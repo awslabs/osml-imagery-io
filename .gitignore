@@ -1,3 +1,6 @@
+# External specification docs.
+/specification/
+
 # Rust
 /target/
 Cargo.lock
