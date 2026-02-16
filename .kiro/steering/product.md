@@ -1,13 +1,19 @@
 # Product Overview
 
-This is a new project repository. The product purpose and features have not yet been defined.
+AWS OSML IO provides high-performance Rust implementations of image format decoders and encoders for geospatial imagery formats, with Python bindings for the OversightML ecosystem.
 
-## Status
-- Repository initialized
-- No source code present
-- Awaiting initial development
+## Purpose
 
-## Next Steps
-- Define product requirements
-- Choose technology stack
-- Implement initial features
+- Decode and encode NITF (National Imagery Transmission Format) 2.0 and 2.1 files
+- Decode and encode GeoTIFF (Georeferenced TIFF) images
+- Provide Python bindings compatible with osml-imagery-toolkit
+
+## Target Users
+
+- Developers working with geospatial imagery
+- OversightML ecosystem users
+- Remote sensing and GIS applications
+
+## Repository
+
+https://github.com/aws-solutions-library-samples/osml-io
