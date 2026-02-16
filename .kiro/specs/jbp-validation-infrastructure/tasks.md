@@ -6,18 +6,18 @@ This implementation plan creates a Python-based test harness for validating NITF
 
 ## Tasks
 
-- [ ] 1. Create TestFileEntry and TestManifest data classes
-  - [ ] 1.1 Create `tests/conformance/__init__.py` with TestFileEntry dataclass
+- [x] 1. Create TestFileEntry and TestManifest data classes
+  - [x] 1.1 Create `tests/conformance/__init__.py` with TestFileEntry dataclass
     - Define fields: path, expected_valid, expected_exception, expected_message, category, description
     - Use dataclasses with default values for optional fields
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6_
-  - [ ] 1.2 Add TestManifest class with load/save methods
+  - [x] 1.2 Add TestManifest class with load/save methods
     - Implement `load()` classmethod that returns empty manifest if file not found
     - Implement `to_json()` and `from_json()` methods for serialization
     - Implement `get_entry()` for path lookup
     - Implement `entries_by_category()` for filtering
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6_
-  - [ ] 1.3 Write unit tests for TestFileEntry and TestManifest
+  - [x] 1.3 Write unit tests for TestFileEntry and TestManifest
     - Test manifest loading with missing file
     - Test manifest loading with valid JSON
     - Test entry lookup found/not found
@@ -32,12 +32,12 @@ This implementation plan creates a Python-based test harness for validating NITF
     - **Property 2: Manifest Lookup Returns Correct Entry**
     - **Validates: Requirements 2.5**
 
-- [ ] 3. Create pytest conformance test infrastructure
-  - [ ] 3.1 Add helper functions for integration data path resolution
+- [x] 3. Create pytest conformance test infrastructure
+  - [x] 3.1 Add helper functions for integration data path resolution
     - Implement `get_integration_data_path()` using env var or default
     - Implement `get_manifest_path()` for manifest location
     - _Requirements: 6.4, 6.5_
-  - [ ] 3.2 Create `tests/test_conformance.py` with parametrized test
+  - [x] 3.2 Create `tests/test_conformance.py` with parametrized test
     - Implement `load_test_cases()` for pytest parametrization
     - Create `test_conformance()` with `@pytest.mark.integration` marker
     - Handle missing test files with `pytest.skip()`
@@ -53,16 +53,16 @@ This implementation plan creates a Python-based test harness for validating NITF
     - **Property 5: Message Substring Matching Is Correct**
     - **Validates: Requirements 4.6, 4.7**
 
-- [ ] 4. Configure pytest markers and graceful degradation
-  - [ ] 4.1 Update `pyproject.toml` or `pytest.ini` with integration marker
+- [x] 4. Configure pytest markers and graceful degradation
+  - [x] 4.1 Update `pyproject.toml` or `pytest.ini` with integration marker
     - Add `integration` marker definition
     - _Requirements: 5.4_
-  - [ ] 4.2 Add logging for missing test data scenarios
+  - [x] 4.2 Add logging for missing test data scenarios
     - Log warning when manifest file not found
     - Log warning when test file not found (before skip)
     - _Requirements: 6.1, 6.2, 6.3_
 
-- [ ] 5. Checkpoint - Verify test infrastructure works
+- [x] 5. Checkpoint - Verify test infrastructure works
   - Create a sample manifest in a temp directory
   - Run pytest to verify parametrization works
   - Verify tests skip gracefully when data is missing

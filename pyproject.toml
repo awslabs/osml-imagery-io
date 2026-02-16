@@ -47,6 +47,9 @@ features = ["pyo3/extension-module"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+markers = [
+    "integration: marks tests as integration tests (requires test data in data/integration/)",
+]
 
 [tool.ruff]
 line-length = 120
