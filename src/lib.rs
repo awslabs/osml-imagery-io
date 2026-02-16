@@ -5,11 +5,35 @@
 
 use pyo3::prelude::*;
 
+mod bindings;
 mod error;
+mod traits;
+mod types;
+
+pub use bindings::{
+    PyAssetProvider, PyDataAssetProvider, PyDatasetReader, PyDatasetWriter,
+    PyGraphicsAssetProvider, PyImageAssetProvider, PyMetadataProvider, PyTextAssetProvider, IO,
+};
+pub use traits::{
+    AssetProvider, DataAssetProvider, DatasetReader, DatasetWriter, GraphicsAssetProvider,
+    ImageAssetProvider, MetadataProvider, TextAssetProvider,
+};
+pub use types::{AssetType, PixelType};
 
 /// Python module for aws.osml.io._io
 #[pymodule]
 fn _io(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_class::<AssetType>()?;
+    m.add_class::<PixelType>()?;
+    m.add_class::<PyMetadataProvider>()?;
+    m.add_class::<PyAssetProvider>()?;
+    m.add_class::<PyImageAssetProvider>()?;
+    m.add_class::<PyTextAssetProvider>()?;
+    m.add_class::<PyDataAssetProvider>()?;
+    m.add_class::<PyGraphicsAssetProvider>()?;
+    m.add_class::<PyDatasetReader>()?;
+    m.add_class::<PyDatasetWriter>()?;
+    m.add_class::<IO>()?;
     Ok(())
 }

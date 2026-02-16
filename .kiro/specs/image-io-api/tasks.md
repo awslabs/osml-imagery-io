@@ -6,34 +6,34 @@ This plan implements the foundational image IO API types and traits for the aws-
 
 ## Tasks
 
-- [ ] 1. Set up project structure and core types
-  - [ ] 1.1 Create module structure with traits/ and bindings/ directories
+- [x] 1. Set up project structure and core types
+  - [x] 1.1 Create module structure with traits/ and bindings/ directories
     - Create `src/traits/mod.rs` with submodule declarations
     - Create `src/bindings/mod.rs` with submodule declarations
     - Update `src/lib.rs` to include new modules
     - _Requirements: 11.1_
 
-  - [ ] 1.2 Implement AssetType enumeration
+  - [x] 1.2 Implement AssetType enumeration
     - Create `src/types.rs` with AssetType enum (Image, Text, Graphics, Data)
     - Add PyO3 `#[pyclass]` derive for Python exposure
     - Implement Clone, Copy, PartialEq, Eq, Hash derives
     - _Requirements: 10.1, 10.3_
 
-  - [ ] 1.3 Implement PixelType enumeration
+  - [x] 1.3 Implement PixelType enumeration
     - Add PixelType enum to `src/types.rs` (UInt8, UInt16, UInt32, Int8, Int16, Int32, Float32, Float64)
     - Implement `to_numpy_dtype()` method returning dtype string
     - Implement `bytes_per_pixel()` method
     - Add PyO3 `#[pyclass]` derive
     - _Requirements: 5.8_
 
-  - [ ]* 1.4 Write unit tests for enumerations
+  - [x] 1.4 Write unit tests for enumerations
     - Test AssetType equality comparisons
     - Test PixelType::to_numpy_dtype() returns correct strings
     - Test PixelType::bytes_per_pixel() returns correct values
     - _Requirements: 10.3_
 
-- [ ] 2. Implement error types and exception mapping
-  - [ ] 2.1 Extend CodecError enumeration
+- [x] 2. Implement error types and exception mapping
+  - [x] 2.1 Extend CodecError enumeration
     - Add AssetNotFound(String) variant
     - Add InvalidBlockCoordinates(u32, u32, u32) variant
     - Add InvalidResolutionLevel(u32) variant
@@ -41,7 +41,7 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Add DuplicateKey(String) variant
     - _Requirements: 1.7, 2.5, 5.13, 5.14, 8.4, 8.5_
 
-  - [ ] 2.2 Implement Python exception mapping
+  - [x] 2.2 Implement Python exception mapping
     - Update `From<CodecError> for PyErr` implementation
     - Map AssetNotFound to PyKeyError
     - Map DuplicateKey to PyValueError
@@ -55,18 +55,18 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Generate each CodecError variant, convert to PyErr, verify correct Python type
     - **Validates: Requirements 11.4**
 
-- [ ] 3. Checkpoint - Ensure all tests pass
+- [x] 3. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 4. Implement MetadataProvider trait and binding
-  - [ ] 4.1 Define MetadataProvider trait
+- [x] 4. Implement MetadataProvider trait and binding
+  - [x] 4.1 Define MetadataProvider trait
     - Create `src/traits/metadata.rs`
     - Define `fn raw(&self) -> &[u8]` method
     - Define `fn as_dict(&self, name: Option<&str>) -> HashMap<String, serde_json::Value>` method
     - Add Send + Sync bounds
     - _Requirements: 6.1, 6.2, 6.3, 6.4_
 
-  - [ ] 4.2 Implement PyMetadataProvider binding
+  - [x] 4.2 Implement PyMetadataProvider binding
     - Create `src/bindings/metadata.rs`
     - Wrap `Arc<dyn MetadataProvider>` in PyMetadataProvider struct
     - Implement `raw` property returning Python BytesIO
@@ -80,8 +80,8 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Verify as_dict() returns all sections
     - **Validates: Requirements 6.3, 6.4**
 
-- [ ] 5. Implement AssetProvider trait and binding
-  - [ ] 5.1 Define AssetProvider trait
+- [x] 5. Implement AssetProvider trait and binding
+  - [x] 5.1 Define AssetProvider trait
     - Create `src/traits/asset.rs`
     - Define key(), title(), description(), media_type() methods returning &str
     - Define roles() method returning &[String]
@@ -90,7 +90,7 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Define metadata() method returning Arc<dyn MetadataProvider>
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8_
 
-  - [ ] 5.2 Implement PyAssetProvider binding
+  - [x] 5.2 Implement PyAssetProvider binding
     - Create `src/bindings/asset.rs`
     - Wrap Arc<dyn AssetProvider> in PyAssetProvider struct
     - Implement all getter methods with PyO3 #[getter] attributes
@@ -98,8 +98,8 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Implement get_metadata() returning PyMetadataProvider
     - _Requirements: 4.1-4.8, 11.1_
 
-- [ ] 6. Implement ImageAssetProvider trait and binding
-  - [ ] 6.1 Define ImageAssetProvider trait
+- [x] 6. Implement ImageAssetProvider trait and binding
+  - [x] 6.1 Define ImageAssetProvider trait
     - Create `src/traits/image.rs`
     - Extend AssetProvider trait
     - Define has_block(block_row, block_col, resolution_level) -> bool
@@ -111,7 +111,7 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Provide default implementations for image_shape(), block_shape(), block_grid_size()
     - _Requirements: 5.1-5.12_
 
-  - [ ] 6.2 Implement PyImageAssetProvider binding
+  - [x] 6.2 Implement PyImageAssetProvider binding
     - Add PyImageAssetProvider struct wrapping Arc<dyn ImageAssetProvider>
     - Implement has_block() method
     - Implement get_block() method returning numpy ndarray via PyO3
@@ -147,11 +147,11 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Verify get_block raises ValueError
     - **Validates: Requirements 5.14**
 
-- [ ] 7. Checkpoint - Ensure all tests pass
+- [x] 7. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 8. Implement specialized asset provider traits
-  - [ ] 8.1 Define TextAssetProvider trait
+- [x] 8. Implement specialized asset provider traits
+  - [x] 8.1 Define TextAssetProvider trait
     - Create `src/traits/text.rs`
     - Extend AssetProvider trait
     - Define text() -> Result<String, CodecError>
@@ -159,7 +159,7 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Define format() -> &str
     - _Requirements: 7.1, 7.2, 7.3_
 
-  - [ ] 8.2 Define DataAssetProvider trait
+  - [x] 8.2 Define DataAssetProvider trait
     - Create `src/traits/data.rs`
     - Extend AssetProvider trait
     - Define mime_type() -> &str
@@ -167,13 +167,13 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Define parse_as_json() -> Result<serde_json::Value, CodecError>
     - _Requirements: 8.1, 8.2, 8.3_
 
-  - [ ] 8.3 Define GraphicsAssetProvider trait
+  - [x] 8.3 Define GraphicsAssetProvider trait
     - Create `src/traits/graphics.rs`
     - Extend AssetProvider trait
     - Document that raw_asset() provides graphics data access
     - _Requirements: 9.1, 9.2_
 
-  - [ ] 8.4 Implement Python bindings for specialized providers
+  - [x] 8.4 Implement Python bindings for specialized providers
     - Add PyTextAssetProvider with get_text(), get_encoding(), get_format()
     - Add PyDataAssetProvider with get_mime_type(), parse_as_xml(), parse_as_json()
     - Add PyGraphicsAssetProvider extending PyAssetProvider
@@ -187,8 +187,8 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Verify parse_as_json() raises ParseError
     - **Validates: Requirements 8.4, 8.5**
 
-- [ ] 9. Implement DatasetReader trait and binding
-  - [ ] 9.1 Define DatasetReader trait
+- [x] 9. Implement DatasetReader trait and binding
+  - [x] 9.1 Define DatasetReader trait
     - Create `src/traits/reader.rs`
     - Define get_asset(key: &str) -> Result<Arc<dyn AssetProvider>, CodecError>
     - Define get_asset_keys(asset_type, roles) -> Vec<String>
@@ -198,7 +198,7 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Add Send + Sync bounds
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.6_
 
-  - [ ] 9.2 Implement PyDatasetReader binding
+  - [x] 9.2 Implement PyDatasetReader binding
     - Create `src/bindings/reader.rs`
     - Wrap Option<Box<dyn DatasetReader>> for ownership management
     - Implement get_asset() returning appropriate Python wrapper based on asset type
@@ -229,8 +229,8 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Verify get_asset() raises KeyError
     - **Validates: Requirements 1.7**
 
-- [ ] 10. Implement DatasetWriter trait and binding
-  - [ ] 10.1 Define DatasetWriter trait
+- [x] 10. Implement DatasetWriter trait and binding
+  - [x] 10.1 Define DatasetWriter trait
     - Create `src/traits/writer.rs`
     - Define add_asset(key, provider, title, description, roles) -> Result<(), CodecError>
     - Define set_metadata(metadata) -> Result<(), CodecError>
@@ -238,7 +238,7 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Add Send + Sync bounds
     - _Requirements: 2.1, 2.2, 2.4_
 
-  - [ ] 10.2 Implement PyDatasetWriter binding
+  - [x] 10.2 Implement PyDatasetWriter binding
     - Create `src/bindings/writer.rs`
     - Wrap Option<Box<dyn DatasetWriter>> for ownership management
     - Implement add_asset() accepting Python AssetProvider
@@ -255,8 +255,8 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Verify ValueError is raised
     - **Validates: Requirements 2.5**
 
-- [ ] 11. Implement IO Factory
-  - [ ] 11.1 Implement IO factory class
+- [x] 11. Implement IO Factory
+  - [x] 11.1 Implement IO factory class
     - Create `src/bindings/io.rs`
     - Implement IO struct with #[pyclass]
     - Implement open(uri: &str, mode: &str) static method
@@ -272,8 +272,8 @@ This plan implements the foundational image IO API types and traits for the aws-
     - For mode "w", verify returned object is DatasetWriter
     - **Validates: Requirements 3.2, 3.3**
 
-- [ ] 12. Wire up Python module and exports
-  - [ ] 12.1 Update lib.rs with all exports
+- [x] 12. Wire up Python module and exports
+  - [x] 12.1 Update lib.rs with all exports
     - Register all #[pyclass] types with the module
     - Export IO, AssetType, PixelType
     - Export PyDatasetReader, PyDatasetWriter
@@ -282,13 +282,13 @@ This plan implements the foundational image IO API types and traits for the aws-
     - Export PyMetadataProvider
     - _Requirements: 11.1_
 
-  - [ ] 12.2 Update Python __init__.py with public API
+  - [x] 12.2 Update Python __init__.py with public API
     - Import and re-export all public classes
     - Add `open` function as alias for IO.open
     - Update __all__ list
     - _Requirements: 11.1_
 
-- [ ] 13. Final checkpoint - Ensure all tests pass
+- [x] 13. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
