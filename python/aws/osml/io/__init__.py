@@ -17,6 +17,12 @@ from aws.osml.io._io import (
     DataAssetProvider,
     GraphicsAssetProvider,
     MetadataProvider,
+    # Parser bindings
+    StructureRegistry,
+    StructureAccessor,
+    StructureWriter,
+    StructureDefinition,
+    Value,
 )
 
 # Convenience alias for IO.open
@@ -41,4 +47,10 @@ __all__ = [
     "GraphicsAssetProvider",
     # Metadata
     "MetadataProvider",
+    # Parser
+    "StructureRegistry",
+    "StructureAccessor",
+    "StructureWriter",
+    "StructureDefinition",
+    "Value",
 ]

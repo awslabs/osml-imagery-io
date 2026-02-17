@@ -7,12 +7,15 @@ use pyo3::prelude::*;
 
 mod bindings;
 mod error;
+pub mod parser;
 mod traits;
 mod types;
 
 pub use bindings::{
     PyAssetProvider, PyDataAssetProvider, PyDatasetReader, PyDatasetWriter,
-    PyGraphicsAssetProvider, PyImageAssetProvider, PyMetadataProvider, PyTextAssetProvider, IO,
+    PyGraphicsAssetProvider, PyImageAssetProvider, PyMetadataProvider, PyTextAssetProvider,
+    PyStructureAccessor, PyStructureDefinition, PyStructureRegistry, PyStructureWriter, PyValue,
+    IO,
 };
 pub use traits::{
     AssetProvider, DataAssetProvider, DatasetReader, DatasetWriter, GraphicsAssetProvider,
@@ -35,5 +38,11 @@ fn _io(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDatasetReader>()?;
     m.add_class::<PyDatasetWriter>()?;
     m.add_class::<IO>()?;
+    // Parser bindings
+    m.add_class::<PyStructureRegistry>()?;
+    m.add_class::<PyStructureAccessor>()?;
+    m.add_class::<PyStructureWriter>()?;
+    m.add_class::<PyStructureDefinition>()?;
+    m.add_class::<PyValue>()?;
     Ok(())
 }
