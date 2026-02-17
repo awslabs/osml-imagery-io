@@ -1,0 +1,8 @@
+# Cargo configuration for aws-osml-io
+#
+# This configuration helps cargo find the correct Python interpreter
+# when building PyO3 bindings.
+
+[env]
+# Use the active Python interpreter from venv/conda
+PYO3_PYTHON = { value = "python3", force = true }

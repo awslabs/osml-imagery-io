@@ -58,7 +58,7 @@ class TestStructureRegistry:
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
         
-        definition = registry.get("NITF_02.10_FileHeader")
+        definition = registry.get("nitf_02.10_file_header")
         assert definition is not None
         assert isinstance(definition, StructureDefinition)
         assert definition.id == "nitf_02_10_file_header"
@@ -76,9 +76,8 @@ class TestStructureRegistry:
         
         names = registry.list()
         assert isinstance(names, list)
-        # Note: There's a naming convention mismatch - list() returns NITF_02.10_FileHeader
-        # but get() expects NITF_02.10_FileHeader. We just verify NITF structures are listed.
-        assert any("NITF" in name for name in names)
+        # Verify NITF structures are listed with new naming convention
+        assert any("nitf_" in name for name in names)
 
     def test_registry_reload(self):
         """Test reloading definitions from disk."""
@@ -89,7 +88,7 @@ class TestStructureRegistry:
         registry.reload()
         
         # Definitions should still be available
-        definition = registry.get("NITF_02.10_FileHeader")
+        definition = registry.get("nitf_02.10_file_header")
         assert definition is not None
 
     def test_registry_register_runtime_definition(self):
@@ -98,7 +97,7 @@ class TestStructureRegistry:
         registry.add_search_path(str(STRUCTURES_DIR))
         
         # Get an existing definition
-        original = registry.get("NITF_02.10_FileHeader")
+        original = registry.get("nitf_02.10_file_header")
         assert original is not None
         
         # Register it under a new name
@@ -122,7 +121,7 @@ class TestStructureDefinition:
         """Get the NITF file header definition."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        return registry.get("NITF_02.10_FileHeader")
+        return registry.get("nitf_02.10_file_header")
 
     def test_definition_id(self, nitf_definition):
         """Test getting definition ID."""
@@ -157,7 +156,7 @@ class TestStructureAccessor:
         """Get the NITF file header definition."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        return registry.get("NITF_02.10_FileHeader")
+        return registry.get("nitf_02.10_file_header")
 
     @pytest.fixture
     def synthetic_data(self):
@@ -252,7 +251,7 @@ class TestStructureWriter:
         """Get the NITF file header definition."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        return registry.get("NITF_02.10_FileHeader")
+        return registry.get("nitf_02.10_file_header")
 
     def test_writer_new_streaming(self, nitf_definition):
         """Test creating a streaming writer."""
@@ -308,7 +307,7 @@ class TestValue:
         """Create accessor with synthetic data."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        definition = registry.get("NITF_02.10_FileHeader")
+        definition = registry.get("nitf_02.10_file_header")
         
         with open(SYNTHETIC_NITF_HEADER, "rb") as f:
             data = f.read()
@@ -381,7 +380,7 @@ class TestRawView:
         """Create accessor with synthetic data."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        definition = registry.get("NITF_02.10_FileHeader")
+        definition = registry.get("nitf_02.10_file_header")
         
         with open(SYNTHETIC_NITF_HEADER, "rb") as f:
             data = f.read()
@@ -424,7 +423,7 @@ class TestMmapSupport:
         """Get the NITF file header definition."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        return registry.get("NITF_02.10_FileHeader")
+        return registry.get("nitf_02.10_file_header")
 
     def test_accessor_with_mmap(self, nitf_definition):
         """Test creating accessor from memory-mapped file."""
@@ -473,7 +472,7 @@ class TestRoundTrip:
         """Get the NITF file header definition."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        return registry.get("NITF_02.10_FileHeader")
+        return registry.get("nitf_02.10_file_header")
 
     @pytest.fixture
     def synthetic_data(self):

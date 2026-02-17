@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 
 mod bindings;
 mod error;
+pub mod jbp;
 pub mod parser;
 mod traits;
 mod types;

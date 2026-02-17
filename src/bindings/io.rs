@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
 use crate::error::CodecError;
+use crate::jbp;
 
 /// Represents a parsed URI with its scheme and path components.
 #[derive(Debug, Clone)]
@@ -92,6 +93,9 @@ impl IO {
     ///   - "r" for reading (returns DatasetReader)
     ///   - "w" for writing (returns DatasetWriter)
     ///
+    /// * `format` - Optional format specification for writing (e.g., "nitf", "nsif").
+    ///   Required when mode is "w". Ignored when mode is "r".
+    ///
     /// # Returns
     ///
     /// A DatasetReader when mode is "r", or a DatasetWriter when mode is "w".
@@ -101,19 +105,22 @@ impl IO {
     /// * ValueError - If the mode is invalid or the file format is not supported.
     /// * IOError - If the file cannot be opened.
     #[staticmethod]
-    #[pyo3(signature = (uri, mode="r"))]
-    fn open(py: Python<'_>, uri: &str, mode: &str) -> PyResult<PyObject> {
+    #[pyo3(signature = (uri, mode="r", format=None))]
+    fn open(py: Python<'_>, uri: &str, mode: &str, format: Option<&str>) -> PyResult<PyObject> {
         let parsed = ParsedUri::parse(uri);
 
         match mode {
             "r" => {
                 // Create a reader based on the URI scheme and format
-                let reader = create_reader(&parsed)?;
+                let reader = create_reader(&parsed, format)?;
                 Ok(reader.into_py(py))
             }
             "w" => {
                 // Create a writer based on the URI scheme and format
-                let writer = create_writer(&parsed)?;
+                let format_str = format.ok_or_else(|| {
+                    PyValueError::new_err("Format must be specified when opening for writing")
+                })?;
+                let writer = create_writer(&parsed, format_str)?;
                 Ok(writer.into_py(py))
             }
             _ => Err(PyValueError::new_err(format!(
@@ -128,10 +135,16 @@ impl IO {
 ///
 /// This function determines the appropriate reader implementation based on
 /// the URI scheme and file format.
-fn create_reader(parsed: &ParsedUri) -> PyResult<PyDatasetReader> {
+fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDatasetReader> {
     // Validate scheme is supported
     match parsed.scheme.as_str() {
-        "file" | "s3" => {}
+        "file" => {}
+        "s3" => {
+            return Err(CodecError::Unsupported(
+                "S3 URIs are not yet supported".to_string(),
+            )
+            .into());
+        }
         scheme => {
             return Err(CodecError::Unsupported(format!(
                 "Unsupported URI scheme: {}",
@@ -141,17 +154,31 @@ fn create_reader(parsed: &ParsedUri) -> PyResult<PyDatasetReader> {
         }
     }
 
+    // If format is explicitly specified, use it
+    if let Some(fmt) = format {
+        match fmt.to_lowercase().as_str() {
+            "nitf" | "nitf21" | "nitf2.1" | "nsif" | "nsif10" | "nsif1.0" | "jbp" => {
+                let reader = jbp::IO::open_as(&parsed.path, fmt)?;
+                return Ok(PyDatasetReader::new(reader));
+            }
+            _ => {
+                return Err(CodecError::InvalidFormat(format!(
+                    "Unsupported format: '{}'",
+                    fmt
+                ))
+                .into());
+            }
+        }
+    }
+
     // Detect format from extension
     let extension = parsed.extension().map(|e| e.to_lowercase());
 
     match extension.as_deref() {
-        Some("ntf") | Some("nitf") | Some("nsf") => {
-            // NITF format - not yet implemented
-            Err(CodecError::Unsupported(format!(
-                "NITF format reader not yet implemented for: {}",
-                parsed.path
-            ))
-            .into())
+        Some("ntf") | Some("nitf") | Some("nsif") | Some("nsf") => {
+            // NITF/NSIF format - use JBP reader
+            let reader = jbp::IO::open(&parsed.path)?;
+            Ok(PyDatasetReader::new(reader))
         }
         Some("tif") | Some("tiff") | Some("gtif") | Some("gtiff") => {
             // GeoTIFF format - not yet implemented
@@ -191,10 +218,16 @@ fn create_reader(parsed: &ParsedUri) -> PyResult<PyDatasetReader> {
 ///
 /// This function determines the appropriate writer implementation based on
 /// the URI scheme and file format.
-fn create_writer(parsed: &ParsedUri) -> PyResult<PyDatasetWriter> {
+fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> {
     // Validate scheme is supported
     match parsed.scheme.as_str() {
-        "file" | "s3" => {}
+        "file" => {}
+        "s3" => {
+            return Err(CodecError::Unsupported(
+                "S3 URIs are not yet supported".to_string(),
+            )
+            .into());
+        }
         scheme => {
             return Err(CodecError::Unsupported(format!(
                 "Unsupported URI scheme: {}",
@@ -204,19 +237,13 @@ fn create_writer(parsed: &ParsedUri) -> PyResult<PyDatasetWriter> {
         }
     }
 
-    // Detect format from extension
-    let extension = parsed.extension().map(|e| e.to_lowercase());
-
-    match extension.as_deref() {
-        Some("ntf") | Some("nitf") | Some("nsf") => {
-            // NITF format - not yet implemented
-            Err(CodecError::Unsupported(format!(
-                "NITF format writer not yet implemented for: {}",
-                parsed.path
-            ))
-            .into())
+    match format.to_lowercase().as_str() {
+        "nitf" | "nitf21" | "nitf2.1" | "nsif" | "nsif10" | "nsif1.0" => {
+            // NITF/NSIF format - use JBP writer
+            let writer = jbp::IO::create(&parsed.path, format)?;
+            Ok(PyDatasetWriter::new(writer))
         }
-        Some("tif") | Some("tiff") | Some("gtif") | Some("gtiff") => {
+        "tif" | "tiff" | "gtif" | "gtiff" | "geotiff" => {
             // GeoTIFF format - not yet implemented
             Err(CodecError::Unsupported(format!(
                 "GeoTIFF format writer not yet implemented for: {}",
@@ -224,7 +251,7 @@ fn create_writer(parsed: &ParsedUri) -> PyResult<PyDatasetWriter> {
             ))
             .into())
         }
-        Some("jp2") | Some("j2k") | Some("jpx") => {
+        "jp2" | "j2k" | "jpx" | "jpeg2000" => {
             // JPEG2000 format - not yet implemented
             Err(CodecError::Unsupported(format!(
                 "JPEG2000 format writer not yet implemented for: {}",
@@ -232,19 +259,12 @@ fn create_writer(parsed: &ParsedUri) -> PyResult<PyDatasetWriter> {
             ))
             .into())
         }
-        Some(ext) => {
+        _ => {
             // Unknown format
             Err(CodecError::InvalidFormat(format!(
-                "Unsupported file format: .{}",
-                ext
+                "Unsupported file format: {}",
+                format
             ))
-            .into())
-        }
-        None => {
-            // No extension - cannot determine format
-            Err(CodecError::InvalidFormat(
-                "Cannot determine file format: no file extension".to_string(),
-            )
             .into())
         }
     }
@@ -305,5 +325,74 @@ mod tests {
         let parsed = ParsedUri::parse("/path/to/.hidden");
         // .hidden has no extension (hidden is the filename)
         assert_eq!(parsed.extension(), Some("hidden"));
+    }
+
+    #[test]
+    fn test_create_reader_nitf_extension() {
+        // This will fail because the file doesn't exist, but it should
+        // get past the format detection
+        let parsed = ParsedUri::parse("nonexistent.ntf");
+        let result = create_reader(&parsed, None);
+        assert!(result.is_err());
+        // Should be an IO error, not an InvalidFormat error
+        let err_str = format!("{:?}", result.err());
+        assert!(
+            !err_str.contains("Unsupported file format"),
+            "Expected file not found error, got: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_create_reader_with_explicit_format() {
+        let parsed = ParsedUri::parse("nonexistent.dat");
+        let result = create_reader(&parsed, Some("nitf"));
+        assert!(result.is_err());
+        // Should be an IO error, not an InvalidFormat error
+        let err_str = format!("{:?}", result.err());
+        assert!(
+            !err_str.contains("Unsupported format"),
+            "Expected file not found error, got: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_create_writer_nitf_format() {
+        let parsed = ParsedUri::parse("/tmp/test_output.ntf");
+        let result = create_writer(&parsed, "nitf");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_create_writer_nsif_format() {
+        let parsed = ParsedUri::parse("/tmp/test_output.nsif");
+        let result = create_writer(&parsed, "nsif");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_create_writer_unknown_format() {
+        let parsed = ParsedUri::parse("/tmp/test_output.xyz");
+        let result = create_writer(&parsed, "unknown");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_reader_s3_not_supported() {
+        let parsed = ParsedUri::parse("s3://bucket/key/image.ntf");
+        let result = create_reader(&parsed, None);
+        assert!(result.is_err());
+        let err_str = format!("{:?}", result.err());
+        assert!(err_str.contains("S3"));
+    }
+
+    #[test]
+    fn test_create_writer_s3_not_supported() {
+        let parsed = ParsedUri::parse("s3://bucket/key/output.ntf");
+        let result = create_writer(&parsed, "nitf");
+        assert!(result.is_err());
+        let err_str = format!("{:?}", result.err());
+        assert!(err_str.contains("S3"));
     }
 }

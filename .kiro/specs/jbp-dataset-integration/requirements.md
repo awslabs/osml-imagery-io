@@ -262,6 +262,5 @@ The JBP Dataset Integration provides the bridge between low-level binary parsing
 4. WHEN creating a DatasetWriter, THE user SHALL specify the output format (e.g., "nitf", "nsif") to determine the underlying writer
 5. THE Python bindings SHALL support context manager protocol (`with` statement) for automatic resource cleanup
 6. THE Python bindings SHALL accept file paths as strings or Path objects
-7. THE Python bindings SHALL support fsspec filesystem objects for cloud storage access
 
 

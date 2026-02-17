@@ -57,8 +57,23 @@ maturin develop --release
 
 ```bash
 pip install -e ".[dev]"
+
+# Run Python tests
 pytest
+
+# Run Rust tests
+cargo test
 ```
+
+#### Running Rust Tests with PyO3
+
+This project uses PyO3 for Python bindings, which requires access to the Python shared library at runtime. On macOS with conda/venv, add this to your `~/.zshrc`:
+
+```bash
+export DYLD_LIBRARY_PATH="/opt/miniconda3/lib:$DYLD_LIBRARY_PATH"
+```
+
+Then restart your terminal. For other setups, see `.kiro/steering/tech.md` for detailed instructions.
 
 ## License
 

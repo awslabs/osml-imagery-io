@@ -41,7 +41,7 @@ Documentation = "https://github.com/aws-solutions-library-samples/osml-io#readme
 [tool.maturin]
 python-source = "python"
 module-name = "aws.osml.io._io"
-features = ["pyo3/extension-module"]
+features = ["extension-module"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

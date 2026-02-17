@@ -13,10 +13,13 @@
 //!
 //! # Naming Convention
 //!
-//! Structure names follow these patterns:
-//! - `NITF_02.10_FileHeader` → `nitf/nitf_02.10_file_header.ksy`
-//! - `TRE_GEOLOB` → `tre/geolob.ksy`
-//! - `DES_TRE_OVERFLOW` → `des/tre_overflow.ksy`
+//! Structure names match the filename stem directly (no case conversion):
+//! - `nitf_02.10_file_header` → `nitf/nitf_02.10_file_header.ksy`
+//! - `nsif_01.00_file_header` → `nsif/nsif_01.00_file_header.ksy`
+//! - `tre_geolob` → `tre/tre_geolob.ksy`
+//! - `des_tre_overflow` → `des/des_tre_overflow.ksy`
+//!
+//! The subdirectory is determined by the prefix: `nitf_`, `nsif_`, `tre_`, `des_`.
 
 use std::collections::HashMap;
 use std::env;
@@ -45,7 +48,7 @@ const STRUCTURE_PATH_ENV: &str = "OSML_IO_STRUCTURE_PATH";
 /// let mut registry = StructureRegistry::new();
 /// registry.add_search_path("/custom/structures");
 ///
-/// if let Some(def) = registry.get("NITF_02.10_FileHeader") {
+/// if let Some(def) = registry.get("nitf_02.10_file_header") {
 ///     println!("Found definition: {}", def.id);
 /// }
 ///
@@ -288,159 +291,37 @@ impl StructureRegistry {
     ///
     /// # Naming Convention
     ///
-    /// - `NITF_02.10_FileHeader` → `nitf/nitf_02.10_file_header.ksy`
-    /// - `NSIF_01.00_FileHeader` → `nsif/nsif_01.00_file_header.ksy`
-    /// - `TRE_GEOLOB` → `tre/geolob.ksy`
-    /// - `DES_TRE_OVERFLOW` → `des/tre_overflow.ksy`
+    /// Structure names match the filename stem directly. The subdirectory
+    /// is determined by the prefix:
+    /// - `nitf_02.10_file_header` → `nitf/nitf_02.10_file_header.ksy`
+    /// - `nsif_01.00_file_header` → `nsif/nsif_01.00_file_header.ksy`
+    /// - `tre_geolob` → `tre/tre_geolob.ksy`
+    /// - `des_tre_overflow` → `des/des_tre_overflow.ksy`
     pub fn name_to_filename(name: &str) -> PathBuf {
-        // Handle TRE_ prefix
-        if let Some(tre_name) = name.strip_prefix("TRE_") {
-            let lower = tre_name.to_lowercase();
-            return PathBuf::from("tre").join(format!("{}.ksy", lower));
-        }
+        let subdir = if name.starts_with("nitf_") {
+            "nitf"
+        } else if name.starts_with("nsif_") {
+            "nsif"
+        } else if name.starts_with("tre_") {
+            "tre"
+        } else if name.starts_with("des_") {
+            "des"
+        } else {
+            ""
+        };
 
-        // Handle DES_ prefix
-        if let Some(des_name) = name.strip_prefix("DES_") {
-            let lower = des_name.to_lowercase();
-            return PathBuf::from("des").join(format!("{}.ksy", lower));
+        if subdir.is_empty() {
+            PathBuf::from(format!("{}.ksy", name))
+        } else {
+            PathBuf::from(subdir).join(format!("{}.ksy", name))
         }
-
-        // Handle NITF_ prefix (e.g., NITF_02.10_FileHeader)
-        if let Some(nitf_rest) = name.strip_prefix("NITF_") {
-            // First convert CamelCase to snake_case, then lowercase
-            let snake = Self::camel_to_snake(nitf_rest);
-            let filename = format!("nitf_{}", snake);
-            return PathBuf::from("nitf").join(format!("{}.ksy", filename));
-        }
-
-        // Handle NSIF_ prefix (e.g., NSIF_01.00_FileHeader)
-        if let Some(nsif_rest) = name.strip_prefix("NSIF_") {
-            let snake = Self::camel_to_snake(nsif_rest);
-            let filename = format!("nsif_{}", snake);
-            return PathBuf::from("nsif").join(format!("{}.ksy", filename));
-        }
-
-        // Default: convert to lowercase snake_case
-        let snake = Self::camel_to_snake(name);
-        PathBuf::from(format!("{}.ksy", snake))
     }
 
     /// Convert a filename path back to a structure name.
-    fn filename_to_name(&self, path: &Path, base_dir: &Path) -> Option<String> {
-        let relative = path.strip_prefix(base_dir).ok()?;
-        let stem = path.file_stem()?.to_str()?;
-
-        // Get the subdirectory if any
-        let subdir = relative.parent().and_then(|p| p.to_str());
-
-        match subdir {
-            Some("tre") => {
-                // tre/geolob.ksy → TRE_GEOLOB
-                Some(format!("TRE_{}", stem.to_uppercase()))
-            }
-            Some("des") => {
-                // des/tre_overflow.ksy → DES_TRE_OVERFLOW
-                Some(format!("DES_{}", stem.to_uppercase()))
-            }
-            Some("nitf") => {
-                // nitf/nitf_02.10_file_header.ksy → NITF_02.10_FileHeader
-                let without_prefix = stem.strip_prefix("nitf_").unwrap_or(stem);
-                Some(format!("NITF_{}", Self::snake_to_camel_preserve_version(without_prefix)))
-            }
-            Some("nsif") => {
-                // nsif/nsif_01.00_file_header.ksy → NSIF_01.00_FileHeader
-                let without_prefix = stem.strip_prefix("nsif_").unwrap_or(stem);
-                Some(format!("NSIF_{}", Self::snake_to_camel_preserve_version(without_prefix)))
-            }
-            _ => {
-                // Default: convert snake_case to CamelCase
-                Some(Self::snake_to_camel(stem))
-            }
-        }
-    }
-
-    /// Convert CamelCase to snake_case.
-    fn camel_to_snake(s: &str) -> String {
-        let mut result = String::new();
-        let mut prev_was_lower = false;
-        let mut prev_was_underscore = false;
-
-        for c in s.chars() {
-            if c.is_uppercase() {
-                // Add underscore before uppercase if:
-                // - Previous char was lowercase (handles "FileHeader" → "file_header")
-                // - Previous char wasn't underscore
-                if prev_was_lower && !prev_was_underscore {
-                    result.push('_');
-                }
-                result.push(c.to_lowercase().next().unwrap_or(c));
-                prev_was_lower = false;
-                prev_was_underscore = false;
-            } else if c == '_' {
-                result.push(c);
-                prev_was_lower = false;
-                prev_was_underscore = true;
-            } else {
-                result.push(c);
-                prev_was_lower = c.is_lowercase();
-                prev_was_underscore = false;
-            }
-        }
-
-        result
-    }
-
-    /// Convert snake_case to CamelCase (preserving version numbers like 02.10).
-    fn snake_to_camel(s: &str) -> String {
-        let mut result = String::new();
-        let mut capitalize_next = true;
-
-        for c in s.chars() {
-            if c == '_' {
-                capitalize_next = true;
-            } else if capitalize_next {
-                result.push(c.to_uppercase().next().unwrap_or(c));
-                capitalize_next = false;
-            } else {
-                result.push(c);
-            }
-        }
-
-        result
-    }
-
-    /// Convert snake_case to CamelCase, preserving underscore before the CamelCase part.
-    /// This handles version-prefixed names like "02.10_file_header" → "02.10_FileHeader"
-    fn snake_to_camel_preserve_version(s: &str) -> String {
-        // Find the first underscore that's followed by a letter (start of the name part)
-        // e.g., "02.10_file_header" should split at the underscore before "file"
-        // But only if the prefix looks like a version number (contains digits/dots)
-        let mut split_pos = None;
-        let chars: Vec<char> = s.chars().collect();
-        
-        for i in 0..chars.len() {
-            if chars[i] == '_' && i + 1 < chars.len() && chars[i + 1].is_alphabetic() {
-                // Check if the prefix looks like a version number (contains digits)
-                let prefix: String = chars[..i].iter().collect();
-                if prefix.chars().any(|c| c.is_ascii_digit()) {
-                    split_pos = Some(i);
-                    break;
-                }
-            }
-        }
-
-        match split_pos {
-            Some(pos) => {
-                // Keep the version part as-is, convert the rest to CamelCase
-                let version_part = &s[..pos];
-                let name_part = &s[pos + 1..]; // Skip the underscore
-                format!("{}_{}", version_part, Self::snake_to_camel(name_part))
-            }
-            None => {
-                // No version prefix, just convert normally
-                Self::snake_to_camel(s)
-            }
-        }
+    ///
+    /// Simply returns the file stem (filename without extension).
+    fn filename_to_name(&self, path: &Path, _base_dir: &Path) -> Option<String> {
+        path.file_stem()?.to_str().map(|s| s.to_string())
     }
 }
 
@@ -596,96 +477,45 @@ seq:
 
     #[test]
     fn name_to_filename_tre() {
-        let path = StructureRegistry::name_to_filename("TRE_GEOLOB");
-        assert_eq!(path, PathBuf::from("tre/geolob.ksy"));
+        let path = StructureRegistry::name_to_filename("tre_geolob");
+        assert_eq!(path, PathBuf::from("tre/tre_geolob.ksy"));
     }
 
     #[test]
     fn name_to_filename_tre_with_underscore() {
-        let path = StructureRegistry::name_to_filename("TRE_USE00A");
-        assert_eq!(path, PathBuf::from("tre/use00a.ksy"));
+        let path = StructureRegistry::name_to_filename("tre_use00a");
+        assert_eq!(path, PathBuf::from("tre/tre_use00a.ksy"));
     }
 
     #[test]
     fn name_to_filename_des() {
-        let path = StructureRegistry::name_to_filename("DES_TRE_OVERFLOW");
-        assert_eq!(path, PathBuf::from("des/tre_overflow.ksy"));
+        let path = StructureRegistry::name_to_filename("des_tre_overflow");
+        assert_eq!(path, PathBuf::from("des/des_tre_overflow.ksy"));
     }
 
     #[test]
     fn name_to_filename_nitf_file_header() {
-        let path = StructureRegistry::name_to_filename("NITF_02.10_FileHeader");
+        let path = StructureRegistry::name_to_filename("nitf_02.10_file_header");
         assert_eq!(path, PathBuf::from("nitf/nitf_02.10_file_header.ksy"));
     }
 
     #[test]
     fn name_to_filename_nitf_image_subheader() {
-        let path = StructureRegistry::name_to_filename("NITF_02.10_ImageSubheader");
+        let path = StructureRegistry::name_to_filename("nitf_02.10_image_subheader");
         assert_eq!(path, PathBuf::from("nitf/nitf_02.10_image_subheader.ksy"));
     }
 
     #[test]
     fn name_to_filename_nsif() {
-        let path = StructureRegistry::name_to_filename("NSIF_01.00_FileHeader");
+        let path = StructureRegistry::name_to_filename("nsif_01.00_file_header");
         assert_eq!(path, PathBuf::from("nsif/nsif_01.00_file_header.ksy"));
     }
 
     #[test]
-    fn camel_to_snake_simple() {
-        assert_eq!(StructureRegistry::camel_to_snake("FileHeader"), "file_header");
-    }
-
-    #[test]
-    fn camel_to_snake_with_version() {
-        assert_eq!(
-            StructureRegistry::camel_to_snake("02.10_FileHeader"),
-            "02.10_file_header"
-        );
-    }
-
-    #[test]
-    fn camel_to_snake_already_snake() {
-        assert_eq!(
-            StructureRegistry::camel_to_snake("file_header"),
-            "file_header"
-        );
-    }
-
-    #[test]
-    fn snake_to_camel_simple() {
-        assert_eq!(StructureRegistry::snake_to_camel("file_header"), "FileHeader");
-    }
-
-    #[test]
-    fn snake_to_camel_with_version() {
-        assert_eq!(
-            StructureRegistry::snake_to_camel("02.10_file_header"),
-            "02.10FileHeader"
-        );
-    }
-
-    #[test]
-    fn snake_to_camel_preserve_version_with_version() {
-        assert_eq!(
-            StructureRegistry::snake_to_camel_preserve_version("02.10_file_header"),
-            "02.10_FileHeader"
-        );
-    }
-
-    #[test]
-    fn snake_to_camel_preserve_version_no_version() {
-        assert_eq!(
-            StructureRegistry::snake_to_camel_preserve_version("file_header"),
-            "FileHeader"
-        );
-    }
-
-    #[test]
-    fn snake_to_camel_preserve_version_complex() {
-        assert_eq!(
-            StructureRegistry::snake_to_camel_preserve_version("01.00_image_subheader"),
-            "01.00_ImageSubheader"
-        );
+    fn name_to_filename_unknown_prefix() {
+        // Names without recognized prefix go to root
+        let path = StructureRegistry::name_to_filename("custom_structure");
+        assert_eq!(path, PathBuf::from("custom_structure.ksy"));
     }
 
     // File-based tests using tempdir
@@ -697,12 +527,12 @@ seq:
         fs::create_dir(&tre_dir).unwrap();
 
         let ksy_content = create_test_ksy("geolob");
-        fs::write(tre_dir.join("geolob.ksy"), ksy_content).unwrap();
+        fs::write(tre_dir.join("tre_geolob.ksy"), ksy_content).unwrap();
 
         let mut registry = StructureRegistry::new();
         registry.add_search_path(temp_dir.path());
 
-        let def = registry.get("TRE_GEOLOB");
+        let def = registry.get("tre_geolob");
         assert!(def.is_some());
         assert_eq!(def.unwrap().id, "geolob");
     }
@@ -713,15 +543,15 @@ seq:
         let tre_dir = temp_dir.path().join("tre");
         fs::create_dir(&tre_dir).unwrap();
 
-        fs::write(tre_dir.join("geolob.ksy"), create_test_ksy("geolob")).unwrap();
-        fs::write(tre_dir.join("use00a.ksy"), create_test_ksy("use00a")).unwrap();
+        fs::write(tre_dir.join("tre_geolob.ksy"), create_test_ksy("geolob")).unwrap();
+        fs::write(tre_dir.join("tre_use00a.ksy"), create_test_ksy("use00a")).unwrap();
 
         let mut registry = StructureRegistry::new();
         registry.add_search_path(temp_dir.path());
 
         let names = registry.list();
-        assert!(names.contains(&"TRE_GEOLOB".to_string()));
-        assert!(names.contains(&"TRE_USE00A".to_string()));
+        assert!(names.contains(&"tre_geolob".to_string()));
+        assert!(names.contains(&"tre_use00a".to_string()));
     }
 
     #[test]
@@ -743,7 +573,7 @@ seq:
     type: str
     size: 10
 "#;
-        fs::write(tre_dir1.join("geolob.ksy"), ksy1).unwrap();
+        fs::write(tre_dir1.join("tre_geolob.ksy"), ksy1).unwrap();
 
         // Second path has definition with title "Second"
         let ksy2 = r#"meta:
@@ -754,13 +584,13 @@ seq:
     type: str
     size: 10
 "#;
-        fs::write(tre_dir2.join("geolob.ksy"), ksy2).unwrap();
+        fs::write(tre_dir2.join("tre_geolob.ksy"), ksy2).unwrap();
 
         let mut registry = StructureRegistry::new();
         registry.add_search_path(temp_dir1.path()); // Lower priority
         registry.add_search_path(temp_dir2.path()); // Higher priority
 
-        let def = registry.get("TRE_GEOLOB").unwrap();
+        let def = registry.get("tre_geolob").unwrap();
         assert_eq!(def.title, Some("Second".to_string()));
     }
 
@@ -778,16 +608,16 @@ seq:
     type: str
     size: 10
 "#;
-        fs::write(tre_dir.join("geolob.ksy"), ksy).unwrap();
+        fs::write(tre_dir.join("tre_geolob.ksy"), ksy).unwrap();
 
         let mut registry = StructureRegistry::new();
         registry.add_search_path(temp_dir.path());
 
         // Register runtime definition
         let runtime_def = StructureDefinition::new("geolob").with_title("FromRuntime");
-        registry.register("TRE_GEOLOB", runtime_def);
+        registry.register("tre_geolob", runtime_def);
 
-        let def = registry.get("TRE_GEOLOB").unwrap();
+        let def = registry.get("tre_geolob").unwrap();
         assert_eq!(def.title, Some("FromRuntime".to_string()));
     }
 
@@ -797,7 +627,7 @@ seq:
         let tre_dir = temp_dir.path().join("tre");
         fs::create_dir(&tre_dir).unwrap();
 
-        fs::write(tre_dir.join("geolob.ksy"), create_test_ksy("geolob")).unwrap();
+        fs::write(tre_dir.join("tre_geolob.ksy"), create_test_ksy("geolob")).unwrap();
 
         let mut registry = StructureRegistry::new();
         registry.add_search_path(temp_dir.path());
@@ -805,12 +635,12 @@ seq:
         assert!(registry.file_cache.is_empty());
 
         // First call loads and caches
-        let def1 = registry.get_mut("TRE_GEOLOB");
+        let def1 = registry.get_mut("tre_geolob");
         assert!(def1.is_some());
-        assert!(registry.file_cache.contains_key("TRE_GEOLOB"));
+        assert!(registry.file_cache.contains_key("tre_geolob"));
 
         // Second call uses cache
-        let def2 = registry.get_mut("TRE_GEOLOB");
+        let def2 = registry.get_mut("tre_geolob");
         assert!(def2.is_some());
         assert!(Arc::ptr_eq(&def1.unwrap(), &def2.unwrap()));
     }
@@ -831,7 +661,7 @@ seq:
         registry.add_search_path(temp_dir.path());
 
         let names = registry.list();
-        assert!(names.contains(&"NITF_02.10_FileHeader".to_string()));
+        assert!(names.contains(&"nitf_02.10_file_header".to_string()));
     }
 
     #[test]
@@ -841,7 +671,7 @@ seq:
         fs::create_dir(&des_dir).unwrap();
 
         fs::write(
-            des_dir.join("tre_overflow.ksy"),
+            des_dir.join("des_tre_overflow.ksy"),
             create_test_ksy("tre_overflow"),
         )
         .unwrap();
@@ -850,7 +680,7 @@ seq:
         registry.add_search_path(temp_dir.path());
 
         let names = registry.list();
-        assert!(names.contains(&"DES_TRE_OVERFLOW".to_string()));
+        assert!(names.contains(&"des_tre_overflow".to_string()));
     }
 
     #[test]
@@ -869,6 +699,7 @@ seq:
         registry.add_search_path(temp_dir.path());
 
         // Every name returned by list() should be resolvable via get()
+        // Note: list() may include names from default search paths too
         let names = registry.list();
         for name in &names {
             let def = registry.get(name);
@@ -892,17 +723,17 @@ seq:
         fs::create_dir(&tre_dir).unwrap();
         fs::create_dir(&des_dir).unwrap();
 
-        // Create test files
+        // Create test files with correct naming convention
         fs::write(
             nitf_dir.join("nitf_02.10_file_header.ksy"),
             create_test_ksy("nitf_file_header"),
         ).unwrap();
         fs::write(
-            tre_dir.join("geolob.ksy"),
+            tre_dir.join("tre_geolob.ksy"),
             create_test_ksy("geolob"),
         ).unwrap();
         fs::write(
-            des_dir.join("tre_overflow.ksy"),
+            des_dir.join("des_tre_overflow.ksy"),
             create_test_ksy("tre_overflow"),
         ).unwrap();
 
@@ -912,9 +743,9 @@ seq:
         let names = registry.list();
         
         // Verify expected names are present
-        assert!(names.contains(&"NITF_02.10_FileHeader".to_string()));
-        assert!(names.contains(&"TRE_GEOLOB".to_string()));
-        assert!(names.contains(&"DES_TRE_OVERFLOW".to_string()));
+        assert!(names.contains(&"nitf_02.10_file_header".to_string()));
+        assert!(names.contains(&"tre_geolob".to_string()));
+        assert!(names.contains(&"des_tre_overflow".to_string()));
 
         // Every name should be resolvable
         for name in &names {
@@ -940,7 +771,7 @@ mod proptests {
 
     /// Generate a valid structure name (alphanumeric with underscores)
     fn valid_struct_name() -> impl Strategy<Value = String> {
-        "[A-Z][A-Z0-9_]{2,15}".prop_map(|s| s.to_string())
+        "[a-z][a-z0-9_]{2,15}".prop_map(|s| s.to_string())
     }
 
     /// Generate a valid structure id (lowercase with underscores)
@@ -948,14 +779,14 @@ mod proptests {
         "[a-z][a-z0-9_]{2,15}".prop_map(|s| s.to_string())
     }
 
-    /// Generate a valid TRE name
+    /// Generate a valid TRE name (now lowercase with tre_ prefix)
     fn valid_tre_name() -> impl Strategy<Value = String> {
-        "[A-Z][A-Z0-9]{2,6}".prop_map(|s| format!("TRE_{}", s))
+        "[a-z][a-z0-9]{2,6}".prop_map(|s| format!("tre_{}", s))
     }
 
-    /// Generate a valid DES name
+    /// Generate a valid DES name (now lowercase with des_ prefix)
     fn valid_des_name() -> impl Strategy<Value = String> {
-        "[A-Z][A-Z0-9_]{2,10}".prop_map(|s| format!("DES_{}", s))
+        "[a-z][a-z0-9_]{2,10}".prop_map(|s| format!("des_{}", s))
     }
 
     /// Create a minimal valid KSY file content
@@ -983,7 +814,7 @@ mod proptests {
         #![proptest_config(ProptestConfig::with_cases(50))]
         #[test]
         fn prop_25_search_path_priority(
-            tre_suffix in "[A-Z][A-Z0-9]{2,5}",
+            tre_suffix in "[a-z][a-z0-9]{2,5}",
             id in valid_struct_id(),
         ) {
             let temp_dir1 = TempDir::new().unwrap();
@@ -994,8 +825,8 @@ mod proptests {
             fs::create_dir(&tre_dir1).unwrap();
             fs::create_dir(&tre_dir2).unwrap();
 
-            let name = format!("TRE_{}", tre_suffix);
-            let filename = format!("{}.ksy", tre_suffix.to_lowercase());
+            let name = format!("tre_{}", tre_suffix);
+            let filename = format!("{}.ksy", name);
 
             // First path (lower priority) has title "LowPriority"
             let ksy1 = create_ksy_content(&id, Some("LowPriority"));
@@ -1037,9 +868,10 @@ mod proptests {
             // Create KSY files for TRE names
             let mut expected_names: Vec<String> = Vec::new();
             for name in &tre_names {
-                let tre_suffix = name.strip_prefix("TRE_").unwrap();
-                let filename = format!("{}.ksy", tre_suffix.to_lowercase());
-                let ksy = create_ksy_content(&tre_suffix.to_lowercase(), None);
+                // Name is already in correct format: tre_xxx
+                let filename = format!("{}.ksy", name);
+                let id = name.strip_prefix("tre_").unwrap_or(name);
+                let ksy = create_ksy_content(id, None);
                 fs::write(tre_dir.join(&filename), &ksy).unwrap();
                 if !expected_names.contains(name) {
                     expected_names.push(name.clone());
@@ -1091,7 +923,7 @@ mod proptests {
         #![proptest_config(ProptestConfig::with_cases(50))]
         #[test]
         fn prop_27_runtime_registration_priority(
-            tre_suffix in "[A-Z][A-Z0-9]{2,5}",
+            tre_suffix in "[a-z][a-z0-9]{2,5}",
             file_id in valid_struct_id(),
             runtime_id in valid_struct_id(),
         ) {
@@ -1099,8 +931,8 @@ mod proptests {
             let tre_dir = temp_dir.path().join("tre");
             fs::create_dir(&tre_dir).unwrap();
 
-            let name = format!("TRE_{}", tre_suffix);
-            let filename = format!("{}.ksy", tre_suffix.to_lowercase());
+            let name = format!("tre_{}", tre_suffix);
+            let filename = format!("{}.ksy", name);
 
             // Create file-based definition
             let ksy = create_ksy_content(&file_id, Some("FromFile"));
