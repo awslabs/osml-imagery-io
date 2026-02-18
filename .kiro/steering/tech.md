@@ -52,6 +52,8 @@ cargo clippy
 
 This project uses PyO3 for Python bindings, which requires access to the Python shared library at runtime. On macOS, Apple's System Integrity Protection (SIP) can strip `DYLD_*` environment variables, so you need to set this in your shell profile for it to persist.
 
+**Note for Kiro**: The user's environment is already configured with the necessary library paths. Do NOT source `scripts/setup-rust-env.sh` or set `DYLD_LIBRARY_PATH` - just run `cargo test` directly.
+
 ### Permanent Setup (Recommended)
 
 Add the following to your shell profile (`~/.zshrc` for zsh, `~/.bashrc` for bash):

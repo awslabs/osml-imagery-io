@@ -6,12 +6,21 @@
 //!
 //! Both providers implement the [`MetadataProvider`] trait, providing access to
 //! parsed field values as dictionaries and raw header bytes.
+//!
+//! # TRE Support
+//!
+//! [`JBPSegmentMetadataProvider`] supports TRE (Tagged Record Extension) metadata
+//! through the `with_tres()` constructor. TRE fields are exposed in the dictionary
+//! interface with CETAG-prefixed keys (e.g., "GEOLOB.ARV").
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::parser::{StructureAccessor, StructureDefinition, Value};
+use crate::parser::{StructureAccessor, StructureDefinition, StructureRegistry, Value};
 use crate::traits::MetadataProvider;
+
+use super::tre::TreEnvelope;
+use super::tre_fields;
 
 /// Metadata provider for NITF file header fields.
 ///
@@ -116,6 +125,13 @@ unsafe impl Sync for JBPFileMetadataProvider {}
 /// [`MetadataProvider`] trait. Works identically to [`JBPFileMetadataProvider`]
 /// but for segment subheaders instead of file headers.
 ///
+/// # TRE Support
+///
+/// When created with `with_tres()`, this provider also exposes TRE fields in the
+/// dictionary interface. TRE fields are prefixed with their CETAG (e.g., "GEOLOB.ARV").
+/// Unknown TREs (those without definitions in the registry) are skipped in metadata
+/// output but preserved for round-trip operations.
+///
 /// # Example
 ///
 /// ```ignore
@@ -126,12 +142,24 @@ unsafe impl Sync for JBPFileMetadataProvider {}
 ///
 /// // Get only image-specific fields (starting with "I")
 /// let image_fields = provider.as_dict(Some("I"));
+///
+/// // With TRE support:
+/// let provider = JBPSegmentMetadataProvider::with_tres(
+///     definition, raw_bytes, tre_envelopes, registry
+/// );
+///
+/// // Get only GEOLOB TRE fields
+/// let geolob_fields = provider.as_dict(Some("GEOLOB"));
 /// ```
 pub struct JBPSegmentMetadataProvider {
     /// Structure definition for field enumeration
     definition: Arc<StructureDefinition>,
     /// Raw subheader bytes
     raw_bytes: Arc<[u8]>,
+    /// TRE envelopes from this segment (inline + overflow)
+    tre_envelopes: Vec<TreEnvelope>,
+    /// Structure registry for TRE definitions
+    registry: Option<Arc<StructureRegistry>>,
 }
 
 impl JBPSegmentMetadataProvider {
@@ -144,6 +172,8 @@ impl JBPSegmentMetadataProvider {
         Self {
             definition: accessor.definition.clone(),
             raw_bytes,
+            tre_envelopes: Vec::new(),
+            registry: None,
         }
     }
 
@@ -152,6 +182,46 @@ impl JBPSegmentMetadataProvider {
         Self {
             definition,
             raw_bytes,
+            tre_envelopes: Vec::new(),
+            registry: None,
+        }
+    }
+
+    /// Create with TRE support.
+    ///
+    /// This constructor enables TRE field access through the metadata interface.
+    /// TRE fields are exposed with CETAG-prefixed keys (e.g., "GEOLOB.ARV").
+    ///
+    /// # Arguments
+    /// * `definition` - Structure definition for the segment subheader
+    /// * `raw_bytes` - Raw bytes of the segment subheader
+    /// * `tre_envelopes` - TRE envelopes from this segment (inline + overflow)
+    /// * `registry` - Structure registry for TRE definitions
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let provider = JBPSegmentMetadataProvider::with_tres(
+    ///     definition,
+    ///     raw_bytes,
+    ///     tre_envelopes,
+    ///     registry,
+    /// );
+    ///
+    /// // Access TRE fields
+    /// let dict = provider.as_dict(Some("GEOLOB"));
+    /// ```
+    pub fn with_tres(
+        definition: Arc<StructureDefinition>,
+        raw_bytes: Arc<[u8]>,
+        tre_envelopes: Vec<TreEnvelope>,
+        registry: Arc<StructureRegistry>,
+    ) -> Self {
+        Self {
+            definition,
+            raw_bytes,
+            tre_envelopes,
+            registry: Some(registry),
         }
     }
 }
@@ -169,12 +239,21 @@ impl MetadataProvider for JBPSegmentMetadataProvider {
     ///   whose names start with the prefix are returned. If `None`, all fields
     ///   are returned.
     ///
+    /// # TRE Fields
+    ///
+    /// When TRE support is enabled (via `with_tres()`), TRE fields are included
+    /// in the result with CETAG-prefixed keys (e.g., "GEOLOB.ARV"). The prefix
+    /// filter applies to TRE fields as well - for example, `as_dict(Some("GEOLOB"))`
+    /// returns only fields from the GEOLOB TRE.
+    ///
+    /// Unknown TREs (those without definitions in the registry) are skipped.
+    ///
     /// # Returns
     /// A HashMap of field names to JSON values.
     fn as_dict(&self, name: Option<&str>) -> HashMap<String, serde_json::Value> {
         let mut result = HashMap::new();
 
-        // Create a temporary accessor to read values
+        // Create a temporary accessor to read subheader values
         if let Ok(accessor) = StructureAccessor::new(self.definition.clone(), &self.raw_bytes) {
             // Iterate over all accessible field paths
             for field_path in accessor.fields() {
@@ -191,6 +270,49 @@ impl MetadataProvider for JBPSegmentMetadataProvider {
                         result.insert(field_path, json_value);
                     }
                 }
+            }
+        }
+
+        // Add TRE fields if registry is available
+        if let Some(ref registry) = self.registry {
+            for envelope in &self.tre_envelopes {
+                // Normalize the tag (trim whitespace)
+                let tag = envelope.tag.trim();
+
+                // Skip if prefix filter doesn't match the CETAG
+                if let Some(prefix) = name {
+                    // Check if the prefix could match this TRE's fields
+                    // Either the prefix is the CETAG itself, or starts with "CETAG."
+                    if !tag.starts_with(prefix) && !prefix.starts_with(tag) {
+                        continue;
+                    }
+                }
+
+                // Try to create an accessor for this TRE
+                if let Ok(Some(tre_accessor)) =
+                    tre_fields::create_accessor(registry, tag, &envelope.data)
+                {
+                    // Iterate over all TRE fields
+                    for field_path in tre_accessor.fields() {
+                        // Build the full path with CETAG prefix
+                        let full_path = format!("{}.{}", tag, field_path);
+
+                        // Apply prefix filter
+                        if let Some(prefix) = name {
+                            if !full_path.starts_with(prefix) {
+                                continue;
+                            }
+                        }
+
+                        // Try to get the field value and convert to JSON
+                        if let Ok(value) = tre_accessor.get(&field_path) {
+                            if let Some(json_value) = value_to_json(&value) {
+                                result.insert(full_path, json_value);
+                            }
+                        }
+                    }
+                }
+                // Unknown TREs (no definition) are silently skipped
             }
         }
 
@@ -434,6 +556,184 @@ mod tests {
         let obj = json.as_object().unwrap();
         assert_eq!(obj.get("_type"), Some(&serde_json::json!("TestType")));
         assert_eq!(obj.get("_data"), Some(&serde_json::json!("64617461")));
+    }
+
+    // TRE support tests
+
+    /// Create a simple TRE definition for testing
+    fn create_test_tre_definition() -> StructureDefinition {
+        use crate::parser::Encoding;
+        StructureDefinition::new("tre_geolob")
+            .with_title("Geographic Location TRE")
+            .with_field(
+                FieldDefinition::new("arv", FieldType::String)
+                    .with_size(SizeSpec::Fixed(9))
+                    .with_encoding(Encoding::BcsN)
+                    .with_doc("Longitude density"),
+            )
+            .with_field(
+                FieldDefinition::new("brv", FieldType::String)
+                    .with_size(SizeSpec::Fixed(9))
+                    .with_encoding(Encoding::BcsN)
+                    .with_doc("Latitude density"),
+            )
+    }
+
+    #[test]
+    fn segment_provider_with_tres_includes_tre_fields() {
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        // Create a TRE envelope with GEOLOB data
+        // ARV: "000360000" (9 bytes), BRV: "000360000" (9 bytes)
+        let tre_data = b"000360000000360000".to_vec();
+        let tre_envelope = TreEnvelope {
+            tag: "GEOLOB".to_string(),
+            data: tre_data,
+        };
+
+        // Create registry with TRE definition
+        let mut registry = StructureRegistry::new();
+        registry.register("tre_geolob", create_test_tre_definition());
+
+        let provider = JBPSegmentMetadataProvider::with_tres(
+            definition,
+            raw_bytes,
+            vec![tre_envelope],
+            Arc::new(registry),
+        );
+
+        let dict = provider.as_dict(None);
+
+        // Should have subheader fields
+        assert!(dict.contains_key("FHDR"));
+        assert!(dict.contains_key("FVER"));
+
+        // Should have TRE fields with CETAG prefix
+        assert!(dict.contains_key("GEOLOB.arv"));
+        assert!(dict.contains_key("GEOLOB.brv"));
+        assert_eq!(dict.get("GEOLOB.arv"), Some(&serde_json::json!("000360000")));
+        assert_eq!(dict.get("GEOLOB.brv"), Some(&serde_json::json!("000360000")));
+    }
+
+    #[test]
+    fn segment_provider_with_tres_filters_by_cetag() {
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        let tre_data = b"000360000000360000".to_vec();
+        let tre_envelope = TreEnvelope {
+            tag: "GEOLOB".to_string(),
+            data: tre_data,
+        };
+
+        let mut registry = StructureRegistry::new();
+        registry.register("tre_geolob", create_test_tre_definition());
+
+        let provider = JBPSegmentMetadataProvider::with_tres(
+            definition,
+            raw_bytes,
+            vec![tre_envelope],
+            Arc::new(registry),
+        );
+
+        // Filter by GEOLOB prefix - should only get TRE fields
+        let dict = provider.as_dict(Some("GEOLOB"));
+
+        assert!(dict.contains_key("GEOLOB.arv"));
+        assert!(dict.contains_key("GEOLOB.brv"));
+        assert!(!dict.contains_key("FHDR"));
+        assert!(!dict.contains_key("FVER"));
+        assert_eq!(dict.len(), 2);
+    }
+
+    #[test]
+    fn segment_provider_skips_unknown_tres() {
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        // Create a TRE with unknown tag (no definition in registry)
+        let unknown_tre = TreEnvelope {
+            tag: "UNKNWN".to_string(),
+            data: vec![1, 2, 3, 4, 5],
+        };
+
+        // Empty registry - no TRE definitions
+        let registry = StructureRegistry::new();
+
+        let provider = JBPSegmentMetadataProvider::with_tres(
+            definition,
+            raw_bytes,
+            vec![unknown_tre],
+            Arc::new(registry),
+        );
+
+        let dict = provider.as_dict(None);
+
+        // Should have subheader fields but no TRE fields
+        assert!(dict.contains_key("FHDR"));
+        assert!(!dict.contains_key("UNKNWN."));
+        // No keys should start with UNKNWN
+        for key in dict.keys() {
+            assert!(!key.starts_with("UNKNWN"), "Unexpected TRE field: {}", key);
+        }
+    }
+
+    #[test]
+    fn segment_provider_without_tres_has_no_tre_fields() {
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        // Create provider without TRE support
+        let provider = JBPSegmentMetadataProvider::from_definition(definition, raw_bytes);
+
+        let dict = provider.as_dict(None);
+
+        // Should only have subheader fields
+        assert!(dict.contains_key("FHDR"));
+        assert_eq!(dict.len(), 4); // Only the 4 subheader fields
+    }
+
+    #[test]
+    fn segment_provider_handles_multiple_tres() {
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        // Create two TRE envelopes
+        let tre1 = TreEnvelope {
+            tag: "GEOLOB".to_string(),
+            data: b"000360000000360000".to_vec(),
+        };
+
+        // Create a second TRE definition
+        let tre2_def = StructureDefinition::new("tre_test")
+            .with_field(
+                FieldDefinition::new("value", FieldType::String)
+                    .with_size(SizeSpec::Fixed(5)),
+            );
+
+        let tre2 = TreEnvelope {
+            tag: "TEST  ".to_string(),
+            data: b"HELLO".to_vec(),
+        };
+
+        let mut registry = StructureRegistry::new();
+        registry.register("tre_geolob", create_test_tre_definition());
+        registry.register("tre_test", tre2_def);
+
+        let provider = JBPSegmentMetadataProvider::with_tres(
+            definition,
+            raw_bytes,
+            vec![tre1, tre2],
+            Arc::new(registry),
+        );
+
+        let dict = provider.as_dict(None);
+
+        // Should have fields from both TREs
+        assert!(dict.contains_key("GEOLOB.arv"));
+        assert!(dict.contains_key("TEST.value"));
+        assert_eq!(dict.get("TEST.value"), Some(&serde_json::json!("HELLO")));
     }
 }
 
@@ -735,6 +1035,315 @@ mod property_tests {
 
                 prop_assert_eq!(provider.raw().len(), expected_len,
                     "raw() length should match input length");
+            }
+        }
+    }
+
+    /// Property 7: Metadata Interface TRE Access
+    /// For any segment with TREs, calling `as_dict(None)` SHALL return all TRE fields
+    /// with CETAG-prefixed keys, and calling `as_dict("GEOLOB")` SHALL return only
+    /// fields from the GEOLOB TRE.
+    /// **Validates: Requirements 18.1, 18.2, 18.3, 18.4**
+    mod prop_7_metadata_interface_tre_access {
+        use super::*;
+        use crate::parser::Encoding;
+
+        /// Strategy to generate valid CETAG strings (1-6 uppercase alphanumeric)
+        fn valid_cetag_strategy() -> impl Strategy<Value = String> {
+            prop::collection::vec(
+                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
+                1..=6,
+            )
+            .prop_map(|chars| {
+                let s: String = chars.into_iter().collect();
+                format!("{:<6}", s) // Pad to 6 chars with spaces
+            })
+        }
+
+        /// Strategy to generate valid BCS-A field values (alphanumeric, fixed size)
+        fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {
+            prop::collection::vec(
+                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
+                size,
+            )
+            .prop_map(|chars| chars.into_iter().collect::<String>())
+        }
+
+        /// Create a simple TRE definition with two fixed-size string fields
+        fn create_tre_definition(name: &str, field1_size: usize, field2_size: usize) -> StructureDefinition {
+            StructureDefinition::new(name)
+                .with_field(
+                    FieldDefinition::new("field1", FieldType::String)
+                        .with_size(SizeSpec::Fixed(field1_size))
+                        .with_encoding(Encoding::BcsA),
+                )
+                .with_field(
+                    FieldDefinition::new("field2", FieldType::String)
+                        .with_size(SizeSpec::Fixed(field2_size))
+                        .with_encoding(Encoding::BcsA),
+                )
+        }
+
+        /// Create a simple subheader definition
+        fn create_subheader_definition() -> Arc<StructureDefinition> {
+            Arc::new(
+                StructureDefinition::new("TestSubheader")
+                    .with_field(
+                        FieldDefinition::new("HEADER", FieldType::String)
+                            .with_size(SizeSpec::Fixed(10)),
+                    )
+            )
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(100))]
+
+            /// Feature: tre-des-support, Property 7: Metadata Interface TRE Access
+            ///
+            /// as_dict(None) returns all TRE fields with CETAG-prefixed keys
+            ///
+            /// **Validates: Requirements 18.1, 18.2, 18.3, 18.4**
+            #[test]
+            fn as_dict_none_includes_all_tre_fields(
+                field1_value in field_value_strategy(8),
+                field2_value in field_value_strategy(6),
+            ) {
+                // Create subheader
+                let subheader_def = create_subheader_definition();
+                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+
+                // Create TRE definition and envelope
+                let tre_def = create_tre_definition("tre_geolob", 8, 6);
+                let mut cedata = Vec::new();
+                cedata.extend(field1_value.as_bytes());
+                cedata.extend(field2_value.as_bytes());
+
+                let tre_envelope = TreEnvelope {
+                    tag: "GEOLOB".to_string(),
+                    data: cedata,
+                };
+
+                // Create registry with TRE definition
+                let mut registry = StructureRegistry::new();
+                registry.register("tre_geolob", tre_def);
+
+                // Create provider with TRE support
+                let provider = JBPSegmentMetadataProvider::with_tres(
+                    subheader_def,
+                    subheader_bytes,
+                    vec![tre_envelope],
+                    Arc::new(registry),
+                );
+
+                let dict = provider.as_dict(None);
+
+                // Should have subheader field
+                prop_assert!(dict.contains_key("HEADER"),
+                    "Should contain subheader field HEADER");
+
+                // Should have TRE fields with CETAG prefix
+                prop_assert!(dict.contains_key("GEOLOB.field1"),
+                    "Should contain TRE field GEOLOB.field1");
+                prop_assert!(dict.contains_key("GEOLOB.field2"),
+                    "Should contain TRE field GEOLOB.field2");
+
+                // Verify TRE field values
+                prop_assert_eq!(
+                    dict.get("GEOLOB.field1"),
+                    Some(&serde_json::json!(field1_value)),
+                    "GEOLOB.field1 should have correct value"
+                );
+                prop_assert_eq!(
+                    dict.get("GEOLOB.field2"),
+                    Some(&serde_json::json!(field2_value)),
+                    "GEOLOB.field2 should have correct value"
+                );
+            }
+
+            /// Feature: tre-des-support, Property 7: Metadata Interface TRE Access
+            ///
+            /// as_dict(Some("CETAG")) returns only fields from that TRE
+            ///
+            /// **Validates: Requirements 18.3, 18.4**
+            #[test]
+            fn as_dict_with_cetag_prefix_filters_to_tre(
+                field1_value in field_value_strategy(8),
+                field2_value in field_value_strategy(6),
+            ) {
+                // Create subheader
+                let subheader_def = create_subheader_definition();
+                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+
+                // Create TRE definition and envelope
+                let tre_def = create_tre_definition("tre_geolob", 8, 6);
+                let mut cedata = Vec::new();
+                cedata.extend(field1_value.as_bytes());
+                cedata.extend(field2_value.as_bytes());
+
+                let tre_envelope = TreEnvelope {
+                    tag: "GEOLOB".to_string(),
+                    data: cedata,
+                };
+
+                // Create registry with TRE definition
+                let mut registry = StructureRegistry::new();
+                registry.register("tre_geolob", tre_def);
+
+                // Create provider with TRE support
+                let provider = JBPSegmentMetadataProvider::with_tres(
+                    subheader_def,
+                    subheader_bytes,
+                    vec![tre_envelope],
+                    Arc::new(registry),
+                );
+
+                // Filter by GEOLOB prefix
+                let dict = provider.as_dict(Some("GEOLOB"));
+
+                // Should NOT have subheader field
+                prop_assert!(!dict.contains_key("HEADER"),
+                    "Should NOT contain subheader field when filtering by CETAG");
+
+                // Should have only TRE fields
+                prop_assert_eq!(dict.len(), 2,
+                    "Should have exactly 2 TRE fields");
+
+                // All keys should start with GEOLOB
+                for key in dict.keys() {
+                    prop_assert!(key.starts_with("GEOLOB."),
+                        "All keys should start with 'GEOLOB.', got: {}", key);
+                }
+            }
+
+            /// Feature: tre-des-support, Property 7: Metadata Interface TRE Access
+            ///
+            /// Multiple TREs are all accessible and filterable
+            ///
+            /// **Validates: Requirements 18.1, 18.2, 18.3, 18.4**
+            #[test]
+            fn multiple_tres_accessible_and_filterable(
+                tre1_field1 in field_value_strategy(8),
+                tre1_field2 in field_value_strategy(6),
+                tre2_field1 in field_value_strategy(8),
+                tre2_field2 in field_value_strategy(6),
+            ) {
+                // Create subheader
+                let subheader_def = create_subheader_definition();
+                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+
+                // Create two TRE definitions
+                let tre1_def = create_tre_definition("tre_geolob", 8, 6);
+                let tre2_def = create_tre_definition("tre_sensrb", 8, 6);
+
+                // Create TRE envelopes
+                let mut cedata1 = Vec::new();
+                cedata1.extend(tre1_field1.as_bytes());
+                cedata1.extend(tre1_field2.as_bytes());
+                let tre1 = TreEnvelope {
+                    tag: "GEOLOB".to_string(),
+                    data: cedata1,
+                };
+
+                let mut cedata2 = Vec::new();
+                cedata2.extend(tre2_field1.as_bytes());
+                cedata2.extend(tre2_field2.as_bytes());
+                let tre2 = TreEnvelope {
+                    tag: "SENSRB".to_string(),
+                    data: cedata2,
+                };
+
+                // Create registry with both TRE definitions
+                let mut registry = StructureRegistry::new();
+                registry.register("tre_geolob", tre1_def);
+                registry.register("tre_sensrb", tre2_def);
+
+                // Create provider with both TREs
+                let provider = JBPSegmentMetadataProvider::with_tres(
+                    subheader_def,
+                    subheader_bytes,
+                    vec![tre1, tre2],
+                    Arc::new(registry),
+                );
+
+                // as_dict(None) should return all fields
+                let all_dict = provider.as_dict(None);
+                prop_assert!(all_dict.contains_key("HEADER"));
+                prop_assert!(all_dict.contains_key("GEOLOB.field1"));
+                prop_assert!(all_dict.contains_key("SENSRB.field1"));
+                prop_assert_eq!(all_dict.len(), 5, // 1 subheader + 2*2 TRE fields
+                    "Should have 5 total fields");
+
+                // as_dict(Some("GEOLOB")) should return only GEOLOB fields
+                let geolob_dict = provider.as_dict(Some("GEOLOB"));
+                prop_assert_eq!(geolob_dict.len(), 2);
+                for key in geolob_dict.keys() {
+                    prop_assert!(key.starts_with("GEOLOB."));
+                }
+
+                // as_dict(Some("SENSRB")) should return only SENSRB fields
+                let sensrb_dict = provider.as_dict(Some("SENSRB"));
+                prop_assert_eq!(sensrb_dict.len(), 2);
+                for key in sensrb_dict.keys() {
+                    prop_assert!(key.starts_with("SENSRB."));
+                }
+            }
+
+            /// Feature: tre-des-support, Property 7: Metadata Interface TRE Access
+            ///
+            /// Unknown TREs are skipped in metadata output
+            ///
+            /// **Validates: Requirements 18.3, 18.4**
+            #[test]
+            fn unknown_tres_skipped_in_output(
+                known_field1 in field_value_strategy(8),
+                known_field2 in field_value_strategy(6),
+            ) {
+                // Create subheader
+                let subheader_def = create_subheader_definition();
+                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+
+                // Create known TRE
+                let tre_def = create_tre_definition("tre_geolob", 8, 6);
+                let mut cedata = Vec::new();
+                cedata.extend(known_field1.as_bytes());
+                cedata.extend(known_field2.as_bytes());
+                let known_tre = TreEnvelope {
+                    tag: "GEOLOB".to_string(),
+                    data: cedata,
+                };
+
+                // Create unknown TRE (no definition in registry)
+                let unknown_tre = TreEnvelope {
+                    tag: "UNKNWN".to_string(),
+                    data: vec![1, 2, 3, 4, 5],
+                };
+
+                // Create registry with only known TRE definition
+                let mut registry = StructureRegistry::new();
+                registry.register("tre_geolob", tre_def);
+
+                // Create provider with both TREs
+                let provider = JBPSegmentMetadataProvider::with_tres(
+                    subheader_def,
+                    subheader_bytes,
+                    vec![known_tre, unknown_tre],
+                    Arc::new(registry),
+                );
+
+                let dict = provider.as_dict(None);
+
+                // Should have known TRE fields
+                prop_assert!(dict.contains_key("GEOLOB.field1"));
+                prop_assert!(dict.contains_key("GEOLOB.field2"));
+
+                // Should NOT have unknown TRE fields
+                for key in dict.keys() {
+                    prop_assert!(!key.starts_with("UNKNWN"),
+                        "Should not contain unknown TRE fields, got: {}", key);
+                }
+
+                // Total should be 1 subheader + 2 known TRE fields = 3
+                prop_assert_eq!(dict.len(), 3);
             }
         }
     }

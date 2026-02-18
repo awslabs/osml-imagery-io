@@ -32,9 +32,39 @@ use std::sync::Arc;
 
 use crate::error::CodecError;
 use crate::jbp::error::JBPError;
+use crate::jbp::overflow::{create_overflow_des, OverflowSource};
+use crate::jbp::tre::{parse_tre_fields_from_metadata, write_tre_envelopes, TreEnvelope};
+use crate::jbp::tre_fields::serialize_tre_groups_to_envelopes;
 use crate::jbp::types::{NitfFormat, SegmentType};
+use crate::parser::StructureRegistry;
 use crate::traits::{AssetProvider, DatasetWriter, MetadataProvider};
 use crate::types::AssetType;
+
+/// Maximum TRE data size for UDID field (UDIDL max 99999 - 3 bytes for UDOFL).
+const MAX_UDID_TRE_SIZE: usize = 99996;
+
+/// Maximum TRE data size for IXSHD field (IXSHDL max 99999 - 3 bytes for IXSOFL).
+#[allow(dead_code)]
+const MAX_IXSHD_TRE_SIZE: usize = 99996;
+
+/// Maximum TRE data size for SXSHD field (SXSHDL max 99999 - 3 bytes for SXSOFL).
+#[allow(dead_code)]
+const MAX_SXSHD_TRE_SIZE: usize = 99996;
+
+/// Maximum TRE data size for TXSHD field (TXSHDL max 99999 - 3 bytes for TXSOFL).
+#[allow(dead_code)]
+const MAX_TXSHD_TRE_SIZE: usize = 99996;
+
+/// Overflow TRE data to be written to a TRE_OVERFLOW DES.
+#[derive(Debug, Clone)]
+struct OverflowTreData {
+    /// The source of the overflow (which header field)
+    source: OverflowSource,
+    /// The 0-based segment index (0 for file header)
+    segment_index: u16,
+    /// The TRE envelopes that overflowed
+    envelopes: Vec<TreEnvelope>,
+}
 
 /// An asset queued for writing.
 #[derive(Clone)]
@@ -75,6 +105,8 @@ pub struct JBPDatasetWriter {
     file_metadata: Option<Arc<dyn MetadataProvider>>,
     /// Whether the writer has been closed
     closed: bool,
+    /// Structure registry for TRE definitions (optional)
+    registry: Option<Arc<StructureRegistry>>,
 }
 
 impl JBPDatasetWriter {
@@ -102,6 +134,35 @@ impl JBPDatasetWriter {
             asset_keys: HashSet::new(),
             file_metadata: None,
             closed: false,
+            registry: None,
+        })
+    }
+
+    /// Create a new writer with TRE support.
+    ///
+    /// The registry is used to look up TRE definitions for serializing
+    /// TRE field values from metadata.
+    ///
+    /// # Arguments
+    /// * `path` - Output file path
+    /// * `format` - NITF format variant (NITF 2.1 or NSIF 1.0)
+    /// * `registry` - Structure registry containing TRE definitions
+    ///
+    /// # Returns
+    /// A new `JBPDatasetWriter` with TRE support.
+    pub fn with_registry(
+        path: impl AsRef<Path>,
+        format: NitfFormat,
+        registry: Arc<StructureRegistry>,
+    ) -> Result<Self, CodecError> {
+        Ok(Self {
+            path: path.as_ref().to_path_buf(),
+            format,
+            assets: Vec::new(),
+            asset_keys: HashSet::new(),
+            file_metadata: None,
+            closed: false,
+            registry: Some(registry),
         })
     }
 
@@ -176,9 +237,138 @@ impl JBPDatasetWriter {
         (images, graphics, text, des)
     }
 
+    /// Split TRE envelopes into those that fit within a size limit and overflow.
+    ///
+    /// TREs are kept together - we don't split individual TREs across boundaries.
+    /// TREs are added to the "fits" list until adding another would exceed the limit.
+    ///
+    /// # Arguments
+    /// * `envelopes` - The TRE envelopes to split
+    /// * `max_size` - Maximum total size in bytes for the "fits" portion
+    ///
+    /// # Returns
+    /// A tuple of (fits, overflow) where:
+    /// - `fits` contains envelopes that fit within max_size
+    /// - `overflow` contains the remaining envelopes
+    fn split_tres_by_size(envelopes: Vec<TreEnvelope>, max_size: usize) -> (Vec<TreEnvelope>, Vec<TreEnvelope>) {
+        let mut fits = Vec::new();
+        let mut overflow = Vec::new();
+        let mut current_size = 0;
+
+        for envelope in envelopes {
+            let envelope_size = envelope.envelope_size();
+            if current_size + envelope_size <= max_size {
+                current_size += envelope_size;
+                fits.push(envelope);
+            } else {
+                overflow.push(envelope);
+            }
+        }
+
+        (fits, overflow)
+    }
+
+    /// Extract TRE envelopes from an asset's metadata.
+    ///
+    /// Parses TRE field values from the asset's metadata (fields with CETAG prefix)
+    /// and returns them as TRE envelopes.
+    ///
+    /// # Arguments
+    /// * `asset` - The queued asset
+    ///
+    /// # Returns
+    /// TRE envelopes, or empty vec if no TREs or no registry.
+    fn extract_tre_envelopes_from_asset(&self, asset: &QueuedAsset) -> Vec<TreEnvelope> {
+        // Need a registry to serialize TREs
+        let registry = match &self.registry {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+
+        // Get metadata from the asset
+        let metadata = asset.provider.metadata();
+        let metadata_dict = metadata.as_dict(None);
+
+        // Parse TRE fields from metadata
+        let tre_groups = parse_tre_fields_from_metadata(&metadata_dict);
+        if tre_groups.is_empty() {
+            return Vec::new();
+        }
+
+        // Serialize TRE groups to envelopes
+        match serialize_tre_groups_to_envelopes(registry, &tre_groups) {
+            Ok(envs) => envs,
+            Err(_) => Vec::new(), // Silently skip on serialization errors
+        }
+    }
+
+    /// Create an image subheader with TRE data and overflow handling.
+    ///
+    /// # Arguments
+    /// * `asset` - The queued asset
+    /// * `segment_index` - The 0-based index of this image segment
+    ///
+    /// # Returns
+    /// A tuple of (subheader_bytes, overflow_data) where:
+    /// - `subheader_bytes` is the complete image subheader
+    /// - `overflow_data` is Some if TREs exceeded UDID limit, None otherwise
+    fn create_image_subheader_with_overflow(
+        &self,
+        asset: &QueuedAsset,
+        segment_index: u16,
+    ) -> (Vec<u8>, Option<OverflowTreData>) {
+        // Extract TRE envelopes from asset metadata
+        let envelopes = self.extract_tre_envelopes_from_asset(asset);
+        
+        if envelopes.is_empty() {
+            // No TREs, create subheader without TRE data
+            return (self.create_image_subheader_with_tres(asset, &[], None), None);
+        }
+
+        // Split TREs by UDID size limit
+        let (fits, overflow) = Self::split_tres_by_size(envelopes, MAX_UDID_TRE_SIZE);
+        
+        // Serialize the TREs that fit
+        let tre_bytes = write_tre_envelopes(&fits);
+        
+        // Create overflow data if needed
+        let overflow_data = if overflow.is_empty() {
+            None
+        } else {
+            Some(OverflowTreData {
+                source: OverflowSource::ImageUdid,
+                segment_index,
+                envelopes: overflow,
+            })
+        };
+
+        // Create subheader with TRE bytes and overflow index placeholder
+        // The overflow index will be set later when we know the DES index
+        let subheader = self.create_image_subheader_with_tres(asset, &tre_bytes, overflow_data.as_ref());
+        
+        (subheader, overflow_data)
+    }
+
 
     /// Create a minimal image subheader.
     fn create_image_subheader(&self, asset: &QueuedAsset) -> Vec<u8> {
+        // Extract TRE bytes from asset metadata if registry is available
+        let tre_bytes = self.extract_tre_bytes_from_asset(asset);
+        self.create_image_subheader_with_tres(asset, &tre_bytes, None)
+    }
+
+    /// Create an image subheader with TRE data.
+    ///
+    /// # Arguments
+    /// * `asset` - The queued asset
+    /// * `tre_bytes` - Serialized TRE envelope bytes to include in UDID field
+    /// * `overflow` - Optional overflow data (used to determine if UDOFL should be set)
+    fn create_image_subheader_with_tres(
+        &self,
+        asset: &QueuedAsset,
+        tre_bytes: &[u8],
+        overflow: Option<&OverflowTreData>,
+    ) -> Vec<u8> {
         let mut subheader = Vec::new();
 
         // IM (2) - File Part Type
@@ -283,12 +473,94 @@ impl JBPDatasetWriter {
         subheader.extend_from_slice(b"0000000000");
         // IMAG (4) - Image Magnification
         subheader.extend_from_slice(b"1.0 ");
+
         // UDIDL (5) - User Defined Image Data Length
-        subheader.extend_from_slice(b"00000");
+        // UDID contains TRE data. If UDIDL > 0, it includes UDOFL (3 bytes) + UDID data
+        if tre_bytes.is_empty() {
+            subheader.extend_from_slice(b"00000");
+        } else {
+            // UDIDL = 3 (UDOFL) + TRE bytes length
+            let udidl = 3 + tre_bytes.len();
+            subheader.extend_from_slice(format!("{:05}", udidl).as_bytes());
+            // UDOFL (3) - User Defined Overflow
+            // If there's overflow, we use a placeholder "???" that will be patched later
+            // when we know the actual DES index. Otherwise, use "000" for no overflow.
+            if overflow.is_some() {
+                subheader.extend_from_slice(b"???");
+            } else {
+                subheader.extend_from_slice(b"000");
+            }
+            // UDID - User Defined Image Data (TRE envelopes)
+            subheader.extend_from_slice(tre_bytes);
+        }
+
         // IXSHDL (5) - Image Extended Subheader Data Length
+        // For now, we don't use IXSHD (extended subheader), only UDID
         subheader.extend_from_slice(b"00000");
 
         subheader
+    }
+
+    /// Extract TRE bytes from an asset's metadata.
+    ///
+    /// Parses TRE field values from the asset's metadata (fields with CETAG prefix)
+    /// and serializes them to TRE envelope bytes.
+    ///
+    /// # Arguments
+    /// * `asset` - The queued asset
+    ///
+    /// # Returns
+    /// Serialized TRE envelope bytes, or empty vec if no TREs or no registry.
+    fn extract_tre_bytes_from_asset(&self, asset: &QueuedAsset) -> Vec<u8> {
+        // Need a registry to serialize TREs
+        let registry = match &self.registry {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+
+        // Get metadata from the asset
+        let metadata = asset.provider.metadata();
+        let metadata_dict = metadata.as_dict(None);
+
+        // Parse TRE fields from metadata
+        let tre_groups = parse_tre_fields_from_metadata(&metadata_dict);
+        if tre_groups.is_empty() {
+            return Vec::new();
+        }
+
+        // Serialize TRE groups to envelopes
+        let envelopes = match serialize_tre_groups_to_envelopes(registry, &tre_groups) {
+            Ok(envs) => envs,
+            Err(_) => return Vec::new(), // Silently skip on serialization errors
+        };
+
+        if envelopes.is_empty() {
+            return Vec::new();
+        }
+
+        // Serialize envelopes to bytes
+        write_tre_envelopes(&envelopes)
+    }
+
+    /// Patch the overflow index placeholder in a subheader.
+    ///
+    /// Searches for the "???" placeholder and replaces it with the actual
+    /// 1-based DES index.
+    ///
+    /// # Arguments
+    /// * `subheader` - The subheader bytes to patch
+    /// * `des_index` - The 1-based DES index for the overflow DES
+    fn patch_overflow_index(subheader: &mut [u8], des_index: u16) {
+        // Search for the "???" placeholder
+        let placeholder = b"???";
+        if let Some(pos) = subheader
+            .windows(3)
+            .position(|window| window == placeholder)
+        {
+            // Replace with the 3-digit DES index
+            let index_str = format!("{:03}", des_index);
+            subheader[pos..pos + 3].copy_from_slice(index_str.as_bytes());
+        }
     }
 
     /// Create a minimal text subheader.
@@ -778,7 +1050,7 @@ impl DatasetWriter for JBPDatasetWriter {
     /// Finalizes the dataset and writes the NITF file.
     ///
     /// This method performs the two-pass writing:
-    /// 1. Calculate all segment lengths
+    /// 1. Calculate all segment lengths (including overflow DES)
     /// 2. Write file header with correct counts and length arrays
     /// 3. Write each segment's subheader and data in order
     fn close(&mut self) -> Result<(), CodecError> {
@@ -789,22 +1061,22 @@ impl DatasetWriter for JBPDatasetWriter {
         // Get assets grouped by type
         let (images, graphics, text, des) = self.get_assets_by_type();
 
-        // Calculate segment counts
-        let (numi, nums, numt, numdes, numres) = self.count_segments_by_type();
-
-        // Calculate header length
-        let header_length = self.calculate_header_length(numi, nums, numt, numdes, numres);
-
-        // Prepare segment info (subheader_len, data_len) for each segment
+        // Prepare image segments with overflow handling
         let mut image_info = Vec::new();
         let mut image_subheaders = Vec::new();
         let mut image_data = Vec::new();
-        for asset in &images {
-            let subheader = self.create_subheader(asset);
+        let mut overflow_tres: Vec<OverflowTreData> = Vec::new();
+
+        for (idx, asset) in images.iter().enumerate() {
+            let (subheader, overflow) = self.create_image_subheader_with_overflow(asset, idx as u16);
             let data = asset.provider.raw_asset()?;
             image_info.push((subheader.len(), data.len()));
             image_subheaders.push(subheader);
             image_data.push(data);
+            
+            if let Some(overflow_data) = overflow {
+                overflow_tres.push(overflow_data);
+            }
         }
 
         let mut graphic_info = Vec::new();
@@ -829,6 +1101,7 @@ impl DatasetWriter for JBPDatasetWriter {
             text_data.push(data);
         }
 
+        // Prepare DES segments from assets
         let mut des_info = Vec::new();
         let mut des_subheaders = Vec::new();
         let mut des_data = Vec::new();
@@ -839,6 +1112,48 @@ impl DatasetWriter for JBPDatasetWriter {
             des_subheaders.push(subheader);
             des_data.push(data);
         }
+
+        // Create TRE_OVERFLOW DES segments for any overflow TREs
+        // The DES index is 1-based, starting after any existing DES segments
+        let base_des_count = des_info.len();
+        for (overflow_idx, overflow_data) in overflow_tres.iter().enumerate() {
+            let des_index = (base_des_count + overflow_idx + 1) as u16; // 1-based index
+            
+            // Patch the overflow index in the source segment's subheader
+            match overflow_data.source {
+                OverflowSource::ImageUdid | OverflowSource::ImageIxshd => {
+                    let segment_idx = overflow_data.segment_index as usize;
+                    if segment_idx < image_subheaders.len() {
+                        Self::patch_overflow_index(&mut image_subheaders[segment_idx], des_index);
+                    }
+                }
+                _ => {
+                    // Other overflow sources not yet implemented
+                }
+            }
+
+            // Create the TRE_OVERFLOW DES
+            let (overflow_subheader, overflow_des_data) = create_overflow_des(
+                overflow_data.source,
+                overflow_data.segment_index,
+                &overflow_data.envelopes,
+                None, // Use default security fields
+            )?;
+
+            des_info.push((overflow_subheader.len(), overflow_des_data.len()));
+            des_subheaders.push(overflow_subheader);
+            des_data.push(overflow_des_data);
+        }
+
+        // Calculate segment counts (including overflow DES)
+        let numi = image_info.len();
+        let nums = graphic_info.len();
+        let numt = text_info.len();
+        let numdes = des_info.len();
+        let numres = 0;
+
+        // Calculate header length
+        let header_length = self.calculate_header_length(numi, nums, numt, numdes, numres);
 
         // Calculate total file length
         let segments_length: usize = image_info.iter().map(|(sh, d)| sh + d).sum::<usize>()
@@ -880,7 +1195,7 @@ impl DatasetWriter for JBPDatasetWriter {
             writer.write_all(data).map_err(|e| JBPError::IoError { source: e })?;
         }
 
-        // Write DES segments
+        // Write DES segments (including TRE_OVERFLOW DES)
         for (subheader, data) in des_subheaders.iter().zip(des_data.iter()) {
             writer.write_all(subheader).map_err(|e| JBPError::IoError { source: e })?;
             writer.write_all(data).map_err(|e| JBPError::IoError { source: e })?;
@@ -1250,6 +1565,87 @@ mod tests {
         let data = std::fs::read(&path).unwrap();
         assert!(data.len() > 0);
     }
+
+    #[test]
+    fn split_tres_by_size_all_fit() {
+        use crate::jbp::tre::TreEnvelope;
+        
+        // Create small TREs that all fit
+        let envelopes = vec![
+            TreEnvelope::new("TEST01", vec![1, 2, 3]).unwrap(),
+            TreEnvelope::new("TEST02", vec![4, 5, 6]).unwrap(),
+        ];
+        
+        let (fits, overflow) = JBPDatasetWriter::split_tres_by_size(envelopes, 1000);
+        
+        assert_eq!(fits.len(), 2);
+        assert!(overflow.is_empty());
+    }
+
+    #[test]
+    fn split_tres_by_size_some_overflow() {
+        use crate::jbp::tre::TreEnvelope;
+        
+        // Create TREs where only some fit
+        // Each envelope is 11 + data.len() bytes
+        let envelopes = vec![
+            TreEnvelope::new("TEST01", vec![0; 10]).unwrap(), // 21 bytes
+            TreEnvelope::new("TEST02", vec![0; 10]).unwrap(), // 21 bytes
+            TreEnvelope::new("TEST03", vec![0; 10]).unwrap(), // 21 bytes
+        ];
+        
+        // Only allow 50 bytes - fits 2 envelopes (42 bytes)
+        let (fits, overflow) = JBPDatasetWriter::split_tres_by_size(envelopes, 50);
+        
+        assert_eq!(fits.len(), 2);
+        assert_eq!(overflow.len(), 1);
+        assert_eq!(overflow[0].tag, "TEST03");
+    }
+
+    #[test]
+    fn split_tres_by_size_none_fit() {
+        use crate::jbp::tre::TreEnvelope;
+        
+        // Create TREs that are too large
+        let envelopes = vec![
+            TreEnvelope::new("TEST01", vec![0; 100]).unwrap(), // 111 bytes
+        ];
+        
+        // Only allow 50 bytes - nothing fits
+        let (fits, overflow) = JBPDatasetWriter::split_tres_by_size(envelopes, 50);
+        
+        assert!(fits.is_empty());
+        assert_eq!(overflow.len(), 1);
+    }
+
+    #[test]
+    fn patch_overflow_index_replaces_placeholder() {
+        let mut subheader = b"some data ??? more data".to_vec();
+        
+        JBPDatasetWriter::patch_overflow_index(&mut subheader, 5);
+        
+        assert_eq!(&subheader, b"some data 005 more data");
+    }
+
+    #[test]
+    fn patch_overflow_index_no_placeholder() {
+        let mut subheader = b"some data 000 more data".to_vec();
+        let original = subheader.clone();
+        
+        JBPDatasetWriter::patch_overflow_index(&mut subheader, 5);
+        
+        // Should not change anything if no placeholder
+        assert_eq!(subheader, original);
+    }
+
+    #[test]
+    fn patch_overflow_index_large_index() {
+        let mut subheader = b"prefix???suffix".to_vec();
+        
+        JBPDatasetWriter::patch_overflow_index(&mut subheader, 123);
+        
+        assert_eq!(&subheader, b"prefix123suffix");
+    }
 }
 
 
@@ -1617,6 +2013,150 @@ mod property_tests {
                 // HL should be less than FL (unless no segments)
                 prop_assert!(hl_value <= fl_value,
                     "HL ({}) should be <= FL ({})", hl_value, fl_value);
+            }
+        }
+    }
+
+    /// Property 2: Unknown TRE Preservation
+    /// For any TRE with a CETAG that has no definition in the Structure Registry,
+    /// reading the TRE and then writing it SHALL preserve the complete envelope byte-for-byte.
+    /// **Validates: Requirements 2.3, 4.1, 4.2, 4.3, 17.3**
+    mod prop_2_unknown_tre_preservation {
+        use super::*;
+        use crate::jbp::tre::{TreEnvelope, write_tre_envelopes};
+
+        /// Strategy for generating valid CETAGs (6 alphanumeric characters)
+        fn unknown_cetag_strategy() -> impl Strategy<Value = String> {
+            // Generate CETAGs that won't match any known TRE definitions
+            // Use pattern UNKN followed by 2 digits
+            (0u8..100).prop_map(|n| format!("UNKN{:02}", n))
+        }
+
+        /// Strategy for generating CEDATA (arbitrary bytes)
+        fn cedata_strategy() -> impl Strategy<Value = Vec<u8>> {
+            prop::collection::vec(any::<u8>(), 0..100)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(100))]
+
+            #[test]
+            fn unknown_tre_envelope_round_trip(
+                tag in unknown_cetag_strategy(),
+                data in cedata_strategy(),
+            ) {
+                // Create an unknown TRE envelope
+                let envelope = TreEnvelope::new(&tag, data.clone()).unwrap();
+                
+                // Serialize to bytes
+                let bytes = envelope.to_bytes();
+                
+                // Parse back
+                let (parsed, consumed) = TreEnvelope::parse(&bytes).unwrap();
+                
+                // Verify round-trip
+                prop_assert_eq!(consumed, bytes.len(), "Should consume all bytes");
+                prop_assert_eq!(parsed.tag.trim(), tag.trim(), "Tag should match");
+                prop_assert_eq!(&parsed.data, &data, "Data should match");
+                
+                // Verify byte-identical output
+                let reparsed_bytes = parsed.to_bytes();
+                prop_assert_eq!(bytes, reparsed_bytes, "Bytes should be identical after round-trip");
+            }
+
+            #[test]
+            fn multiple_unknown_tres_round_trip(
+                envelopes in prop::collection::vec(
+                    (unknown_cetag_strategy(), cedata_strategy()),
+                    1..5
+                ),
+            ) {
+                // Create TRE envelopes
+                let tres: Vec<TreEnvelope> = envelopes
+                    .iter()
+                    .map(|(tag, data)| TreEnvelope::new(tag, data.clone()).unwrap())
+                    .collect();
+                
+                // Serialize all to bytes
+                let bytes = write_tre_envelopes(&tres);
+                
+                // Parse all back
+                let parsed = TreEnvelope::parse_all(&bytes).unwrap();
+                
+                // Verify count matches
+                prop_assert_eq!(parsed.len(), tres.len(), "Should parse same number of TREs");
+                
+                // Verify each TRE matches
+                for (original, parsed_tre) in tres.iter().zip(parsed.iter()) {
+                    prop_assert_eq!(original.tag.trim(), parsed_tre.tag.trim());
+                    prop_assert_eq!(&original.data, &parsed_tre.data);
+                }
+                
+                // Verify byte-identical output
+                let reparsed_bytes = write_tre_envelopes(&parsed);
+                prop_assert_eq!(bytes, reparsed_bytes, "Bytes should be identical after round-trip");
+            }
+        }
+    }
+
+    /// Property 4: TRE Field Value Round-Trip
+    /// For any valid map of TRE field values, writing the TRE and then parsing it back
+    /// SHALL produce an equivalent field map.
+    /// **Validates: Requirements 8.1, 8.2, 8.3, 17.2**
+    mod prop_4_tre_field_value_round_trip {
+        use super::*;
+        use crate::jbp::tre::TreEnvelope;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(100))]
+
+            #[test]
+            fn tre_envelope_size_calculation(
+                tag in "[A-Z0-9]{6}",
+                data_len in 0usize..1000,
+            ) {
+                let data = vec![0u8; data_len];
+                let envelope = TreEnvelope::new(&tag, data).unwrap();
+                
+                // Envelope size should be CETAG(6) + CEL(5) + CEDATA(data_len)
+                let expected_size = 6 + 5 + data_len;
+                prop_assert_eq!(envelope.envelope_size(), expected_size);
+                
+                // Serialized bytes should match envelope_size
+                let bytes = envelope.to_bytes();
+                prop_assert_eq!(bytes.len(), expected_size);
+            }
+
+            #[test]
+            fn tre_envelope_cel_field_correct(
+                tag in "[A-Z0-9]{6}",
+                data_len in 0usize..99999,
+            ) {
+                let data = vec![0u8; data_len];
+                let envelope = TreEnvelope::new(&tag, data).unwrap();
+                
+                let bytes = envelope.to_bytes();
+                
+                // CEL field is at offset 6, 5 bytes
+                let cel_str = std::str::from_utf8(&bytes[6..11]).unwrap();
+                let cel_value: usize = cel_str.parse().unwrap();
+                
+                prop_assert_eq!(cel_value, data_len, "CEL should equal data length");
+            }
+
+            #[test]
+            fn tre_envelope_cetag_field_correct(
+                tag in "[A-Z0-9]{6}",
+                data in prop::collection::vec(any::<u8>(), 0..100),
+            ) {
+                let envelope = TreEnvelope::new(&tag, data).unwrap();
+                
+                let bytes = envelope.to_bytes();
+                
+                // CETAG field is at offset 0, 6 bytes
+                let cetag_str = std::str::from_utf8(&bytes[0..6]).unwrap();
+                
+                prop_assert_eq!(cetag_str, &tag, "CETAG should match input tag");
             }
         }
     }

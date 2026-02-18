@@ -30,9 +30,12 @@ mod error;
 pub mod format;
 pub mod io;
 mod metadata;
+pub mod overflow;
 mod reader;
 #[cfg(test)]
 pub mod test_data_generator;
+pub mod tre;
+pub mod tre_fields;
 mod types;
 mod writer;
 
@@ -45,6 +48,11 @@ pub use error::{JBPError, ValidationCode, ValidationWarning};
 pub use format::{is_nitf_extension, validate_nitf_magic};
 pub use io::IO;
 pub use metadata::{JBPFileMetadataProvider, JBPSegmentMetadataProvider};
+pub use overflow::{create_overflow_des, OverflowSource};
+pub use tre::{
+    extract_tre_fields_from_provider, parse_tre_fields_from_metadata, write_tre_envelopes,
+    TreEnvelope, TreFieldGroup,
+};
 pub use types::{JBPReaderOptions, NitfFormat, SegmentLocation, SegmentOffsets, SegmentType};
 
 // Re-export reader and writer

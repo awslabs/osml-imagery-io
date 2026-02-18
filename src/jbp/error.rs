@@ -66,6 +66,42 @@ pub enum JBPError {
     /// Error from the binary parser
     #[error("Parser error: {0}")]
     ParserError(#[from] AccessError),
+
+    /// Invalid CETAG format in TRE envelope
+    #[error("Invalid CETAG format: '{tag}'")]
+    InvalidCetag {
+        /// The invalid tag value
+        tag: String,
+    },
+
+    /// TRE length mismatch between CEL and actual CEDATA
+    #[error("TRE length mismatch: CETAG='{tag}', CEL={cel}, actual={actual}")]
+    LengthMismatch {
+        /// The TRE tag
+        tag: String,
+        /// The declared length (CEL value)
+        cel: usize,
+        /// The actual data length
+        actual: usize,
+    },
+
+    /// Unexpected end of data when parsing TRE
+    #[error("Unexpected end of data: expected {expected} bytes, got {available}")]
+    UnexpectedEof {
+        /// Expected number of bytes
+        expected: usize,
+        /// Actually available bytes
+        available: usize,
+    },
+
+    /// Invalid overflow index (exceeds DES count)
+    #[error("Invalid overflow index: {index} (exceeds DES count of {des_count})")]
+    InvalidOverflowIndex {
+        /// The invalid overflow index
+        index: u16,
+        /// The actual number of DES segments
+        des_count: usize,
+    },
 }
 
 impl From<JBPError> for CodecError {
@@ -83,6 +119,21 @@ impl From<JBPError> for CodecError {
             }
             JBPError::IoError { source } => CodecError::Io(source),
             JBPError::ParserError(err) => CodecError::Parse(err.to_string()),
+            JBPError::InvalidCetag { tag } => {
+                CodecError::Parse(format!("Invalid CETAG format: '{}'", tag))
+            }
+            JBPError::LengthMismatch { tag, cel, actual } => CodecError::Parse(format!(
+                "TRE length mismatch: CETAG='{}', CEL={}, actual={}",
+                tag, cel, actual
+            )),
+            JBPError::UnexpectedEof { expected, available } => CodecError::Parse(format!(
+                "Unexpected end of data: expected {} bytes, got {}",
+                expected, available
+            )),
+            JBPError::InvalidOverflowIndex { index, des_count } => CodecError::Parse(format!(
+                "Invalid overflow index: {} (exceeds DES count of {})",
+                index, des_count
+            )),
         }
     }
 }
@@ -318,5 +369,106 @@ mod tests {
             ValidationCode::SegmentCountMismatch.to_string(),
             "SEGMENT_COUNT_MISMATCH"
         );
+    }
+
+    #[test]
+    fn jbp_error_invalid_cetag_display() {
+        let err = JBPError::InvalidCetag {
+            tag: "GEO!OB".to_string(),
+        };
+        assert_eq!(err.to_string(), "Invalid CETAG format: 'GEO!OB'");
+    }
+
+    #[test]
+    fn jbp_error_length_mismatch_display() {
+        let err = JBPError::LengthMismatch {
+            tag: "GEOLOB".to_string(),
+            cel: 100,
+            actual: 50,
+        };
+        assert_eq!(
+            err.to_string(),
+            "TRE length mismatch: CETAG='GEOLOB', CEL=100, actual=50"
+        );
+    }
+
+    #[test]
+    fn jbp_error_unexpected_eof_display() {
+        let err = JBPError::UnexpectedEof {
+            expected: 100,
+            available: 50,
+        };
+        assert_eq!(
+            err.to_string(),
+            "Unexpected end of data: expected 100 bytes, got 50"
+        );
+    }
+
+    #[test]
+    fn jbp_error_to_codec_error_invalid_cetag() {
+        let jbp_err = JBPError::InvalidCetag {
+            tag: "BAD!".to_string(),
+        };
+        let codec_err: CodecError = jbp_err.into();
+        match codec_err {
+            CodecError::Parse(msg) => assert!(msg.contains("Invalid CETAG")),
+            _ => panic!("Expected Parse error"),
+        }
+    }
+
+    #[test]
+    fn jbp_error_to_codec_error_length_mismatch() {
+        let jbp_err = JBPError::LengthMismatch {
+            tag: "TEST".to_string(),
+            cel: 10,
+            actual: 5,
+        };
+        let codec_err: CodecError = jbp_err.into();
+        match codec_err {
+            CodecError::Parse(msg) => assert!(msg.contains("length mismatch")),
+            _ => panic!("Expected Parse error"),
+        }
+    }
+
+    #[test]
+    fn jbp_error_to_codec_error_unexpected_eof() {
+        let jbp_err = JBPError::UnexpectedEof {
+            expected: 100,
+            available: 50,
+        };
+        let codec_err: CodecError = jbp_err.into();
+        match codec_err {
+            CodecError::Parse(msg) => assert!(msg.contains("Unexpected end of data")),
+            _ => panic!("Expected Parse error"),
+        }
+    }
+
+    #[test]
+    fn jbp_error_invalid_overflow_index_display() {
+        let err = JBPError::InvalidOverflowIndex {
+            index: 5,
+            des_count: 3,
+        };
+        assert_eq!(
+            err.to_string(),
+            "Invalid overflow index: 5 (exceeds DES count of 3)"
+        );
+    }
+
+    #[test]
+    fn jbp_error_to_codec_error_invalid_overflow_index() {
+        let jbp_err = JBPError::InvalidOverflowIndex {
+            index: 10,
+            des_count: 5,
+        };
+        let codec_err: CodecError = jbp_err.into();
+        match codec_err {
+            CodecError::Parse(msg) => {
+                assert!(msg.contains("Invalid overflow index"));
+                assert!(msg.contains("10"));
+                assert!(msg.contains("5"));
+            }
+            _ => panic!("Expected Parse error"),
+        }
     }
 }
