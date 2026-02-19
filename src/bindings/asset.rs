@@ -236,6 +236,10 @@ impl AssetProvider for BytesAssetProvider {
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         Arc::new(EmptyMetadataProvider::default())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // Ensure BytesAssetProvider is Send + Sync

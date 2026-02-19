@@ -28,6 +28,7 @@ pub mod asset;
 pub mod datetime;
 mod error;
 pub mod format;
+pub mod image;
 pub mod io;
 mod metadata;
 pub mod overflow;

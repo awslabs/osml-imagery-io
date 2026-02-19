@@ -22,13 +22,16 @@
 //!
 //! Use [`generate_asset_key`] to create keys and [`parse_asset_key`] to parse them.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::error::CodecError;
+use crate::jbp::image::decoder::{create_block_decoder, BlockDecoder};
+use crate::jbp::image::facade::ImageSubheaderFacade;
 use crate::jbp::metadata::JBPSegmentMetadataProvider;
-use crate::jbp::types::{SegmentLocation, SegmentType};
-use crate::traits::{AssetProvider, MetadataProvider};
-use crate::types::AssetType;
+use crate::jbp::types::{NitfFormat, SegmentLocation, SegmentType};
+use crate::parser::StructureRegistry;
+use crate::traits::{AssetProvider, ImageAssetProvider, MetadataProvider};
+use crate::types::{AssetType, PixelType};
 
 /// Generate an asset key from segment type and index.
 ///
@@ -130,6 +133,12 @@ pub struct JBPImageAssetProvider {
     data: Arc<[u8]>,
     /// Segment metadata provider
     metadata: Arc<JBPSegmentMetadataProvider>,
+    /// Structure registry for parsing
+    registry: Arc<StructureRegistry>,
+    /// NITF format variant
+    format: NitfFormat,
+    /// Lazy-initialized block decoder
+    decoder: OnceLock<Box<dyn BlockDecoder>>,
 }
 
 impl JBPImageAssetProvider {
@@ -143,6 +152,8 @@ impl JBPImageAssetProvider {
     /// * `location` - Segment location in the file
     /// * `data` - Reference to the file data
     /// * `metadata` - Segment metadata provider
+    /// * `registry` - Structure registry for parsing
+    /// * `format` - NITF format variant
     pub fn new(
         key: String,
         title: String,
@@ -151,6 +162,8 @@ impl JBPImageAssetProvider {
         location: SegmentLocation,
         data: Arc<[u8]>,
         metadata: Arc<JBPSegmentMetadataProvider>,
+        registry: Arc<StructureRegistry>,
+        format: NitfFormat,
     ) -> Self {
         Self {
             key,
@@ -160,7 +173,54 @@ impl JBPImageAssetProvider {
             location,
             data,
             metadata,
+            registry,
+            format,
+            decoder: OnceLock::new(),
         }
+    }
+
+    /// Get the subheader bytes for this image segment.
+    fn subheader_bytes(&self) -> &[u8] {
+        let start = self.location.subheader_offset as usize;
+        let end = start + self.location.subheader_length as usize;
+        &self.data[start..end]
+    }
+
+    /// Get the image data bytes for this image segment.
+    fn image_data(&self) -> Arc<[u8]> {
+        let start = self.location.data_offset as usize;
+        let end = start + self.location.data_length as usize;
+        Arc::from(&self.data[start..end])
+    }
+
+    /// Get or create the block decoder.
+    fn decoder(&self) -> Result<&dyn BlockDecoder, CodecError> {
+        // Try to get existing decoder first
+        if let Some(decoder) = self.decoder.get() {
+            return Ok(decoder.as_ref());
+        }
+        
+        // Initialize the decoder
+        let subheader_bytes = self.subheader_bytes();
+        let facade = ImageSubheaderFacade::from_bytes(
+            subheader_bytes,
+            &self.registry,
+            self.format,
+        )?;
+        let image_data = self.image_data();
+        let new_decoder = create_block_decoder(&facade, image_data)?;
+        
+        // Try to set it (another thread might have set it already)
+        let _ = self.decoder.set(new_decoder);
+        
+        // Return the decoder (either ours or the one another thread set)
+        Ok(self.decoder.get().unwrap().as_ref())
+    }
+
+    /// Get the subheader facade for metadata access.
+    fn subheader(&self) -> Result<ImageSubheaderFacade<'_>, CodecError> {
+        let subheader_bytes = self.subheader_bytes();
+        ImageSubheaderFacade::from_bytes(subheader_bytes, &self.registry, self.format)
     }
 }
 
@@ -207,6 +267,103 @@ impl AssetProvider for JBPImageAssetProvider {
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl ImageAssetProvider for JBPImageAssetProvider {
+    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
+        if resolution_level != 0 {
+            // Check if decoder supports multiple resolution levels
+            if let Ok(decoder) = self.decoder() {
+                if resolution_level >= decoder.num_resolution_levels() {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        self.decoder()
+            .map(|d| d.has_block(block_row, block_col))
+            .unwrap_or(false)
+    }
+
+    fn get_block(
+        &self,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+        bands: Option<&[u32]>,
+    ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        let decoder = self.decoder()?;
+        if resolution_level >= decoder.num_resolution_levels() {
+            return Err(CodecError::InvalidBlockCoordinates(
+                block_row,
+                block_col,
+                resolution_level,
+            ));
+        }
+        decoder.decode_block(block_row, block_col, bands)
+    }
+
+    fn num_resolution_levels(&self) -> u32 {
+        self.decoder()
+            .map(|d| d.num_resolution_levels())
+            .unwrap_or(1)
+    }
+
+    fn num_bands(&self) -> u32 {
+        self.subheader()
+            .and_then(|s| s.band_count())
+            .map(|c| c as u32)
+            .unwrap_or(1)
+    }
+
+    fn num_rows(&self) -> u32 {
+        self.subheader().and_then(|s| s.nrows()).unwrap_or(0)
+    }
+
+    fn num_columns(&self) -> u32 {
+        self.subheader().and_then(|s| s.ncols()).unwrap_or(0)
+    }
+
+    fn num_pixels_per_block_horizontal(&self) -> u32 {
+        self.subheader().and_then(|s| s.nppbh()).unwrap_or(0)
+    }
+
+    fn num_pixels_per_block_vertical(&self) -> u32 {
+        self.subheader().and_then(|s| s.nppbv()).unwrap_or(0)
+    }
+
+    fn num_bits_per_pixel(&self) -> u32 {
+        self.subheader()
+            .and_then(|s| s.nbpp())
+            .map(|n| n as u32)
+            .unwrap_or(8)
+    }
+
+    fn actual_bits_per_pixel(&self) -> u32 {
+        self.subheader()
+            .and_then(|s| s.abpp())
+            .map(|n| n as u32)
+            .unwrap_or(8)
+    }
+
+    fn pixel_value_type(&self) -> PixelType {
+        self.subheader()
+            .and_then(|s| {
+                let pvtype = s.pvtype()?;
+                let nbpp = s.nbpp()?;
+                Ok(pvtype.to_pixel_type(nbpp))
+            })
+            .unwrap_or(PixelType::UInt8)
+    }
+
+    fn pad_pixel_value(&self) -> f64 {
+        0.0
     }
 }
 
@@ -321,6 +478,10 @@ impl AssetProvider for JBPTextAssetProvider {
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Asset provider for NITF graphic segments.
@@ -432,6 +593,10 @@ impl AssetProvider for JBPGraphicsAssetProvider {
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Asset provider for NITF Data Extension Segments (DES).
@@ -542,6 +707,10 @@ impl AssetProvider for JBPDataAssetProvider {
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -689,6 +858,16 @@ mod tests {
         Arc::new(JBPSegmentMetadataProvider::from_definition(definition, raw_bytes))
     }
 
+    /// Create a test structure registry.
+    fn create_test_registry() -> Arc<StructureRegistry> {
+        Arc::new(StructureRegistry::new())
+    }
+
+    /// Get the default test format.
+    fn test_format() -> NitfFormat {
+        NitfFormat::Nitf21
+    }
+
     // JBPImageAssetProvider tests
     #[test]
     fn image_provider_key() {
@@ -697,6 +876,7 @@ mod tests {
         let file_data = create_test_file_data(segment_data);
         let metadata = create_test_metadata(definition);
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+        let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
             "image_segment_0".to_string(),
@@ -706,6 +886,8 @@ mod tests {
             location,
             file_data,
             metadata,
+            registry,
+            test_format(),
         );
 
         assert_eq!(provider.key(), "image_segment_0");
@@ -718,6 +900,7 @@ mod tests {
         let file_data = create_test_file_data(segment_data);
         let metadata = create_test_metadata(definition);
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+        let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
             "image_segment_0".to_string(),
@@ -727,6 +910,8 @@ mod tests {
             location,
             file_data,
             metadata,
+            registry,
+            test_format(),
         );
 
         assert_eq!(provider.title(), "Test Image");
@@ -739,6 +924,7 @@ mod tests {
         let file_data = create_test_file_data(segment_data);
         let metadata = create_test_metadata(definition);
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+        let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
             "image_segment_0".to_string(),
@@ -748,6 +934,8 @@ mod tests {
             location,
             file_data,
             metadata,
+            registry,
+            test_format(),
         );
 
         assert_eq!(provider.description(), "A test image segment");
@@ -760,6 +948,7 @@ mod tests {
         let file_data = create_test_file_data(segment_data);
         let metadata = create_test_metadata(definition);
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+        let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
             "image_segment_0".to_string(),
@@ -769,6 +958,8 @@ mod tests {
             location,
             file_data,
             metadata,
+            registry,
+            test_format(),
         );
 
         assert_eq!(provider.media_type(), "application/vnd.nitf.image");
@@ -781,6 +972,7 @@ mod tests {
         let file_data = create_test_file_data(segment_data);
         let metadata = create_test_metadata(definition);
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+        let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
             "image_segment_0".to_string(),
@@ -790,6 +982,8 @@ mod tests {
             location,
             file_data,
             metadata,
+            registry,
+            test_format(),
         );
 
         assert_eq!(provider.roles(), &["data", "thumbnail"]);
@@ -802,6 +996,7 @@ mod tests {
         let file_data = create_test_file_data(segment_data);
         let metadata = create_test_metadata(definition);
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+        let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
             "image_segment_0".to_string(),
@@ -811,6 +1006,8 @@ mod tests {
             location,
             file_data,
             metadata,
+            registry,
+            test_format(),
         );
 
         assert_eq!(provider.asset_type(), AssetType::Image);
@@ -823,6 +1020,7 @@ mod tests {
         let file_data = create_test_file_data(segment_data);
         let metadata = create_test_metadata(definition);
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+        let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
             "image_segment_0".to_string(),
@@ -832,6 +1030,8 @@ mod tests {
             location,
             file_data,
             metadata,
+            registry,
+            test_format(),
         );
 
         let raw = provider.raw_asset().unwrap();
@@ -846,6 +1046,7 @@ mod tests {
         let metadata = create_test_metadata(definition);
         // Location claims more data than exists
         let location = SegmentLocation::new(0, 30, 30, 1000);
+        let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
             "image_segment_0".to_string(),
@@ -855,6 +1056,8 @@ mod tests {
             location,
             file_data,
             metadata,
+            registry,
+            test_format(),
         );
 
         let result = provider.raw_asset();
@@ -868,6 +1071,7 @@ mod tests {
         let file_data = create_test_file_data(segment_data);
         let metadata = create_test_metadata(definition);
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+        let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
             "image_segment_0".to_string(),
@@ -877,6 +1081,8 @@ mod tests {
             location,
             file_data,
             metadata,
+            registry,
+            test_format(),
         );
 
         let meta = provider.metadata();
@@ -1500,6 +1706,402 @@ mod property_tests {
                     prop_assert_eq!(parsed, None,
                         "Expected None for malformed key '{}', got {:?}", key, parsed);
                 }
+            }
+        }
+    }
+
+    /// Property 14: ImageAssetProvider Trait Compliance
+    /// For any JBPImageAssetProvider instance, the trait methods SHALL return values
+    /// consistent with the underlying ImageSubheader: num_rows() = NROWS,
+    /// num_columns() = NCOLS, num_bands() = band count, etc.
+    /// **Validates: Requirements 18.1-18.7**
+    mod prop_14_image_asset_provider_trait_compliance {
+        use super::*;
+        use crate::jbp::metadata::JBPSegmentMetadataProvider;
+        use crate::parser::{FieldDefinition, FieldType, SizeSpec, StructureDefinition};
+        use crate::traits::ImageAssetProvider;
+
+        /// Create a test structure definition (same as in tests module)
+        fn create_test_definition() -> Arc<StructureDefinition> {
+            Arc::new(
+                StructureDefinition::new("TestSubheader")
+                    .with_field(
+                        FieldDefinition::new("ID", FieldType::String)
+                            .with_size(SizeSpec::Fixed(10))
+                            .with_doc("Segment identifier"),
+                    )
+                    .with_field(
+                        FieldDefinition::new("TITLE", FieldType::String)
+                            .with_size(SizeSpec::Fixed(20))
+                            .with_doc("Segment title"),
+                    ),
+            )
+        }
+
+        /// Create a test structure registry
+        fn create_test_registry() -> Arc<StructureRegistry> {
+            Arc::new(StructureRegistry::new())
+        }
+
+        /// Get the default test format
+        fn test_format() -> NitfFormat {
+            NitfFormat::Nitf21
+        }
+
+        /// Helper to create a valid NITF image subheader with configurable parameters.
+        /// Returns (subheader_bytes, image_data, expected_values)
+        fn create_test_image_segment(
+            nrows: u32,
+            ncols: u32,
+            nbands: u8,
+            nbpp: u8,
+            nppbh: u32,
+            nppbv: u32,
+        ) -> (Vec<u8>, Vec<u8>, TestExpectedValues) {
+            let mut subheader = Vec::new();
+
+            // IM (2) - Image segment marker
+            subheader.extend_from_slice(b"IM");
+
+            // IID1 (10) - Image identifier 1
+            subheader.extend_from_slice(b"TestImg01 ");
+
+            // IDATIM (14) - Image date and time
+            subheader.extend_from_slice(b"20240101120000");
+
+            // TGTID (17) - Target identifier
+            subheader.extend_from_slice(&[b' '; 17]);
+
+            // IID2 (80) - Image identifier 2
+            subheader.extend_from_slice(&[b' '; 80]);
+
+            // Security fields (167 bytes total)
+            subheader.push(b'U');           // ISCLAS (1)
+            subheader.extend_from_slice(&[b' '; 2]);  // ISCLSY (2)
+            subheader.extend_from_slice(&[b' '; 11]); // ISCODE (11)
+            subheader.extend_from_slice(&[b' '; 2]);  // ISCTLH (2)
+            subheader.extend_from_slice(&[b' '; 20]); // ISREL (20)
+            subheader.extend_from_slice(&[b' '; 2]);  // ISDCTP (2)
+            subheader.extend_from_slice(&[b' '; 8]);  // ISDCDT (8)
+            subheader.extend_from_slice(&[b' '; 4]);  // ISDCXM (4)
+            subheader.push(b' ');           // ISDG (1)
+            subheader.extend_from_slice(&[b' '; 8]);  // ISDGDT (8)
+            subheader.extend_from_slice(&[b' '; 43]); // ISCLTX (43)
+            subheader.push(b' ');           // ISCATP (1)
+            subheader.extend_from_slice(&[b' '; 40]); // ISCAUT (40)
+            subheader.push(b' ');           // ISCRSN (1)
+            subheader.extend_from_slice(&[b' '; 8]);  // ISSRDT (8)
+            subheader.extend_from_slice(&[b' '; 15]); // ISCTLN (15)
+
+            // ENCRYP (1)
+            subheader.push(b'0');
+
+            // ISORCE (42)
+            subheader.extend_from_slice(&[b' '; 42]);
+
+            // NROWS (8)
+            subheader.extend_from_slice(format!("{:08}", nrows).as_bytes());
+
+            // NCOLS (8)
+            subheader.extend_from_slice(format!("{:08}", ncols).as_bytes());
+
+            // PVTYPE (3)
+            subheader.extend_from_slice(b"INT");
+
+            // IREP (8)
+            let irep = if nbands == 1 { b"MONO    " } else { b"MULTI   " };
+            subheader.extend_from_slice(irep);
+
+            // ICAT (8)
+            subheader.extend_from_slice(b"VIS     ");
+
+            // ABPP (2)
+            subheader.extend_from_slice(format!("{:02}", nbpp).as_bytes());
+
+            // PJUST (1)
+            subheader.push(b'R');
+
+            // ICORDS (1) - Using blank to skip IGEOLO
+            subheader.push(b' ');
+
+            // NICOM (1) - No comments
+            subheader.push(b'0');
+
+            // IC (2) - No compression
+            subheader.extend_from_slice(b"NC");
+
+            // NBANDS (1)
+            subheader.push(b'0' + nbands);
+
+            // Band info for each band
+            for _ in 0..nbands {
+                subheader.extend_from_slice(b"M "); // IREPBAND (2)
+                subheader.extend_from_slice(&[b' '; 6]); // ISUBCAT (6)
+                subheader.push(b'N');        // IFC (1)
+                subheader.extend_from_slice(&[b' '; 3]); // IMFLT (3)
+                subheader.push(b'0');        // NLUTS (1) - No LUTs
+            }
+
+            // ISYNC (1)
+            subheader.push(b'0');
+
+            // IMODE (1)
+            subheader.push(b'B');
+
+            // Calculate blocking parameters
+            let nbpr = (ncols + nppbh - 1) / nppbh;
+            let nbpc = (nrows + nppbv - 1) / nppbv;
+
+            // NBPR (4)
+            subheader.extend_from_slice(format!("{:04}", nbpr).as_bytes());
+
+            // NBPC (4)
+            subheader.extend_from_slice(format!("{:04}", nbpc).as_bytes());
+
+            // NPPBH (4)
+            subheader.extend_from_slice(format!("{:04}", nppbh).as_bytes());
+
+            // NPPBV (4)
+            subheader.extend_from_slice(format!("{:04}", nppbv).as_bytes());
+
+            // NBPP (2)
+            subheader.extend_from_slice(format!("{:02}", nbpp).as_bytes());
+
+            // IDLVL (3)
+            subheader.extend_from_slice(b"001");
+
+            // IALVL (3)
+            subheader.extend_from_slice(b"000");
+
+            // ILOC (10)
+            subheader.extend_from_slice(b"0000000000");
+
+            // IMAG (4)
+            subheader.extend_from_slice(b"1.0 ");
+
+            // UDIDL (5) - No user defined data
+            subheader.extend_from_slice(b"00000");
+
+            // IXSHDL (5) - No extended subheader data
+            subheader.extend_from_slice(b"00000");
+
+            // Calculate image data size
+            let bytes_per_pixel = ((nbpp as usize) + 7) / 8;
+            let block_size = (nppbh as usize) * (nppbv as usize) * (nbands as usize) * bytes_per_pixel;
+            let total_blocks = (nbpr as usize) * (nbpc as usize);
+            let image_data_size = block_size * total_blocks;
+
+            // Create image data (zeros)
+            let image_data = vec![0u8; image_data_size];
+
+            let expected = TestExpectedValues {
+                nrows,
+                ncols,
+                nbands: nbands as u32,
+                nbpp: nbpp as u32,
+                abpp: nbpp as u32,
+                nppbh,
+                nppbv,
+                nbpr,
+                nbpc,
+            };
+
+            (subheader, image_data, expected)
+        }
+
+        #[derive(Debug)]
+        struct TestExpectedValues {
+            nrows: u32,
+            ncols: u32,
+            nbands: u32,
+            nbpp: u32,
+            abpp: u32,
+            nppbh: u32,
+            nppbv: u32,
+            nbpr: u32,
+            nbpc: u32,
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(50))]
+
+            /// ImageAssetProvider returns correct dimension values
+            #[test]
+            fn trait_returns_correct_dimensions(
+                nrows in 1u32..256,
+                ncols in 1u32..256,
+            ) {
+                let (subheader, image_data, expected) = create_test_image_segment(
+                    nrows, ncols, 1, 8, 64, 64,
+                );
+
+                // Create file data: subheader + image data
+                let subheader_len = subheader.len();
+                let mut file_data = subheader;
+                file_data.extend_from_slice(&image_data);
+                let file_data: Arc<[u8]> = Arc::from(file_data);
+
+                let definition = create_test_definition();
+                let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
+                    definition,
+                    Arc::from(&file_data[..subheader_len]),
+                ));
+                let registry = create_test_registry();
+                let location = SegmentLocation::new(
+                    0,
+                    subheader_len as u64,
+                    subheader_len as u64,
+                    image_data.len() as u64,
+                );
+
+                let provider = JBPImageAssetProvider::new(
+                    "image_segment_0".to_string(),
+                    "Test Image".to_string(),
+                    "Test".to_string(),
+                    vec!["data".to_string()],
+                    location,
+                    file_data,
+                    metadata,
+                    registry,
+                    test_format(),
+                );
+
+                prop_assert_eq!(provider.num_rows(), expected.nrows,
+                    "num_rows() mismatch: expected {}, got {}", expected.nrows, provider.num_rows());
+                prop_assert_eq!(provider.num_columns(), expected.ncols,
+                    "num_columns() mismatch: expected {}, got {}", expected.ncols, provider.num_columns());
+            }
+
+            /// ImageAssetProvider returns correct band count
+            #[test]
+            fn trait_returns_correct_band_count(nbands in 1u8..9) {
+                let (subheader, image_data, expected) = create_test_image_segment(
+                    64, 64, nbands, 8, 64, 64,
+                );
+
+                let subheader_len = subheader.len();
+                let mut file_data = subheader;
+                file_data.extend_from_slice(&image_data);
+                let file_data: Arc<[u8]> = Arc::from(file_data);
+
+                let definition = create_test_definition();
+                let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
+                    definition,
+                    Arc::from(&file_data[..subheader_len]),
+                ));
+                let registry = create_test_registry();
+                let location = SegmentLocation::new(
+                    0,
+                    subheader_len as u64,
+                    subheader_len as u64,
+                    image_data.len() as u64,
+                );
+
+                let provider = JBPImageAssetProvider::new(
+                    "image_segment_0".to_string(),
+                    "Test Image".to_string(),
+                    "Test".to_string(),
+                    vec!["data".to_string()],
+                    location,
+                    file_data,
+                    metadata,
+                    registry,
+                    test_format(),
+                );
+
+                prop_assert_eq!(provider.num_bands(), expected.nbands,
+                    "num_bands() mismatch: expected {}, got {}", expected.nbands, provider.num_bands());
+            }
+
+            /// ImageAssetProvider returns correct block size
+            #[test]
+            fn trait_returns_correct_block_size(
+                nppbh in prop::sample::select(vec![32u32, 64, 128, 256]),
+                nppbv in prop::sample::select(vec![32u32, 64, 128, 256]),
+            ) {
+                let (subheader, image_data, expected) = create_test_image_segment(
+                    256, 256, 1, 8, nppbh, nppbv,
+                );
+
+                let subheader_len = subheader.len();
+                let mut file_data = subheader;
+                file_data.extend_from_slice(&image_data);
+                let file_data: Arc<[u8]> = Arc::from(file_data);
+
+                let definition = create_test_definition();
+                let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
+                    definition,
+                    Arc::from(&file_data[..subheader_len]),
+                ));
+                let registry = create_test_registry();
+                let location = SegmentLocation::new(
+                    0,
+                    subheader_len as u64,
+                    subheader_len as u64,
+                    image_data.len() as u64,
+                );
+
+                let provider = JBPImageAssetProvider::new(
+                    "image_segment_0".to_string(),
+                    "Test Image".to_string(),
+                    "Test".to_string(),
+                    vec!["data".to_string()],
+                    location,
+                    file_data,
+                    metadata,
+                    registry,
+                    test_format(),
+                );
+
+                prop_assert_eq!(provider.num_pixels_per_block_horizontal(), expected.nppbh,
+                    "nppbh mismatch: expected {}, got {}", expected.nppbh, provider.num_pixels_per_block_horizontal());
+                prop_assert_eq!(provider.num_pixels_per_block_vertical(), expected.nppbv,
+                    "nppbv mismatch: expected {}, got {}", expected.nppbv, provider.num_pixels_per_block_vertical());
+            }
+
+            /// ImageAssetProvider returns correct bits per pixel
+            #[test]
+            fn trait_returns_correct_bits_per_pixel(
+                nbpp in prop::sample::select(vec![8u8, 16, 32]),
+            ) {
+                let (subheader, image_data, expected) = create_test_image_segment(
+                    64, 64, 1, nbpp, 64, 64,
+                );
+
+                let subheader_len = subheader.len();
+                let mut file_data = subheader;
+                file_data.extend_from_slice(&image_data);
+                let file_data: Arc<[u8]> = Arc::from(file_data);
+
+                let definition = create_test_definition();
+                let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
+                    definition,
+                    Arc::from(&file_data[..subheader_len]),
+                ));
+                let registry = create_test_registry();
+                let location = SegmentLocation::new(
+                    0,
+                    subheader_len as u64,
+                    subheader_len as u64,
+                    image_data.len() as u64,
+                );
+
+                let provider = JBPImageAssetProvider::new(
+                    "image_segment_0".to_string(),
+                    "Test Image".to_string(),
+                    "Test".to_string(),
+                    vec!["data".to_string()],
+                    location,
+                    file_data,
+                    metadata,
+                    registry,
+                    test_format(),
+                );
+
+                prop_assert_eq!(provider.num_bits_per_pixel(), expected.nbpp,
+                    "nbpp mismatch: expected {}, got {}", expected.nbpp, provider.num_bits_per_pixel());
+                prop_assert_eq!(provider.actual_bits_per_pixel(), expected.abpp,
+                    "abpp mismatch: expected {}, got {}", expected.abpp, provider.actual_bits_per_pixel());
             }
         }
     }

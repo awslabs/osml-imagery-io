@@ -104,6 +104,10 @@ impl AssetProvider for TestAssetProvider {
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         Arc::new(EmptyMetadataProvider)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Empty metadata provider for test assets.

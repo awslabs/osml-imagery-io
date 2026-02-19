@@ -1280,6 +1280,10 @@ mod tests {
         fn metadata(&self) -> Arc<dyn MetadataProvider> {
             Arc::new(TestMetadataProvider)
         }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
     }
 
     struct TestMetadataProvider;
@@ -1709,6 +1713,10 @@ mod property_tests {
 
         fn metadata(&self) -> Arc<dyn MetadataProvider> {
             Arc::new(PropTestMetadataProvider)
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
         }
     }
 

@@ -905,6 +905,8 @@ impl JBPDatasetReader {
                     *location,
                     self.data.clone(),
                     metadata,
+                    self.registry.clone(),
+                    self.format,
                 )))
             }
             SegmentType::Text => {

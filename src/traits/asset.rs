@@ -2,6 +2,7 @@
 //!
 //! This module defines the base interface for all asset types.
 
+use std::any::Any;
 use std::sync::Arc;
 
 use crate::error::CodecError;
@@ -48,4 +49,9 @@ pub trait AssetProvider: Send + Sync {
 
     /// Returns the asset-level metadata provider.
     fn metadata(&self) -> Arc<dyn MetadataProvider>;
+
+    /// Returns a reference to self as `Any` for downcasting.
+    ///
+    /// This method enables runtime type checking and downcasting to concrete types.
+    fn as_any(&self) -> &dyn Any;
 }
