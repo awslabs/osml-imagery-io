@@ -375,3 +375,245 @@ mod prop_11_underscore_indexed_naming {
         }
     }
 }
+
+
+/// Property 1: TypeRef Size Accuracy
+/// For any field with `FieldType::TypeRef(type_name)` where `type_name` exists in the
+/// definition's types map, `get_simple_field_size()` SHALL return the same size as
+/// `get_type_size()` for the same field.
+/// **Validates: Requirements 1.1, 1.2, 1.3**
+mod prop_1_typeref_size_accuracy {
+    use super::*;
+    use crate::parser::accessor::context::get_simple_field_size;
+    use crate::parser::expression::EvalContext;
+
+    /// Create a structure definition with a simple nested type
+    fn create_simple_nested_def(inner_field_size: usize) -> StructureDefinition {
+        // Create a nested type with a single fixed-size field
+        let nested_type = StructureDefinition::new("inner_type").with_field(
+            FieldDefinition::new("inner_field", FieldType::String)
+                .with_size(SizeSpec::Fixed(inner_field_size)),
+        );
+
+        StructureDefinition::new("test_struct")
+            .with_type("inner_type", nested_type)
+            .with_field(
+                FieldDefinition::new("nested", FieldType::TypeRef("inner_type".to_string()))
+                    .with_size(SizeSpec::Fixed(0)), // Size comes from type
+            )
+    }
+
+    /// Create a structure definition with a nested type containing multiple fields
+    fn create_multi_field_nested_def(field1_size: usize, field2_size: usize) -> StructureDefinition {
+        let nested_type = StructureDefinition::new("multi_field_type")
+            .with_field(
+                FieldDefinition::new("field1", FieldType::String)
+                    .with_size(SizeSpec::Fixed(field1_size)),
+            )
+            .with_field(
+                FieldDefinition::new("field2", FieldType::String)
+                    .with_size(SizeSpec::Fixed(field2_size)),
+            );
+
+        StructureDefinition::new("test_struct")
+            .with_type("multi_field_type", nested_type)
+            .with_field(
+                FieldDefinition::new("nested", FieldType::TypeRef("multi_field_type".to_string()))
+                    .with_size(SizeSpec::Fixed(0)),
+            )
+    }
+
+    /// Create a structure definition with a nested type containing conditional fields
+    fn create_conditional_nested_def(threshold: u8) -> StructureDefinition {
+        let condition = ExpressionEvaluator::parse(&format!("flag >= {}", threshold)).unwrap();
+
+        let nested_type = StructureDefinition::new("conditional_type")
+            .with_field(
+                FieldDefinition::new("flag", FieldType::UnsignedInt(1))
+                    .with_size(SizeSpec::Fixed(1)),
+            )
+            .with_field(
+                FieldDefinition::new("conditional_data", FieldType::String)
+                    .with_size(SizeSpec::Fixed(8))
+                    .with_condition(condition),
+            )
+            .with_field(
+                FieldDefinition::new("always_present", FieldType::String)
+                    .with_size(SizeSpec::Fixed(4)),
+            );
+
+        StructureDefinition::new("test_struct")
+            .with_type("conditional_type", nested_type)
+            .with_field(
+                FieldDefinition::new("nested", FieldType::TypeRef("conditional_type".to_string()))
+                    .with_size(SizeSpec::Fixed(0)),
+            )
+    }
+
+    /// Create a structure definition with recursively nested types
+    fn create_recursive_nested_def(inner_size: usize) -> StructureDefinition {
+        // Inner type
+        let inner_type = StructureDefinition::new("inner_type").with_field(
+            FieldDefinition::new("inner_field", FieldType::String)
+                .with_size(SizeSpec::Fixed(inner_size)),
+        );
+
+        // Outer type that contains inner type
+        let outer_type = StructureDefinition::new("outer_type")
+            .with_field(
+                FieldDefinition::new("outer_field", FieldType::String)
+                    .with_size(SizeSpec::Fixed(4)),
+            )
+            .with_field(
+                FieldDefinition::new("inner", FieldType::TypeRef("inner_type".to_string()))
+                    .with_size(SizeSpec::Fixed(0)),
+            );
+
+        StructureDefinition::new("test_struct")
+            .with_type("inner_type", inner_type)
+            .with_type("outer_type", outer_type)
+            .with_field(
+                FieldDefinition::new("nested", FieldType::TypeRef("outer_type".to_string()))
+                    .with_size(SizeSpec::Fixed(0)),
+            )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        /// Simple nested type: get_simple_field_size matches get_type_size
+        #[test]
+        fn simple_nested_type_size_matches(inner_size in 1usize..50usize) {
+            let def = Arc::new(create_simple_nested_def(inner_size));
+            let data: Vec<u8> = vec![b'X'; inner_size + 10]; // Extra padding
+
+            let accessor = StructureAccessor::new(def.clone(), &data).unwrap();
+            let evaluator = ExpressionEvaluator::new();
+            let ctx = EvalContext::new();
+
+            // Find the nested field
+            let field = def.fields.iter().find(|f| f.id == "nested").unwrap();
+
+            // Get size using get_simple_field_size (context.rs)
+            let simple_size = get_simple_field_size(field, &ctx, &evaluator, &def, &data, 0).unwrap();
+
+            // Get size using get_type_size (mod.rs) via accessor
+            let accessor_size = accessor.get_type_size("inner_type", 0).unwrap();
+
+            prop_assert_eq!(simple_size, accessor_size,
+                "get_simple_field_size ({}) should match get_type_size ({}) for inner_size={}",
+                simple_size, accessor_size, inner_size);
+
+            // Also verify the size is correct
+            prop_assert_eq!(simple_size, inner_size,
+                "Size should be {} but got {}", inner_size, simple_size);
+        }
+
+        /// Multi-field nested type: sizes are summed correctly
+        #[test]
+        fn multi_field_nested_type_size_matches(
+            field1_size in 1usize..25usize,
+            field2_size in 1usize..25usize,
+        ) {
+            let def = Arc::new(create_multi_field_nested_def(field1_size, field2_size));
+            let total_size = field1_size + field2_size;
+            let data: Vec<u8> = vec![b'X'; total_size + 10];
+
+            let accessor = StructureAccessor::new(def.clone(), &data).unwrap();
+            let evaluator = ExpressionEvaluator::new();
+            let ctx = EvalContext::new();
+
+            let field = def.fields.iter().find(|f| f.id == "nested").unwrap();
+
+            let simple_size = get_simple_field_size(field, &ctx, &evaluator, &def, &data, 0).unwrap();
+            let accessor_size = accessor.get_type_size("multi_field_type", 0).unwrap();
+
+            prop_assert_eq!(simple_size, accessor_size,
+                "get_simple_field_size ({}) should match get_type_size ({}) for field1={}, field2={}",
+                simple_size, accessor_size, field1_size, field2_size);
+
+            prop_assert_eq!(simple_size, total_size,
+                "Size should be {} but got {}", total_size, simple_size);
+        }
+
+        /// Conditional nested type with condition TRUE: includes conditional field
+        #[test]
+        fn conditional_nested_type_condition_true(flag in 128u8..=255u8) {
+            let def = Arc::new(create_conditional_nested_def(128));
+            // flag (1) + conditional_data (8) + always_present (4) = 13
+            let mut data = vec![flag];
+            data.extend_from_slice(b"CONDDATA"); // 8 bytes
+            data.extend_from_slice(b"DONE");     // 4 bytes
+            data.extend_from_slice(&[0u8; 10]);  // padding
+
+            let accessor = StructureAccessor::new(def.clone(), &data).unwrap();
+            let evaluator = ExpressionEvaluator::new();
+            let ctx = EvalContext::new();
+
+            let field = def.fields.iter().find(|f| f.id == "nested").unwrap();
+
+            let simple_size = get_simple_field_size(field, &ctx, &evaluator, &def, &data, 0).unwrap();
+            let accessor_size = accessor.get_type_size("conditional_type", 0).unwrap();
+
+            prop_assert_eq!(simple_size, accessor_size,
+                "get_simple_field_size ({}) should match get_type_size ({}) when condition is true (flag={})",
+                simple_size, accessor_size, flag);
+
+            // Expected: flag (1) + conditional_data (8) + always_present (4) = 13
+            prop_assert_eq!(simple_size, 13,
+                "Size should be 13 when condition is true, got {}", simple_size);
+        }
+
+        /// Conditional nested type with condition FALSE: excludes conditional field
+        #[test]
+        fn conditional_nested_type_condition_false(flag in 0u8..128u8) {
+            let def = Arc::new(create_conditional_nested_def(128));
+            // flag (1) + always_present (4) = 5 (conditional_data skipped)
+            let mut data = vec![flag];
+            data.extend_from_slice(b"DONE");     // 4 bytes
+            data.extend_from_slice(&[0u8; 10]);  // padding
+
+            let accessor = StructureAccessor::new(def.clone(), &data).unwrap();
+            let evaluator = ExpressionEvaluator::new();
+            let ctx = EvalContext::new();
+
+            let field = def.fields.iter().find(|f| f.id == "nested").unwrap();
+
+            let simple_size = get_simple_field_size(field, &ctx, &evaluator, &def, &data, 0).unwrap();
+            let accessor_size = accessor.get_type_size("conditional_type", 0).unwrap();
+
+            prop_assert_eq!(simple_size, accessor_size,
+                "get_simple_field_size ({}) should match get_type_size ({}) when condition is false (flag={})",
+                simple_size, accessor_size, flag);
+
+            // Expected: flag (1) + always_present (4) = 5
+            prop_assert_eq!(simple_size, 5,
+                "Size should be 5 when condition is false, got {}", simple_size);
+        }
+
+        /// Recursive nested types: sizes are calculated correctly through nesting
+        #[test]
+        fn recursive_nested_type_size_matches(inner_size in 1usize..30usize) {
+            let def = Arc::new(create_recursive_nested_def(inner_size));
+            // outer_field (4) + inner_type (inner_size) = 4 + inner_size
+            let total_size = 4 + inner_size;
+            let data: Vec<u8> = vec![b'X'; total_size + 10];
+
+            let accessor = StructureAccessor::new(def.clone(), &data).unwrap();
+            let evaluator = ExpressionEvaluator::new();
+            let ctx = EvalContext::new();
+
+            let field = def.fields.iter().find(|f| f.id == "nested").unwrap();
+
+            let simple_size = get_simple_field_size(field, &ctx, &evaluator, &def, &data, 0).unwrap();
+            let accessor_size = accessor.get_type_size("outer_type", 0).unwrap();
+
+            prop_assert_eq!(simple_size, accessor_size,
+                "get_simple_field_size ({}) should match get_type_size ({}) for recursive nested type with inner_size={}",
+                simple_size, accessor_size, inner_size);
+
+            prop_assert_eq!(simple_size, total_size,
+                "Size should be {} but got {}", total_size, simple_size);
+        }
+    }
+}

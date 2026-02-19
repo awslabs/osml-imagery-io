@@ -562,20 +562,140 @@ impl<'a> StructureAccessor<'a> {
     }
 
     /// Get the size of a nested type.
-    fn get_type_size(&self, type_name: &str, offset: usize) -> Result<usize, AccessError> {
+    pub(crate) fn get_type_size(&self, type_name: &str, offset: usize) -> Result<usize, AccessError> {
         let nested_def = self.definition.types.get(type_name).ok_or_else(|| {
             AccessError::UnknownField {
                 path: type_name.to_string(),
             }
         })?;
 
-        // Calculate total size of nested type
+        // Build context for evaluating conditions within the nested type
+        let mut nested_ctx = self.build_eval_context()?;
         let mut total_size = 0;
+        
         for field in &nested_def.fields {
-            total_size += self.get_field_size(field, offset + total_size)?;
+            // Check if this field is conditional
+            if let Some(ref condition) = field.condition {
+                let result = self.evaluator.evaluate(condition, &nested_ctx);
+                match result {
+                    Ok(EvalResult::Boolean(false)) => {
+                        // Skip this conditional field
+                        continue;
+                    }
+                    Ok(EvalResult::Boolean(true)) => {
+                        // Condition is true, continue to process field
+                    }
+                    Err(_) => {
+                        // Condition evaluation failed - skip this field
+                        // This can happen when referenced fields don't exist yet
+                        continue;
+                    }
+                    _ => {
+                        // Condition didn't evaluate to boolean - skip field
+                        continue;
+                    }
+                }
+            }
+            
+            // Get field size
+            let field_size = self.get_nested_field_size(field, &nested_ctx, offset + total_size)?;
+            
+            // Read field value and add to context for subsequent fields
+            if offset + total_size + field_size <= self.data.len() {
+                let field_data = &self.data[offset + total_size..offset + total_size + field_size];
+                if let Ok(value) = self.read_simple_nested_value(field, field_data) {
+                    let _ = self.add_value_to_context(&mut nested_ctx, &field.id, &value);
+                }
+            }
+            
+            total_size += field_size;
         }
 
         Ok(total_size)
+    }
+    
+    /// Get the size of a field within a nested type, using the nested context.
+    fn get_nested_field_size(
+        &self,
+        field: &FieldDefinition,
+        ctx: &EvalContext,
+        offset: usize,
+    ) -> Result<usize, AccessError> {
+        match &field.size {
+            SizeSpec::Fixed(size) => {
+                if *size == 0 {
+                    match &field.field_type {
+                        FieldType::UnsignedInt(bytes) | FieldType::SignedInt(bytes) => {
+                            Ok(*bytes as usize)
+                        }
+                        FieldType::TypeRef(type_name) => {
+                            self.get_type_size(type_name, offset)
+                        }
+                        _ => Ok(0),
+                    }
+                } else {
+                    Ok(*size)
+                }
+            }
+            SizeSpec::Expression(expr) => {
+                let result = self.evaluator.evaluate(expr, ctx).map_err(|e| {
+                    AccessError::ExpressionError {
+                        path: field.id.clone(),
+                        message: e.to_string(),
+                    }
+                })?;
+
+                match result {
+                    EvalResult::Integer(n) if n >= 0 => Ok(n as usize),
+                    _ => Err(AccessError::ExpressionError {
+                        path: field.id.clone(),
+                        message: "Size expression did not evaluate to positive integer".to_string(),
+                    }),
+                }
+            }
+        }
+    }
+    
+    /// Read a simple value from field data for nested type context building.
+    fn read_simple_nested_value<'b>(&self, field: &FieldDefinition, data: &'b [u8]) -> Result<Value<'b>, AccessError> {
+        use std::borrow::Cow;
+        
+        match &field.field_type {
+            FieldType::String => {
+                let s = std::str::from_utf8(data).unwrap_or("");
+                Ok(Value::String(Cow::Borrowed(s)))
+            }
+            FieldType::Bytes => Ok(Value::Bytes(data)),
+            FieldType::UnsignedInt(bytes) => {
+                let n = match bytes {
+                    1 => data.first().map(|&b| b as u64).unwrap_or(0),
+                    2 if data.len() >= 2 => u16::from_be_bytes([data[0], data[1]]) as u64,
+                    4 if data.len() >= 4 => {
+                        u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as u64
+                    }
+                    _ => 0,
+                };
+                Ok(Value::Unsigned(n))
+            }
+            FieldType::SignedInt(bytes) => {
+                let n = match bytes {
+                    1 => data.first().map(|&b| b as i8 as i64 as u64).unwrap_or(0),
+                    2 if data.len() >= 2 => {
+                        i16::from_be_bytes([data[0], data[1]]) as i64 as u64
+                    }
+                    4 if data.len() >= 4 => {
+                        i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64 as u64
+                    }
+                    _ => 0,
+                };
+                Ok(Value::Unsigned(n))
+            }
+            FieldType::TypeRef(_) => {
+                Err(AccessError::UnknownField {
+                    path: field.id.clone(),
+                })
+            }
+        }
     }
 
 
