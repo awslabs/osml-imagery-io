@@ -226,7 +226,7 @@ impl PyImageAssetProvider {
 }
 
 /// Creates a numpy array from raw bytes with the appropriate dtype.
-fn create_numpy_array(
+pub fn create_numpy_array(
     py: Python<'_>,
     data: &[u8],
     shape: [u32; 3],

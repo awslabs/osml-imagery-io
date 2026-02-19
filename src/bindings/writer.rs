@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 
-use crate::bindings::{PyAssetProvider, PyMetadataProvider};
+use crate::bindings::{PyAssetProvider, PyMemoryImageAssetProvider, PyMetadataProvider};
 use crate::error::CodecError;
-use crate::traits::DatasetWriter;
+use crate::traits::{AssetProvider, DatasetWriter};
 
 /// Python wrapper for DatasetWriter trait objects.
 ///
@@ -69,6 +69,39 @@ impl PyDatasetWriter {
     ) -> PyResult<()> {
         let inner = self.get_inner_mut()?;
         let asset_provider = Arc::clone(provider.inner());
+        inner.add_asset(key, asset_provider, title, description, &roles)?;
+        Ok(())
+    }
+
+    /// Adds an image asset to the dataset using a MemoryImageAssetProvider.
+    ///
+    /// This method accepts a MemoryImageAssetProvider which contains image
+    /// configuration (dimensions, pixel type, blocking, etc.) that will be
+    /// used to create the proper NITF image subheader.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The unique string identifier for the asset.
+    /// * `provider` - The MemoryImageAssetProvider containing the image data and configuration.
+    /// * `title` - A human-readable title for the asset.
+    /// * `description` - A detailed description of the asset.
+    /// * `roles` - Semantic roles for the asset (e.g., "data", "thumbnail", "metadata").
+    ///
+    /// # Raises
+    ///
+    /// * ValueError - If an asset with the given key already exists.
+    #[pyo3(signature = (key, provider, title, description, roles))]
+    fn add_image_asset(
+        &mut self,
+        key: &str,
+        provider: &PyMemoryImageAssetProvider,
+        title: &str,
+        description: &str,
+        roles: Vec<String>,
+    ) -> PyResult<()> {
+        let inner = self.get_inner_mut()?;
+        // Clone the Arc and cast to dyn AssetProvider
+        let asset_provider: Arc<dyn AssetProvider> = provider.inner().clone();
         inner.add_asset(key, asset_provider, title, description, &roles)?;
         Ok(())
     }

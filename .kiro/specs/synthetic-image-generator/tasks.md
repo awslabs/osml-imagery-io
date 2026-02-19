@@ -6,8 +6,8 @@ This implementation plan creates a Python script utility for generating syntheti
 
 ## Tasks
 
-- [ ] 1. Create script skeleton and CLI
-  - [ ] 1.1 Create `scripts/generate_synthetic_image.py` with argparse CLI
+- [x] 1. Create script skeleton and CLI
+  - [x] 1.1 Create `scripts/generate_synthetic_image.py` with argparse CLI
     - Add positional argument for output path
     - Add optional arguments for width, height, tile-width, tile-height
     - Add optional arguments for bands, pixel-type, abpp, imode
@@ -15,14 +15,14 @@ This implementation plan creates a Python script utility for generating syntheti
     - Add help text for all options
     - _Requirements: 1.1-1.8_
 
-  - [ ] 1.2 Implement ImageConfig dataclass
+  - [x] 1.2 Implement ImageConfig dataclass
     - Create dataclass with all configuration fields
     - Implement validation in `__post_init__`
     - Add computed properties (numpy_dtype, max_pixel_value, num_tiles_x/y)
     - _Requirements: 1.7, 5.3-5.5_
 
-- [ ] 2. Implement checkerboard pattern generation
-  - [ ] 2.1 Implement CheckerboardPattern class
+- [-] 2. Implement checkerboard pattern generation
+  - [x] 2.1 Implement CheckerboardPattern class
     - Define light and dark base colors
     - Implement `get_tile_color()` method
     - Handle grayscale vs multi-band color selection
@@ -35,8 +35,8 @@ This implementation plan creates a Python script utility for generating syntheti
     - Verify adjacent tiles have different colors
     - **Validates: Requirements 7.1**
 
-- [ ] 3. Implement tile ID rendering
-  - [ ] 3.1 Implement TileIDRenderer class
+- [-] 3. Implement tile ID rendering
+  - [x] 3.1 Implement TileIDRenderer class
     - Define 5x7 bitmap font patterns for digits 0-9
     - Implement `render_id()` method
     - Calculate centered position for text
@@ -49,8 +49,8 @@ This implementation plan creates a Python script utility for generating syntheti
     - Verify text color contrasts with background
     - **Validates: Requirements 8.2**
 
-- [ ] 4. Implement tile generation
-  - [ ] 4.1 Implement TileGenerator class
+- [x] 4. Implement tile generation
+  - [x] 4.1 Implement TileGenerator class
     - Implement `generate_tile()` method
     - Calculate actual tile dimensions for edge tiles
     - Fill tile with checkerboard background
@@ -69,26 +69,26 @@ This implementation plan creates a Python script utility for generating syntheti
     - Verify all pixel values are within range
     - **Validates: Requirements 5.1, 5.2, 5.4**
 
-- [ ] 5. Implement image writing
-  - [ ] 5.1 Implement ImageWriter class
+- [x] 5. Implement image writing
+  - [x] 5.1 Implement ImageWriter class
     - Implement `_generate_full_image()` to assemble tiles
     - Implement `_to_bytes()` for band-sequential conversion
     - Implement `write_image()` using IO library
     - _Requirements: 10.1-10.4_
 
-  - [ ] 5.2 Add error handling and exit codes
+  - [x] 5.2 Add error handling and exit codes
     - Wrap IO operations in try/except
     - Add context to error messages
     - Return appropriate exit codes
     - _Requirements: 11.1-11.4_
 
-- [ ] 6. Checkpoint - Verify basic functionality
+- [x] 6. Checkpoint - Verify basic functionality
   - Ensure script runs with default parameters
   - Ensure generated file can be opened with IO.open()
   - Ask the user if questions arise
 
-- [ ] 7. Implement band configurations
-  - [ ] 7.1 Add band metadata support
+- [x] 7. Implement band configurations
+  - [x] 7.1 Add band metadata support
     - Set IREP based on band count (MONO, RGB, MULTI)
     - Generate appropriate IREPBAND values
     - _Requirements: 4.1-4.4_
@@ -99,13 +99,13 @@ This implementation plan creates a Python script utility for generating syntheti
     - Verify all bands contain non-zero data
     - **Validates: Requirements 4.5**
 
-- [ ] 8. Implement IMODE support
-  - [ ] 8.1 Add IMODE configuration to ImageWriter
+- [x] 8. Implement IMODE support
+  - [x] 8.1 Add IMODE configuration to ImageWriter
     - Pass IMODE to IO library
     - Verify correct IMODE in output file
     - _Requirements: 6.1-6.5_
 
-- [ ] 9. Final checkpoint - Full integration test
+- [x] 9. Final checkpoint - Full integration test
   - Test all parameter combinations
   - Verify generated files with describe_dataset.py
   - Ensure all tests pass, ask the user if questions arise

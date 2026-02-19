@@ -8,16 +8,19 @@ use pyo3::prelude::*;
 mod bindings;
 mod error;
 pub mod jbp;
+pub mod memory_image;
 pub mod parser;
 mod traits;
 mod types;
 
 pub use bindings::{
     PyAssetProvider, PyDataAssetProvider, PyDatasetReader, PyDatasetWriter,
-    PyGraphicsAssetProvider, PyImageAssetProvider, PyMetadataProvider, PyTextAssetProvider,
+    PyGraphicsAssetProvider, PyImageAssetProvider, PyMemoryImageAssetProvider,
+    PyMetadataProvider, PyTextAssetProvider,
     PyStructureAccessor, PyStructureDefinition, PyStructureRegistry, PyStructureWriter, PyValue,
     IO,
 };
+pub use memory_image::{MemoryImageAssetProvider, MemoryImageConfig};
 pub use traits::{
     AssetProvider, DataAssetProvider, DatasetReader, DatasetWriter, GraphicsAssetProvider,
     ImageAssetProvider, MetadataProvider, TextAssetProvider,
@@ -33,6 +36,7 @@ fn _io(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMetadataProvider>()?;
     m.add_class::<PyAssetProvider>()?;
     m.add_class::<PyImageAssetProvider>()?;
+    m.add_class::<PyMemoryImageAssetProvider>()?;
     m.add_class::<PyTextAssetProvider>()?;
     m.add_class::<PyDataAssetProvider>()?;
     m.add_class::<PyGraphicsAssetProvider>()?;

@@ -13,6 +13,7 @@ from aws.osml.io._io import (
     DatasetWriter,
     AssetProvider,
     ImageAssetProvider,
+    MemoryImageAssetProvider,
     TextAssetProvider,
     DataAssetProvider,
     GraphicsAssetProvider,
@@ -42,6 +43,7 @@ __all__ = [
     # Asset Providers
     "AssetProvider",
     "ImageAssetProvider",
+    "MemoryImageAssetProvider",
     "TextAssetProvider",
     "DataAssetProvider",
     "GraphicsAssetProvider",

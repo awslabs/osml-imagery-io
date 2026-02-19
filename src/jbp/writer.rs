@@ -66,6 +66,48 @@ struct OverflowTreData {
     envelopes: Vec<TreEnvelope>,
 }
 
+/// Image properties extracted from an ImageAssetProvider.
+#[derive(Clone, Debug)]
+struct ImageProperties {
+    /// Number of rows (height)
+    nrows: u32,
+    /// Number of columns (width)
+    ncols: u32,
+    /// Number of bands
+    nbands: u32,
+    /// Nominal bits per pixel
+    nbpp: u32,
+    /// Actual bits per pixel
+    abpp: u32,
+    /// Pixel value type (INT, SI, R, C)
+    pvtype: String,
+    /// Image representation (MONO, RGB, MULTI, etc.)
+    irep: String,
+    /// Interleave mode (B, P, R, S)
+    imode: String,
+    /// Pixels per block horizontal
+    nppbh: u32,
+    /// Pixels per block vertical
+    nppbv: u32,
+}
+
+impl Default for ImageProperties {
+    fn default() -> Self {
+        Self {
+            nrows: 1,
+            ncols: 1,
+            nbands: 1,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "MONO".to_string(),
+            imode: "B".to_string(),
+            nppbh: 1,
+            nppbv: 1,
+        }
+    }
+}
+
 /// An asset queued for writing.
 #[derive(Clone)]
 struct QueuedAsset {
@@ -357,6 +399,269 @@ impl JBPDatasetWriter {
         self.create_image_subheader_with_tres(asset, &tre_bytes, None)
     }
 
+    /// Extract image properties from an asset provider.
+    /// 
+    /// If the provider implements ImageAssetProvider (via MemoryImageAssetProvider),
+    /// extract the image properties. Otherwise, return default values.
+    fn extract_image_properties(asset: &QueuedAsset) -> ImageProperties {
+        use crate::memory_image::MemoryImageAssetProvider;
+        use crate::traits::ImageAssetProvider;
+        
+        // Try to downcast to MemoryImageAssetProvider
+        if let Some(memory_provider) = asset.provider.as_any().downcast_ref::<MemoryImageAssetProvider>() {
+            let config = memory_provider.config();
+            ImageProperties {
+                nrows: memory_provider.num_rows(),
+                ncols: memory_provider.num_columns(),
+                nbands: memory_provider.num_bands(),
+                nbpp: memory_provider.num_bits_per_pixel(),
+                abpp: memory_provider.actual_bits_per_pixel(),
+                pvtype: Self::pixel_type_to_pvtype(memory_provider.pixel_value_type()),
+                irep: config.irep.clone(),
+                imode: config.imode.clone(),
+                nppbh: memory_provider.num_pixels_per_block_horizontal(),
+                nppbv: memory_provider.num_pixels_per_block_vertical(),
+            }
+        } else {
+            // Default values for non-ImageAssetProvider assets
+            ImageProperties::default()
+        }
+    }
+
+    /// Check if an asset is a MemoryImageAssetProvider.
+    ///
+    /// This is used to determine whether IMODE conversion should be applied.
+    /// Only MemoryImageAssetProvider provides data in BSQ format that needs conversion.
+    fn is_memory_image_provider(asset: &QueuedAsset) -> bool {
+        use crate::memory_image::MemoryImageAssetProvider;
+        asset.provider.as_any().downcast_ref::<MemoryImageAssetProvider>().is_some()
+    }
+
+    /// Convert PixelType to PVTYPE string.
+    fn pixel_type_to_pvtype(pixel_type: crate::types::PixelType) -> String {
+        use crate::types::PixelType;
+        match pixel_type {
+            PixelType::UInt8 | PixelType::UInt16 | PixelType::UInt32 => "INT".to_string(),
+            PixelType::Int8 | PixelType::Int16 | PixelType::Int32 => "SI".to_string(),
+            PixelType::Float32 | PixelType::Float64 => "R".to_string(),
+        }
+    }
+
+    /// Convert BSQ (band-sequential) image data to the appropriate IMODE format.
+    ///
+    /// The input data is in BSQ format (all pixels of band 0, then all pixels of band 1, etc.)
+    /// stored in row-major order within each band.
+    ///
+    /// # Arguments
+    /// * `bsq_data` - Raw image data in BSQ format
+    /// * `props` - Image properties including dimensions, bands, and IMODE
+    ///
+    /// # Returns
+    /// Image data converted to the specified IMODE format.
+    fn convert_bsq_to_imode(bsq_data: &[u8], props: &ImageProperties) -> Vec<u8> {
+        match props.imode.as_str() {
+            "B" => Self::bsq_to_imode_b(bsq_data, props),
+            "P" => Self::bsq_to_imode_p(bsq_data, props),
+            "R" => Self::bsq_to_imode_r(bsq_data, props),
+            "S" => Self::bsq_to_imode_s(bsq_data, props),
+            _ => bsq_data.to_vec(), // Default to no conversion
+        }
+    }
+
+    /// Convert BSQ data to IMODE B (Band Interleaved by Block).
+    ///
+    /// For IMODE B, blocks are stored sequentially (left to right, top to bottom),
+    /// and within each block, all bands are stored together (band 0 for entire block,
+    /// then band 1 for entire block, etc.).
+    fn bsq_to_imode_b(bsq_data: &[u8], props: &ImageProperties) -> Vec<u8> {
+        let bytes_per_sample = (props.nbpp as usize + 7) / 8;
+        let num_bands = props.nbands as usize;
+        let num_rows = props.nrows as usize;
+        let num_cols = props.ncols as usize;
+        let block_width = props.nppbh as usize;
+        let block_height = props.nppbv as usize;
+
+        let num_blocks_h = (num_cols + block_width - 1) / block_width;
+        let num_blocks_v = (num_rows + block_height - 1) / block_height;
+
+        let band_size = num_rows * num_cols * bytes_per_sample;
+        let mut result = Vec::with_capacity(bsq_data.len());
+
+        // Iterate through blocks in row-major order
+        for block_row in 0..num_blocks_v {
+            for block_col in 0..num_blocks_h {
+                // Calculate actual block dimensions (may be smaller for edge blocks)
+                let start_row = block_row * block_height;
+                let start_col = block_col * block_width;
+                let end_row = (start_row + block_height).min(num_rows);
+                let end_col = (start_col + block_width).min(num_cols);
+                let block_rows = end_row - start_row;
+                let block_cols = end_col - start_col;
+
+                // For IMODE B: output all pixels of band 0 for this block,
+                // then all pixels of band 1, etc.
+                for band in 0..num_bands {
+                    let band_start = band * band_size;
+                    for row in start_row..end_row {
+                        for col in start_col..end_col {
+                            let src_offset = band_start + (row * num_cols + col) * bytes_per_sample;
+                            if src_offset + bytes_per_sample <= bsq_data.len() {
+                                result.extend_from_slice(
+                                    &bsq_data[src_offset..src_offset + bytes_per_sample],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Convert BSQ data to IMODE P (Band Interleaved by Pixel).
+    ///
+    /// For IMODE P, blocks are stored sequentially, and within each block,
+    /// pixels are stored with all bands interleaved (R0G0B0 R1G1B1 ...).
+    fn bsq_to_imode_p(bsq_data: &[u8], props: &ImageProperties) -> Vec<u8> {
+        let bytes_per_sample = (props.nbpp as usize + 7) / 8;
+        let num_bands = props.nbands as usize;
+        let num_rows = props.nrows as usize;
+        let num_cols = props.ncols as usize;
+        let block_width = props.nppbh as usize;
+        let block_height = props.nppbv as usize;
+
+        let num_blocks_h = (num_cols + block_width - 1) / block_width;
+        let num_blocks_v = (num_rows + block_height - 1) / block_height;
+
+        let band_size = num_rows * num_cols * bytes_per_sample;
+        let mut result = Vec::with_capacity(bsq_data.len());
+
+        // Iterate through blocks in row-major order
+        for block_row in 0..num_blocks_v {
+            for block_col in 0..num_blocks_h {
+                let start_row = block_row * block_height;
+                let start_col = block_col * block_width;
+                let end_row = (start_row + block_height).min(num_rows);
+                let end_col = (start_col + block_width).min(num_cols);
+
+                // For IMODE P: output all bands for each pixel
+                for row in start_row..end_row {
+                    for col in start_col..end_col {
+                        for band in 0..num_bands {
+                            let band_start = band * band_size;
+                            let src_offset = band_start + (row * num_cols + col) * bytes_per_sample;
+                            if src_offset + bytes_per_sample <= bsq_data.len() {
+                                result.extend_from_slice(
+                                    &bsq_data[src_offset..src_offset + bytes_per_sample],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Convert BSQ data to IMODE R (Band Interleaved by Row within blocks).
+    ///
+    /// For IMODE R, blocks are stored sequentially, and within each block,
+    /// rows are stored with all bands for each row together.
+    fn bsq_to_imode_r(bsq_data: &[u8], props: &ImageProperties) -> Vec<u8> {
+        let bytes_per_sample = (props.nbpp as usize + 7) / 8;
+        let num_bands = props.nbands as usize;
+        let num_rows = props.nrows as usize;
+        let num_cols = props.ncols as usize;
+        let block_width = props.nppbh as usize;
+        let block_height = props.nppbv as usize;
+
+        let num_blocks_h = (num_cols + block_width - 1) / block_width;
+        let num_blocks_v = (num_rows + block_height - 1) / block_height;
+
+        let band_size = num_rows * num_cols * bytes_per_sample;
+        let mut result = Vec::with_capacity(bsq_data.len());
+
+        // Iterate through blocks in row-major order
+        for block_row in 0..num_blocks_v {
+            for block_col in 0..num_blocks_h {
+                let start_row = block_row * block_height;
+                let start_col = block_col * block_width;
+                let end_row = (start_row + block_height).min(num_rows);
+                let end_col = (start_col + block_width).min(num_cols);
+
+                // For IMODE R: for each row, output all bands
+                for row in start_row..end_row {
+                    for band in 0..num_bands {
+                        let band_start = band * band_size;
+                        for col in start_col..end_col {
+                            let src_offset = band_start + (row * num_cols + col) * bytes_per_sample;
+                            if src_offset + bytes_per_sample <= bsq_data.len() {
+                                result.extend_from_slice(
+                                    &bsq_data[src_offset..src_offset + bytes_per_sample],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Convert BSQ data to IMODE S (Band Sequential with block ordering).
+    ///
+    /// For IMODE S, data is organized as: for each band, blocks are stored
+    /// sequentially (left to right, top to bottom), and within each block,
+    /// pixels are stored row by row.
+    ///
+    /// Loop order: band -> block_row -> block_col -> sample_row -> sample_col
+    fn bsq_to_imode_s(bsq_data: &[u8], props: &ImageProperties) -> Vec<u8> {
+        let bytes_per_sample = (props.nbpp as usize + 7) / 8;
+        let num_bands = props.nbands as usize;
+        let num_rows = props.nrows as usize;
+        let num_cols = props.ncols as usize;
+        let block_width = props.nppbh as usize;
+        let block_height = props.nppbv as usize;
+
+        let num_blocks_h = (num_cols + block_width - 1) / block_width;
+        let num_blocks_v = (num_rows + block_height - 1) / block_height;
+
+        let band_size = num_rows * num_cols * bytes_per_sample;
+        let mut result = Vec::with_capacity(bsq_data.len());
+
+        // For IMODE S: band is the outermost loop
+        for band in 0..num_bands {
+            let band_start = band * band_size;
+            
+            // Then iterate through blocks in row-major order
+            for block_row in 0..num_blocks_v {
+                for block_col in 0..num_blocks_h {
+                    let start_row = block_row * block_height;
+                    let start_col = block_col * block_width;
+                    let end_row = (start_row + block_height).min(num_rows);
+                    let end_col = (start_col + block_width).min(num_cols);
+
+                    // Output pixels within block row by row
+                    for row in start_row..end_row {
+                        for col in start_col..end_col {
+                            let src_offset = band_start + (row * num_cols + col) * bytes_per_sample;
+                            if src_offset + bytes_per_sample <= bsq_data.len() {
+                                result.extend_from_slice(
+                                    &bsq_data[src_offset..src_offset + bytes_per_sample],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
     /// Create an image subheader with TRE data.
     ///
     /// # Arguments
@@ -369,6 +674,9 @@ impl JBPDatasetWriter {
         tre_bytes: &[u8],
         overflow: Option<&OverflowTreData>,
     ) -> Vec<u8> {
+        // Extract image properties from the asset provider
+        let props = Self::extract_image_properties(asset);
+        
         let mut subheader = Vec::new();
 
         // IM (2) - File Part Type
@@ -420,17 +728,17 @@ impl JBPDatasetWriter {
         // ISORCE (42) - Image Source
         subheader.extend_from_slice(&[b' '; 42]);
         // NROWS (8) - Number of Significant Rows
-        subheader.extend_from_slice(b"00000001");
+        subheader.extend_from_slice(format!("{:08}", props.nrows).as_bytes());
         // NCOLS (8) - Number of Significant Columns
-        subheader.extend_from_slice(b"00000001");
+        subheader.extend_from_slice(format!("{:08}", props.ncols).as_bytes());
         // PVTYPE (3) - Pixel Value Type
-        subheader.extend_from_slice(b"INT");
+        subheader.extend_from_slice(format!("{:3}", props.pvtype).as_bytes());
         // IREP (8) - Image Representation
-        subheader.extend_from_slice(b"MONO    ");
+        subheader.extend_from_slice(format!("{:8}", props.irep).as_bytes());
         // ICAT (8) - Image Category
         subheader.extend_from_slice(b"VIS     ");
         // ABPP (2) - Actual Bits Per Pixel
-        subheader.extend_from_slice(b"08");
+        subheader.extend_from_slice(format!("{:02}", props.abpp).as_bytes());
         // PJUST (1) - Pixel Justification
         subheader.extend_from_slice(b"R");
         // ICORDS (1) - Image Coordinate Representation
@@ -439,32 +747,56 @@ impl JBPDatasetWriter {
         subheader.extend_from_slice(b"0");
         // IC (2) - Image Compression
         subheader.extend_from_slice(b"NC");
-        // NBANDS (1) - Number of Bands
-        subheader.extend_from_slice(b"1");
-        // IREPBAND1 (2) - Band Representation
-        subheader.extend_from_slice(b"M ");
-        // ISUBCAT1 (6) - Band Subcategory
-        subheader.extend_from_slice(&[b' '; 6]);
-        // IFC1 (1) - Band Image Filter Condition
-        subheader.extend_from_slice(b"N");
-        // IMFLT1 (3) - Band Standard Image Filter Code
-        subheader.extend_from_slice(&[b' '; 3]);
-        // NLUTS1 (1) - Number of LUTs
-        subheader.extend_from_slice(b"0");
+        
+        // NBANDS (1) or XBANDS (5) - Number of Bands
+        // If nbands > 9, use XBANDS format (NBANDS=0, then XBANDS field)
+        if props.nbands > 9 {
+            subheader.extend_from_slice(b"0");
+            subheader.extend_from_slice(format!("{:05}", props.nbands).as_bytes());
+        } else {
+            subheader.extend_from_slice(format!("{}", props.nbands).as_bytes());
+        }
+        
+        // Band info for each band
+        for band in 0..props.nbands {
+            // IREPBAND (2) - Band Representation
+            let irepband = match props.irep.trim() {
+                "MONO" => "M ",
+                "RGB" if band == 0 => "R ",
+                "RGB" if band == 1 => "G ",
+                "RGB" if band == 2 => "B ",
+                _ => "  ",
+            };
+            subheader.extend_from_slice(irepband.as_bytes());
+            // ISUBCAT (6) - Band Subcategory
+            subheader.extend_from_slice(&[b' '; 6]);
+            // IFC (1) - Band Image Filter Condition
+            subheader.extend_from_slice(b"N");
+            // IMFLT (3) - Band Standard Image Filter Code
+            subheader.extend_from_slice(&[b' '; 3]);
+            // NLUTS (1) - Number of LUTs
+            subheader.extend_from_slice(b"0");
+        }
+        
         // ISYNC (1) - Image Sync Code
         subheader.extend_from_slice(b"0");
         // IMODE (1) - Image Mode
-        subheader.extend_from_slice(b"B");
+        subheader.extend_from_slice(props.imode.as_bytes());
+        
+        // Calculate blocking parameters
+        let nbpr = (props.ncols + props.nppbh - 1) / props.nppbh;
+        let nbpc = (props.nrows + props.nppbv - 1) / props.nppbv;
+        
         // NBPR (4) - Number of Blocks Per Row
-        subheader.extend_from_slice(b"0001");
+        subheader.extend_from_slice(format!("{:04}", nbpr).as_bytes());
         // NBPC (4) - Number of Blocks Per Column
-        subheader.extend_from_slice(b"0001");
+        subheader.extend_from_slice(format!("{:04}", nbpc).as_bytes());
         // NPPBH (4) - Number of Pixels Per Block Horizontal
-        subheader.extend_from_slice(b"0001");
+        subheader.extend_from_slice(format!("{:04}", props.nppbh).as_bytes());
         // NPPBV (4) - Number of Pixels Per Block Vertical
-        subheader.extend_from_slice(b"0001");
+        subheader.extend_from_slice(format!("{:04}", props.nppbv).as_bytes());
         // NBPP (2) - Number of Bits Per Pixel
-        subheader.extend_from_slice(b"08");
+        subheader.extend_from_slice(format!("{:02}", props.nbpp).as_bytes());
         // IDLVL (3) - Image Display Level
         subheader.extend_from_slice(b"001");
         // IALVL (3) - Image Attachment Level
@@ -1069,7 +1401,18 @@ impl DatasetWriter for JBPDatasetWriter {
 
         for (idx, asset) in images.iter().enumerate() {
             let (subheader, overflow) = self.create_image_subheader_with_overflow(asset, idx as u16);
-            let data = asset.provider.raw_asset()?;
+            // Get raw data from the provider
+            let raw_data = asset.provider.raw_asset()?;
+            
+            // Only apply IMODE conversion for MemoryImageAssetProvider
+            // which provides data in BSQ format. Other providers pass through as-is.
+            let data = if Self::is_memory_image_provider(asset) {
+                let props = Self::extract_image_properties(asset);
+                Self::convert_bsq_to_imode(&raw_data, &props)
+            } else {
+                raw_data
+            };
+            
             image_info.push((subheader.len(), data.len()));
             image_subheaders.push(subheader);
             image_data.push(data);
