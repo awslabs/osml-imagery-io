@@ -25,7 +25,7 @@ doc: |
   For new implementations, use BANDSB instead.
 
 seq:
-  - id: row_spacing
+  - id: ROW_SPACING
     type: str
     size: 7
     encoding: BCS-N
@@ -34,7 +34,7 @@ seq:
       Range: 0000.01 to 9999.99 meters.
       "-------" if unknown.
 
-  - id: row_spacing_units
+  - id: ROW_SPACING_UNITS
     type: str
     size: 1
     encoding: BCS-A
@@ -42,7 +42,7 @@ seq:
       Row spacing units.
       M = meters, R = microradians.
 
-  - id: col_spacing
+  - id: COL_SPACING
     type: str
     size: 7
     encoding: BCS-N
@@ -51,7 +51,7 @@ seq:
       Range: 0000.01 to 9999.99 meters.
       "-------" if unknown.
 
-  - id: col_spacing_units
+  - id: COL_SPACING_UNITS
     type: str
     size: 1
     encoding: BCS-A
@@ -59,7 +59,7 @@ seq:
       Column spacing units.
       M = meters, R = microradians.
 
-  - id: focal_length
+  - id: FOCAL_LENGTH
     type: str
     size: 6
     encoding: BCS-N
@@ -68,7 +68,7 @@ seq:
       Range: 0001.0 to 9999.9 mm.
       "------" if unknown.
 
-  - id: count
+  - id: COUNT
     type: str
     size: 4
     encoding: BCS-N
@@ -77,10 +77,10 @@ seq:
       Range: 0001 to 9999.
 
   # Per-band fields loop
-  - id: bands
+  - id: BANDS
     type: band_entry
     repeat: expr
-    repeat-expr: count.to_i
+    repeat-expr: COUNT.to_i
     doc: Per-band parameters.
 
 types:
@@ -89,7 +89,7 @@ types:
       Per-band parameters for BANDSA TRE.
       Each band entry contains wavelength and calibration information.
     seq:
-      - id: bandid
+      - id: BANDID
         type: str
         size: 6
         encoding: BCS-A
@@ -97,7 +97,7 @@ types:
           Band identifier.
           6 BCS-A characters.
 
-      - id: bad_band
+      - id: BAD_BAND
         type: str
         size: 1
         encoding: BCS-N
@@ -105,7 +105,7 @@ types:
           Bad band indicator.
           0 = bad/invalid band, 1 = good/valid band.
 
-      - id: start_wave
+      - id: START_WAVE
         type: str
         size: 7
         encoding: BCS-N
@@ -114,7 +114,7 @@ types:
           Range: 00.0001 to 99.9999 micrometers.
           "-------" if unknown.
 
-      - id: center_wave
+      - id: CENTER_WAVE
         type: str
         size: 7
         encoding: BCS-N
@@ -123,7 +123,7 @@ types:
           Range: 00.0001 to 99.9999 micrometers.
           "-------" if unknown.
 
-      - id: end_wave
+      - id: END_WAVE
         type: str
         size: 7
         encoding: BCS-N
@@ -132,7 +132,7 @@ types:
           Range: 00.0001 to 99.9999 micrometers.
           "-------" if unknown.
 
-      - id: radiometric_cal
+      - id: RADIOMETRIC_CAL
         type: str
         size: 5
         encoding: BCS-N
@@ -141,7 +141,7 @@ types:
           Range: 0.001 to 9.999.
           "-----" if unknown.
 
-      - id: cal_dark
+      - id: CAL_DARK
         type: str
         size: 6
         encoding: BCS-N
@@ -150,7 +150,7 @@ types:
           Range: 000000 to 999999.
           "------" if unknown.
 
-      - id: cal_sensitivity
+      - id: CAL_SENSITIVITY
         type: str
         size: 5
         encoding: BCS-N
@@ -159,7 +159,7 @@ types:
           Range: 00.01 to 99.99.
           "-----" if unknown.
 
-      - id: noise_level
+      - id: NOISE_LEVEL
         type: str
         size: 5
         encoding: BCS-N

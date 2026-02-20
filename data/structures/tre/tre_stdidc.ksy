@@ -14,7 +14,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix D - CSDE
 
 seq:
-  - id: acquisition_date
+  - id: ACQUISITION_DATE
     type: str
     size: 14
     encoding: ASCII
@@ -23,7 +23,7 @@ seq:
       Date of collection mission (aircraft takeoff).
       14 BCS-A, YYYYMMDDHHMMSS format (UTC).
 
-  - id: mission
+  - id: MISSION
     type: str
     size: 14
     encoding: ASCII
@@ -33,7 +33,7 @@ seq:
       For aerial, identifies the scanner.
       14 BCS-A.
 
-  - id: pass
+  - id: PASS
     type: str
     size: 2
     encoding: ASCII
@@ -42,7 +42,7 @@ seq:
       Identifies each pass or flight per day.
       2 BCS-A, 00-99, A1-A9, B1-B9, ... Z1-Z9.
 
-  - id: op_num
+  - id: OP_NUM
     type: str
     size: 3
     encoding: ASCII
@@ -51,7 +51,7 @@ seq:
       Imaging operations numbers increase within each pass.
       3 BCS-N, 000-999. 000 indicates system doesn't number operations.
 
-  - id: start_segment
+  - id: START_SEGMENT
     type: str
     size: 2
     encoding: ASCII
@@ -60,7 +60,7 @@ seq:
       Identifies images as separate pieces within an imaging operation.
       2 BCS-A, AA-ZZ. AA is first segment.
 
-  - id: repro_num
+  - id: REPRO_NUM
     type: str
     size: 2
     encoding: ASCII
@@ -69,7 +69,7 @@ seq:
       Indicates if data was reprocessed or enhanced.
       2 BCS-N, 00-99. 00 is original, 01 is first reprocess.
 
-  - id: replay_regen
+  - id: REPLAY_REGEN
     type: str
     size: 3
     encoding: ASCII
@@ -78,7 +78,7 @@ seq:
       Replay (remapping) or regeneration imagery mode.
       3 BCS-A. 000 indicates originally processed image.
 
-  - id: blank_fill
+  - id: BLANK_FILL
     type: str
     size: 1
     encoding: ASCII
@@ -86,7 +86,7 @@ seq:
       Blank Fill (BLANK_FILL)
       1 BCS-A, space or underscore.
 
-  - id: start_column
+  - id: START_COLUMN
     type: str
     size: 3
     encoding: ASCII
@@ -95,7 +95,7 @@ seq:
       Offset in blocks of first block in cross-scan direction.
       3 BCS-N, 001-999.
 
-  - id: start_row
+  - id: START_ROW
     type: str
     size: 5
     encoding: ASCII
@@ -104,7 +104,7 @@ seq:
       Offset in blocks of first block in along-scan direction.
       5 BCS-N, 00001-99999.
 
-  - id: end_segment
+  - id: END_SEGMENT
     type: str
     size: 2
     encoding: ASCII
@@ -113,7 +113,7 @@ seq:
       Ending segment ID of this file.
       2 BCS-A, AA-ZZ.
 
-  - id: end_column
+  - id: END_COLUMN
     type: str
     size: 3
     encoding: ASCII
@@ -122,7 +122,7 @@ seq:
       Offset in blocks of last block in cross-scan direction.
       3 BCS-N, 001-999.
 
-  - id: end_row
+  - id: END_ROW
     type: str
     size: 5
     encoding: ASCII
@@ -131,16 +131,16 @@ seq:
       Offset in blocks of last block in along-scan direction.
       5 BCS-N, 00001-99999.
 
-  - id: country
+  - id: COUNTRY
     type: str
     size: 2
     encoding: ASCII
     doc: |
       Country Code (COUNTRY)
-      Two letter code for country of image reference point.
+      Two letter code for COUNTRY of image reference point.
       2 BCS-A, AA-ZZ (FIPS PUB 10-4).
 
-  - id: wac
+  - id: WAC
     type: str
     size: 4
     encoding: ASCII
@@ -149,7 +149,7 @@ seq:
       4-number WAC for reference point of image segment.
       4 BCS-N, 0001-1866.
 
-  - id: location
+  - id: LOCATION
     type: str
     size: 11
     encoding: ASCII
@@ -158,13 +158,13 @@ seq:
       Natural reference point of sensor for geographic coverage.
       11 BCS-A, DDMMXDDDMMY format.
 
-  - id: reserved1
+  - id: RESERVED1
     type: str
     size: 5
     encoding: ASCII
     doc: Reserved (5 spaces)
 
-  - id: reserved2
+  - id: RESERVED2
     type: str
     size: 8
     encoding: ASCII

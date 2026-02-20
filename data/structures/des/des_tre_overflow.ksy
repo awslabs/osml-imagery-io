@@ -19,7 +19,7 @@ doc: |
   Reference: Joint BIIF Profile (JBP) Section 5.18.4
 
 seq:
-  - id: desoflw
+  - id: DESOFLW
     type: str
     size: 6
     encoding: BCS-A
@@ -35,7 +35,7 @@ seq:
       - SXSHD: Graphic subheader extended subheader data
       - TXSHD: Text subheader extended subheader data
 
-  - id: desitem
+  - id: DESITEM
     type: str
     size: 3
     encoding: BCS-N

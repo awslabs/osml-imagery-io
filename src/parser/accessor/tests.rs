@@ -1168,48 +1168,48 @@ fn integration_image_subheader_tre_fields_accessible() {
     let accessor = StructureAccessor::new(definition, &test_data).unwrap();
     
     // Verify basic fields are accessible
-    let im = accessor.get("im").unwrap();
+    let im = accessor.get("IM").unwrap();
     assert_eq!(im.as_str().unwrap(), "IM");
     
-    let nbands = accessor.get("nbands").unwrap();
+    let nbands = accessor.get("NBANDS").unwrap();
     assert_eq!(nbands.as_str().unwrap(), "2");
     
     // Verify band_info is accessible
-    assert!(accessor.has("band_info_0"), "band_info_0 should be accessible");
-    assert!(accessor.has("band_info_1"), "band_info_1 should be accessible");
+    assert!(accessor.has("BAND_INFO_0"), "BAND_INFO_0 should be accessible");
+    assert!(accessor.has("BAND_INFO_1"), "BAND_INFO_1 should be accessible");
     
     // CRITICAL: Verify TRE fields AFTER band_info are accessible
     // This is the main bug fix verification
     
     // UDIDL should be accessible
-    assert!(accessor.has("udidl"), "udidl should be accessible after band_info");
-    let udidl = accessor.get("udidl").unwrap();
+    assert!(accessor.has("UDIDL"), "UDIDL should be accessible after band_info");
+    let udidl = accessor.get("UDIDL").unwrap();
     assert_eq!(udidl.as_str().unwrap(), "00020");
     
     // UDOFL should be accessible (since udidl > 0)
-    assert!(accessor.has("udofl"), "udofl should be accessible when udidl > 0");
-    let udofl = accessor.get("udofl").unwrap();
+    assert!(accessor.has("UDOFL"), "UDOFL should be accessible when UDIDL > 0");
+    let udofl = accessor.get("UDOFL").unwrap();
     assert_eq!(udofl.as_str().unwrap(), "000");
     
     // UDID should be accessible (since udidl > 0)
-    assert!(accessor.has("udid"), "udid should be accessible when udidl > 0");
-    let udid = accessor.get("udid").unwrap();
+    assert!(accessor.has("UDID"), "UDID should be accessible when UDIDL > 0");
+    let udid = accessor.get("UDID").unwrap();
     // UDID is raw bytes, verify it has the expected length (udidl - 3 = 17)
     assert_eq!(udid.as_bytes().len(), 17);
     
     // IXSHDL should be accessible
-    assert!(accessor.has("ixshdl"), "ixshdl should be accessible after udid");
-    let ixshdl = accessor.get("ixshdl").unwrap();
+    assert!(accessor.has("IXSHDL"), "IXSHDL should be accessible after UDID");
+    let ixshdl = accessor.get("IXSHDL").unwrap();
     assert_eq!(ixshdl.as_str().unwrap(), "00025");
     
     // IXSOFL should be accessible (since ixshdl > 0)
-    assert!(accessor.has("ixsofl"), "ixsofl should be accessible when ixshdl > 0");
-    let ixsofl = accessor.get("ixsofl").unwrap();
+    assert!(accessor.has("IXSOFL"), "IXSOFL should be accessible when IXSHDL > 0");
+    let ixsofl = accessor.get("IXSOFL").unwrap();
     assert_eq!(ixsofl.as_str().unwrap(), "000");
     
     // IXSHD should be accessible (since ixshdl > 0)
-    assert!(accessor.has("ixshd"), "ixshd should be accessible when ixshdl > 0");
-    let ixshd = accessor.get("ixshd").unwrap();
+    assert!(accessor.has("IXSHD"), "IXSHD should be accessible when IXSHDL > 0");
+    let ixshd = accessor.get("IXSHD").unwrap();
     // IXSHD is raw bytes, verify it has the expected length (ixshdl - 3 = 22)
     assert_eq!(ixshd.as_bytes().len(), 22);
 }
@@ -1234,26 +1234,26 @@ fn integration_image_subheader_no_tre_data() {
     let accessor = StructureAccessor::new(definition, &test_data).unwrap();
     
     // Verify band_info is accessible
-    assert!(accessor.has("band_info_0"), "band_info_0 should be accessible");
-    assert!(!accessor.has("band_info_1"), "band_info_1 should NOT exist for 1 band");
+    assert!(accessor.has("BAND_INFO_0"), "BAND_INFO_0 should be accessible");
+    assert!(!accessor.has("BAND_INFO_1"), "BAND_INFO_1 should NOT exist for 1 band");
     
     // UDIDL should be accessible and be 0
-    assert!(accessor.has("udidl"), "udidl should be accessible");
-    let udidl = accessor.get("udidl").unwrap();
+    assert!(accessor.has("UDIDL"), "UDIDL should be accessible");
+    let udidl = accessor.get("UDIDL").unwrap();
     assert_eq!(udidl.as_str().unwrap(), "00000");
     
     // UDOFL and UDID should NOT be accessible (since udidl = 0)
-    assert!(!accessor.has("udofl"), "udofl should NOT be accessible when udidl = 0");
-    assert!(!accessor.has("udid"), "udid should NOT be accessible when udidl = 0");
+    assert!(!accessor.has("UDOFL"), "UDOFL should NOT be accessible when UDIDL = 0");
+    assert!(!accessor.has("UDID"), "UDID should NOT be accessible when UDIDL = 0");
     
     // IXSHDL should be accessible and be 0
-    assert!(accessor.has("ixshdl"), "ixshdl should be accessible");
-    let ixshdl = accessor.get("ixshdl").unwrap();
+    assert!(accessor.has("IXSHDL"), "IXSHDL should be accessible");
+    let ixshdl = accessor.get("IXSHDL").unwrap();
     assert_eq!(ixshdl.as_str().unwrap(), "00000");
     
     // IXSOFL and IXSHD should NOT be accessible (since ixshdl = 0)
-    assert!(!accessor.has("ixsofl"), "ixsofl should NOT be accessible when ixshdl = 0");
-    assert!(!accessor.has("ixshd"), "ixshd should NOT be accessible when ixshdl = 0");
+    assert!(!accessor.has("IXSOFL"), "IXSOFL should NOT be accessible when IXSHDL = 0");
+    assert!(!accessor.has("IXSHD"), "IXSHD should NOT be accessible when IXSHDL = 0");
 }
 
 #[test]
@@ -1279,25 +1279,25 @@ fn integration_image_subheader_field_iterator_completeness() {
     let fields: Vec<String> = accessor.fields().collect();
     
     // Verify TRE-related fields are included in the iterator
-    assert!(fields.contains(&"udidl".to_string()), "fields() should include udidl");
-    assert!(fields.contains(&"udofl".to_string()), "fields() should include udofl (when udidl > 0)");
-    assert!(fields.contains(&"udid".to_string()), "fields() should include udid (when udidl > 0)");
-    assert!(fields.contains(&"ixshdl".to_string()), "fields() should include ixshdl");
-    assert!(fields.contains(&"ixsofl".to_string()), "fields() should include ixsofl (when ixshdl > 0)");
-    assert!(fields.contains(&"ixshd".to_string()), "fields() should include ixshd (when ixshdl > 0)");
+    assert!(fields.contains(&"UDIDL".to_string()), "fields() should include UDIDL");
+    assert!(fields.contains(&"UDOFL".to_string()), "fields() should include UDOFL (when UDIDL > 0)");
+    assert!(fields.contains(&"UDID".to_string()), "fields() should include UDID (when UDIDL > 0)");
+    assert!(fields.contains(&"IXSHDL".to_string()), "fields() should include IXSHDL");
+    assert!(fields.contains(&"IXSOFL".to_string()), "fields() should include IXSOFL (when IXSHDL > 0)");
+    assert!(fields.contains(&"IXSHD".to_string()), "fields() should include IXSHD (when IXSHDL > 0)");
     
     // Verify band_info fields are included
-    assert!(fields.contains(&"band_info_0".to_string()), "fields() should include band_info_0");
-    assert!(fields.contains(&"band_info_1".to_string()), "fields() should include band_info_1");
+    assert!(fields.contains(&"BAND_INFO_0".to_string()), "fields() should include BAND_INFO_0");
+    assert!(fields.contains(&"BAND_INFO_1".to_string()), "fields() should include BAND_INFO_1");
     
     // Verify fields before band_info are included
-    assert!(fields.contains(&"im".to_string()), "fields() should include im");
-    assert!(fields.contains(&"nbands".to_string()), "fields() should include nbands");
+    assert!(fields.contains(&"IM".to_string()), "fields() should include IM");
+    assert!(fields.contains(&"NBANDS".to_string()), "fields() should include NBANDS");
     
     // Verify fields after band_info but before TRE fields are included
-    assert!(fields.contains(&"isync".to_string()), "fields() should include isync");
-    assert!(fields.contains(&"imode".to_string()), "fields() should include imode");
-    assert!(fields.contains(&"imag".to_string()), "fields() should include imag");
+    assert!(fields.contains(&"ISYNC".to_string()), "fields() should include ISYNC");
+    assert!(fields.contains(&"IMODE".to_string()), "fields() should include IMODE");
+    assert!(fields.contains(&"IMAG".to_string()), "fields() should include IMAG");
 }
 
 #[test]
@@ -1323,12 +1323,12 @@ fn integration_image_subheader_field_iterator_no_tre() {
     let fields: Vec<String> = accessor.fields().collect();
     
     // Verify UDIDL and IXSHDL are included (they're always present)
-    assert!(fields.contains(&"udidl".to_string()), "fields() should include udidl");
-    assert!(fields.contains(&"ixshdl".to_string()), "fields() should include ixshdl");
+    assert!(fields.contains(&"UDIDL".to_string()), "fields() should include UDIDL");
+    assert!(fields.contains(&"IXSHDL".to_string()), "fields() should include IXSHDL");
     
     // Verify conditional TRE fields are NOT included when their conditions are false
-    assert!(!fields.contains(&"udofl".to_string()), "fields() should NOT include udofl when udidl = 0");
-    assert!(!fields.contains(&"udid".to_string()), "fields() should NOT include udid when udidl = 0");
-    assert!(!fields.contains(&"ixsofl".to_string()), "fields() should NOT include ixsofl when ixshdl = 0");
-    assert!(!fields.contains(&"ixshd".to_string()), "fields() should NOT include ixshd when ixshdl = 0");
+    assert!(!fields.contains(&"UDOFL".to_string()), "fields() should NOT include UDOFL when UDIDL = 0");
+    assert!(!fields.contains(&"UDID".to_string()), "fields() should NOT include UDID when UDIDL = 0");
+    assert!(!fields.contains(&"IXSOFL".to_string()), "fields() should NOT include IXSOFL when IXSHDL = 0");
+    assert!(!fields.contains(&"IXSHD".to_string()), "fields() should NOT include IXSHD when IXSHDL = 0");
 }

@@ -13,7 +13,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix E - ASDE
 
 seq:
-  - id: angle_to_north
+  - id: ANGLE_TO_NORTH
     type: str
     size: 7
     encoding: ASCII
@@ -22,7 +22,7 @@ seq:
       Angle measured clockwise from first-row vector to True North.
       7 BCS-N, 000.000-359.999 degrees.
 
-  - id: angle_to_north_accy
+  - id: ANGLE_TO_NORTH_ACCY
     type: str
     size: 6
     encoding: ASCII
@@ -31,7 +31,7 @@ seq:
       90% probable error value.
       6 BCS-N, 00.001-44.999 degrees, or 000000/00.000 for unknown.
 
-  - id: squint_angle
+  - id: SQUINT_ANGLE
     type: str
     size: 7
     encoding: ASCII
@@ -40,7 +40,7 @@ seq:
       Angle from crosstrack to great circle joining ARP to ORP.
       7 BCS-N, -60.000 to +85.000 degrees.
 
-  - id: squint_angle_accy
+  - id: SQUINT_ANGLE_ACCY
     type: str
     size: 6
     encoding: ASCII
@@ -49,7 +49,7 @@ seq:
       90% probable error value.
       6 BCS-N, 00.001-44.999 degrees, or 000000/00.000 for unknown.
 
-  - id: mode
+  - id: MODE
     type: str
     size: 3
     encoding: ASCII
@@ -58,13 +58,13 @@ seq:
       Collection mode and processing mode.
       3 BCS-A, sensor-specific coded value.
 
-  - id: reserved_001
+  - id: RESERVED_001
     type: str
     size: 16
     encoding: ASCII
     doc: Reserved (16 spaces)
 
-  - id: graze_ang
+  - id: GRAZE_ANG
     type: str
     size: 5
     encoding: ASCII
@@ -73,7 +73,7 @@ seq:
       Angle between focus plane and line of sight to radar.
       5 BCS-N, 00.00-90.00 degrees.
 
-  - id: graze_ang_accy
+  - id: GRAZE_ANG_ACCY
     type: str
     size: 5
     encoding: ASCII
@@ -82,7 +82,7 @@ seq:
       90% probable error value.
       5 BCS-N, 00.01-90.00 degrees, or 00000/00.00 for unknown.
 
-  - id: slope_ang
+  - id: SLOPE_ANG
     type: str
     size: 5
     encoding: ASCII
@@ -91,7 +91,7 @@ seq:
       Angle between SAR plane and focus plane.
       5 BCS-N, 00.00-90.00 degrees.
 
-  - id: polar
+  - id: POLAR
     type: str
     size: 2
     encoding: ASCII
@@ -100,7 +100,7 @@ seq:
       Transmit and receive polarization.
       2 BCS-A, HH/HV/VH/VV.
 
-  - id: nsamp
+  - id: NSAMP
     type: str
     size: 5
     encoding: ASCII
@@ -109,13 +109,13 @@ seq:
       Includes fill pixels.
       5 BCS-N, 00001-99999.
 
-  - id: reserved_002
+  - id: RESERVED_002
     type: str
     size: 1
     encoding: ASCII
     doc: Reserved (value 0)
 
-  - id: seq_num
+  - id: SEQ_NUM
     type: str
     size: 1
     encoding: ASCII
@@ -124,7 +124,7 @@ seq:
       Sequence within coupled imagery set.
       1 BCS-N, 1-6.
 
-  - id: prime_id
+  - id: PRIME_ID
     type: str
     size: 12
     encoding: ASCII
@@ -133,7 +133,7 @@ seq:
       Target designator of primary target.
       12 BCS-A.
 
-  - id: prime_be
+  - id: PRIME_BE
     type: str
     size: 15
     encoding: ASCII
@@ -142,13 +142,13 @@ seq:
       Basic Encyclopedia or non-BE ID of primary target.
       15 BCS-A.
 
-  - id: reserved_003
+  - id: RESERVED_003
     type: str
     size: 1
     encoding: ASCII
     doc: Reserved (value 0)
 
-  - id: n_sec
+  - id: N_SEC
     type: str
     size: 2
     encoding: ASCII
@@ -157,7 +157,7 @@ seq:
       Number of SECTGA extensions.
       2 BCS-N, 00-99.
 
-  - id: ipr
+  - id: IPR
     type: str
     size: 2
     encoding: ASCII

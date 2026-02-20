@@ -12,7 +12,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix C - PIAE
 
 seq:
-  - id: eqpcode
+  - id: EQPCODE
     type: str
     size: 7
     encoding: ASCII
@@ -21,7 +21,7 @@ seq:
       Equipment code from NGIC Foreign Equipment Guide.
       7 BCS-A.
 
-  - id: eqpnomen
+  - id: EQPNOMEN
     type: str
     size: 45
     encoding: ASCII
@@ -30,7 +30,7 @@ seq:
       Equipment nomenclature from NGIC Foreign Equipment Guide.
       45 BCS-A.
 
-  - id: eqpman
+  - id: EQPMAN
     type: str
     size: 64
     encoding: ASCII
@@ -39,7 +39,7 @@ seq:
       Manufacturer of the equipment.
       64 BCS-A.
 
-  - id: obtype
+  - id: OBTYPE
     type: str
     size: 1
     encoding: ASCII
@@ -48,7 +48,7 @@ seq:
       Order of Battle type from MIIDS/IDB.
       1 BCS-A.
 
-  - id: ordbat
+  - id: ORDBAT
     type: str
     size: 3
     encoding: ASCII
@@ -57,7 +57,7 @@ seq:
       Type order of battle from EARS 1.1.
       3 BCS-A.
 
-  - id: ctryprod
+  - id: CTRYPROD
     type: str
     size: 2
     encoding: ASCII
@@ -66,7 +66,7 @@ seq:
       Country where equipment was produced.
       2 BCS-A, GEC code.
 
-  - id: ctrydsn
+  - id: CTRYDSN
     type: str
     size: 2
     encoding: ASCII
@@ -75,7 +75,7 @@ seq:
       Country where equipment was designed.
       2 BCS-A, GEC code.
 
-  - id: objview
+  - id: OBJVIEW
     type: str
     size: 6
     encoding: ASCII

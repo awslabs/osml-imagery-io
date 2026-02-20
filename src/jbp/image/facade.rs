@@ -84,54 +84,54 @@ impl<'a> ImageSubheaderFacade<'a> {
     ///
     /// This is a 10-character identifier for the image.
     pub fn iid1(&self) -> Result<String, CodecError> {
-        self.get_str_field("iid1")
+        self.get_str_field("IID1")
     }
 
     /// Get the image identifier 2 (IID2).
     ///
     /// This is an 80-character free-text identifier for the image.
     pub fn iid2(&self) -> Result<String, CodecError> {
-        self.get_str_field("iid2")
+        self.get_str_field("IID2")
     }
 
     /// Get the image date and time (IDATIM).
     ///
     /// This is a 14-character date/time string in CCYYMMDDhhmmss format.
     pub fn idatim(&self) -> Result<String, CodecError> {
-        self.get_str_field("idatim")
+        self.get_str_field("IDATIM")
     }
 
     /// Get the target identifier (TGTID).
     ///
     /// This is a 17-character target identifier.
     pub fn tgtid(&self) -> Result<String, CodecError> {
-        self.get_str_field("tgtid")
+        self.get_str_field("TGTID")
     }
 
     /// Get the image source (ISORCE).
     ///
     /// This is a 42-character description of the image source.
     pub fn isorce(&self) -> Result<String, CodecError> {
-        self.get_str_field("isorce")
+        self.get_str_field("ISORCE")
     }
 
     // ==================== Dimension and Pixel Field Accessors ====================
 
     /// Get the number of significant rows in the image (NROWS).
     pub fn nrows(&self) -> Result<u32, CodecError> {
-        self.get_u32_field("nrows")
+        self.get_u32_field("NROWS")
     }
 
     /// Get the number of significant columns in the image (NCOLS).
     pub fn ncols(&self) -> Result<u32, CodecError> {
-        self.get_u32_field("ncols")
+        self.get_u32_field("NCOLS")
     }
 
     /// Get the pixel value type (PVTYPE).
     ///
     /// Returns the parsed `PixelValueType` enum.
     pub fn pvtype(&self) -> Result<PixelValueType, CodecError> {
-        let s = self.get_str_field("pvtype")?;
+        let s = self.get_str_field("PVTYPE")?;
         PixelValueType::from_str(&s)
     }
 
@@ -139,7 +139,7 @@ impl<'a> ImageSubheaderFacade<'a> {
     ///
     /// Returns the parsed `ImageRepresentation` enum.
     pub fn irep(&self) -> Result<ImageRepresentation, CodecError> {
-        let s = self.get_str_field("irep")?;
+        let s = self.get_str_field("IREP")?;
         ImageRepresentation::from_str(&s)
     }
 
@@ -147,28 +147,28 @@ impl<'a> ImageSubheaderFacade<'a> {
     ///
     /// This is an 8-character image category code.
     pub fn icat(&self) -> Result<String, CodecError> {
-        self.get_str_field("icat")
+        self.get_str_field("ICAT")
     }
 
     /// Get the actual bits per pixel (ABPP).
     ///
     /// This is the number of significant bits in each pixel value.
     pub fn abpp(&self) -> Result<u8, CodecError> {
-        self.get_u8_field("abpp")
+        self.get_u8_field("ABPP")
     }
 
     /// Get the number of bits per pixel (NBPP).
     ///
     /// This is the storage size for each pixel value.
     pub fn nbpp(&self) -> Result<u8, CodecError> {
-        self.get_u8_field("nbpp")
+        self.get_u8_field("NBPP")
     }
 
     /// Get the pixel justification (PJUST).
     ///
     /// Returns the parsed `PixelJustification` enum.
     pub fn pjust(&self) -> Result<PixelJustification, CodecError> {
-        let s = self.get_str_field("pjust")?;
+        let s = self.get_str_field("PJUST")?;
         let c = s.chars().next().ok_or_else(|| {
             CodecError::Parse("PJUST field is empty".to_string())
         })?;
@@ -179,29 +179,29 @@ impl<'a> ImageSubheaderFacade<'a> {
 
     /// Get the number of blocks per row (NBPR).
     pub fn nbpr(&self) -> Result<u32, CodecError> {
-        self.get_u32_field("nbpr")
+        self.get_u32_field("NBPR")
     }
 
     /// Get the number of blocks per column (NBPC).
     pub fn nbpc(&self) -> Result<u32, CodecError> {
-        self.get_u32_field("nbpc")
+        self.get_u32_field("NBPC")
     }
 
     /// Get the number of pixels per block horizontal (NPPBH).
     pub fn nppbh(&self) -> Result<u32, CodecError> {
-        self.get_u32_field("nppbh")
+        self.get_u32_field("NPPBH")
     }
 
     /// Get the number of pixels per block vertical (NPPBV).
     pub fn nppbv(&self) -> Result<u32, CodecError> {
-        self.get_u32_field("nppbv")
+        self.get_u32_field("NPPBV")
     }
 
     /// Get the image interleave mode (IMODE).
     ///
     /// Returns the parsed `InterleaveMode` enum.
     pub fn imode(&self) -> Result<InterleaveMode, CodecError> {
-        let s = self.get_str_field("imode")?;
+        let s = self.get_str_field("IMODE")?;
         let c = s.chars().next().ok_or_else(|| {
             CodecError::Parse("IMODE field is empty".to_string())
         })?;
@@ -215,10 +215,10 @@ impl<'a> ImageSubheaderFacade<'a> {
     /// This handles the NBANDS/XBANDS logic: if NBANDS is 0, the actual
     /// band count is in XBANDS.
     pub fn band_count(&self) -> Result<usize, CodecError> {
-        let nbands = self.get_u8_field("nbands")? as usize;
+        let nbands = self.get_u8_field("NBANDS")? as usize;
         if nbands == 0 {
             // Use XBANDS for extended band count
-            self.get_u32_field("xbands").map(|v| v as usize)
+            self.get_u32_field("XBANDS").map(|v| v as usize)
         } else {
             Ok(nbands)
         }
@@ -240,7 +240,7 @@ impl<'a> ImageSubheaderFacade<'a> {
             )));
         }
 
-        let nbands = self.get_u8_field("nbands")? as usize;
+        let nbands = self.get_u8_field("NBANDS")? as usize;
         let use_extended = nbands == 0;
 
         Ok(BandInfoFacade {
@@ -257,7 +257,7 @@ impl<'a> ImageSubheaderFacade<'a> {
     /// Common values: NC (no compression), NM (no compression with mask),
     /// C8 (JPEG 2000), M8 (JPEG 2000 with mask).
     pub fn ic(&self) -> Result<String, CodecError> {
-        self.get_str_field("ic")
+        self.get_str_field("IC")
     }
 
     /// Get the compression rate code (COMRAT).
@@ -265,8 +265,8 @@ impl<'a> ImageSubheaderFacade<'a> {
     /// This field is only present when IC is not NC or NM.
     /// Returns `None` if the field is not present.
     pub fn comrat(&self) -> Result<Option<String>, CodecError> {
-        if self.accessor.has("comrat") {
-            Ok(Some(self.get_str_field("comrat")?))
+        if self.accessor.has("COMRAT") {
+            Ok(Some(self.get_str_field("COMRAT")?))
         } else {
             Ok(None)
         }
@@ -364,19 +364,19 @@ impl<'a> BandInfoFacade<'a> {
     ///
     /// Common values: R, G, B, M (mono), LU (lookup), Y, Cb, Cr.
     pub fn irepband(&self) -> Result<String, CodecError> {
-        self.get_band_str_field("irepband")
+        self.get_band_str_field("IREPBAND")
     }
 
     /// Get the band subcategory (ISUBCATn).
     pub fn isubcat(&self) -> Result<String, CodecError> {
-        self.get_band_str_field("isubcat")
+        self.get_band_str_field("ISUBCAT")
     }
 
     /// Get the band image filter condition (IFCn).
     ///
     /// Returns 'N' for no filter condition.
     pub fn ifc(&self) -> Result<char, CodecError> {
-        let s = self.get_band_str_field("ifc")?;
+        let s = self.get_band_str_field("IFC")?;
         s.chars().next().ok_or_else(|| {
             CodecError::Parse("IFC field is empty".to_string())
         })
@@ -384,12 +384,12 @@ impl<'a> BandInfoFacade<'a> {
 
     /// Get the band standard image filter code (IMFLTn).
     pub fn imflt(&self) -> Result<String, CodecError> {
-        self.get_band_str_field("imflt")
+        self.get_band_str_field("IMFLT")
     }
 
     /// Get the number of LUTs for this band (NLUTSn).
     pub fn nluts(&self) -> Result<u8, CodecError> {
-        self.get_band_u8_field("nluts")
+        self.get_band_u8_field("NLUTS")
     }
 
     /// Get the number of entries in each LUT (NELUTn).
@@ -400,7 +400,7 @@ impl<'a> BandInfoFacade<'a> {
         if nluts == 0 {
             Ok(None)
         } else {
-            let path = self.band_field_path("nelut");
+            let path = self.band_field_path("NELUT");
             if self.accessor.has(&path) {
                 let value = self.accessor
                     .get(&path)
@@ -477,9 +477,9 @@ impl<'a> BandInfoFacade<'a> {
     /// Get the path prefix for band info fields.
     fn band_info_path(&self) -> String {
         if self.use_extended {
-            format!("band_info_extended_{}", self.index)
+            format!("BAND_INFO_EXTENDED_{}", self.index)
         } else {
-            format!("band_info_{}", self.index)
+            format!("BAND_INFO_{}", self.index)
         }
     }
 

@@ -22,7 +22,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix N - ENGRDA
 
 seq:
-  - id: resrc
+  - id: RESRC
     type: str
     size: 20
     encoding: BCS-A
@@ -32,7 +32,7 @@ seq:
       Identifier as used in the ACFT SDE "SENSOR_ID" field.
       Left justified, space padded.
 
-  - id: recnt
+  - id: RECNT
     type: str
     size: 3
     encoding: BCS-N
@@ -40,10 +40,10 @@ seq:
       Record Entry Count - Number of Engineering Data Elements included
       in the TRE. Range: 001 to 999.
 
-  - id: records
+  - id: RECORDS
     type: engineering_record
     repeat: expr
-    repeat-expr: recnt.to_i
+    repeat-expr: RECNT.to_i
     doc: Engineering data records.
 
 types:
@@ -52,7 +52,7 @@ types:
       A single engineering data element containing a label, matrix dimensions,
       data type, size, units, and the actual data values.
     seq:
-      - id: engln
+      - id: ENGLN
         type: str
         size: 2
         encoding: BCS-N
@@ -60,15 +60,15 @@ types:
           Engineering Data Label Length - Length in bytes of the label.
           Range: 01 to 99.
 
-      - id: englbl
+      - id: ENGLBL
         type: str
-        size: engln.to_i
+        size: ENGLN.to_i
         encoding: BCS-A
         doc: |
           Engineering Data Label - Unique string identifying the engineering
           data. No terminator characters (0x0A or 0x0D) allowed.
 
-      - id: engmtxc
+      - id: ENGMTXC
         type: str
         size: 4
         encoding: BCS-N
@@ -77,7 +77,7 @@ types:
           row of the matrix data (C). For one-dimensional arrays, this is
           the number of elements. Range: 0001 to 9999.
 
-      - id: engmtxr
+      - id: ENGMTXR
         type: str
         size: 4
         encoding: BCS-N
@@ -86,7 +86,7 @@ types:
           data (R). Matrix elements are stored as a vector in C x R order.
           Range: 0001 to 9999.
 
-      - id: engtyp
+      - id: ENGTYP
         type: str
         size: 1
         encoding: BCS-A
@@ -99,7 +99,7 @@ types:
           C = Complex data (pair of real elements)
           A = BCS Alphanumeric character data
 
-      - id: engdts
+      - id: ENGDTS
         type: str
         size: 1
         encoding: BCS-N
@@ -109,7 +109,7 @@ types:
           For BCS data (ENGTYP=A), this shall be "1".
           For IEEE float (ENGTYP=R), minimum is 4 (32 bits).
 
-      - id: engdatu
+      - id: ENGDATU
         type: str
         size: 2
         encoding: BCS-A
@@ -120,7 +120,7 @@ types:
           tC/tF/tK (temperature), Va/Vd (voltage), mA/uA/A (current),
           UD (undefined). ISO-1000 should guide other unit definitions.
 
-      - id: engdatc
+      - id: ENGDATC
         type: str
         size: 8
         encoding: BCS-N
@@ -129,8 +129,8 @@ types:
           For BCS data, this is the byte/character count.
           Range: 00000001 to 99999932.
 
-      - id: engdata
-        size: engdatc.to_i
+      - id: ENGDATA
+        size: ENGDATC.to_i
         doc: |
           Engineering Data - The actual engineering data values.
           Format depends on ENGTYP:

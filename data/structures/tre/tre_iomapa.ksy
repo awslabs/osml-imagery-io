@@ -23,7 +23,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix F - IOMAPA
 
 seq:
-  - id: band_number
+  - id: BAND_NUMBER
     type: str
     size: 3
     encoding: ASCII
@@ -32,7 +32,7 @@ seq:
       000 for monochrome or single band imagery.
       3 BCS-N, 000-999.
 
-  - id: map_select
+  - id: MAP_SELECT
     type: str
     size: 1
     encoding: ASCII
@@ -43,7 +43,7 @@ seq:
 
   # Remaining data depends on map_select value
   # This simplified definition captures the raw remaining bytes
-  - id: method_data
+  - id: METHOD_DATA
     size-eos: true
     doc: |
       Method-specific data based on MAP_SELECT value:

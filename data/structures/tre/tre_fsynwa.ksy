@@ -21,7 +21,7 @@ doc: |
   Reference: NGA.STND.0044_1.3 - Motion Imagery Extension for NITF 2.1
 
 seq:
-  - id: data
+  - id: DATA
     size-eos: true
     doc: |
       Raw TRE data.

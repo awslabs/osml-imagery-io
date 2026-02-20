@@ -26,7 +26,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AT - S2EVPA v1.0
 
 seq:
-  - id: quantity_name_len
+  - id: QUANTITY_NAME_LEN
     type: str
     size: 3
     encoding: BCS-N
@@ -34,17 +34,17 @@ seq:
       Length of QUANTITY_NAME field in bytes.
       3 BCS-N characters, range 000-999.
 
-  - id: quantity_name
+  - id: QUANTITY_NAME
     type: str
-    size: quantity_name_len.to_i
+    size: QUANTITY_NAME_LEN.to_i
     encoding: ECS-A
-    if: quantity_name_len.to_i > 0
+    if: QUANTITY_NAME_LEN.to_i > 0
     doc: |
       Name of the engineering or scientific quantity specified by this TRE.
       Value is case sensitive. See NITF Field Value Registry.
       Variable length ECS-A characters (length specified by QUANTITY_NAME_LEN).
 
-  - id: uom_len
+  - id: UOM_LEN
     type: str
     size: 3
     encoding: BCS-N
@@ -52,18 +52,18 @@ seq:
       Length of UOM (Unit of Measure) field in bytes.
       3 BCS-N characters, range 000-999.
 
-  - id: uom
+  - id: UOM
     type: str
-    size: uom_len.to_i
+    size: UOM_LEN.to_i
     encoding: ECS-A
-    if: uom_len.to_i > 0
+    if: UOM_LEN.to_i > 0
     doc: |
       SI unit of measure of the engineering or scientific quantity.
       Value is case sensitive. See NITF Field Value Registry.
       For dimensionless quantities (ratios), set to "1".
       Variable length ECS-A characters (length specified by UOM_LEN).
 
-  - id: first_band
+  - id: FIRST_BAND
     type: str
     size: 5
     encoding: BCS-N
@@ -71,7 +71,7 @@ seq:
       Index of first band to which this polynomial applies.
       5 BCS-N characters, range 00001-99999.
 
-  - id: last_band
+  - id: LAST_BAND
     type: str
     size: 5
     encoding: BCS-N
@@ -80,7 +80,7 @@ seq:
       Must be greater than or equal to FIRST_BAND.
       5 BCS-N characters, range 00001-99999.
 
-  - id: numcoef
+  - id: NUMCOEF
     type: str
     size: 1
     encoding: BCS-N
@@ -88,10 +88,10 @@ seq:
       Number of polynomial coefficients.
       1 BCS-N character, range 1-9.
 
-  - id: coefficients
+  - id: COEFFICIENTS
     type: coefficient
     repeat: expr
-    repeat-expr: numcoef.to_i
+    repeat-expr: NUMCOEF.to_i
     doc: |
       Polynomial coefficients. COEF_1 is the constant term (0th degree),
       COEF_2 is the 1st degree coefficient, etc.
@@ -99,7 +99,7 @@ seq:
 types:
   coefficient:
     seq:
-      - id: value
+      - id: VALUE
         type: str
         size: 15
         encoding: BCS-A

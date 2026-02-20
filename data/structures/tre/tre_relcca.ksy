@@ -19,7 +19,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AD - RELCCA
 
 seq:
-  - id: reldate
+  - id: RELDATE
     type: str
     size: 8
     encoding: BCS-N
@@ -30,7 +30,7 @@ seq:
       Unknown values represented with hyphen-minus ("-").
       8 BCS-N characters.
 
-  - id: relslnth
+  - id: RELSLNTH
     type: str
     size: 4
     encoding: BCS-N
@@ -40,17 +40,17 @@ seq:
       Value "0000" indicates no releasability source information.
       4 BCS-N characters, range 0000-9999.
 
-  - id: relsours
+  - id: RELSOURS
     type: str
-    size: relslnth.to_i
+    size: RELSLNTH.to_i
     encoding: UTF8
-    if: relslnth.to_i > 0
+    if: RELSLNTH.to_i > 0
     doc: |
       Releasability Determination Source (RELSOURS)
       Name or reference to the releasability determination authority source.
       Variable length, 0-9999 bytes.
 
-  - id: relccslnth
+  - id: RELCCSLNTH
     type: str
     size: 4
     encoding: BCS-N
@@ -60,18 +60,18 @@ seq:
       Value "0000" indicates no RELCCSTD information.
       4 BCS-N characters, range 0000-9999.
 
-  - id: relccstd
+  - id: RELCCSTD
     type: str
-    size: relccslnth.to_i
+    size: RELCCSLNTH.to_i
     encoding: UTF8
-    if: relccslnth.to_i > 0
+    if: RELCCSLNTH.to_i > 0
     doc: |
       Country Code Standard (RELCCSTD)
       The country code standard that defines the country codes used in
       the COALCC and RELCCODES fields.
       Variable length, 0-9999 bytes.
 
-  - id: rcolslnth
+  - id: RCOLSLNTH
     type: str
     size: 4
     encoding: BCS-N
@@ -81,18 +81,18 @@ seq:
       Value "0000" indicates no RCOLSTD information.
       4 BCS-N characters, range 0000-9999.
 
-  - id: rcolstd
+  - id: RCOLSTD
     type: str
-    size: rcolslnth.to_i
+    size: RCOLSLNTH.to_i
     encoding: UTF8
-    if: rcolslnth.to_i > 0
+    if: RCOLSLNTH.to_i > 0
     doc: |
       Coalition ID Code Standard (RCOLSTD)
       The coalition ID code standard that defines the coalition codes
       used in the COALID and COALCC fields.
       Variable length, 0-9999 bytes.
 
-  - id: rorgslnth
+  - id: RORGSLNTH
     type: str
     size: 4
     encoding: BCS-N
@@ -102,18 +102,18 @@ seq:
       Value "0000" indicates no RORGSTD information.
       4 BCS-N characters, range 0000-9999.
 
-  - id: rorgstd
+  - id: RORGSTD
     type: str
-    size: rorgslnth.to_i
+    size: RORGSLNTH.to_i
     encoding: UTF8
-    if: rorgslnth.to_i > 0
+    if: RORGSLNTH.to_i > 0
     doc: |
       Release Organizational Code Standard (RORGSTD)
       The release organizational code standard that defines the release
       organization codes used in the RELORG field.
       Variable length, 0-9999 bytes.
 
-  - id: coidlnth
+  - id: COIDLNTH
     type: str
     size: 4
     encoding: BCS-N
@@ -123,11 +123,11 @@ seq:
       Value "0000" indicates no coalition information.
       4 BCS-N characters, range 0000-9999.
 
-  - id: coalid
+  - id: COALID
     type: str
-    size: coidlnth.to_i
+    size: COIDLNTH.to_i
     encoding: UTF8
-    if: coidlnth.to_i > 0
+    if: COIDLNTH.to_i > 0
     doc: |
       Coalition Acronym/Identification (COALID)
       Valid list of coalition multilateral entity codes to which the file
@@ -135,11 +135,11 @@ seq:
       by single space (0x20).
       Variable length, 0-9999 bytes.
 
-  - id: coallnth
+  - id: COALLNTH
     type: str
     size: 4
     encoding: BCS-N
-    if: coidlnth.to_i > 0
+    if: COIDLNTH.to_i > 0
     doc: |
       Coalition Code Field Length (COALLNTH)
       Number of bytes in the COALCC field.
@@ -147,11 +147,11 @@ seq:
       4 BCS-N characters, range 0000-9999.
       Only present when COIDLNTH > 0.
 
-  - id: coalcc
+  - id: COALCC
     type: str
-    size: coallnth.to_i
+    size: COALLNTH.to_i
     encoding: UTF8
-    if: coidlnth.to_i > 0 and coallnth.to_i > 0
+    if: COIDLNTH.to_i > 0 and COALLNTH.to_i > 0
     doc: |
       Coalition Nations (COALCC)
       Identifies nations in the coalition(s) identified in COALID.
@@ -159,7 +159,7 @@ seq:
       national codes by two division sign (0xF7) characters.
       Variable length, 0-9999 bytes.
 
-  - id: relclnth
+  - id: RELCLNTH
     type: str
     size: 4
     encoding: BCS-N
@@ -169,18 +169,18 @@ seq:
       Value "0000" indicates no country code information.
       4 BCS-N characters, range 0000-9999.
 
-  - id: relccodes
+  - id: RELCCODES
     type: str
-    size: relclnth.to_i
+    size: RELCLNTH.to_i
     encoding: UTF8
-    if: relclnth.to_i > 0
+    if: RELCLNTH.to_i > 0
     doc: |
       Country Codes for Releasability (RELCCODES)
       Lists countries to which this NSIF file is releasable.
       Country codes separated by single space (0x20).
       Variable length, 0-9999 bytes.
 
-  - id: rlorglnth
+  - id: RLORGLNTH
     type: str
     size: 4
     encoding: BCS-N
@@ -190,11 +190,11 @@ seq:
       Value "0000" indicates no additional organizational information.
       4 BCS-N characters, range 0000-9999.
 
-  - id: relorg
+  - id: RELORG
     type: str
-    size: rlorglnth.to_i
+    size: RLORGLNTH.to_i
     encoding: UTF8
-    if: rlorglnth.to_i > 0
+    if: RLORGLNTH.to_i > 0
     doc: |
       List of Organizations (RELORG)
       Free text list of organizations to which imagery can be released.

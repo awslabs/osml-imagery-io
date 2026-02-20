@@ -16,7 +16,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix U - RSM
 
 seq:
-  - id: iid
+  - id: IID
     type: str
     size: 80
     encoding: BCS-A
@@ -24,7 +24,7 @@ seq:
       Image Identifier
       80 BCS-A characters identifying the image.
 
-  - id: edition
+  - id: EDITION
     type: str
     size: 40
     encoding: BCS-A
@@ -32,7 +32,7 @@ seq:
       RSM Image Support Data Edition
       40 BCS-A characters identifying the edition.
 
-  - id: gr0
+  - id: GR0
     type: str
     size: 21
     encoding: BCS-N
@@ -40,7 +40,7 @@ seq:
       Ground Row Normalization Offset
       21 BCS-N real number.
 
-  - id: grx
+  - id: GRX
     type: str
     size: 21
     encoding: BCS-N
@@ -48,7 +48,7 @@ seq:
       Ground Row X Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gry
+  - id: GRY
     type: str
     size: 21
     encoding: BCS-N
@@ -56,7 +56,7 @@ seq:
       Ground Row Y Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: grz
+  - id: GRZ
     type: str
     size: 21
     encoding: BCS-N
@@ -64,7 +64,7 @@ seq:
       Ground Row Z Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: grxx
+  - id: GRXX
     type: str
     size: 21
     encoding: BCS-N
@@ -72,7 +72,7 @@ seq:
       Ground Row XX Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: grxy
+  - id: GRXY
     type: str
     size: 21
     encoding: BCS-N
@@ -80,7 +80,7 @@ seq:
       Ground Row XY Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: grxz
+  - id: GRXZ
     type: str
     size: 21
     encoding: BCS-N
@@ -88,7 +88,7 @@ seq:
       Ground Row XZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gryy
+  - id: GRYY
     type: str
     size: 21
     encoding: BCS-N
@@ -96,7 +96,7 @@ seq:
       Ground Row YY Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gryz
+  - id: GRYZ
     type: str
     size: 21
     encoding: BCS-N
@@ -104,7 +104,7 @@ seq:
       Ground Row YZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: grzz
+  - id: GRZZ
     type: str
     size: 21
     encoding: BCS-N
@@ -112,7 +112,7 @@ seq:
       Ground Row ZZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gc0
+  - id: GC0
     type: str
     size: 21
     encoding: BCS-N
@@ -120,7 +120,7 @@ seq:
       Ground Column Normalization Offset
       21 BCS-N real number.
 
-  - id: gcx
+  - id: GCX
     type: str
     size: 21
     encoding: BCS-N
@@ -128,7 +128,7 @@ seq:
       Ground Column X Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gcy
+  - id: GCY
     type: str
     size: 21
     encoding: BCS-N
@@ -136,7 +136,7 @@ seq:
       Ground Column Y Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gcz
+  - id: GCZ
     type: str
     size: 21
     encoding: BCS-N
@@ -144,7 +144,7 @@ seq:
       Ground Column Z Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gcxx
+  - id: GCXX
     type: str
     size: 21
     encoding: BCS-N
@@ -152,7 +152,7 @@ seq:
       Ground Column XX Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gcxy
+  - id: GCXY
     type: str
     size: 21
     encoding: BCS-N
@@ -160,7 +160,7 @@ seq:
       Ground Column XY Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gcxz
+  - id: GCXZ
     type: str
     size: 21
     encoding: BCS-N
@@ -168,7 +168,7 @@ seq:
       Ground Column XZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gcyy
+  - id: GCYY
     type: str
     size: 21
     encoding: BCS-N
@@ -176,7 +176,7 @@ seq:
       Ground Column YY Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gcyz
+  - id: GCYZ
     type: str
     size: 21
     encoding: BCS-N
@@ -184,7 +184,7 @@ seq:
       Ground Column YZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: gczz
+  - id: GCZZ
     type: str
     size: 21
     encoding: BCS-N
@@ -192,7 +192,7 @@ seq:
       Ground Column ZZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: grnis
+  - id: GRNIS
     type: str
     size: 3
     encoding: BCS-NPI
@@ -200,7 +200,7 @@ seq:
       Number of Ground Row Sections
       3 BCS-NPI positive integer.
 
-  - id: gcnis
+  - id: GCNIS
     type: str
     size: 3
     encoding: BCS-NPI
@@ -208,7 +208,7 @@ seq:
       Number of Ground Column Sections
       3 BCS-NPI positive integer.
 
-  - id: gtnis
+  - id: GTNIS
     type: str
     size: 3
     encoding: BCS-NPI
@@ -216,7 +216,7 @@ seq:
       Total Number of Ground Sections
       3 BCS-NPI positive integer (GRNIS * GCNIS).
 
-  - id: grssiz
+  - id: GRSSIZ
     type: str
     size: 21
     encoding: BCS-N
@@ -224,7 +224,7 @@ seq:
       Ground Row Section Size
       21 BCS-N real number.
 
-  - id: gcssiz
+  - id: GCSSIZ
     type: str
     size: 21
     encoding: BCS-N

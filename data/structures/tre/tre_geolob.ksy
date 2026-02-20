@@ -13,7 +13,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix P - GEOSDE
 
 seq:
-  - id: arv
+  - id: ARV
     type: str
     size: 9
     encoding: BCS-N
@@ -22,7 +22,7 @@ seq:
       Number of pixels or elements per 360 degrees of longitude.
       9 BCS-N positive integer.
 
-  - id: brv
+  - id: BRV
     type: str
     size: 9
     encoding: BCS-N
@@ -31,7 +31,7 @@ seq:
       Number of pixels or elements per 360 degrees of latitude.
       9 BCS-N positive integer.
 
-  - id: lso
+  - id: LSO
     type: str
     size: 15
     encoding: BCS-N
@@ -40,7 +40,7 @@ seq:
       Longitude of the origin of the coordinate system in degrees.
       15 BCS-N real number, range ±180.000000000.
 
-  - id: pso
+  - id: PSO
     type: str
     size: 15
     encoding: BCS-N

@@ -27,7 +27,7 @@ doc: |
   Reference: STDI-0002 Volume 2, Appendix O - MRGXMA
 
 seq:
-  - id: num_seg_assoc
+  - id: NUM_SEG_ASSOC
     type: str
     size: 3
     encoding: BCS-N
@@ -43,10 +43,10 @@ seq:
       data provider chooses to formally associate the text segment with
       the merged output, then the value is 3.
 
-  - id: seg_assoc
+  - id: SEG_ASSOC
     type: seg_assoc_entry
     repeat: expr
-    repeat-expr: num_seg_assoc.to_i
+    repeat-expr: NUM_SEG_ASSOC.to_i
     doc: |
       Associated segment entries.
       One entry for each associated segment (1 to NUM_SEG_ASSOC).
@@ -54,7 +54,7 @@ seq:
 types:
   seg_assoc_entry:
     seq:
-      - id: value
+      - id: VALUE
         type: str
         size: 25
         encoding: BCS-A

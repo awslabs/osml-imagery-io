@@ -12,7 +12,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix P - GEOSDE
 
 seq:
-  - id: prj
+  - id: PRJ
     type: str
     size: 80
     encoding: ECS-A
@@ -20,7 +20,7 @@ seq:
       Projection Name (PRJ)
       80 ECS-A. Full name of the map projection.
 
-  - id: pjc
+  - id: PJC
     type: str
     size: 2
     encoding: BCS-A
@@ -29,7 +29,7 @@ seq:
       2 BCS-A. Two-character code identifying the projection.
       Examples: "TC" (Transverse Cylindrical), "AC" (Albers Conic).
 
-  - id: xor
+  - id: XOR
     type: str
     size: 15
     encoding: BCS-N
@@ -37,7 +37,7 @@ seq:
       X False Origin (XOR)
       15 BCS-N. False easting value for the projection origin.
 
-  - id: yor
+  - id: YOR
     type: str
     size: 15
     encoding: BCS-N
@@ -45,7 +45,7 @@ seq:
       Y False Origin (YOR)
       15 BCS-N. False northing value for the projection origin.
 
-  - id: prn
+  - id: PRN
     type: str
     size: 1
     encoding: BCS-N
@@ -53,10 +53,10 @@ seq:
       Number of Projection Parameters (PRN)
       1 BCS-N. Count of projection parameters (0-9).
 
-  - id: projection_params
+  - id: PROJECTION_PARAMS
     type: projection_param
     repeat: expr
-    repeat-expr: prn.to_i
+    repeat-expr: PRN.to_i
     doc: |
       Projection Parameters
       Repeated PRN times, each containing a parameter value and name.
@@ -64,7 +64,7 @@ seq:
 types:
   projection_param:
     seq:
-      - id: pco
+      - id: PCO
         type: str
         size: 15
         encoding: BCS-N
@@ -72,7 +72,7 @@ types:
           Projection Parameter Value (PCO)
           15 BCS-N. Numeric value of the projection parameter.
 
-      - id: ptb
+      - id: PTB
         type: str
         size: 80
         encoding: ECS-A

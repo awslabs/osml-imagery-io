@@ -21,7 +21,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AM - PIVECA (Placeholder)
 
 seq:
-  - id: data
+  - id: DATA
     size-eos: true
     doc: |
       Raw TRE data.

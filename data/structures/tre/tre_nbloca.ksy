@@ -18,7 +18,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix I - NBLOCA
 
 seq:
-  - id: frame_1_offset
+  - id: FRAME_1_OFFSET
     type: u4
     doc: |
       First Image Frame Offset (FRAME_1_OFFSET)
@@ -26,18 +26,18 @@ seq:
       4-byte unsigned binary integer, range 439-999999.
       This offset equals the size of the image subheader.
 
-  - id: number_of_frames
+  - id: NUMBER_OF_FRAMES
     type: u4
     doc: |
       Number of Blocks (NUMBER_OF_FRAMES)
       Number of blocks for which offsets are listed.
       4-byte unsigned binary integer, range 1-24996.
 
-  - id: frame_offsets
+  - id: FRAME_OFFSETS
     type: u4
     repeat: expr
     repeat-expr: number_of_frames - 1
-    if: number_of_frames > 1
+    if: NUMBER_OF_FRAMES > 1
     doc: |
       Frame Offsets (FRAME_2_OFFSET to FRAME_N_OFFSET)
       Offset in bytes of the beginning of the nth image frame

@@ -19,7 +19,7 @@ doc: |
   Reference: STDI-0006 (NCDRD), STDI-0002 Volume 1 Appendix S
 
 seq:
-  - id: sensor
+  - id: SENSOR
     type: str
     size: 6
     encoding: BCS-A
@@ -27,7 +27,7 @@ seq:
       Sensor Identifier
       6 BCS-A characters identifying the sensor.
 
-  - id: time_first_line_image
+  - id: TIME_FIRST_LINE_IMAGE
     type: str
     size: 12
     encoding: BCS-N
@@ -35,7 +35,7 @@ seq:
       Time of First Line of Image
       12 BCS-N characters representing time in HHMMSS.SSSSS format.
 
-  - id: time_image_duration
+  - id: TIME_IMAGE_DURATION
     type: str
     size: 12
     encoding: BCS-N
@@ -43,7 +43,7 @@ seq:
       Image Duration Time
       12 BCS-N characters representing duration in seconds.
 
-  - id: max_gsd
+  - id: MAX_GSD
     type: str
     size: 5
     encoding: BCS-N
@@ -51,7 +51,7 @@ seq:
       Maximum Ground Sample Distance
       5 BCS-N real number in meters.
 
-  - id: along_scan_gsd
+  - id: ALONG_SCAN_GSD
     type: str
     size: 5
     encoding: BCS-N
@@ -59,7 +59,7 @@ seq:
       Along Scan Ground Sample Distance
       5 BCS-N real number in meters.
 
-  - id: cross_scan_gsd
+  - id: CROSS_SCAN_GSD
     type: str
     size: 5
     encoding: BCS-N
@@ -67,7 +67,7 @@ seq:
       Cross Scan Ground Sample Distance
       5 BCS-N real number in meters.
 
-  - id: geo_mean_gsd
+  - id: GEO_MEAN_GSD
     type: str
     size: 5
     encoding: BCS-N
@@ -75,7 +75,7 @@ seq:
       Geometric Mean Ground Sample Distance
       5 BCS-N real number in meters.
 
-  - id: a_s_vert_gsd
+  - id: A_S_VERT_GSD
     type: str
     size: 5
     encoding: BCS-N
@@ -83,7 +83,7 @@ seq:
       Along Scan Vertical GSD
       5 BCS-N real number in meters.
 
-  - id: c_s_vert_gsd
+  - id: C_S_VERT_GSD
     type: str
     size: 5
     encoding: BCS-N
@@ -91,7 +91,7 @@ seq:
       Cross Scan Vertical GSD
       5 BCS-N real number in meters.
 
-  - id: geo_mean_vert_gsd
+  - id: GEO_MEAN_VERT_GSD
     type: str
     size: 5
     encoding: BCS-N
@@ -99,7 +99,7 @@ seq:
       Geometric Mean Vertical GSD
       5 BCS-N real number in meters.
 
-  - id: geo_beta_angle
+  - id: GEO_BETA_ANGLE
     type: str
     size: 5
     encoding: BCS-N
@@ -107,7 +107,7 @@ seq:
       Geometric Beta Angle
       5 BCS-N real number in degrees.
 
-  - id: dynamic_range
+  - id: DYNAMIC_RANGE
     type: str
     size: 5
     encoding: BCS-NPI
@@ -115,7 +115,7 @@ seq:
       Dynamic Range
       5 BCS-NPI integer representing bits.
 
-  - id: num_lines
+  - id: NUM_LINES
     type: str
     size: 7
     encoding: BCS-NPI
@@ -123,7 +123,7 @@ seq:
       Number of Lines
       7 BCS-NPI integer.
 
-  - id: num_samples
+  - id: NUM_SAMPLES
     type: str
     size: 5
     encoding: BCS-NPI
@@ -131,7 +131,7 @@ seq:
       Number of Samples
       5 BCS-NPI integer.
 
-  - id: angle_to_north
+  - id: ANGLE_TO_NORTH
     type: str
     size: 7
     encoding: BCS-N
@@ -139,7 +139,7 @@ seq:
       Angle to North
       7 BCS-N real number in degrees.
 
-  - id: obliquity_angle
+  - id: OBLIQUITY_ANGLE
     type: str
     size: 6
     encoding: BCS-N
@@ -147,7 +147,7 @@ seq:
       Obliquity Angle
       6 BCS-N real number in degrees.
 
-  - id: az_of_obliquity
+  - id: AZ_OF_OBLIQUITY
     type: str
     size: 7
     encoding: BCS-N
@@ -155,7 +155,7 @@ seq:
       Azimuth of Obliquity
       7 BCS-N real number in degrees.
 
-  - id: grp_id
+  - id: GRP_ID
     type: str
     size: 2
     encoding: BCS-NPI
@@ -163,7 +163,7 @@ seq:
       Ground Reference Point ID
       2 BCS-NPI integer.
 
-  - id: grp_lat
+  - id: GRP_LAT
     type: str
     size: 11
     encoding: BCS-N
@@ -171,7 +171,7 @@ seq:
       Ground Reference Point Latitude
       11 BCS-N real number in degrees.
 
-  - id: grp_lon
+  - id: GRP_LON
     type: str
     size: 12
     encoding: BCS-N
@@ -179,7 +179,7 @@ seq:
       Ground Reference Point Longitude
       12 BCS-N real number in degrees.
 
-  - id: grp_alt
+  - id: GRP_ALT
     type: str
     size: 8
     encoding: BCS-N
@@ -187,7 +187,7 @@ seq:
       Ground Reference Point Altitude
       8 BCS-N real number in meters.
 
-  - id: sun_azimuth
+  - id: SUN_AZIMUTH
     type: str
     size: 7
     encoding: BCS-N
@@ -195,7 +195,7 @@ seq:
       Sun Azimuth Angle
       7 BCS-N real number in degrees.
 
-  - id: sun_elevation
+  - id: SUN_ELEVATION
     type: str
     size: 7
     encoding: BCS-N
@@ -203,7 +203,7 @@ seq:
       Sun Elevation Angle
       7 BCS-N real number in degrees.
 
-  - id: predicted_niirs
+  - id: PREDICTED_NIIRS
     type: str
     size: 3
     encoding: BCS-N
@@ -211,7 +211,7 @@ seq:
       Predicted NIIRS
       3 BCS-N real number (0.0-9.9).
 
-  - id: circl_err
+  - id: CIRCL_ERR
     type: str
     size: 5
     encoding: BCS-N
@@ -219,7 +219,7 @@ seq:
       Circular Error
       5 BCS-N real number in meters.
 
-  - id: linear_err
+  - id: LINEAR_ERR
     type: str
     size: 5
     encoding: BCS-N
@@ -227,7 +227,7 @@ seq:
       Linear Error
       5 BCS-N real number in meters.
 
-  - id: cloud_cover
+  - id: CLOUD_COVER
     type: str
     size: 3
     encoding: BCS-NPI
@@ -235,7 +235,7 @@ seq:
       Cloud Cover Percentage
       3 BCS-NPI integer (0-100).
 
-  - id: rolling_shutter_flag
+  - id: ROLLING_SHUTTER_FLAG
     type: str
     size: 1
     encoding: BCS-A
@@ -243,7 +243,7 @@ seq:
       Rolling Shutter Flag
       1 BCS-A character (Y/N).
 
-  - id: ue_time_flag
+  - id: UE_TIME_FLAG
     type: str
     size: 1
     encoding: BCS-A
@@ -251,7 +251,7 @@ seq:
       Uncertainty Estimate Time Flag
       1 BCS-A character (Y/N).
 
-  - id: reserved_1
+  - id: RESERVED_1
     type: str
     size: 14
     encoding: BCS-A

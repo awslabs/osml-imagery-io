@@ -66,6 +66,36 @@ struct OverflowTreData {
     envelopes: Vec<TreEnvelope>,
 }
 
+/// Encoding hints extracted from asset metadata.
+///
+/// These hints control format-specific encoding options when writing NITF files.
+/// They are read from the asset's metadata provider using standard NITF field names.
+#[derive(Clone, Debug)]
+pub struct EncodingHints {
+    /// Band interleave mode (B, P, R, S)
+    pub imode: String,
+    /// Image compression code (NC, NM, C1, C3, etc.)
+    pub ic: String,
+    /// Pixels per block horizontal (1-8192)
+    pub nppbh: u32,
+    /// Pixels per block vertical (1-8192)
+    pub nppbv: u32,
+    /// Compression ratio (for compressed images)
+    pub comrat: Option<String>,
+}
+
+impl Default for EncodingHints {
+    fn default() -> Self {
+        Self {
+            imode: "B".to_string(),
+            ic: "NC".to_string(),
+            nppbh: 0, // 0 means use image dimensions
+            nppbv: 0, // 0 means use image dimensions
+            comrat: None,
+        }
+    }
+}
+
 /// Image properties extracted from an ImageAssetProvider.
 #[derive(Clone, Debug)]
 struct ImageProperties {
@@ -351,20 +381,34 @@ impl JBPDatasetWriter {
     /// * `segment_index` - The 0-based index of this image segment
     ///
     /// # Returns
-    /// A tuple of (subheader_bytes, overflow_data) where:
+    /// A tuple of (subheader_bytes, overflow_data, encoding_hints) where:
     /// - `subheader_bytes` is the complete image subheader
     /// - `overflow_data` is Some if TREs exceeded UDID limit, None otherwise
+    /// - `encoding_hints` are the validated hints used for this image
     fn create_image_subheader_with_overflow(
         &self,
         asset: &QueuedAsset,
         segment_index: u16,
-    ) -> (Vec<u8>, Option<OverflowTreData>) {
+    ) -> Result<(Vec<u8>, Option<OverflowTreData>, EncodingHints), CodecError> {
+        // Extract image properties and encoding hints
+        let props = Self::extract_image_properties(asset);
+        
+        // Detect and resolve conflicts between provider properties and metadata
+        // Provider structural properties always override metadata
+        let warnings = Self::detect_and_resolve_conflicts(asset, &props);
+        for warning in warnings {
+            eprintln!("Warning: {}", warning);
+        }
+        
+        let hints = Self::extract_encoding_hints(asset, &props);
+        let validated_hints = Self::validate_encoding_hints(&hints, &props)?;
+        
         // Extract TRE envelopes from asset metadata
         let envelopes = self.extract_tre_envelopes_from_asset(asset);
         
         if envelopes.is_empty() {
             // No TREs, create subheader without TRE data
-            return (self.create_image_subheader_with_tres(asset, &[], None), None);
+            return Ok((self.create_image_subheader_with_tres(asset, &[], None, &validated_hints), None, validated_hints));
         }
 
         // Split TREs by UDID size limit
@@ -386,23 +430,40 @@ impl JBPDatasetWriter {
 
         // Create subheader with TRE bytes and overflow index placeholder
         // The overflow index will be set later when we know the DES index
-        let subheader = self.create_image_subheader_with_tres(asset, &tre_bytes, overflow_data.as_ref());
+        let subheader = self.create_image_subheader_with_tres(asset, &tre_bytes, overflow_data.as_ref(), &validated_hints);
         
-        (subheader, overflow_data)
+        Ok((subheader, overflow_data, validated_hints))
     }
 
 
     /// Create a minimal image subheader.
-    fn create_image_subheader(&self, asset: &QueuedAsset) -> Vec<u8> {
+    fn create_image_subheader(&self, asset: &QueuedAsset) -> Result<(Vec<u8>, EncodingHints), CodecError> {
+        // Extract image properties and encoding hints
+        let props = Self::extract_image_properties(asset);
+        
+        // Detect and resolve conflicts between provider properties and metadata
+        // Provider structural properties always override metadata
+        let warnings = Self::detect_and_resolve_conflicts(asset, &props);
+        for warning in warnings {
+            eprintln!("Warning: {}", warning);
+        }
+        
+        let hints = Self::extract_encoding_hints(asset, &props);
+        let validated_hints = Self::validate_encoding_hints(&hints, &props)?;
+        
         // Extract TRE bytes from asset metadata if registry is available
         let tre_bytes = self.extract_tre_bytes_from_asset(asset);
-        self.create_image_subheader_with_tres(asset, &tre_bytes, None)
+        Ok((self.create_image_subheader_with_tres(asset, &tre_bytes, None, &validated_hints), validated_hints))
     }
 
     /// Extract image properties from an asset provider.
     /// 
     /// If the provider implements ImageAssetProvider (via MemoryImageAssetProvider),
     /// extract the image properties. Otherwise, return default values.
+    /// 
+    /// Note: IMODE, NPPBH, and NPPBV are set to defaults here. The actual values
+    /// should come from encoding hints extracted via `extract_encoding_hints()`.
+    /// Callers should override these fields with validated encoding hints.
     fn extract_image_properties(asset: &QueuedAsset) -> ImageProperties {
         use crate::memory_image::MemoryImageAssetProvider;
         use crate::traits::ImageAssetProvider;
@@ -418,7 +479,9 @@ impl JBPDatasetWriter {
                 abpp: memory_provider.actual_bits_per_pixel(),
                 pvtype: Self::pixel_type_to_pvtype(memory_provider.pixel_value_type()),
                 irep: config.irep.clone(),
-                imode: config.imode.clone(),
+                // Default IMODE - actual value comes from encoding hints
+                imode: "B".to_string(),
+                // Default block sizes from provider - may be overridden by encoding hints
                 nppbh: memory_provider.num_pixels_per_block_horizontal(),
                 nppbv: memory_provider.num_pixels_per_block_vertical(),
             }
@@ -435,6 +498,306 @@ impl JBPDatasetWriter {
     fn is_memory_image_provider(asset: &QueuedAsset) -> bool {
         use crate::memory_image::MemoryImageAssetProvider;
         asset.provider.as_any().downcast_ref::<MemoryImageAssetProvider>().is_some()
+    }
+
+    /// Extract encoding hints from asset metadata.
+    ///
+    /// Reads encoding hint fields (IMODE, IC, NPPBH, NPPBV, COMRAT) from the asset's
+    /// metadata provider. Missing fields use default values.
+    ///
+    /// # Arguments
+    /// * `asset` - The queued asset to extract hints from
+    /// * `image_props` - Image properties for default block sizes
+    ///
+    /// # Returns
+    /// EncodingHints with values from metadata or defaults.
+    fn extract_encoding_hints(asset: &QueuedAsset, image_props: &ImageProperties) -> EncodingHints {
+        let metadata = asset.provider.metadata();
+        let dict = metadata.as_dict(None);
+        
+        // Extract imode - default to "B" if not present
+        // Field names use uppercase to match .ksy parser output
+        let imode = dict.get("IMODE")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "B".to_string());
+        
+        // Extract ic - default to "NC" (no compression) if not present
+        let ic = dict.get("IC")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "NC".to_string());
+        
+        // Extract nppbh - default to provider's block width if not present or 0
+        let nppbh = dict.get("NPPBH")
+            .and_then(|v| {
+                // Try to parse as integer from string or number
+                if let Some(s) = v.as_str() {
+                    s.trim().parse::<u32>().ok()
+                } else if let Some(n) = v.as_u64() {
+                    Some(n as u32)
+                } else if let Some(n) = v.as_i64() {
+                    Some(n as u32)
+                } else {
+                    None
+                }
+            })
+            .filter(|&n| n > 0)
+            .unwrap_or(image_props.nppbh);
+        
+        // Extract nppbv - default to provider's block height if not present or 0
+        let nppbv = dict.get("NPPBV")
+            .and_then(|v| {
+                // Try to parse as integer from string or number
+                if let Some(s) = v.as_str() {
+                    s.trim().parse::<u32>().ok()
+                } else if let Some(n) = v.as_u64() {
+                    Some(n as u32)
+                } else if let Some(n) = v.as_i64() {
+                    Some(n as u32)
+                } else {
+                    None
+                }
+            })
+            .filter(|&n| n > 0)
+            .unwrap_or(image_props.nppbv);
+        
+        // Extract comrat - optional, only used for compressed images
+        let comrat = dict.get("COMRAT")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        
+        EncodingHints {
+            imode,
+            ic,
+            nppbh,
+            nppbv,
+            comrat,
+        }
+    }
+
+    /// Detect and resolve conflicts between provider properties and metadata.
+    ///
+    /// Provider structural properties (num_bands, pixel_type, dimensions) always
+    /// override any conflicting values in metadata. This method checks for conflicts
+    /// and logs warnings when they are detected.
+    ///
+    /// # Conflict Resolution Rules
+    /// - Provider num_bands overrides metadata NBANDS
+    /// - Provider pixel_type overrides metadata PVTYPE
+    /// - Provider dimensions override metadata NROWS/NCOLS
+    /// - IREP inconsistent with band count logs a warning
+    ///
+    /// # Arguments
+    /// * `asset` - The queued asset containing metadata
+    /// * `image_props` - Image properties extracted from the provider (authoritative)
+    ///
+    /// # Returns
+    /// A vector of warning messages for any detected conflicts.
+    fn detect_and_resolve_conflicts(asset: &QueuedAsset, image_props: &ImageProperties) -> Vec<String> {
+        let metadata = asset.provider.metadata();
+        let dict = metadata.as_dict(None);
+        let mut warnings = Vec::new();
+
+        // Check for NBANDS conflict
+        if let Some(nbands_value) = dict.get("NBANDS") {
+            let metadata_nbands = if let Some(s) = nbands_value.as_str() {
+                s.trim().parse::<u32>().ok()
+            } else if let Some(n) = nbands_value.as_u64() {
+                Some(n as u32)
+            } else if let Some(n) = nbands_value.as_i64() {
+                Some(n as u32)
+            } else {
+                None
+            };
+
+            if let Some(meta_bands) = metadata_nbands {
+                if meta_bands != image_props.nbands {
+                    warnings.push(format!(
+                        "Metadata NBANDS ({}) conflicts with provider band count ({}), using provider value",
+                        meta_bands, image_props.nbands
+                    ));
+                }
+            }
+        }
+
+        // Check for PVTYPE conflict
+        if let Some(pvtype_value) = dict.get("PVTYPE") {
+            if let Some(meta_pvtype) = pvtype_value.as_str() {
+                let meta_pvtype_trimmed = meta_pvtype.trim();
+                let props_pvtype_trimmed = image_props.pvtype.trim();
+                if meta_pvtype_trimmed != props_pvtype_trimmed {
+                    warnings.push(format!(
+                        "Metadata PVTYPE ('{}') conflicts with provider pixel type ('{}'), using provider value",
+                        meta_pvtype_trimmed, props_pvtype_trimmed
+                    ));
+                }
+            }
+        }
+
+        // Check for NROWS conflict
+        if let Some(nrows_value) = dict.get("NROWS") {
+            let metadata_nrows = if let Some(s) = nrows_value.as_str() {
+                s.trim().parse::<u32>().ok()
+            } else if let Some(n) = nrows_value.as_u64() {
+                Some(n as u32)
+            } else if let Some(n) = nrows_value.as_i64() {
+                Some(n as u32)
+            } else {
+                None
+            };
+
+            if let Some(meta_rows) = metadata_nrows {
+                if meta_rows != image_props.nrows {
+                    warnings.push(format!(
+                        "Metadata NROWS ({}) conflicts with provider row count ({}), using provider value",
+                        meta_rows, image_props.nrows
+                    ));
+                }
+            }
+        }
+
+        // Check for NCOLS conflict
+        if let Some(ncols_value) = dict.get("NCOLS") {
+            let metadata_ncols = if let Some(s) = ncols_value.as_str() {
+                s.trim().parse::<u32>().ok()
+            } else if let Some(n) = ncols_value.as_u64() {
+                Some(n as u32)
+            } else if let Some(n) = ncols_value.as_i64() {
+                Some(n as u32)
+            } else {
+                None
+            };
+
+            if let Some(meta_cols) = metadata_ncols {
+                if meta_cols != image_props.ncols {
+                    warnings.push(format!(
+                        "Metadata NCOLS ({}) conflicts with provider column count ({}), using provider value",
+                        meta_cols, image_props.ncols
+                    ));
+                }
+            }
+        }
+
+        // Check for IREP/band count mismatch
+        // IREP values and their expected band counts:
+        // - MONO: 1 band
+        // - RGB: 3 bands
+        // - RGB/LUT: 1 band (lookup table)
+        // - MULTI: any number of bands
+        // - NODISPLY: any number of bands
+        // - NVECTOR: any number of bands
+        // - POLAR: 2 bands
+        // - VPH: 2 bands
+        if let Some(irep_value) = dict.get("IREP") {
+            if let Some(meta_irep) = irep_value.as_str() {
+                let meta_irep_trimmed = meta_irep.trim();
+                let expected_bands: Option<u32> = match meta_irep_trimmed {
+                    "MONO" => Some(1),
+                    "RGB" => Some(3),
+                    "RGB/LUT" => Some(1),
+                    "POLAR" | "VPH" => Some(2),
+                    // MULTI, NODISPLY, NVECTOR can have any number of bands
+                    _ => None,
+                };
+
+                if let Some(expected) = expected_bands {
+                    if expected != image_props.nbands {
+                        warnings.push(format!(
+                            "IREP '{}' inconsistent with {} bands, using provider band count",
+                            meta_irep_trimmed, image_props.nbands
+                        ));
+                    }
+                }
+            }
+        } else {
+            // Also check the IREP from image_props (which comes from the provider config)
+            // against the actual band count
+            let irep_trimmed = image_props.irep.trim();
+            let expected_bands: Option<u32> = match irep_trimmed {
+                "MONO" => Some(1),
+                "RGB" => Some(3),
+                "RGB/LUT" => Some(1),
+                "POLAR" | "VPH" => Some(2),
+                _ => None,
+            };
+
+            if let Some(expected) = expected_bands {
+                if expected != image_props.nbands {
+                    warnings.push(format!(
+                        "IREP '{}' inconsistent with {} bands, using provider band count",
+                        irep_trimmed, image_props.nbands
+                    ));
+                }
+            }
+        }
+
+        warnings
+    }
+
+    /// Validate encoding hints and auto-adjust block sizes if needed.
+    ///
+    /// # Validation Rules
+    /// - IMODE must be one of: B, P, R, S
+    /// - NPPBH must be in range [1, 8192]
+    /// - NPPBV must be in range [1, 8192]
+    /// - Block sizes larger than image dimensions are auto-adjusted
+    ///
+    /// # Arguments
+    /// * `hints` - The encoding hints to validate
+    /// * `image_props` - Image properties for dimension checks
+    ///
+    /// # Returns
+    /// Validated (and possibly adjusted) encoding hints, or an error for invalid values.
+    fn validate_encoding_hints(
+        hints: &EncodingHints,
+        image_props: &ImageProperties,
+    ) -> Result<EncodingHints, CodecError> {
+        // Validate IMODE
+        let valid_imodes = ["B", "P", "R", "S"];
+        if !valid_imodes.contains(&hints.imode.as_str()) {
+            return Err(CodecError::InvalidFormat(format!(
+                "Invalid IMODE value '{}': must be B, P, R, or S",
+                hints.imode
+            )));
+        }
+        
+        // Validate NPPBH range
+        if hints.nppbh < 1 || hints.nppbh > 8192 {
+            return Err(CodecError::InvalidFormat(format!(
+                "Invalid NPPBH value '{}': must be between 1 and 8192",
+                hints.nppbh
+            )));
+        }
+        
+        // Validate NPPBV range
+        if hints.nppbv < 1 || hints.nppbv > 8192 {
+            return Err(CodecError::InvalidFormat(format!(
+                "Invalid NPPBV value '{}': must be between 1 and 8192",
+                hints.nppbv
+            )));
+        }
+        
+        // Auto-adjust block sizes if larger than image dimensions
+        let mut adjusted = hints.clone();
+        
+        if hints.nppbh > image_props.ncols {
+            // Note: In production, this would log a warning
+            // "NPPBH {} exceeds image width {}, adjusting to {}"
+            adjusted.nppbh = image_props.ncols;
+        }
+        
+        if hints.nppbv > image_props.nrows {
+            // Note: In production, this would log a warning
+            // "NPPBV {} exceeds image height {}, adjusting to {}"
+            adjusted.nppbv = image_props.nrows;
+        }
+        
+        // Note: IC validation for unsupported codecs would be done here
+        // For now, we only support NC (no compression)
+        // Future: Add validation for C1, C3, C4, C5, C6, C7, C8, M1, M3, M4, M5, M8, I1
+        
+        Ok(adjusted)
     }
 
     /// Convert PixelType to PVTYPE string.
@@ -668,11 +1031,13 @@ impl JBPDatasetWriter {
     /// * `asset` - The queued asset
     /// * `tre_bytes` - Serialized TRE envelope bytes to include in UDID field
     /// * `overflow` - Optional overflow data (used to determine if UDOFL should be set)
+    /// * `hints` - Encoding hints for IMODE, IC, block sizes
     fn create_image_subheader_with_tres(
         &self,
         asset: &QueuedAsset,
         tre_bytes: &[u8],
         overflow: Option<&OverflowTreData>,
+        hints: &EncodingHints,
     ) -> Vec<u8> {
         // Extract image properties from the asset provider
         let props = Self::extract_image_properties(asset);
@@ -745,8 +1110,8 @@ impl JBPDatasetWriter {
         subheader.extend_from_slice(b" ");
         // NICOM (1) - Number of Image Comments
         subheader.extend_from_slice(b"0");
-        // IC (2) - Image Compression
-        subheader.extend_from_slice(b"NC");
+        // IC (2) - Image Compression (from encoding hints)
+        subheader.extend_from_slice(format!("{:2}", hints.ic).as_bytes());
         
         // NBANDS (1) or XBANDS (5) - Number of Bands
         // If nbands > 9, use XBANDS format (NBANDS=0, then XBANDS field)
@@ -780,21 +1145,21 @@ impl JBPDatasetWriter {
         
         // ISYNC (1) - Image Sync Code
         subheader.extend_from_slice(b"0");
-        // IMODE (1) - Image Mode
-        subheader.extend_from_slice(props.imode.as_bytes());
+        // IMODE (1) - Image Mode (from encoding hints)
+        subheader.extend_from_slice(hints.imode.as_bytes());
         
-        // Calculate blocking parameters
-        let nbpr = (props.ncols + props.nppbh - 1) / props.nppbh;
-        let nbpc = (props.nrows + props.nppbv - 1) / props.nppbv;
+        // Calculate blocking parameters using hints
+        let nbpr = (props.ncols + hints.nppbh - 1) / hints.nppbh;
+        let nbpc = (props.nrows + hints.nppbv - 1) / hints.nppbv;
         
         // NBPR (4) - Number of Blocks Per Row
         subheader.extend_from_slice(format!("{:04}", nbpr).as_bytes());
         // NBPC (4) - Number of Blocks Per Column
         subheader.extend_from_slice(format!("{:04}", nbpc).as_bytes());
-        // NPPBH (4) - Number of Pixels Per Block Horizontal
-        subheader.extend_from_slice(format!("{:04}", props.nppbh).as_bytes());
-        // NPPBV (4) - Number of Pixels Per Block Vertical
-        subheader.extend_from_slice(format!("{:04}", props.nppbv).as_bytes());
+        // NPPBH (4) - Number of Pixels Per Block Horizontal (from encoding hints)
+        subheader.extend_from_slice(format!("{:04}", hints.nppbh).as_bytes());
+        // NPPBV (4) - Number of Pixels Per Block Vertical (from encoding hints)
+        subheader.extend_from_slice(format!("{:04}", hints.nppbv).as_bytes());
         // NBPP (2) - Number of Bits Per Pixel
         subheader.extend_from_slice(format!("{:02}", props.nbpp).as_bytes());
         // IDLVL (3) - Image Display Level
@@ -1075,9 +1440,20 @@ impl JBPDatasetWriter {
     }
 
     /// Create a subheader for the given asset.
+    /// 
+    /// Note: For image segments, use `create_image_subheader_with_overflow` instead
+    /// to properly handle TRE overflow and encoding hints.
     fn create_subheader(&self, asset: &QueuedAsset) -> Vec<u8> {
         match asset.segment_type {
-            SegmentType::Image => self.create_image_subheader(asset),
+            SegmentType::Image => {
+                // For images, we need to handle encoding hints properly.
+                // This path should not normally be reached as images use
+                // create_image_subheader_with_overflow in the close() method.
+                // Return a basic subheader with default hints for fallback.
+                self.create_image_subheader(asset)
+                    .map(|(subheader, _)| subheader)
+                    .unwrap_or_default()
+            }
             SegmentType::Text => self.create_text_subheader(asset),
             SegmentType::Graphic => self.create_graphic_subheader(asset),
             SegmentType::DataExtension | SegmentType::ReservedExtension => {
@@ -1400,14 +1776,18 @@ impl DatasetWriter for JBPDatasetWriter {
         let mut overflow_tres: Vec<OverflowTreData> = Vec::new();
 
         for (idx, asset) in images.iter().enumerate() {
-            let (subheader, overflow) = self.create_image_subheader_with_overflow(asset, idx as u16);
+            let (subheader, overflow, hints) = self.create_image_subheader_with_overflow(asset, idx as u16)?;
             // Get raw data from the provider
             let raw_data = asset.provider.raw_asset()?;
             
             // Only apply IMODE conversion for MemoryImageAssetProvider
             // which provides data in BSQ format. Other providers pass through as-is.
             let data = if Self::is_memory_image_provider(asset) {
-                let props = Self::extract_image_properties(asset);
+                let mut props = Self::extract_image_properties(asset);
+                // Use encoding hints for IMODE and block sizes
+                props.imode = hints.imode.clone();
+                props.nppbh = hints.nppbh;
+                props.nppbv = hints.nppbv;
                 Self::convert_bsq_to_imode(&raw_data, &props)
             } else {
                 raw_data
@@ -1992,6 +2372,477 @@ mod tests {
         JBPDatasetWriter::patch_overflow_index(&mut subheader, 123);
         
         assert_eq!(&subheader, b"prefix123suffix");
+    }
+
+    // Helper struct for conflict detection tests
+    struct ConflictTestMetadataProvider {
+        data: HashMap<String, serde_json::Value>,
+    }
+
+    impl ConflictTestMetadataProvider {
+        fn new() -> Self {
+            Self {
+                data: HashMap::new(),
+            }
+        }
+
+        fn with_field(mut self, key: &str, value: serde_json::Value) -> Self {
+            self.data.insert(key.to_string(), value);
+            self
+        }
+    }
+
+    impl MetadataProvider for ConflictTestMetadataProvider {
+        fn raw(&self) -> &[u8] {
+            &[]
+        }
+
+        fn as_dict(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
+            self.data.clone()
+        }
+    }
+
+    struct ConflictTestAssetProvider {
+        key: String,
+        metadata: Arc<dyn MetadataProvider>,
+    }
+
+    impl ConflictTestAssetProvider {
+        fn new(key: &str, metadata: Arc<dyn MetadataProvider>) -> Self {
+            Self {
+                key: key.to_string(),
+                metadata,
+            }
+        }
+    }
+
+    impl AssetProvider for ConflictTestAssetProvider {
+        fn key(&self) -> &str {
+            &self.key
+        }
+
+        fn title(&self) -> &str {
+            "Test Asset"
+        }
+
+        fn description(&self) -> &str {
+            "Test Description"
+        }
+
+        fn media_type(&self) -> &str {
+            "image/nitf"
+        }
+
+        fn roles(&self) -> &[String] {
+            &[]
+        }
+
+        fn asset_type(&self) -> AssetType {
+            AssetType::Image
+        }
+
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
+            Ok(vec![0u8; 100])
+        }
+
+        fn metadata(&self) -> Arc<dyn MetadataProvider> {
+            self.metadata.clone()
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    #[test]
+    fn conflict_detection_no_conflicts() {
+        let metadata = Arc::new(ConflictTestMetadataProvider::new());
+        let provider = ConflictTestAssetProvider::new("test", metadata);
+        let asset = QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        };
+        
+        let props = ImageProperties {
+            nrows: 100,
+            ncols: 200,
+            nbands: 3,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "RGB".to_string(),
+            imode: "B".to_string(),
+            nppbh: 200,
+            nppbv: 100,
+        };
+        
+        let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn conflict_detection_nbands_mismatch() {
+        let metadata = Arc::new(
+            ConflictTestMetadataProvider::new()
+                .with_field("NBANDS", serde_json::json!(5))
+        );
+        let provider = ConflictTestAssetProvider::new("test", metadata);
+        let asset = QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        };
+        
+        let props = ImageProperties {
+            nrows: 100,
+            ncols: 200,
+            nbands: 3,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "RGB".to_string(),
+            imode: "B".to_string(),
+            nppbh: 200,
+            nppbv: 100,
+        };
+        
+        let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("NBANDS"));
+        assert!(warnings[0].contains("5"));
+        assert!(warnings[0].contains("3"));
+    }
+
+    #[test]
+    fn conflict_detection_pvtype_mismatch() {
+        let metadata = Arc::new(
+            ConflictTestMetadataProvider::new()
+                .with_field("PVTYPE", serde_json::json!("R"))
+        );
+        let provider = ConflictTestAssetProvider::new("test", metadata);
+        let asset = QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        };
+        
+        let props = ImageProperties {
+            nrows: 100,
+            ncols: 200,
+            nbands: 1,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "MONO".to_string(),
+            imode: "B".to_string(),
+            nppbh: 200,
+            nppbv: 100,
+        };
+        
+        let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("PVTYPE"));
+        assert!(warnings[0].contains("R"));
+        assert!(warnings[0].contains("INT"));
+    }
+
+    #[test]
+    fn conflict_detection_nrows_mismatch() {
+        let metadata = Arc::new(
+            ConflictTestMetadataProvider::new()
+                .with_field("NROWS", serde_json::json!(500))
+        );
+        let provider = ConflictTestAssetProvider::new("test", metadata);
+        let asset = QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        };
+        
+        let props = ImageProperties {
+            nrows: 100,
+            ncols: 200,
+            nbands: 1,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "MONO".to_string(),
+            imode: "B".to_string(),
+            nppbh: 200,
+            nppbv: 100,
+        };
+        
+        let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("NROWS"));
+        assert!(warnings[0].contains("500"));
+        assert!(warnings[0].contains("100"));
+    }
+
+    #[test]
+    fn conflict_detection_ncols_mismatch() {
+        let metadata = Arc::new(
+            ConflictTestMetadataProvider::new()
+                .with_field("NCOLS", serde_json::json!(800))
+        );
+        let provider = ConflictTestAssetProvider::new("test", metadata);
+        let asset = QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        };
+        
+        let props = ImageProperties {
+            nrows: 100,
+            ncols: 200,
+            nbands: 1,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "MONO".to_string(),
+            imode: "B".to_string(),
+            nppbh: 200,
+            nppbv: 100,
+        };
+        
+        let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("NCOLS"));
+        assert!(warnings[0].contains("800"));
+        assert!(warnings[0].contains("200"));
+    }
+
+    #[test]
+    fn conflict_detection_irep_band_count_mismatch_from_metadata() {
+        // Metadata says RGB (expects 3 bands) but provider has 1 band
+        let metadata = Arc::new(
+            ConflictTestMetadataProvider::new()
+                .with_field("IREP", serde_json::json!("RGB"))
+        );
+        let provider = ConflictTestAssetProvider::new("test", metadata);
+        let asset = QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        };
+        
+        let props = ImageProperties {
+            nrows: 100,
+            ncols: 200,
+            nbands: 1,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "MONO".to_string(),
+            imode: "B".to_string(),
+            nppbh: 200,
+            nppbv: 100,
+        };
+        
+        let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("IREP"));
+        assert!(warnings[0].contains("RGB"));
+        assert!(warnings[0].contains("1 bands"));
+    }
+
+    #[test]
+    fn conflict_detection_irep_band_count_mismatch_from_props() {
+        // No IREP in metadata, but props.irep is MONO with 3 bands
+        let metadata = Arc::new(ConflictTestMetadataProvider::new());
+        let provider = ConflictTestAssetProvider::new("test", metadata);
+        let asset = QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        };
+        
+        let props = ImageProperties {
+            nrows: 100,
+            ncols: 200,
+            nbands: 3,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "MONO".to_string(), // MONO expects 1 band, but we have 3
+            imode: "B".to_string(),
+            nppbh: 200,
+            nppbv: 100,
+        };
+        
+        let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("IREP"));
+        assert!(warnings[0].contains("MONO"));
+        assert!(warnings[0].contains("3 bands"));
+    }
+
+    #[test]
+    fn conflict_detection_multiple_conflicts() {
+        // Multiple conflicts at once
+        let metadata = Arc::new(
+            ConflictTestMetadataProvider::new()
+                .with_field("NBANDS", serde_json::json!(5))
+                .with_field("NROWS", serde_json::json!(999))
+                .with_field("NCOLS", serde_json::json!(888))
+        );
+        let provider = ConflictTestAssetProvider::new("test", metadata);
+        let asset = QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        };
+        
+        let props = ImageProperties {
+            nrows: 100,
+            ncols: 200,
+            nbands: 3,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "RGB".to_string(),
+            imode: "B".to_string(),
+            nppbh: 200,
+            nppbv: 100,
+        };
+        
+        let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
+        assert_eq!(warnings.len(), 3);
+        assert!(warnings.iter().any(|w| w.contains("NBANDS")));
+        assert!(warnings.iter().any(|w| w.contains("NROWS")));
+        assert!(warnings.iter().any(|w| w.contains("NCOLS")));
+    }
+
+    #[test]
+    fn conflict_detection_string_values_parsed() {
+        // Test that string values in metadata are parsed correctly
+        let metadata = Arc::new(
+            ConflictTestMetadataProvider::new()
+                .with_field("NBANDS", serde_json::json!("5"))
+                .with_field("NROWS", serde_json::json!("  999  "))
+        );
+        let provider = ConflictTestAssetProvider::new("test", metadata);
+        let asset = QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        };
+        
+        let props = ImageProperties {
+            nrows: 100,
+            ncols: 200,
+            nbands: 3,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "RGB".to_string(),
+            imode: "B".to_string(),
+            nppbh: 200,
+            nppbv: 100,
+        };
+        
+        let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
+        assert_eq!(warnings.len(), 2);
+    }
+
+    #[test]
+    fn conflict_detection_matching_values_no_warning() {
+        // When metadata values match provider values, no warnings
+        let metadata = Arc::new(
+            ConflictTestMetadataProvider::new()
+                .with_field("NBANDS", serde_json::json!(3))
+                .with_field("NROWS", serde_json::json!(100))
+                .with_field("NCOLS", serde_json::json!(200))
+                .with_field("PVTYPE", serde_json::json!("INT"))
+                .with_field("IREP", serde_json::json!("RGB"))
+        );
+        let provider = ConflictTestAssetProvider::new("test", metadata);
+        let asset = QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        };
+        
+        let props = ImageProperties {
+            nrows: 100,
+            ncols: 200,
+            nbands: 3,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "RGB".to_string(),
+            imode: "B".to_string(),
+            nppbh: 200,
+            nppbv: 100,
+        };
+        
+        let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn conflict_detection_multi_irep_no_warning() {
+        // MULTI IREP can have any number of bands
+        let metadata = Arc::new(
+            ConflictTestMetadataProvider::new()
+                .with_field("IREP", serde_json::json!("MULTI"))
+        );
+        let provider = ConflictTestAssetProvider::new("test", metadata);
+        let asset = QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        };
+        
+        let props = ImageProperties {
+            nrows: 100,
+            ncols: 200,
+            nbands: 10, // Any number of bands is valid for MULTI
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "MULTI".to_string(),
+            imode: "B".to_string(),
+            nppbh: 200,
+            nppbv: 100,
+        };
+        
+        let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
+        assert!(warnings.is_empty());
     }
 }
 

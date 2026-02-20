@@ -885,7 +885,13 @@ impl JBPDatasetReader {
         // Create appropriate definition and provider based on segment type
         match segment_type {
             SegmentType::Image => {
-                let definition = Arc::new(Self::create_image_subheader_definition());
+                // Use the full .ksy-driven definition from registry if available,
+                // falling back to minimal definition for backwards compatibility.
+                // This ensures all image subheader fields are exposed through metadata.
+                let definition = self
+                    .registry
+                    .get("nitf_02.10_image_subheader")
+                    .unwrap_or_else(|| Arc::new(Self::create_image_subheader_definition()));
                 
                 // Extract TREs from image subheader
                 let tre_envelopes = self.extract_image_tres(&subheader_bytes)?;
@@ -1015,7 +1021,7 @@ impl JBPDatasetReader {
         if let Some(full_def) = self.registry.get("nitf_02.10_image_subheader") {
             if let Ok(accessor) = StructureAccessor::new(full_def, subheader_bytes) {
                 // Extract UDID TREs
-                if let Ok(udid_value) = accessor.get("udid") {
+                if let Ok(udid_value) = accessor.get("UDID") {
                     let udid_bytes = udid_value.as_bytes();
                     if !udid_bytes.is_empty() {
                         if let Ok(udid_tres) = TreEnvelope::parse_all(udid_bytes) {
@@ -1025,7 +1031,7 @@ impl JBPDatasetReader {
                 }
                 
                 // Extract IXSHD TREs
-                if let Ok(ixshd_value) = accessor.get("ixshd") {
+                if let Ok(ixshd_value) = accessor.get("IXSHD") {
                     let ixshd_bytes = ixshd_value.as_bytes();
                     if !ixshd_bytes.is_empty() {
                         if let Ok(ixshd_tres) = TreEnvelope::parse_all(ixshd_bytes) {
@@ -1081,7 +1087,7 @@ impl JBPDatasetReader {
         if let Some(full_def) = self.registry.get("nitf_02.10_graphic_subheader") {
             if let Ok(accessor) = StructureAccessor::new(full_def, subheader_bytes) {
                 // Extract SXSHD TREs
-                if let Ok(sxshd_value) = accessor.get("sxshd") {
+                if let Ok(sxshd_value) = accessor.get("SXSHD") {
                     let sxshd_bytes = sxshd_value.as_bytes();
                     if !sxshd_bytes.is_empty() {
                         if let Ok(sxshd_tres) = TreEnvelope::parse_all(sxshd_bytes) {
@@ -1125,7 +1131,7 @@ impl JBPDatasetReader {
         if let Some(full_def) = self.registry.get("nitf_02.10_text_subheader") {
             if let Ok(accessor) = StructureAccessor::new(full_def, subheader_bytes) {
                 // Extract TXSHD TREs
-                if let Ok(txshd_value) = accessor.get("txshd") {
+                if let Ok(txshd_value) = accessor.get("TXSHD") {
                     let txshd_bytes = txshd_value.as_bytes();
                     if !txshd_bytes.is_empty() {
                         if let Ok(txshd_tres) = TreEnvelope::parse_all(txshd_bytes) {
@@ -1755,7 +1761,7 @@ mod property_tests {
                 // Verify metadata is accessible
                 let metadata = asset.metadata();
                 let dict = metadata.as_dict(None);
-                // Should have at least the IM field
+                // Should have at least the IM field (uppercase per .ksy convention)
                 prop_assert!(
                     dict.contains_key("IM"),
                     "Image segment {} metadata missing IM field",
@@ -2166,7 +2172,7 @@ mod tre_property_tests {
                 let metadata = asset.metadata();
                 let dict = metadata.as_dict(None);
                 
-                // Should have at least the IM field from subheader
+                // Should have at least the IM field from subheader (uppercase per .ksy convention)
                 prop_assert!(
                     dict.contains_key("IM"),
                     "Image segment {} metadata should have IM field", i
@@ -2217,7 +2223,7 @@ mod tre_property_tests {
             // Get all metadata fields
             let dict = metadata.as_dict(None);
             
-            // Verify subheader fields are present
+            // Verify subheader fields are present (uppercase per .ksy convention)
             prop_assert!(
                 dict.contains_key("IM"),
                 "Should have IM field from subheader"
@@ -2475,12 +2481,12 @@ mod nitf_integration_tests {
                 let dict = metadata.as_dict(None);
                 
                 // Verify that we have fields from different parts of the subheader
-                // Early fields (before band_info)
+                // Early fields (before BAND_INFO) - uppercase per .ksy convention
                 let has_early_fields = dict.contains_key("IM") || dict.contains_key("IID1");
                 
-                // Late fields (after band_info) - these verify the TypeRef fix
-                // Note: The metadata provider may use a minimal definition that doesn't
-                // include all fields, so we check for any late field presence
+                // Late fields (after BAND_INFO) - these verify the TypeRef fix
+                // Note: The metadata provider uses the full .ksy definition which
+                // includes all fields with uppercase names
                 let has_late_fields = dict.contains_key("UDIDL") || 
                                       dict.contains_key("IXSHDL") ||
                                       dict.contains_key("ISYNC") ||

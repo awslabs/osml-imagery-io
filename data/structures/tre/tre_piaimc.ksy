@@ -13,7 +13,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix C - PIAE
 
 seq:
-  - id: cloudcvr
+  - id: CLOUDCVR
     type: str
     size: 3
     encoding: ASCII
@@ -22,7 +22,7 @@ seq:
       Percentage of image obscured by cloud.
       3 BCS-N, 000-100 or 999 (unknown).
 
-  - id: srp
+  - id: SRP
     type: str
     size: 1
     encoding: ASCII
@@ -31,7 +31,7 @@ seq:
       Indicates if standard radiometric product data is available.
       1 BCS-A, Y or N.
 
-  - id: sensmode
+  - id: SENSMODE
     type: str
     size: 12
     encoding: ASCII
@@ -40,7 +40,7 @@ seq:
       Identifies the sensor mode used in capturing the image.
       12 BCS-A, e.g., WHISKBROOM, PUSHBROOM, FRAMING, SPOT, SWATH.
 
-  - id: sensname
+  - id: SENSNAME
     type: str
     size: 18
     encoding: ASCII
@@ -49,7 +49,7 @@ seq:
       Identifies the name of the sensor used in capturing the image.
       18 BCS-A.
 
-  - id: source
+  - id: SOURCE
     type: str
     size: 255
     encoding: ASCII
@@ -58,7 +58,7 @@ seq:
       Indicates where the image came from.
       255 BCS-A.
 
-  - id: comgen
+  - id: COMGEN
     type: str
     size: 2
     encoding: ASCII
@@ -67,7 +67,7 @@ seq:
       Number of lossy compressions done by the archive.
       2 BCS-N, 00-99.
 
-  - id: subqual
+  - id: SUBQUAL
     type: str
     size: 1
     encoding: ASCII
@@ -76,7 +76,7 @@ seq:
       Subjective rating of image quality.
       1 BCS-A, P=Poor, G=Good, E=Excellent, F=Fair.
 
-  - id: piamsnnum
+  - id: PIAMSNNUM
     type: str
     size: 7
     encoding: ASCII
@@ -85,7 +85,7 @@ seq:
       Mission number assigned to the reconnaissance mission.
       7 BCS-A.
 
-  - id: camspecs
+  - id: CAMSPECS
     type: str
     size: 32
     encoding: ASCII
@@ -94,7 +94,7 @@ seq:
       Brand name of camera and focal length of lens.
       32 BCS-A.
 
-  - id: projid
+  - id: PROJID
     type: str
     size: 2
     encoding: ASCII
@@ -103,7 +103,7 @@ seq:
       Collection platform project identifier code.
       2 BCS-A.
 
-  - id: generation
+  - id: GENERATION
     type: str
     size: 1
     encoding: ASCII
@@ -112,7 +112,7 @@ seq:
       Number of image generations. 0 is reserved for original.
       1 BCS-N, 0-9.
 
-  - id: esd
+  - id: ESD
     type: str
     size: 1
     encoding: ASCII
@@ -121,7 +121,7 @@ seq:
       Indicates if exploitation support data is available.
       1 BCS-A, Y or N.
 
-  - id: othercond
+  - id: OTHERCOND
     type: str
     size: 2
     encoding: ASCII
@@ -130,7 +130,7 @@ seq:
       Other conditions affecting imagery over target.
       2 BCS-A.
 
-  - id: meangsd
+  - id: MEANGSD
     type: str
     size: 7
     encoding: ASCII
@@ -139,7 +139,7 @@ seq:
       Geometric mean of across/along scan center-to-center distance.
       7 BCS-N, 00000.0 to 99999.9 in inches.
 
-  - id: idatum
+  - id: IDATUM
     type: str
     size: 3
     encoding: ASCII
@@ -148,7 +148,7 @@ seq:
       Mathematical representation of earth used to geo-correct image.
       3 BCS-A.
 
-  - id: iellip
+  - id: IELLIP
     type: str
     size: 3
     encoding: ASCII
@@ -157,7 +157,7 @@ seq:
       Mathematical representation of earth (ellipsoid) for geo-correction.
       3 BCS-A.
 
-  - id: preproc
+  - id: PREPROC
     type: str
     size: 2
     encoding: ASCII
@@ -166,7 +166,7 @@ seq:
       Level of radiometric and geometric processing applied.
       2 BCS-A.
 
-  - id: iproj
+  - id: IPROJ
     type: str
     size: 2
     encoding: ASCII
@@ -175,7 +175,7 @@ seq:
       2D-map projection used to geo-correct/rectify image.
       2 BCS-A.
 
-  - id: sattrack
+  - id: SATTRACK
     type: str
     size: 8
     encoding: ASCII

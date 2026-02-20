@@ -13,7 +13,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix E - ASDE
 
 seq:
-  - id: angle_to_north
+  - id: ANGLE_TO_NORTH
     type: str
     size: 3
     encoding: ASCII
@@ -22,7 +22,7 @@ seq:
       Angle measured clockwise from first-row vector to True North.
       3 BCS-N, 000-359 degrees.
 
-  - id: mean_gsd
+  - id: MEAN_GSD
     type: str
     size: 5
     encoding: ASCII
@@ -31,13 +31,13 @@ seq:
       Geometric mean of cross/along scan center-to-center distance.
       5 BCS-N, 000.0-999.9 inches. Accuracy ±10%.
 
-  - id: reserved_001
+  - id: RESERVED_001
     type: str
     size: 1
     encoding: ASCII
     doc: Reserved (1 character)
 
-  - id: dynamic_range
+  - id: DYNAMIC_RANGE
     type: str
     size: 5
     encoding: ASCII
@@ -46,13 +46,13 @@ seq:
       Dynamic range of image pixels.
       5 BCS-N, 00000-65535.
 
-  - id: reserved_002
+  - id: RESERVED_002
     type: str
     size: 7
     encoding: ASCII
     doc: Reserved (7 spaces)
 
-  - id: obl_ang
+  - id: OBL_ANG
     type: str
     size: 5
     encoding: ASCII
@@ -61,7 +61,7 @@ seq:
       Angle between local NED horizontal and optical axis.
       5 BCS-N, 00.00-90.00 degrees.
 
-  - id: roll_ang
+  - id: ROLL_ANG
     type: str
     size: 6
     encoding: ASCII
@@ -70,7 +70,7 @@ seq:
       Roll angle of platform body.
       6 BCS-N, ±90.00 degrees.
 
-  - id: prime_id
+  - id: PRIME_ID
     type: str
     size: 12
     encoding: ASCII
@@ -78,7 +78,7 @@ seq:
       Primary Target ID (PRIME_ID)
       12 BCS-A.
 
-  - id: prime_be
+  - id: PRIME_BE
     type: str
     size: 15
     encoding: ASCII
@@ -87,13 +87,13 @@ seq:
       Basic Encyclopedia or non-BE ID of primary target.
       15 BCS-A.
 
-  - id: reserved_003
+  - id: RESERVED_003
     type: str
     size: 5
     encoding: ASCII
     doc: Reserved (5 spaces)
 
-  - id: n_sec
+  - id: N_SEC
     type: str
     size: 3
     encoding: ASCII
@@ -102,19 +102,19 @@ seq:
       Number of SECTG extensions present.
       3 BCS-N, 000-250.
 
-  - id: reserved_004
+  - id: RESERVED_004
     type: str
     size: 2
     encoding: ASCII
     doc: Reserved (2 spaces)
 
-  - id: reserved_005
+  - id: RESERVED_005
     type: str
     size: 7
     encoding: ASCII
     doc: Reserved (value 0000001)
 
-  - id: n_seg
+  - id: N_SEG
     type: str
     size: 3
     encoding: ASCII
@@ -123,7 +123,7 @@ seq:
       Separate imagery pieces within an imaging operation.
       3 BCS-N, 001-999.
 
-  - id: max_lp_seg
+  - id: MAX_LP_SEG
     type: str
     size: 6
     encoding: ASCII
@@ -132,13 +132,13 @@ seq:
       Maximum number of lines per segment including overlap.
       6 BCS-N, 000001-199999.
 
-  - id: reserved_006
+  - id: RESERVED_006
     type: str
     size: 12
     encoding: ASCII
     doc: Reserved (12 spaces)
 
-  - id: sun_el
+  - id: SUN_EL
     type: str
     size: 5
     encoding: ASCII
@@ -147,7 +147,7 @@ seq:
       Angle from target plane at first image line.
       5 BCS-N, ±90.0 degrees, or 999.9 if unavailable.
 
-  - id: sun_az
+  - id: SUN_AZ
     type: str
     size: 5
     encoding: ASCII

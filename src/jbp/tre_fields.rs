@@ -299,25 +299,25 @@ mod tests {
         StructureDefinition::new("tre_geolob")
             .with_title("Geographic Location TRE")
             .with_field(
-                FieldDefinition::new("arv", FieldType::String)
+                FieldDefinition::new("ARV", FieldType::String)
                     .with_size(SizeSpec::Fixed(9))
                     .with_encoding(Encoding::BcsN)
                     .with_doc("Longitude density"),
             )
             .with_field(
-                FieldDefinition::new("brv", FieldType::String)
+                FieldDefinition::new("BRV", FieldType::String)
                     .with_size(SizeSpec::Fixed(9))
                     .with_encoding(Encoding::BcsN)
                     .with_doc("Latitude density"),
             )
             .with_field(
-                FieldDefinition::new("lso", FieldType::String)
+                FieldDefinition::new("LSO", FieldType::String)
                     .with_size(SizeSpec::Fixed(15))
                     .with_encoding(Encoding::BcsN)
                     .with_doc("Longitude of reference origin"),
             )
             .with_field(
-                FieldDefinition::new("pso", FieldType::String)
+                FieldDefinition::new("PSO", FieldType::String)
                     .with_size(SizeSpec::Fixed(15))
                     .with_encoding(Encoding::BcsN)
                     .with_doc("Latitude of reference origin"),
@@ -426,11 +426,11 @@ mod tests {
             .unwrap();
         
         // Read the ARV field
-        let arv = accessor.get("arv").unwrap();
+        let arv = accessor.get("ARV").unwrap();
         assert_eq!(arv.as_str().unwrap(), "000360000");
         
         // Read the BRV field
-        let brv = accessor.get("brv").unwrap();
+        let brv = accessor.get("BRV").unwrap();
         assert_eq!(brv.as_str().unwrap(), "000360000");
     }
 }

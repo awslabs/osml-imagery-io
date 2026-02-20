@@ -13,7 +13,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix D - CSDE
 
 seq:
-  - id: angle_to_north
+  - id: ANGLE_TO_NORTH
     type: str
     size: 3
     encoding: ASCII
@@ -22,7 +22,7 @@ seq:
       Angle measured clockwise from first-row vector to True North.
       3 BCS-N, 000-359 degrees.
 
-  - id: mean_gsd
+  - id: MEAN_GSD
     type: str
     size: 5
     encoding: ASCII
@@ -31,13 +31,13 @@ seq:
       Geometric mean of cross/along scan center-to-center distance.
       5 BCS-N, 000.0-999.9 inches. Accuracy +10%.
 
-  - id: reserved1
+  - id: RESERVED1
     type: str
     size: 1
     encoding: ASCII
     doc: Reserved (1 space)
 
-  - id: dynamic_range
+  - id: DYNAMIC_RANGE
     type: str
     size: 5
     encoding: ASCII
@@ -46,25 +46,25 @@ seq:
       Dynamic range of pixels in image.
       5 BCS-N, 00000-99999.
 
-  - id: reserved2
+  - id: RESERVED2
     type: str
     size: 3
     encoding: ASCII
     doc: Reserved (3 spaces)
 
-  - id: reserved3
+  - id: RESERVED3
     type: str
     size: 1
     encoding: ASCII
     doc: Reserved (1 space)
 
-  - id: reserved4
+  - id: RESERVED4
     type: str
     size: 3
     encoding: ASCII
     doc: Reserved (3 spaces)
 
-  - id: obl_ang
+  - id: OBL_ANG
     type: str
     size: 5
     encoding: ASCII
@@ -72,7 +72,7 @@ seq:
       Obliquity Angle (OBL_ANG)
       5 BCS-N, 00.00-90.00 degrees.
 
-  - id: roll_ang
+  - id: ROLL_ANG
     type: str
     size: 6
     encoding: ASCII
@@ -80,49 +80,49 @@ seq:
       Roll Angle (ROLL_ANG)
       6 BCS-N, +90.00 degrees (signed).
 
-  - id: reserved5
+  - id: RESERVED5
     type: str
     size: 12
     encoding: ASCII
     doc: Reserved (12 spaces)
 
-  - id: reserved6
+  - id: RESERVED6
     type: str
     size: 15
     encoding: ASCII
     doc: Reserved (15 spaces)
 
-  - id: reserved7
+  - id: RESERVED7
     type: str
     size: 4
     encoding: ASCII
     doc: Reserved (4 spaces)
 
-  - id: reserved8
+  - id: RESERVED8
     type: str
     size: 1
     encoding: ASCII
     doc: Reserved (1 space)
 
-  - id: reserved9
+  - id: RESERVED9
     type: str
     size: 3
     encoding: ASCII
     doc: Reserved (3 spaces)
 
-  - id: reserved10
+  - id: RESERVED10
     type: str
     size: 1
     encoding: ASCII
     doc: Reserved (1 space)
 
-  - id: reserved11
+  - id: RESERVED11
     type: str
     size: 1
     encoding: ASCII
     doc: Reserved (1 space)
 
-  - id: n_ref
+  - id: N_REF
     type: str
     size: 2
     encoding: ASCII
@@ -131,7 +131,7 @@ seq:
       Number of reference lines in image.
       2 BCS-N, 00-99.
 
-  - id: rev_num
+  - id: REV_NUM
     type: str
     size: 5
     encoding: ASCII
@@ -140,7 +140,7 @@ seq:
       Revolution number at northernmost point of orbit.
       5 BCS-N, 00001-99999.
 
-  - id: n_seg
+  - id: N_SEG
     type: str
     size: 3
     encoding: ASCII
@@ -148,7 +148,7 @@ seq:
       Number of Segments (N_SEG)
       3 BCS-N, 001-999.
 
-  - id: max_lp_seg
+  - id: MAX_LP_SEG
     type: str
     size: 6
     encoding: ASCII
@@ -157,19 +157,19 @@ seq:
       Maximum number of lines per segment including overlap.
       6 BCS-N, 000001-999999.
 
-  - id: reserved12
+  - id: RESERVED12
     type: str
     size: 6
     encoding: ASCII
     doc: Reserved (6 spaces)
 
-  - id: reserved13
+  - id: RESERVED13
     type: str
     size: 6
     encoding: ASCII
     doc: Reserved (6 spaces)
 
-  - id: sun_el
+  - id: SUN_EL
     type: str
     size: 5
     encoding: ASCII
@@ -178,7 +178,7 @@ seq:
       Sun elevation from target plane at first image line.
       5 BCS-N, -90.0 to +90.0 degrees, or 999.9 if unavailable.
 
-  - id: sun_az
+  - id: SUN_AZ
     type: str
     size: 5
     encoding: ASCII

@@ -18,6 +18,7 @@ from aws.osml.io._io import (
     DataAssetProvider,
     GraphicsAssetProvider,
     MetadataProvider,
+    SimpleMetadataProvider,
     # Parser bindings
     StructureRegistry,
     StructureAccessor,
@@ -49,6 +50,7 @@ __all__ = [
     "GraphicsAssetProvider",
     # Metadata
     "MetadataProvider",
+    "SimpleMetadataProvider",
     # Parser
     "StructureRegistry",
     "StructureAccessor",

@@ -24,7 +24,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AR - BCHIPA
 
 seq:
-  - id: sde_uuid
+  - id: SDE_UUID
     type: str
     size: 36
     encoding: BCS-A
@@ -33,7 +33,7 @@ seq:
       Canonical format using lower-case characters, or all blank spaces (0x20)
       if no UUID is provided.
 
-  - id: num_insts
+  - id: NUM_INSTS
     type: str
     size: 5
     encoding: BCS-N
@@ -41,7 +41,7 @@ seq:
       Number of instances of BCHIPA TRE associated with this band-wise
       processed image. Range: 00001-99999
 
-  - id: instance
+  - id: INSTANCE
     type: str
     size: 5
     encoding: BCS-N
@@ -49,7 +49,7 @@ seq:
       Current instance number within the series of BCHIPA TREs.
       Range: 00001-99999
 
-  - id: include_a
+  - id: INCLUDE_A
     type: str
     size: 1
     encoding: BCS-A
@@ -58,7 +58,7 @@ seq:
       Y = include fields, N = exclude fields.
       Must be Y if INSTANCE = 00001.
 
-  - id: include_b
+  - id: INCLUDE_B
     type: str
     size: 1
     encoding: BCS-A
@@ -66,7 +66,7 @@ seq:
       Inclusion flag for original band information.
       Y = include fields, N = exclude fields.
 
-  - id: include_c
+  - id: INCLUDE_C
     type: str
     size: 1
     encoding: BCS-A
@@ -76,7 +76,7 @@ seq:
 
   # Remaining data depends on include flags and has complex nested conditionals
   # This simplified definition captures the raw remaining bytes
-  - id: conditional_data
+  - id: CONDITIONAL_DATA
     size-eos: true
     doc: |
       Conditional sections based on include flags (A, B, C).

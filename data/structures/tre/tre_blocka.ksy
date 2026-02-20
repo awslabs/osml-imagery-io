@@ -13,7 +13,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix E - ASDE
 
 seq:
-  - id: block_instance
+  - id: BLOCK_INSTANCE
     type: str
     size: 2
     encoding: ASCII
@@ -22,7 +22,7 @@ seq:
       Block number of this image block.
       2 BCS-N, 01-99.
 
-  - id: n_gray
+  - id: N_GRAY
     type: str
     size: 5
     encoding: ASCII
@@ -31,7 +31,7 @@ seq:
       SAR: number of gray fill pixels. EO-IR: 00000.
       5 BCS-N, 00000-99999.
 
-  - id: l_lines
+  - id: L_LINES
     type: str
     size: 5
     encoding: ASCII
@@ -39,7 +39,7 @@ seq:
       Row Count (L_LINES)
       5 BCS-N, 00001-99999.
 
-  - id: layover_angle
+  - id: LAYOVER_ANGLE
     type: str
     size: 3
     encoding: ASCII
@@ -48,7 +48,7 @@ seq:
       SAR: angle between first row and layover direction.
       3 BCS-N, 000-359 degrees, or spaces for EO-IR.
 
-  - id: shadow_angle
+  - id: SHADOW_ANGLE
     type: str
     size: 3
     encoding: ASCII
@@ -57,13 +57,13 @@ seq:
       SAR: angle between first row and radar shadow.
       3 BCS-N, 000-359 degrees, or spaces for EO-IR.
 
-  - id: reserved_001
+  - id: RESERVED_001
     type: str
     size: 16
     encoding: ASCII
     doc: Reserved (16 spaces)
 
-  - id: frlc_loc
+  - id: FRLC_LOC
     type: str
     size: 21
     encoding: ASCII
@@ -72,7 +72,7 @@ seq:
       High precision corner coordinate.
       21 BCS-A, Xddmmss.ssYdddmmss.ss or ±dd.dddddd±ddd.dddddd.
 
-  - id: lrlc_loc
+  - id: LRLC_LOC
     type: str
     size: 21
     encoding: ASCII
@@ -81,7 +81,7 @@ seq:
       High precision corner coordinate.
       21 BCS-A.
 
-  - id: lrfc_loc
+  - id: LRFC_LOC
     type: str
     size: 21
     encoding: ASCII
@@ -90,7 +90,7 @@ seq:
       High precision corner coordinate.
       21 BCS-A.
 
-  - id: frfc_loc
+  - id: FRFC_LOC
     type: str
     size: 21
     encoding: ASCII
@@ -99,7 +99,7 @@ seq:
       High precision corner coordinate.
       21 BCS-A.
 
-  - id: reserved_002
+  - id: RESERVED_002
     type: str
     size: 5
     encoding: ASCII

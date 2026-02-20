@@ -12,7 +12,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix C - PIAE
 
 seq:
-  - id: eventname
+  - id: EVENTNAME
     type: str
     size: 38
     encoding: ASCII
@@ -21,7 +21,7 @@ seq:
       The recognized name of the event.
       38 BCS-A.
 
-  - id: eventtype
+  - id: EVENTTYPE
     type: str
     size: 8
     encoding: ASCII

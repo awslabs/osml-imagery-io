@@ -10,210 +10,210 @@ doc: |
 
 seq:
   # Graphic Segment Marker
-  - id: sy
+  - id: SY
     type: str
     size: 2
     encoding: BCS-A
     doc: File part type. Always "SY" for graphic segments.
 
   # Graphic Identifier
-  - id: sid
+  - id: SID
     type: str
     size: 10
     encoding: BCS-A
     doc: Graphic identifier.
 
   # Graphic Name
-  - id: sname
+  - id: SNAME
     type: str
     size: 20
     encoding: ECS-A
     doc: Graphic name.
 
   # Graphic Security Classification
-  - id: ssclas
+  - id: SSCLAS
     type: str
     size: 1
     encoding: BCS-A
     doc: Graphic security classification (T, S, C, R, or U).
 
-  - id: ssclsy
+  - id: SSCLSY
     type: str
     size: 2
     encoding: BCS-A
     doc: Graphic security classification system.
 
-  - id: sscode
+  - id: SSCODE
     type: str
     size: 11
     encoding: BCS-A
     doc: Graphic codewords.
 
-  - id: ssctlh
+  - id: SSCTLH
     type: str
     size: 2
     encoding: BCS-A
     doc: Graphic control and handling.
 
-  - id: ssrel
+  - id: SSREL
     type: str
     size: 20
     encoding: BCS-A
     doc: Graphic releasing instructions.
 
-  - id: ssdctp
+  - id: SSDCTP
     type: str
     size: 2
     encoding: BCS-A
     doc: Graphic declassification type.
 
-  - id: ssdcdt
+  - id: SSDCDT
     type: str
     size: 8
     encoding: BCS-N
     doc: Graphic declassification date.
 
-  - id: ssdcxm
+  - id: SSDCXM
     type: str
     size: 4
     encoding: BCS-A
     doc: Graphic declassification exemption.
 
-  - id: ssdg
+  - id: SSDG
     type: str
     size: 1
     encoding: BCS-A
     doc: Graphic downgrade.
 
-  - id: ssdgdt
+  - id: SSDGDT
     type: str
     size: 8
     encoding: BCS-N
     doc: Graphic downgrade date.
 
-  - id: sscltx
+  - id: SSCLTX
     type: str
     size: 43
     encoding: ECS-A
     doc: Graphic classification text.
 
-  - id: sscatp
+  - id: SSCATP
     type: str
     size: 1
     encoding: BCS-A
     doc: Graphic classification authority type.
 
-  - id: sscaut
+  - id: SSCAUT
     type: str
     size: 40
     encoding: ECS-A
     doc: Graphic classification authority.
 
-  - id: sscrsn
+  - id: SSCRSN
     type: str
     size: 1
     encoding: BCS-A
     doc: Graphic classification reason.
 
-  - id: sssrdt
+  - id: SSSRDT
     type: str
     size: 8
     encoding: BCS-N
     doc: Graphic security source date.
 
-  - id: ssctln
+  - id: SSCTLN
     type: str
     size: 15
     encoding: BCS-A
     doc: Graphic security control number.
 
   # Encryption
-  - id: encryp
+  - id: ENCRYP
     type: str
     size: 1
     encoding: BCS-N
     doc: Encryption (0 = not encrypted).
 
   # Graphic Type
-  - id: sfmt
+  - id: SFMT
     type: str
     size: 1
     encoding: BCS-A
     doc: Graphic type (C = CGM).
 
   # Reserved for Future Use
-  - id: sstruct
+  - id: SSTRUCT
     type: str
     size: 13
     encoding: BCS-N
     doc: Reserved for future use.
 
   # Graphic Display Level
-  - id: sdlvl
+  - id: SDLVL
     type: str
     size: 3
     encoding: BCS-N
     doc: Graphic display level (001-999).
 
   # Graphic Attachment Level
-  - id: salvl
+  - id: SALVL
     type: str
     size: 3
     encoding: BCS-N
     doc: Graphic attachment level (000-998).
 
   # Graphic Location
-  - id: sloc
+  - id: SLOC
     type: str
     size: 10
     encoding: BCS-N
     doc: Graphic location (RRRRRCCCCC format).
 
   # First Graphic Bound Location
-  - id: sbnd1
+  - id: SBND1
     type: str
     size: 10
     encoding: BCS-N
     doc: First graphic bound location.
 
   # Graphic Color
-  - id: scolor
+  - id: SCOLOR
     type: str
     size: 1
     encoding: BCS-A
     doc: Graphic color (C = color, M = monochrome).
 
   # Second Graphic Bound Location
-  - id: sbnd2
+  - id: SBND2
     type: str
     size: 10
     encoding: BCS-N
     doc: Second graphic bound location.
 
   # Reserved
-  - id: sres2
+  - id: SRES2
     type: str
     size: 2
     encoding: BCS-N
     doc: Reserved for future use.
 
   # Graphic Extended Subheader Data Length
-  - id: sxshdl
+  - id: SXSHDL
     type: str
     size: 5
     encoding: BCS-N
     doc: Graphic extended subheader data length.
 
   # Graphic Extended Subheader Overflow
-  - id: sxsofl
+  - id: SXSOFL
     type: str
     size: 3
     encoding: BCS-N
-    if: sxshdl.to_i > 0
+    if: SXSHDL.to_i > 0
     doc: Graphic extended subheader overflow.
 
   # Graphic Extended Subheader Data
-  - id: sxshd
-    size: sxshdl.to_i - 3
-    if: sxshdl.to_i > 0
+  - id: SXSHD
+    size: SXSHDL.to_i - 3
+    if: SXSHDL.to_i > 0
     doc: Graphic extended subheader data (TREs).

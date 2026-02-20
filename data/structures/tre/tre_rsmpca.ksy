@@ -16,7 +16,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix U - RSM
 
 seq:
-  - id: iid
+  - id: IID
     type: str
     size: 80
     encoding: BCS-A
@@ -24,7 +24,7 @@ seq:
       Image Identifier
       80 BCS-A characters identifying the image.
 
-  - id: edition
+  - id: EDITION
     type: str
     size: 40
     encoding: BCS-A
@@ -32,7 +32,7 @@ seq:
       RSM Image Support Data Edition
       40 BCS-A characters identifying the edition.
 
-  - id: rsn
+  - id: RSN
     type: str
     size: 3
     encoding: BCS-NPI
@@ -40,7 +40,7 @@ seq:
       Row Section Number
       3 BCS-NPI positive integer (1 to RNIS).
 
-  - id: csn
+  - id: CSN
     type: str
     size: 3
     encoding: BCS-NPI
@@ -48,7 +48,7 @@ seq:
       Column Section Number
       3 BCS-NPI positive integer (1 to CNIS).
 
-  - id: rfep
+  - id: RFEP
     type: str
     size: 21
     encoding: BCS-N
@@ -56,7 +56,7 @@ seq:
       Row Fit Error in Pixels
       21 BCS-N real number.
 
-  - id: cfep
+  - id: CFEP
     type: str
     size: 21
     encoding: BCS-N
@@ -64,7 +64,7 @@ seq:
       Column Fit Error in Pixels
       21 BCS-N real number.
 
-  - id: rnrmo
+  - id: RNRMO
     type: str
     size: 21
     encoding: BCS-N
@@ -72,7 +72,7 @@ seq:
       Row Normalization Offset
       21 BCS-N real number.
 
-  - id: cnrmo
+  - id: CNRMO
     type: str
     size: 21
     encoding: BCS-N
@@ -80,7 +80,7 @@ seq:
       Column Normalization Offset
       21 BCS-N real number.
 
-  - id: xnrmo
+  - id: XNRMO
     type: str
     size: 21
     encoding: BCS-N
@@ -88,7 +88,7 @@ seq:
       X Normalization Offset
       21 BCS-N real number.
 
-  - id: ynrmo
+  - id: YNRMO
     type: str
     size: 21
     encoding: BCS-N
@@ -96,7 +96,7 @@ seq:
       Y Normalization Offset
       21 BCS-N real number.
 
-  - id: znrmo
+  - id: ZNRMO
     type: str
     size: 21
     encoding: BCS-N
@@ -104,7 +104,7 @@ seq:
       Z Normalization Offset
       21 BCS-N real number.
 
-  - id: rnrmsf
+  - id: RNRMSF
     type: str
     size: 21
     encoding: BCS-N
@@ -112,7 +112,7 @@ seq:
       Row Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: cnrmsf
+  - id: CNRMSF
     type: str
     size: 21
     encoding: BCS-N
@@ -120,7 +120,7 @@ seq:
       Column Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: xnrmsf
+  - id: XNRMSF
     type: str
     size: 21
     encoding: BCS-N
@@ -128,7 +128,7 @@ seq:
       X Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: ynrmsf
+  - id: YNRMSF
     type: str
     size: 21
     encoding: BCS-N
@@ -136,7 +136,7 @@ seq:
       Y Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: znrmsf
+  - id: ZNRMSF
     type: str
     size: 21
     encoding: BCS-N
@@ -144,7 +144,7 @@ seq:
       Z Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: rnpwrx
+  - id: RNPWRX
     type: str
     size: 1
     encoding: BCS-NPI
@@ -152,7 +152,7 @@ seq:
       Row Numerator Maximum Power of X
       1 BCS-NPI digit (0-9).
 
-  - id: rnpwry
+  - id: RNPWRY
     type: str
     size: 1
     encoding: BCS-NPI
@@ -160,7 +160,7 @@ seq:
       Row Numerator Maximum Power of Y
       1 BCS-NPI digit (0-9).
 
-  - id: rnpwrz
+  - id: RNPWRZ
     type: str
     size: 1
     encoding: BCS-NPI
@@ -168,7 +168,7 @@ seq:
       Row Numerator Maximum Power of Z
       1 BCS-NPI digit (0-9).
 
-  - id: rntrms
+  - id: RNTRMS
     type: str
     size: 3
     encoding: BCS-NPI
@@ -176,17 +176,17 @@ seq:
       Number of Row Numerator Polynomial Terms
       3 BCS-NPI positive integer.
 
-  - id: rnpcf
+  - id: RNPCF
     type: str
     size: 21
     encoding: BCS-N
     repeat: expr
-    repeat-expr: rntrms.to_i
+    repeat-expr: RNTRMS.to_i
     doc: |
       Row Numerator Polynomial Coefficients
       RNTRMS coefficients, each 21 BCS-N real number.
 
-  - id: rdpwrx
+  - id: RDPWRX
     type: str
     size: 1
     encoding: BCS-NPI
@@ -194,7 +194,7 @@ seq:
       Row Denominator Maximum Power of X
       1 BCS-NPI digit (0-9).
 
-  - id: rdpwry
+  - id: RDPWRY
     type: str
     size: 1
     encoding: BCS-NPI
@@ -202,7 +202,7 @@ seq:
       Row Denominator Maximum Power of Y
       1 BCS-NPI digit (0-9).
 
-  - id: rdpwrz
+  - id: RDPWRZ
     type: str
     size: 1
     encoding: BCS-NPI
@@ -210,7 +210,7 @@ seq:
       Row Denominator Maximum Power of Z
       1 BCS-NPI digit (0-9).
 
-  - id: rdtrms
+  - id: RDTRMS
     type: str
     size: 3
     encoding: BCS-NPI
@@ -218,17 +218,17 @@ seq:
       Number of Row Denominator Polynomial Terms
       3 BCS-NPI positive integer.
 
-  - id: rdpcf
+  - id: RDPCF
     type: str
     size: 21
     encoding: BCS-N
     repeat: expr
-    repeat-expr: rdtrms.to_i
+    repeat-expr: RDTRMS.to_i
     doc: |
       Row Denominator Polynomial Coefficients
       RDTRMS coefficients, each 21 BCS-N real number.
 
-  - id: cnpwrx
+  - id: CNPWRX
     type: str
     size: 1
     encoding: BCS-NPI
@@ -236,7 +236,7 @@ seq:
       Column Numerator Maximum Power of X
       1 BCS-NPI digit (0-9).
 
-  - id: cnpwry
+  - id: CNPWRY
     type: str
     size: 1
     encoding: BCS-NPI
@@ -244,7 +244,7 @@ seq:
       Column Numerator Maximum Power of Y
       1 BCS-NPI digit (0-9).
 
-  - id: cnpwrz
+  - id: CNPWRZ
     type: str
     size: 1
     encoding: BCS-NPI
@@ -252,7 +252,7 @@ seq:
       Column Numerator Maximum Power of Z
       1 BCS-NPI digit (0-9).
 
-  - id: cntrms
+  - id: CNTRMS
     type: str
     size: 3
     encoding: BCS-NPI
@@ -260,17 +260,17 @@ seq:
       Number of Column Numerator Polynomial Terms
       3 BCS-NPI positive integer.
 
-  - id: cnpcf
+  - id: CNPCF
     type: str
     size: 21
     encoding: BCS-N
     repeat: expr
-    repeat-expr: cntrms.to_i
+    repeat-expr: CNTRMS.to_i
     doc: |
       Column Numerator Polynomial Coefficients
       CNTRMS coefficients, each 21 BCS-N real number.
 
-  - id: cdpwrx
+  - id: CDPWRX
     type: str
     size: 1
     encoding: BCS-NPI
@@ -278,7 +278,7 @@ seq:
       Column Denominator Maximum Power of X
       1 BCS-NPI digit (0-9).
 
-  - id: cdpwry
+  - id: CDPWRY
     type: str
     size: 1
     encoding: BCS-NPI
@@ -286,7 +286,7 @@ seq:
       Column Denominator Maximum Power of Y
       1 BCS-NPI digit (0-9).
 
-  - id: cdpwrz
+  - id: CDPWRZ
     type: str
     size: 1
     encoding: BCS-NPI
@@ -294,7 +294,7 @@ seq:
       Column Denominator Maximum Power of Z
       1 BCS-NPI digit (0-9).
 
-  - id: cdtrms
+  - id: CDTRMS
     type: str
     size: 3
     encoding: BCS-NPI
@@ -302,12 +302,12 @@ seq:
       Number of Column Denominator Polynomial Terms
       3 BCS-NPI positive integer.
 
-  - id: cdpcf
+  - id: CDPCF
     type: str
     size: 21
     encoding: BCS-N
     repeat: expr
-    repeat-expr: cdtrms.to_i
+    repeat-expr: CDTRMS.to_i
     doc: |
       Column Denominator Polynomial Coefficients
       CDTRMS coefficients, each 21 BCS-N real number.

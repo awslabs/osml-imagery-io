@@ -27,7 +27,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AL - ILLUMA-ILLUMB
 
 seq:
-  - id: xml_content
+  - id: XML_CONTENT
     type: str
     size-eos: true
     encoding: UTF-8

@@ -21,7 +21,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AJ - PIXMTA
 
 seq:
-  - id: numais
+  - id: NUMAIS
     type: str
     size: 3
     encoding: BCS-A
@@ -32,20 +32,20 @@ seq:
       "000" = not associated with other segments in same file.
       "ALL" = associated with all segments except other PMISs or PQSs.
 
-  - id: aisdlvl
+  - id: AISDLVL
     type: str
     size: 3
     encoding: BCS-N
     repeat: expr
-    repeat-expr: numais.to_i
-    if: numais != "000" and numais != "ALL"
+    repeat-expr: NUMAIS.to_i
+    if: NUMAIS != "000" and NUMAIS != "ALL"
     doc: |
       Display Level of Associated Image Segment (AISDLVL)
       Image Display Level (IDLVL) of each associated image segment.
       3 BCS-N characters, range 001-999.
       Repeated NUMAIS times (omitted if NUMAIS is "000" or "ALL").
 
-  - id: origin_x
+  - id: ORIGIN_X
     type: str
     size: 14
     encoding: BCS-A
@@ -55,7 +55,7 @@ seq:
       14 BCS-A characters in scientific notation (±n.nnnnnnnE±nn).
       Special value +4.9999999E+07 for compact form single-column PMIS.
 
-  - id: origin_y
+  - id: ORIGIN_Y
     type: str
     size: 14
     encoding: BCS-A
@@ -65,7 +65,7 @@ seq:
       14 BCS-A characters in scientific notation (±n.nnnnnnnE±nn).
       Special value +4.9999999E+07 for compact form single-row PMIS.
 
-  - id: scale_x
+  - id: SCALE_X
     type: str
     size: 14
     encoding: BCS-A
@@ -75,7 +75,7 @@ seq:
       14 BCS-A characters in scientific notation (+n.nnnnnnnE±nn).
       Special value +9.9999999E+07 for compact form single-column PMIS.
 
-  - id: scale_y
+  - id: SCALE_Y
     type: str
     size: 14
     encoding: BCS-A
@@ -85,7 +85,7 @@ seq:
       14 BCS-A characters in scientific notation (+n.nnnnnnnE±nn).
       Special value +9.9999999E+07 for compact form single-row PMIS.
 
-  - id: sample_mode
+  - id: SAMPLE_MODE
     type: str
     size: 1
     encoding: BCS-A
@@ -96,7 +96,7 @@ seq:
       "I" = Interpolated mode (interpolate between PMIS pixels).
       1 BCS-A character.
 
-  - id: nummetrics
+  - id: NUMMETRICS
     type: str
     size: 5
     encoding: BCS-N
@@ -105,7 +105,7 @@ seq:
       Number of separate metrics in the PMIS.
       5 BCS-N characters, range 00001-99999.
 
-  - id: perband
+  - id: PERBAND
     type: str
     size: 1
     encoding: BCS-A
@@ -116,15 +116,15 @@ seq:
       "P" = separate metrics for each AIS band.
       1 BCS-A character.
 
-  - id: metrics
+  - id: METRICS
     type: metric_entry
     repeat: expr
-    repeat-expr: nummetrics.to_i
+    repeat-expr: NUMMETRICS.to_i
     doc: |
       Metric entries.
       Repeated NUMMETRICS times.
 
-  - id: reserved_len
+  - id: RESERVED_LEN
     type: str
     size: 5
     encoding: BCS-N
@@ -133,9 +133,9 @@ seq:
       Size in bytes of the RESERVED field.
       5 BCS-N characters, default "00000".
 
-  - id: reserved
-    size: reserved_len.to_i
-    if: reserved_len.to_i > 0
+  - id: RESERVED
+    size: RESERVED_LEN.to_i
+    if: RESERVED_LEN.to_i > 0
     doc: |
       Reserved Data Field (RESERVED)
       Reserved for future use by NTB.
@@ -144,7 +144,7 @@ seq:
 types:
   metric_entry:
     seq:
-      - id: description
+      - id: DESCRIPTION
         type: str
         size: 40
         encoding: BCS-A
@@ -153,7 +153,7 @@ types:
           Descriptive label for the metric, maps to ISUBCATn in PMIS subheader.
           40 BCS-A characters.
 
-      - id: unit
+      - id: UNIT
         type: str
         size: 40
         encoding: ECS-A
@@ -162,7 +162,7 @@ types:
           Unit of measure for the metric after conversion to engineering values.
           40 ECS-A characters.
 
-      - id: fittype
+      - id: FITTYPE
         type: str
         size: 1
         encoding: BCS-A
@@ -172,24 +172,24 @@ types:
           "D" = direct (stored values equal engineering values).
           1 BCS-A character.
 
-      - id: numcoef
+      - id: NUMCOEF
         type: str
         size: 1
         encoding: BCS-N
-        if: fittype == "P"
+        if: FITTYPE == "P"
         doc: |
           Number of Coefficients (NUMCOEF)
           Number of polynomial coefficients for transformation.
           1 BCS-N character, range 1-9.
           Only present if FITTYPE = "P".
 
-      - id: coef
+      - id: COEF
         type: str
         size: 15
         encoding: BCS-A
         repeat: expr
-        repeat-expr: numcoef.to_i
-        if: fittype == "P"
+        repeat-expr: NUMCOEF.to_i
+        if: FITTYPE == "P"
         doc: |
           Transformation Coefficient (COEF)
           Polynomial coefficients for converting stored values to engineering values.

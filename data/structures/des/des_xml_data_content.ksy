@@ -21,7 +21,7 @@ doc: |
   Reference: STDI-0002 Volume 2, Appendix F - XML_DATA_CONTENT
 
 seq:
-  - id: descrc
+  - id: DESCRC
     type: str
     size: 5
     encoding: BCS-N
@@ -31,7 +31,7 @@ seq:
       5 BCS-N positive integer (00000-65535 or 99999).
       A value of 99999 indicates CRC is not calculated.
 
-  - id: desshft
+  - id: DESSHFT
     type: str
     size: 8
     encoding: BCS-A
@@ -42,7 +42,7 @@ seq:
       8 BCS-A characters.
       Examples: XSD, XML, DTD, XSL, XSLT
 
-  - id: desshdt
+  - id: DESSHDT
     type: str
     size: 20
     encoding: BCS-A
@@ -52,7 +52,7 @@ seq:
       Time (UTC/Zulu) of the XML file's origination.
       20 BCS-A characters in format YYYY-MM-DDThh:mm:ssZ.
 
-  - id: desshrp
+  - id: DESSHRP
     type: str
     size: 40
     encoding: UTF-8
@@ -62,7 +62,7 @@ seq:
       Identification of the organization responsible for the DES content.
       40 bytes UTF-8 encoded free text.
 
-  - id: desshsi
+  - id: DESSHSI
     type: str
     size: 60
     encoding: UTF-8
@@ -72,7 +72,7 @@ seq:
       Name of the specification used for the XML data content.
       60 bytes UTF-8 encoded free text.
 
-  - id: desshsv
+  - id: DESSHSV
     type: str
     size: 10
     encoding: BCS-A
@@ -82,7 +82,7 @@ seq:
       Version or edition of the specification.
       10 BCS-A characters free text.
 
-  - id: desshsd
+  - id: DESSHSD
     type: str
     size: 20
     encoding: BCS-A
@@ -92,7 +92,7 @@ seq:
       Version or edition date for the specification.
       20 BCS-A characters in format YYYY-MM-DDThh:mm:ssZ.
 
-  - id: desshtn
+  - id: DESSHTN
     type: str
     size: 120
     encoding: BCS-A
@@ -103,7 +103,7 @@ seq:
       120 BCS-A characters containing URL.
       Default is BCS spaces.
 
-  - id: desshlpg
+  - id: DESSHLPG
     type: str
     size: 125
     encoding: BCS-A
@@ -116,7 +116,7 @@ seq:
       Latitude range: -90 to +90, Longitude range: -180 to +360.
       Default is BCS spaces.
 
-  - id: desshlpt
+  - id: DESSHLPT
     type: str
     size: 25
     encoding: BCS-A
@@ -128,7 +128,7 @@ seq:
       Format: ±dd.dddddddd±ddd.dddddddd
       Default is BCS spaces.
 
-  - id: desshli
+  - id: DESSHLI
     type: str
     size: 20
     encoding: BCS-A
@@ -140,7 +140,7 @@ seq:
       Examples: US, USA
       Default is BCS spaces.
 
-  - id: desshlin
+  - id: DESSHLIN
     type: str
     size: 120
     encoding: BCS-A
@@ -151,7 +151,7 @@ seq:
       120 BCS-A characters.
       Default is BCS spaces.
 
-  - id: desshabs
+  - id: DESSHABS
     type: str
     size: 200
     encoding: UTF-8

@@ -13,7 +13,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix E - ASDE
 
 seq:
-  - id: ac_msn_id
+  - id: AC_MSN_ID
     type: str
     size: 20
     encoding: ASCII
@@ -21,7 +21,7 @@ seq:
       Aircraft Mission Identification (AC_MSN_ID)
       20 BCS-A. "NOT AVAILABLE" if unavailable.
 
-  - id: ac_tail_no
+  - id: AC_TAIL_NO
     type: str
     size: 10
     encoding: ASCII
@@ -29,7 +29,7 @@ seq:
       Aircraft Tail Number (AC_TAIL_NO)
       10 BCS-A.
 
-  - id: ac_to
+  - id: AC_TO
     type: str
     size: 12
     encoding: ASCII
@@ -38,7 +38,7 @@ seq:
       Date/time in UTC, CCYYMMDDhhmm format.
       12 BCS-A.
 
-  - id: sensor_id_type
+  - id: SENSOR_ID_TYPE
     type: str
     size: 4
     encoding: ASCII
@@ -47,7 +47,7 @@ seq:
       Identifies sensor type (SAR, ccff for EO-IR, LIff for LiDAR).
       4 BCS-A.
 
-  - id: sensor_id
+  - id: SENSOR_ID
     type: str
     size: 6
     encoding: ASCII
@@ -56,7 +56,7 @@ seq:
       Identifies specific sensor that produced the image.
       6 BCS-A.
 
-  - id: scene_source
+  - id: SCENE_SOURCE
     type: str
     size: 1
     encoding: ASCII
@@ -65,7 +65,7 @@ seq:
       Origin of request for current scene.
       1 BCS-N, 0-9.
 
-  - id: scnum
+  - id: SCNUM
     type: str
     size: 6
     encoding: ASCII
@@ -74,7 +74,7 @@ seq:
       Identifies current scene from mission plan.
       6 BCS-N, 000000-999999.
 
-  - id: pdate
+  - id: PDATE
     type: str
     size: 8
     encoding: ASCII
@@ -83,7 +83,7 @@ seq:
       Date raw data converted to imagery.
       8 BCS-A, CCYYMMDD format.
 
-  - id: imhostno
+  - id: IMHOSTNO
     type: str
     size: 6
     encoding: ASCII
@@ -92,7 +92,7 @@ seq:
       Scene that immediate scene was initiated from.
       6 BCS-N, 000000-999999.
 
-  - id: imreqid
+  - id: IMREQID
     type: str
     size: 5
     encoding: ASCII
@@ -101,7 +101,7 @@ seq:
       Only non-zero for immediate scenes.
       5 BCS-N, 00000-99999.
 
-  - id: mplan
+  - id: MPLAN
     type: str
     size: 3
     encoding: ASCII
@@ -110,7 +110,7 @@ seq:
       Current sensor-specific collection mode.
       3 BCS-N, 001-999.
 
-  - id: entloc
+  - id: ENTLOC
     type: str
     size: 25
     encoding: ASCII
@@ -119,7 +119,7 @@ seq:
       Entry point latitude/longitude.
       25 BCS-A, ddmmss.ssssXdddmmss.ssssY or ±dd.dddddddd±ddd.dddddddd.
 
-  - id: loc_accy
+  - id: LOC_ACCY
     type: str
     size: 6
     encoding: ASCII
@@ -128,7 +128,7 @@ seq:
       90% probable circular error in feet.
       6 BCS-N, 000.01-999.99 or 000000/000.00 for unknown.
 
-  - id: entelv
+  - id: ENTELV
     type: str
     size: 6
     encoding: ASCII
@@ -137,7 +137,7 @@ seq:
       Entry point ground elevation.
       6 BCS-N, -01000 to +30000 feet or meters.
 
-  - id: elv_unit
+  - id: ELV_UNIT
     type: str
     size: 1
     encoding: ASCII
@@ -146,7 +146,7 @@ seq:
       f=feet, m=meters.
       1 BCS-A.
 
-  - id: exitloc
+  - id: EXITLOC
     type: str
     size: 25
     encoding: ASCII
@@ -155,7 +155,7 @@ seq:
       Exit point latitude/longitude.
       25 BCS-A.
 
-  - id: exitelv
+  - id: EXITELV
     type: str
     size: 6
     encoding: ASCII
@@ -164,7 +164,7 @@ seq:
       Exit point ground elevation.
       6 BCS-N.
 
-  - id: tmap
+  - id: TMAP
     type: str
     size: 7
     encoding: ASCII
@@ -173,7 +173,7 @@ seq:
       Angle between ground projection and scene centerline.
       7 BCS-N, 000.000-180.000 degrees.
 
-  - id: row_spacing
+  - id: ROW_SPACING
     type: str
     size: 7
     encoding: ASCII
@@ -182,7 +182,7 @@ seq:
       Distance between adjacent rows at image center.
       7 BCS-N.
 
-  - id: row_spacing_units
+  - id: ROW_SPACING_UNITS
     type: str
     size: 1
     encoding: ASCII
@@ -191,7 +191,7 @@ seq:
       f=feet, m=meters, r=μ-radians, u=unknown.
       1 BCS-A.
 
-  - id: col_spacing
+  - id: COL_SPACING
     type: str
     size: 7
     encoding: ASCII
@@ -200,7 +200,7 @@ seq:
       Distance between adjacent pixels within a row.
       7 BCS-N.
 
-  - id: col_spacing_units
+  - id: COL_SPACING_UNITS
     type: str
     size: 1
     encoding: ASCII
@@ -209,7 +209,7 @@ seq:
       f=feet, m=meters, r=μ-radians, u=unknown.
       1 BCS-A.
 
-  - id: focal_length
+  - id: FOCAL_LENGTH
     type: str
     size: 6
     encoding: ASCII
@@ -218,7 +218,7 @@ seq:
       Effective distance from optical lens to sensor.
       6 BCS-N, 000.01-899.99 cm, 999.99 if unavailable.
 
-  - id: senserial
+  - id: SENSERIAL
     type: str
     size: 6
     encoding: ASCII
@@ -227,7 +227,7 @@ seq:
       Vendor's serial number of sensor LRU.
       6 BCS-N, 000001-999999.
 
-  - id: abswver
+  - id: ABSWVER
     type: str
     size: 7
     encoding: ASCII
@@ -235,7 +235,7 @@ seq:
       Airborne Software Version (ABSWVER)
       7 BCS-A.
 
-  - id: cal_date
+  - id: CAL_DATE
     type: str
     size: 8
     encoding: ASCII
@@ -244,7 +244,7 @@ seq:
       Date sensor was last calibrated.
       8 BCS-A, CCYYMMDD format.
 
-  - id: patch_tot
+  - id: PATCH_TOT
     type: str
     size: 4
     encoding: ASCII
@@ -253,7 +253,7 @@ seq:
       Total number of patches in imaging operation.
       4 BCS-N, 0000-9999.
 
-  - id: mti_tot
+  - id: MTI_TOT
     type: str
     size: 3
     encoding: ASCII

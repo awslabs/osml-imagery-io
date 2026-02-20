@@ -16,7 +16,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix U - RSM
 
 seq:
-  - id: iid
+  - id: IID
     type: str
     size: 80
     encoding: BCS-A
@@ -24,7 +24,7 @@ seq:
       Image Identifier
       80 BCS-A characters identifying the image.
 
-  - id: edition
+  - id: EDITION
     type: str
     size: 40
     encoding: BCS-A
@@ -32,7 +32,7 @@ seq:
       RSM Image Support Data Edition
       40 BCS-A characters identifying the edition.
 
-  - id: r0
+  - id: R0
     type: str
     size: 21
     encoding: BCS-N
@@ -40,7 +40,7 @@ seq:
       Row Normalization Offset
       21 BCS-N real number.
 
-  - id: rx
+  - id: RX
     type: str
     size: 21
     encoding: BCS-N
@@ -48,7 +48,7 @@ seq:
       Row X Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: ry
+  - id: RY
     type: str
     size: 21
     encoding: BCS-N
@@ -56,7 +56,7 @@ seq:
       Row Y Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: rz
+  - id: RZ
     type: str
     size: 21
     encoding: BCS-N
@@ -64,7 +64,7 @@ seq:
       Row Z Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: rxx
+  - id: RXX
     type: str
     size: 21
     encoding: BCS-N
@@ -72,7 +72,7 @@ seq:
       Row XX Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: rxy
+  - id: RXY
     type: str
     size: 21
     encoding: BCS-N
@@ -80,7 +80,7 @@ seq:
       Row XY Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: rxz
+  - id: RXZ
     type: str
     size: 21
     encoding: BCS-N
@@ -88,7 +88,7 @@ seq:
       Row XZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: ryy
+  - id: RYY
     type: str
     size: 21
     encoding: BCS-N
@@ -96,7 +96,7 @@ seq:
       Row YY Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: ryz
+  - id: RYZ
     type: str
     size: 21
     encoding: BCS-N
@@ -104,7 +104,7 @@ seq:
       Row YZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: rzz
+  - id: RZZ
     type: str
     size: 21
     encoding: BCS-N
@@ -112,7 +112,7 @@ seq:
       Row ZZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: c0
+  - id: C0
     type: str
     size: 21
     encoding: BCS-N
@@ -120,7 +120,7 @@ seq:
       Column Normalization Offset
       21 BCS-N real number.
 
-  - id: cx
+  - id: CX
     type: str
     size: 21
     encoding: BCS-N
@@ -128,7 +128,7 @@ seq:
       Column X Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: cy
+  - id: CY
     type: str
     size: 21
     encoding: BCS-N
@@ -136,7 +136,7 @@ seq:
       Column Y Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: cz
+  - id: CZ
     type: str
     size: 21
     encoding: BCS-N
@@ -144,7 +144,7 @@ seq:
       Column Z Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: cxx
+  - id: CXX
     type: str
     size: 21
     encoding: BCS-N
@@ -152,7 +152,7 @@ seq:
       Column XX Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: cxy
+  - id: CXY
     type: str
     size: 21
     encoding: BCS-N
@@ -160,7 +160,7 @@ seq:
       Column XY Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: cxz
+  - id: CXZ
     type: str
     size: 21
     encoding: BCS-N
@@ -168,7 +168,7 @@ seq:
       Column XZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: cyy
+  - id: CYY
     type: str
     size: 21
     encoding: BCS-N
@@ -176,7 +176,7 @@ seq:
       Column YY Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: cyz
+  - id: CYZ
     type: str
     size: 21
     encoding: BCS-N
@@ -184,7 +184,7 @@ seq:
       Column YZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: czz
+  - id: CZZ
     type: str
     size: 21
     encoding: BCS-N
@@ -192,7 +192,7 @@ seq:
       Column ZZ Normalization Scale Factor
       21 BCS-N real number.
 
-  - id: rnis
+  - id: RNIS
     type: str
     size: 3
     encoding: BCS-NPI
@@ -200,7 +200,7 @@ seq:
       Number of Row Sections in Image
       3 BCS-NPI positive integer.
 
-  - id: cnis
+  - id: CNIS
     type: str
     size: 3
     encoding: BCS-NPI
@@ -208,7 +208,7 @@ seq:
       Number of Column Sections in Image
       3 BCS-NPI positive integer.
 
-  - id: tnis
+  - id: TNIS
     type: str
     size: 3
     encoding: BCS-NPI
@@ -216,7 +216,7 @@ seq:
       Total Number of Image Sections
       3 BCS-NPI positive integer (RNIS * CNIS).
 
-  - id: rssiz
+  - id: RSSIZ
     type: str
     size: 21
     encoding: BCS-N
@@ -224,7 +224,7 @@ seq:
       Row Section Size
       21 BCS-N real number (rows per section).
 
-  - id: cssiz
+  - id: CSSIZ
     type: str
     size: 21
     encoding: BCS-N

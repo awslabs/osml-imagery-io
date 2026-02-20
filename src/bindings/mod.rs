@@ -11,6 +11,7 @@ pub mod memory_image;
 pub mod metadata;
 pub mod parser;
 pub mod reader;
+pub mod simple_metadata;
 pub mod text;
 pub mod writer;
 
@@ -23,5 +24,6 @@ pub use memory_image::PyMemoryImageAssetProvider;
 pub use metadata::PyMetadataProvider;
 pub use parser::{PyStructureAccessor, PyStructureDefinition, PyStructureRegistry, PyStructureWriter, PyValue};
 pub use reader::PyDatasetReader;
+pub use simple_metadata::PySimpleMetadataProvider;
 pub use text::PyTextAssetProvider;
 pub use writer::PyDatasetWriter;

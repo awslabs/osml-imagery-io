@@ -22,7 +22,7 @@ doc: |
 
 seq:
   # Common Fields for Spot and Swath
-  - id: img_total_rows
+  - id: IMG_TOTAL_ROWS
     type: str
     size: 6
     encoding: BCS-N
@@ -30,7 +30,7 @@ seq:
       Number of rows in full image product.
       6 BCS-N characters, range 000000-999999.
 
-  - id: img_total_cols
+  - id: IMG_TOTAL_COLS
     type: str
     size: 6
     encoding: BCS-N
@@ -38,7 +38,7 @@ seq:
       Number of columns in full image product.
       6 BCS-N characters, range 000000-999999.
 
-  - id: img_index_row
+  - id: IMG_INDEX_ROW
     type: str
     size: 6
     encoding: BCS-N
@@ -46,7 +46,7 @@ seq:
       Upper left corner of tile, row coordinate, in full image coordinate grid.
       6 BCS-N characters, range 000000-999999.
 
-  - id: img_index_col
+  - id: IMG_INDEX_COL
     type: str
     size: 6
     encoding: BCS-N
@@ -54,7 +54,7 @@ seq:
       Upper left corner of tile, column coordinate, in full image coordinate grid.
       6 BCS-N characters, range 000000-999999.
 
-  - id: geoid_offset
+  - id: GEOID_OFFSET
     type: str
     size: 7
     encoding: BCS-A
@@ -62,7 +62,7 @@ seq:
       Distance from the reference ellipsoid to the MSL geoid at the reference point (ft).
       7 BCS-A characters, format ±999.99.
 
-  - id: alpha_0
+  - id: ALPHA_0
     type: str
     size: 16
     encoding: BCS-A
@@ -70,7 +70,7 @@ seq:
       Cone Angle (radians).
       16 BCS-A characters, format ±9.9999999999999.
 
-  - id: k_l
+  - id: K_L
     type: str
     size: 2
     encoding: BCS-A
@@ -78,7 +78,7 @@ seq:
       Left/right look flag. 1 on left, -1 on right.
       2 BCS-A characters.
 
-  - id: c_m
+  - id: C_M
     type: str
     size: 15
     encoding: BCS-A
@@ -86,7 +86,7 @@ seq:
       Speed of light, adjusted for refractivity of atmosphere (m/s).
       15 BCS-A characters, format ddddddddd.ddddd.
 
-  - id: ac_roll
+  - id: AC_ROLL
     type: str
     size: 16
     encoding: BCS-A
@@ -94,7 +94,7 @@ seq:
       Nominal Aircraft Roll (radians).
       16 BCS-A characters, format ±9.9999999999999.
 
-  - id: ac_pitch
+  - id: AC_PITCH
     type: str
     size: 16
     encoding: BCS-A
@@ -102,7 +102,7 @@ seq:
       Nominal Aircraft Pitch (radians).
       16 BCS-A characters, format ±9.9999999999999.
 
-  - id: ac_yaw
+  - id: AC_YAW
     type: str
     size: 16
     encoding: BCS-A
@@ -110,7 +110,7 @@ seq:
       Nominal Aircraft Yaw (radians).
       16 BCS-A characters, format ±9.9999999999999.
 
-  - id: ac_track_heading
+  - id: AC_TRACK_HEADING
     type: str
     size: 16
     encoding: BCS-A
@@ -119,7 +119,7 @@ seq:
       16 BCS-A characters, format ±9.9999999999999.
 
   # Spot Fields (blank filled for Swath scenes)
-  - id: ap_origin_x
+  - id: AP_ORIGIN_X
     type: str
     size: 13
     encoding: BCS-A
@@ -128,7 +128,7 @@ seq:
       Blank filled for Swath scenes.
       13 BCS-A characters, format ±99999999.999.
 
-  - id: ap_origin_y
+  - id: AP_ORIGIN_Y
     type: str
     size: 13
     encoding: BCS-A
@@ -137,7 +137,7 @@ seq:
       Blank filled for Swath scenes.
       13 BCS-A characters, format ±99999999.999.
 
-  - id: ap_origin_z
+  - id: AP_ORIGIN_Z
     type: str
     size: 13
     encoding: BCS-A
@@ -146,7 +146,7 @@ seq:
       Blank filled for Swath scenes.
       13 BCS-A characters, format ±99999999.999.
 
-  - id: ap_dir_x
+  - id: AP_DIR_X
     type: str
     size: 16
     encoding: BCS-A
@@ -155,7 +155,7 @@ seq:
       Blank filled for Swath scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: ap_dir_y
+  - id: AP_DIR_Y
     type: str
     size: 16
     encoding: BCS-A
@@ -164,7 +164,7 @@ seq:
       Blank filled for Swath scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: ap_dir_z
+  - id: AP_DIR_Z
     type: str
     size: 16
     encoding: BCS-A
@@ -173,7 +173,7 @@ seq:
       Blank filled for Swath scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: x_ap_start
+  - id: X_AP_START
     type: str
     size: 12
     encoding: BCS-A
@@ -182,7 +182,7 @@ seq:
       Blank filled for Swath scenes.
       12 BCS-A characters, format ±99999.99999.
 
-  - id: x_ap_end
+  - id: X_AP_END
     type: str
     size: 12
     encoding: BCS-A
@@ -191,7 +191,7 @@ seq:
       Blank filled for Swath scenes.
       12 BCS-A characters, format ±99999.99999.
 
-  - id: ss_row_shift
+  - id: SS_ROW_SHIFT
     type: str
     size: 4
     encoding: BCS-A
@@ -200,7 +200,7 @@ seq:
       in the stitching function. Blank filled for Swath scenes.
       4 BCS-A characters, range -999 to 999.
 
-  - id: ss_col_shift
+  - id: SS_COL_SHIFT
     type: str
     size: 4
     encoding: BCS-A
@@ -210,7 +210,7 @@ seq:
       4 BCS-A characters, range -999 to 999.
 
   # Swath Fields (blank filled for Spot scenes)
-  - id: u_hat_x
+  - id: U_HAT_X
     type: str
     size: 16
     encoding: BCS-A
@@ -219,7 +219,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: u_hat_y
+  - id: U_HAT_Y
     type: str
     size: 16
     encoding: BCS-A
@@ -228,7 +228,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: u_hat_z
+  - id: U_HAT_Z
     type: str
     size: 16
     encoding: BCS-A
@@ -237,7 +237,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: v_hat_x
+  - id: V_HAT_X
     type: str
     size: 16
     encoding: BCS-A
@@ -246,7 +246,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: v_hat_y
+  - id: V_HAT_Y
     type: str
     size: 16
     encoding: BCS-A
@@ -255,7 +255,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: v_hat_z
+  - id: V_HAT_Z
     type: str
     size: 16
     encoding: BCS-A
@@ -264,7 +264,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: n_hat_x
+  - id: N_HAT_X
     type: str
     size: 16
     encoding: BCS-A
@@ -273,7 +273,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: n_hat_y
+  - id: N_HAT_Y
     type: str
     size: 16
     encoding: BCS-A
@@ -282,7 +282,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: n_hat_z
+  - id: N_HAT_Z
     type: str
     size: 16
     encoding: BCS-A
@@ -291,7 +291,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: eta_0
+  - id: ETA_0
     type: str
     size: 16
     encoding: BCS-A
@@ -300,7 +300,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±9.9999999999999.
 
-  - id: sigma_sm
+  - id: SIGMA_SM
     type: str
     size: 13
     encoding: BCS-A
@@ -309,7 +309,7 @@ seq:
       Blank filled for Spot scenes.
       13 BCS-A characters, format ±99999999.999.
 
-  - id: sigma_sn
+  - id: SIGMA_SN
     type: str
     size: 13
     encoding: BCS-A
@@ -318,7 +318,7 @@ seq:
       Blank filled for Spot scenes.
       13 BCS-A characters, format ±99999999.999.
 
-  - id: s_off
+  - id: S_OFF
     type: str
     size: 10
     encoding: BCS-A
@@ -327,7 +327,7 @@ seq:
       Blank filled for Spot scenes.
       10 BCS-A characters, format ±9999.9999.
 
-  - id: rn_offset
+  - id: RN_OFFSET
     type: str
     size: 12
     encoding: BCS-A
@@ -336,7 +336,7 @@ seq:
       Blank filled for Spot scenes.
       12 BCS-A characters, format ±999999.9999.
 
-  - id: r_scl
+  - id: R_SCL
     type: str
     size: 16
     encoding: BCS-A
@@ -345,7 +345,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ddddddd.dddddddd.
 
-  - id: r_nav
+  - id: R_NAV
     type: str
     size: 16
     encoding: BCS-A
@@ -354,7 +354,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ddddddd.dddddddd.
 
-  - id: r_sc_exact
+  - id: R_SC_EXACT
     type: str
     size: 16
     encoding: BCS-A
@@ -363,7 +363,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format dddddd.ddddddddd.
 
-  - id: c_sc_x
+  - id: C_SC_X
     type: str
     size: 16
     encoding: BCS-A
@@ -372,7 +372,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±999999.99999999.
 
-  - id: c_sc_y
+  - id: C_SC_Y
     type: str
     size: 16
     encoding: BCS-A
@@ -381,7 +381,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±999999.99999999.
 
-  - id: c_sc_z
+  - id: C_SC_Z
     type: str
     size: 16
     encoding: BCS-A
@@ -390,7 +390,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±999999.99999999.
 
-  - id: k_hat_x
+  - id: K_HAT_X
     type: str
     size: 16
     encoding: BCS-A
@@ -399,7 +399,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: k_hat_y
+  - id: K_HAT_Y
     type: str
     size: 16
     encoding: BCS-A
@@ -408,7 +408,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: k_hat_z
+  - id: K_HAT_Z
     type: str
     size: 16
     encoding: BCS-A
@@ -417,7 +417,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: l_hat_x
+  - id: L_HAT_X
     type: str
     size: 16
     encoding: BCS-A
@@ -426,7 +426,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: l_hat_y
+  - id: L_HAT_Y
     type: str
     size: 16
     encoding: BCS-A
@@ -435,7 +435,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: l_hat_z
+  - id: L_HAT_Z
     type: str
     size: 16
     encoding: BCS-A
@@ -444,7 +444,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±1.0000000000000.
 
-  - id: p_z
+  - id: P_Z
     type: str
     size: 16
     encoding: BCS-A
@@ -453,7 +453,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±999999.99999999.
 
-  - id: theta_c
+  - id: THETA_C
     type: str
     size: 16
     encoding: BCS-A
@@ -462,7 +462,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format ±9.9999999999999.
 
-  - id: alpha_sl
+  - id: ALPHA_SL
     type: str
     size: 16
     encoding: BCS-A
@@ -471,7 +471,7 @@ seq:
       Blank filled for Spot scenes.
       16 BCS-A characters, format d.dddddddddddddd.
 
-  - id: sigma_tc
+  - id: SIGMA_TC
     type: str
     size: 16
     encoding: BCS-A

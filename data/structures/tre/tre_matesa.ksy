@@ -18,7 +18,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AK - MATESA
 
 seq:
-  - id: cur_source
+  - id: CUR_SOURCE
     type: str
     size: 42
     encoding: ECS-A
@@ -30,7 +30,7 @@ seq:
       producer shall be provided.
       42 ECS-A characters.
 
-  - id: cur_mate_type
+  - id: CUR_MATE_TYPE
     type: str
     size: 16
     encoding: ECS-A
@@ -43,7 +43,7 @@ seq:
       "NITF_FSDCXM", "NITF_FSDG", "NITF_FSDGDT", "NITF_FSCLTX", "NITF_FSCATP".
       16 ECS-A characters.
 
-  - id: cur_file_id_len
+  - id: CUR_FILE_ID_LEN
     type: str
     size: 4
     encoding: BCS-N
@@ -52,9 +52,9 @@ seq:
       This field contains the length in bytes of the CUR_FILE_ID field.
       4 BCS-N characters, range 0001-9999.
 
-  - id: cur_file_id
+  - id: CUR_FILE_ID
     type: str
-    size: cur_file_id_len.to_i
+    size: CUR_FILE_ID_LEN.to_i
     encoding: ECS-A
     doc: |
       ID of the Current File/Segment (CUR_FILE_ID)
@@ -63,7 +63,7 @@ seq:
       are mates.
       Variable length (1-9999 bytes) ECS-A characters.
 
-  - id: num_groups
+  - id: NUM_GROUPS
     type: str
     size: 4
     encoding: BCS-N
@@ -72,10 +72,10 @@ seq:
       Number of mate relationship groups.
       4 BCS-N characters, range 0001-9999.
 
-  - id: groups
+  - id: GROUPS
     type: mate_group
     repeat: expr
-    repeat-expr: num_groups.to_i
+    repeat-expr: NUM_GROUPS.to_i
     doc: |
       Mate relationship groups.
       Repeated NUM_GROUPS times.
@@ -83,7 +83,7 @@ seq:
 types:
   mate_group:
     seq:
-      - id: relationship
+      - id: RELATIONSHIP
         type: str
         size: 24
         encoding: ECS-A
@@ -97,7 +97,7 @@ types:
           "CHANGE_DETECTION", "DERIVED_FROM", "DERIVED_TO", etc.
           24 ECS-A characters.
 
-      - id: num_mates
+      - id: NUM_MATES
         type: str
         size: 4
         encoding: BCS-N
@@ -107,17 +107,17 @@ types:
           related files.
           4 BCS-N characters, range 0001-9999.
 
-      - id: mates
+      - id: MATES
         type: mate_entry
         repeat: expr
-        repeat-expr: num_mates.to_i
+        repeat-expr: NUM_MATES.to_i
         doc: |
           Mate entries for this group.
           Repeated NUM_MATES times.
 
   mate_entry:
     seq:
-      - id: source
+      - id: SOURCE
         type: str
         size: 42
         encoding: ECS-A
@@ -130,7 +130,7 @@ types:
           shall be provided.
           42 ECS-A characters.
 
-      - id: mate_type
+      - id: MATE_TYPE
         type: str
         size: 16
         encoding: ECS-A
@@ -140,7 +140,7 @@ types:
           nth group of related files.
           16 ECS-A characters.
 
-      - id: mate_id_len
+      - id: MATE_ID_LEN
         type: str
         size: 4
         encoding: BCS-N
@@ -150,9 +150,9 @@ types:
           for the mth mate in the nth group of related files.
           4 BCS-N characters, range 0001-9999.
 
-      - id: mate_id
+      - id: MATE_ID
         type: str
-        size: mate_id_len.to_i
+        size: MATE_ID_LEN.to_i
         encoding: ECS-A
         doc: |
           Mate File Identifier (MATE_ID)

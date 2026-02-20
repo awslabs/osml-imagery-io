@@ -28,7 +28,7 @@ doc: |
 
 seq:
   # DES specification and creation information
-  - id: des_date_time
+  - id: DES_DATE_TIME
     type: str
     size: 14
     encoding: ECS-A
@@ -38,7 +38,7 @@ seq:
       14 ECS-A characters in format CCYYMMDDhhmmss (UTC Zulu).
       May contain hyphen-minus (0x2D) for unknown portions.
 
-  - id: des_writer_name
+  - id: DES_WRITER_NAME
     type: str
     size: 256
     encoding: ECS-A
@@ -48,7 +48,7 @@ seq:
       WEATHER_DATA DES.
       256 ECS-A characters, alphanumeric or all ECS spaces (0x20).
 
-  - id: des_writer_version
+  - id: DES_WRITER_VERSION
     type: str
     size: 66
     encoding: ECS-A
@@ -58,7 +58,7 @@ seq:
       WEATHER_DATA DES.
       66 ECS-A characters, alphanumeric or all ECS spaces (0x20).
 
-  - id: des_uuid
+  - id: DES_UUID
     type: str
     size: 36
     encoding: BCS-A
@@ -69,7 +69,7 @@ seq:
       36 BCS-A characters in canonical UUID format.
       Example: dbe26dc7-e003-4d29-8edb-41acc0e86b6e
 
-  - id: numais
+  - id: NUMAIS
     type: str
     size: 3
     encoding: BCS-A
@@ -81,13 +81,13 @@ seq:
       If NUMAIS = "ALL", the DES is associated with all image segments
       in the NITF dataset, and field AISDLVLn is omitted.
 
-  - id: aisdlvl
+  - id: AISDLVL
     type: str
     size: 3
     encoding: BCS-N
     repeat: expr
-    repeat-expr: numais.to_i
-    if: numais != "ALL" and numais != "000"
+    repeat-expr: NUMAIS.to_i
+    if: NUMAIS != "ALL" and NUMAIS != "000"
     doc: |
       Associated Image Segment Display Level (AISDLVLn)
       The Image Display Level (IDLVL) of each image segment associated
@@ -96,7 +96,7 @@ seq:
       Range: 001 to 999
       Omitted if NUMAIS = "000" or "ALL".
 
-  - id: num_shapefiles
+  - id: NUM_SHAPEFILES
     type: str
     size: 3
     encoding: BCS-A
@@ -108,20 +108,20 @@ seq:
       If NUM_SHAPEFILES = "ALL", the DES is associated with all
       shapefile DESs in the NITF dataset.
 
-  - id: shapefile_uuid
+  - id: SHAPEFILE_UUID
     type: str
     size: 36
     encoding: BCS-N
     repeat: expr
-    repeat-expr: num_shapefiles.to_i
-    if: num_shapefiles != "ALL" and num_shapefiles != "000"
+    repeat-expr: NUM_SHAPEFILES.to_i
+    if: NUM_SHAPEFILES != "ALL" and NUM_SHAPEFILES != "000"
     doc: |
       UUID of Associated Shapefile DES (SHAPEFILE_UUIDn)
       The UUID value of each shapefile DES associated with this DES.
       36 BCS-N characters in canonical UUID format.
       Omitted if NUM_SHAPEFILES = "0" or "ALL".
 
-  - id: num_assoc_elem
+  - id: NUM_ASSOC_ELEM
     type: str
     size: 3
     encoding: BCS-A
@@ -132,12 +132,12 @@ seq:
       3 BCS-A characters.
       Range: 000 to 999
 
-  - id: assoc_elem_uuid
+  - id: ASSOC_ELEM_UUID
     type: str
     size: 36
     encoding: BCS-N
     repeat: expr
-    repeat-expr: num_assoc_elem.to_i
+    repeat-expr: NUM_ASSOC_ELEM.to_i
     doc: |
       UUID of Associated Element (ASSOC_ELEM_UUIDn)
       The UUID of the nth element associated with this DES.
@@ -145,7 +145,7 @@ seq:
       Omitted if NUM_ASSOC_ELEM = "000".
 
   # METOC creation and content information
-  - id: metoc_writer_name
+  - id: METOC_WRITER_NAME
     type: str
     size: 256
     encoding: ECS-A
@@ -155,7 +155,7 @@ seq:
       in the user-defined data (DESDATA) portion of this DES.
       256 ECS-A characters, alphanumeric or all ECS spaces (0x20).
 
-  - id: metoc_writer_version
+  - id: METOC_WRITER_VERSION
     type: str
     size: 66
     encoding: ECS-A
@@ -164,7 +164,7 @@ seq:
       The version of the software used to create the METOC dataset.
       66 ECS-A characters, alphanumeric or all ECS spaces (0x20).
 
-  - id: atmos_flag
+  - id: ATMOS_FLAG
     type: str
     size: 1
     encoding: ECS-A
@@ -175,7 +175,7 @@ seq:
       1 ECS-A character.
       Values: Y = Data included, N = Data not included, U = Unknown
 
-  - id: ocean_flag
+  - id: OCEAN_FLAG
     type: str
     size: 1
     encoding: ECS-A
@@ -186,7 +186,7 @@ seq:
       1 ECS-A character.
       Values: Y = Data included, N = Data not included, U = Unknown
 
-  - id: space_flag
+  - id: SPACE_FLAG
     type: str
     size: 1
     encoding: ECS-A
@@ -197,7 +197,7 @@ seq:
       1 ECS-A character.
       Values: Y = Data included, N = Data not included, U = Unknown
 
-  - id: metoc_source
+  - id: METOC_SOURCE
     type: str
     size: 80
     encoding: ECS-A
@@ -212,7 +212,7 @@ seq:
   # Note: These fields are only present if METOC_SOURCE = "NONTRADITIONAL"
   # The parser must check METOC_SOURCE value to determine presence
 
-  - id: metoc_format
+  - id: METOC_FORMAT
     type: str
     size: 80
     encoding: ECS-A
@@ -222,7 +222,7 @@ seq:
       80 ECS-A characters.
       Approved values: PAIS_2.0, GRIB0, GRIB1, GRIB2, GRIB3
 
-  - id: com_size
+  - id: COM_SIZE
     type: str
     size: 4
     encoding: BCS-N
@@ -232,18 +232,18 @@ seq:
       4 BCS-N characters.
       Range: 0000 to 8388
 
-  - id: comments
+  - id: COMMENTS
     type: str
-    size: com_size.to_i
+    size: COM_SIZE.to_i
     encoding: ECS-A
-    if: com_size.to_i > 0
+    if: COM_SIZE.to_i > 0
     doc: |
       Free Text Comment Block (COMMENTS)
       A block of user-defined free text.
       Size determined by COM_SIZE field value.
       Omitted if COM_SIZE is "0000".
 
-  - id: creation_timestamp
+  - id: CREATION_TIMESTAMP
     type: str
     size: 14
     encoding: ECS-A
@@ -253,7 +253,7 @@ seq:
       14 ECS-A characters in format CCYYMMDDhhmmss (UTC Zulu).
       May be all ECS spaces (0x20) if unknown.
 
-  - id: valid_timestamp
+  - id: VALID_TIMESTAMP
     type: str
     size: 14
     encoding: ECS-A
@@ -263,7 +263,7 @@ seq:
       14 ECS-A characters in format CCYYMMDDhhmmss (UTC Zulu).
       May be all ECS spaces (0x20) if unknown.
 
-  - id: metoc_generation
+  - id: METOC_GENERATION
     type: str
     size: 80
     encoding: ECS-A
@@ -274,7 +274,7 @@ seq:
       80 ECS-A characters.
       Values depend on METOC_FORMAT (see Tables L.6-3 through L.6-6).
 
-  - id: location_shape
+  - id: LOCATION_SHAPE
     type: str
     size: 40
     encoding: BCS-A

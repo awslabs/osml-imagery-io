@@ -21,7 +21,7 @@ doc: |
   Reference: BPJ2K01.10 - BIIF Profile for JPEG 2000 Version 01.10
 
 seq:
-  - id: orig_l
+  - id: ORIG_L
     type: str
     size: 1
     encoding: BCS-N
@@ -30,7 +30,7 @@ seq:
       Number of decomposition levels in the original image.
       Range: 0-9. Value 0 indicates only the LL subband.
 
-  - id: nlevels_o
+  - id: NLEVELS_O
     type: str
     size: 2
     encoding: BCS-N
@@ -39,7 +39,7 @@ seq:
       Number of decomposition levels in this (possibly derived) image.
       Range: 00-32.
 
-  - id: nbands_o
+  - id: NBANDS_O
     type: str
     size: 5
     encoding: BCS-N
@@ -47,7 +47,7 @@ seq:
       Number of Image Components (Bands) in this Image.
       Range: 00001-16384.
 
-  - id: nlayers_o
+  - id: NLAYERS_O
     type: str
     size: 3
     encoding: BCS-N
@@ -55,17 +55,17 @@ seq:
       Number of Quality Layers in this Image.
       Range: 001-999.
 
-  - id: layers
+  - id: LAYERS
     type: layer_info
     repeat: expr
-    repeat-expr: nlayers_o.to_i
+    repeat-expr: NLAYERS_O.to_i
     doc: Per-layer information for each quality layer.
 
 types:
   layer_info:
     doc: Information for a single quality layer.
     seq:
-      - id: layer_id
+      - id: LAYER_ID
         type: str
         size: 3
         encoding: BCS-N
@@ -74,7 +74,7 @@ types:
           Sequential layer number starting from 001.
           Range: 001-999.
 
-      - id: bitrate
+      - id: BITRATE
         type: str
         size: 9
         encoding: BCS-N

@@ -12,7 +12,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix C - PIAE
 
 seq:
-  - id: tgtutm
+  - id: TGTUTM
     type: str
     size: 15
     encoding: ASCII
@@ -21,7 +21,7 @@ seq:
       Universal Transverse Mercator grid coordinates.
       15 BCS-A, XXXNNnnnnnnnnnn format.
 
-  - id: piatgaid
+  - id: PIATGAID
     type: str
     size: 15
     encoding: ASCII
@@ -30,7 +30,7 @@ seq:
       Basic Encyclopedia (BE) or non-BE ID of primary target.
       15 BCS-A.
 
-  - id: piactry
+  - id: PIACTRY
     type: str
     size: 2
     encoding: ASCII
@@ -39,7 +39,7 @@ seq:
       Country where target coordinates reside.
       2 BCS-A, GEC code.
 
-  - id: piacat
+  - id: PIACAT
     type: str
     size: 5
     encoding: ASCII
@@ -48,7 +48,7 @@ seq:
       Target classification by product or activity type.
       5 BCS-N, DIAM 65-3-1.
 
-  - id: tgtgeo
+  - id: TGTGEO
     type: str
     size: 15
     encoding: ASCII
@@ -57,7 +57,7 @@ seq:
       Point target geographic location.
       15 BCS-A, ddmmssXdddmmssY format.
 
-  - id: datum
+  - id: DATUM
     type: str
     size: 3
     encoding: ASCII
@@ -66,7 +66,7 @@ seq:
       Datum of map used to derive target coordinates.
       3 BCS-A.
 
-  - id: tgtname
+  - id: TGTNAME
     type: str
     size: 38
     encoding: ASCII
@@ -75,7 +75,7 @@ seq:
       Official name of target element based on MIIDS/IDB.
       38 BCS-A.
 
-  - id: percover
+  - id: PERCOVER
     type: str
     size: 3
     encoding: ASCII
@@ -84,7 +84,7 @@ seq:
       Percentage of target covered by image.
       3 BCS-N, 000-100.
 
-  - id: tgtlat
+  - id: TGTLAT
     type: str
     size: 10
     encoding: ASCII
@@ -93,7 +93,7 @@ seq:
       Point target latitude in decimal degrees.
       10 BCS-N, +dd.dddddd format.
 
-  - id: tgtlon
+  - id: TGTLON
     type: str
     size: 11
     encoding: ASCII

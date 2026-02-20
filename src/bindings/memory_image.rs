@@ -70,13 +70,31 @@ impl PyMemoryImageAssetProvider {
     /// * `block_height` - Block/tile height in pixels (default: 256)
     /// * `pixel_type` - Pixel data type (default: UInt8)
     /// * `actual_bits_per_pixel` - Actual bits per pixel, may be less than nominal (default: None, uses full range)
-    /// * `imode` - Interleave mode: B, P, R, or S (default: "B")
+    /// * `metadata` - Optional MetadataProvider for encoding hints (IMODE, IC, NPPBH, etc.)
     /// * `title` - Human-readable title (default: auto-generated)
     /// * `description` - Detailed description (default: auto-generated)
     ///
     /// # Returns
     ///
     /// A new MemoryImageAssetProvider instance.
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// from aws.osml.io import MemoryImageAssetProvider, SimpleMetadataProvider, PixelType
+    ///
+    /// # Create with encoding hints (lowercase field names match .ksy parser output)
+    /// metadata = SimpleMetadataProvider()
+    /// metadata.set("imode", "P")  # Pixel interleave mode
+    /// metadata.set("nppbh", "256")  # Block width
+    ///
+    /// provider = MemoryImageAssetProvider.create(
+    ///     key="synthetic_image",
+    ///     num_columns=512,
+    ///     num_rows=512,
+    ///     metadata=metadata,
+    /// )
+    /// ```
     #[staticmethod]
     #[pyo3(signature = (
         key,
@@ -87,7 +105,7 @@ impl PyMemoryImageAssetProvider {
         block_height=256,
         pixel_type=PixelType::UInt8,
         actual_bits_per_pixel=None,
-        imode="B",
+        metadata=None,
         title=None,
         description=None
     ))]
@@ -101,21 +119,25 @@ impl PyMemoryImageAssetProvider {
         block_height: u32,
         pixel_type: PixelType,
         actual_bits_per_pixel: Option<u32>,
-        imode: &str,
+        metadata: Option<&PyMetadataProvider>,
         title: Option<&str>,
         description: Option<&str>,
     ) -> Self {
         let mut config = MemoryImageConfig::new(num_columns, num_rows)
             .with_bands(num_bands)
             .with_block_size(block_width, block_height)
-            .with_pixel_type(pixel_type)
-            .with_imode(imode);
+            .with_pixel_type(pixel_type);
 
         if let Some(abpp) = actual_bits_per_pixel {
             config = config.with_actual_bits_per_pixel(abpp);
         }
 
-        let provider = MemoryImageAssetProvider::new(key, config);
+        let mut provider = MemoryImageAssetProvider::new(key, config);
+
+        // Apply metadata if provided
+        if let Some(meta) = metadata {
+            provider = provider.with_metadata(meta.inner().clone());
+        }
 
         // Apply title and description if provided
         let provider = match (title, description) {
@@ -323,12 +345,6 @@ impl PyMemoryImageAssetProvider {
     #[getter]
     fn block_grid_size(&self) -> (u32, u32) {
         self.inner.block_grid_size()
-    }
-
-    /// Returns the interleave mode (B, P, R, or S).
-    #[getter]
-    fn imode(&self) -> String {
-        self.inner.config().imode.clone()
     }
 
     /// Returns the image representation (MONO, RGB, MULTI, etc.).

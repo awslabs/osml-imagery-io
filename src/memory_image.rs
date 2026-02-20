@@ -31,8 +31,6 @@ pub struct MemoryImageConfig {
     pub bits_per_pixel: u32,
     /// Actual bits per pixel (may be less than nominal)
     pub actual_bits_per_pixel: u32,
-    /// Interleave mode (B, P, R, S)
-    pub imode: String,
     /// Image representation (MONO, RGB, MULTI, etc.)
     pub irep: String,
 }
@@ -48,7 +46,6 @@ impl Default for MemoryImageConfig {
             pixel_type: PixelType::UInt8,
             bits_per_pixel: 8,
             actual_bits_per_pixel: 8,
-            imode: "B".to_string(),
             irep: "MONO".to_string(),
         }
     }
@@ -94,12 +91,6 @@ impl MemoryImageConfig {
     /// Set the actual bits per pixel (for sub-byte precision).
     pub fn with_actual_bits_per_pixel(mut self, abpp: u32) -> Self {
         self.actual_bits_per_pixel = abpp;
-        self
-    }
-
-    /// Set the interleave mode.
-    pub fn with_imode(mut self, imode: &str) -> Self {
-        self.imode = imode.to_string();
         self
     }
 
@@ -206,6 +197,34 @@ impl MemoryImageAssetProvider {
     pub fn with_title(mut self, title: &str, description: &str) -> Self {
         self.title = title.to_string();
         self.description = description.to_string();
+        self
+    }
+
+    /// Create with a custom metadata provider.
+    ///
+    /// This allows attaching encoding hints and other metadata to the asset.
+    /// The metadata will be accessible via the `metadata()` method and can be
+    /// used by writers to control format-specific encoding options.
+    ///
+    /// # Arguments
+    /// * `metadata` - The metadata provider to attach to this asset
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use aws_osml_io::memory_image::{MemoryImageAssetProvider, MemoryImageConfig};
+    /// use aws_osml_io::SimpleMetadataProvider;
+    ///
+    /// let metadata = SimpleMetadataProvider::new();
+    /// metadata.set("imode", "P");
+    /// metadata.set("nppbh", "256");
+    ///
+    /// let config = MemoryImageConfig::new(512, 512);
+    /// let provider = MemoryImageAssetProvider::new("image_0", config)
+    ///     .with_metadata(Arc::new(metadata));
+    /// ```
+    pub fn with_metadata(mut self, metadata: Arc<dyn MetadataProvider>) -> Self {
+        self.metadata = metadata;
         self
     }
 
@@ -639,5 +658,169 @@ mod tests {
         let (data, shape) = provider.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [256, 256, 1]);
         assert_eq!(data.len(), 256 * 256);
+    }
+
+    #[test]
+    fn test_with_metadata() {
+        use crate::simple_metadata::SimpleMetadataProvider;
+
+        // Create a metadata provider with encoding hints
+        let metadata = SimpleMetadataProvider::new();
+        metadata.set("imode", "P");
+        metadata.set("nppbh", "256");
+
+        let config = MemoryImageConfig::new(512, 512);
+        let provider = MemoryImageAssetProvider::new("test_image", config)
+            .with_metadata(Arc::new(metadata));
+
+        // Verify metadata is accessible
+        let meta = provider.metadata();
+        let dict = meta.as_dict(None);
+        assert_eq!(dict.get("imode"), Some(&serde_json::json!("P")));
+        assert_eq!(dict.get("nppbh"), Some(&serde_json::json!("256")));
+    }
+
+    #[test]
+    fn test_default_metadata_is_empty() {
+        let config = MemoryImageConfig::new(512, 512);
+        let provider = MemoryImageAssetProvider::new("test_image", config);
+
+        // Default metadata should be empty
+        let meta = provider.metadata();
+        let dict = meta.as_dict(None);
+        assert!(dict.is_empty());
+    }
+}
+
+/// Property-based tests for MemoryImageAssetProvider metadata round-trip.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::simple_metadata::SimpleMetadataProvider;
+    use proptest::prelude::*;
+
+    /// Strategy for generating valid metadata keys (NITF field names).
+    fn valid_metadata_key() -> impl Strategy<Value = String> {
+        // NITF field names are typically uppercase alphanumeric, 1-10 chars
+        "[A-Z][A-Z0-9]{0,9}".prop_map(|s| s.to_string())
+    }
+
+    /// Strategy for generating valid metadata values.
+    fn valid_metadata_value() -> impl Strategy<Value = String> {
+        // Values can be alphanumeric with some special chars, 1-20 chars
+        "[A-Za-z0-9._-]{1,20}".prop_map(|s| s.to_string())
+    }
+
+    proptest! {
+        /// Property 5: MemoryImageAssetProvider Metadata Round-Trip
+        /// 
+        /// For any SimpleMetadataProvider M with key-value pairs, if a 
+        /// MemoryImageAssetProvider is created with M, then calling 
+        /// metadata().as_dict(None) on the provider SHALL return the same 
+        /// key-value pairs as M.as_dict(None).
+        /// 
+        /// **Validates: Requirements 2.2**
+        #[test]
+        fn property_metadata_round_trip(
+            pairs in prop::collection::vec((valid_metadata_key(), valid_metadata_value()), 1..10)
+        ) {
+            // Create metadata provider with random key-value pairs
+            let metadata = SimpleMetadataProvider::new();
+            for (key, value) in &pairs {
+                metadata.set(key, value);
+            }
+
+            // Get the original dict before attaching to provider
+            let original_dict = metadata.as_dict(None);
+
+            // Create MemoryImageAssetProvider with the metadata
+            let config = MemoryImageConfig::new(256, 256);
+            let provider = MemoryImageAssetProvider::new("test_image", config)
+                .with_metadata(Arc::new(metadata));
+
+            // Get metadata back from provider
+            let retrieved_dict = provider.metadata().as_dict(None);
+
+            // Verify all key-value pairs are preserved
+            prop_assert_eq!(
+                original_dict.len(),
+                retrieved_dict.len(),
+                "Metadata dict should have same number of entries"
+            );
+
+            for (key, value) in &original_dict {
+                prop_assert!(
+                    retrieved_dict.contains_key(key),
+                    "Retrieved metadata should contain key: {}", key
+                );
+                prop_assert_eq!(
+                    retrieved_dict.get(key),
+                    Some(value),
+                    "Value for key {} should match", key
+                );
+            }
+        }
+
+        /// Property 5b: Multiple metadata providers are independent
+        /// 
+        /// Creating multiple MemoryImageAssetProviders with different metadata
+        /// should not affect each other's metadata.
+        #[test]
+        fn property_metadata_independence(
+            pairs1 in prop::collection::vec((valid_metadata_key(), valid_metadata_value()), 1..5),
+            pairs2 in prop::collection::vec((valid_metadata_key(), valid_metadata_value()), 1..5)
+        ) {
+            // Create first metadata provider
+            let metadata1 = SimpleMetadataProvider::new();
+            for (key, value) in &pairs1 {
+                metadata1.set(key, value);
+            }
+            let original_dict1 = metadata1.as_dict(None);
+
+            // Create second metadata provider
+            let metadata2 = SimpleMetadataProvider::new();
+            for (key, value) in &pairs2 {
+                metadata2.set(key, value);
+            }
+            let original_dict2 = metadata2.as_dict(None);
+
+            // Create two providers with different metadata
+            let config = MemoryImageConfig::new(256, 256);
+            let provider1 = MemoryImageAssetProvider::new("image1", config.clone())
+                .with_metadata(Arc::new(metadata1));
+            let provider2 = MemoryImageAssetProvider::new("image2", config)
+                .with_metadata(Arc::new(metadata2));
+
+            // Verify each provider has its own metadata
+            let retrieved1 = provider1.metadata().as_dict(None);
+            let retrieved2 = provider2.metadata().as_dict(None);
+
+            prop_assert_eq!(
+                original_dict1.len(),
+                retrieved1.len(),
+                "Provider 1 should have correct metadata count"
+            );
+            prop_assert_eq!(
+                original_dict2.len(),
+                retrieved2.len(),
+                "Provider 2 should have correct metadata count"
+            );
+
+            // Verify values match for each provider
+            for (key, value) in &original_dict1 {
+                prop_assert_eq!(
+                    retrieved1.get(key),
+                    Some(value),
+                    "Provider 1 value for key {} should match", key
+                );
+            }
+            for (key, value) in &original_dict2 {
+                prop_assert_eq!(
+                    retrieved2.get(key),
+                    Some(value),
+                    "Provider 2 value for key {} should match", key
+                );
+            }
+        }
     }
 }

@@ -376,10 +376,14 @@ class ImageWriter:
             RuntimeError: If the IO library fails to create or write the file
             ImportError: If the IO library is not available
         """
-        from aws.osml.io import IO, MemoryImageAssetProvider, PixelType
+        from aws.osml.io import IO, MemoryImageAssetProvider, SimpleMetadataProvider, PixelType
         
         # Map pixel type string to PixelType enum
         pixel_type = PixelType.UInt8 if config.pixel_type == "uint8" else PixelType.UInt16
+        
+        # Create metadata provider with encoding hints (uppercase field names match .ksy definitions)
+        metadata = SimpleMetadataProvider()
+        metadata.set("IMODE", config.imode)
         
         # Create MemoryImageAssetProvider with the correct configuration
         try:
@@ -392,7 +396,7 @@ class ImageWriter:
                 block_height=config.tile_height,
                 pixel_type=pixel_type,
                 actual_bits_per_pixel=config.abpp,
-                imode=config.imode,
+                metadata=metadata,
                 title="Synthetic Test Image",
                 description=f"{config.width}x{config.height} {config.num_bands}-band "
                            f"{config.pixel_type} IMODE={config.imode}",

@@ -13,7 +13,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix P - GEOSDE
 
 seq:
-  - id: uni
+  - id: UNI
     type: str
     size: 3
     encoding: BCS-A
@@ -25,7 +25,7 @@ seq:
       "UM " (Micrometers), "KM " (Kilometers),
       "F  " (Feet), "I  " (Inches).
 
-  - id: arv
+  - id: ARV
     type: str
     size: 9
     encoding: BCS-N
@@ -34,7 +34,7 @@ seq:
       9 BCS-N positive integer. Number of pixels per unit
       in the X (easting) direction.
 
-  - id: brv
+  - id: BRV
     type: str
     size: 9
     encoding: BCS-N
@@ -43,7 +43,7 @@ seq:
       9 BCS-N positive integer. Number of pixels per unit
       in the Y (northing) direction.
 
-  - id: lso
+  - id: LSO
     type: str
     size: 15
     encoding: BCS-N
@@ -52,7 +52,7 @@ seq:
       15 BCS-N real number. X coordinate (easting) of the
       origin of the image coordinate system.
 
-  - id: pso
+  - id: PSO
     type: str
     size: 15
     encoding: BCS-N

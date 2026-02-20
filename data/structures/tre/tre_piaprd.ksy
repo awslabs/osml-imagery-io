@@ -14,7 +14,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix C - PIAE
 
 seq:
-  - id: accessid
+  - id: ACCESSID
     type: str
     size: 64
     encoding: ASCII
@@ -23,7 +23,7 @@ seq:
       Archive unique identifier (filename, record ID, reference number, etc.).
       64 BCS-A.
 
-  - id: fmcontrol
+  - id: FMCONTROL
     type: str
     size: 32
     encoding: ASCII
@@ -32,7 +32,7 @@ seq:
       Foreign material associated with the product.
       32 BCS-A.
 
-  - id: subdet
+  - id: SUBDET
     type: str
     size: 1
     encoding: ASCII
@@ -41,7 +41,7 @@ seq:
       Subjective rating of useful detail available.
       1 BCS-A, P=Poor, F=Fair, G=Good, E=Excellent.
 
-  - id: prodcode
+  - id: PRODCODE
     type: str
     size: 2
     encoding: ASCII
@@ -50,7 +50,7 @@ seq:
       Category of product data stored in archive.
       2 BCS-A.
 
-  - id: producerse
+  - id: PRODUCERSE
     type: str
     size: 6
     encoding: ASCII
@@ -59,7 +59,7 @@ seq:
       Element within producing organization that created product.
       6 BCS-A.
 
-  - id: prodidno
+  - id: PRODIDNO
     type: str
     size: 20
     encoding: ASCII
@@ -68,7 +68,7 @@ seq:
       Producer assigned number identifying product.
       20 BCS-A.
 
-  - id: prodsnme
+  - id: PRODSNME
     type: str
     size: 10
     encoding: ASCII
@@ -77,7 +77,7 @@ seq:
       Abbreviated name of product stored in archive.
       10 BCS-A. Required.
 
-  - id: producercd
+  - id: PRODUCERCD
     type: str
     size: 2
     encoding: ASCII
@@ -86,7 +86,7 @@ seq:
       Organization responsible for creating/modifying product.
       2 BCS-A.
 
-  - id: prodcrtime
+  - id: PRODCRTIME
     type: str
     size: 14
     encoding: ASCII
@@ -95,7 +95,7 @@ seq:
       Date/time product was created or last modified (ZULU).
       14 BCS-A, CCYYMMDDHHMMSS format.
 
-  - id: mapid
+  - id: MAPID
     type: str
     size: 40
     encoding: ASCII
@@ -104,7 +104,7 @@ seq:
       Map associated with the product.
       40 BCS-A.
 
-  - id: sectitlerep
+  - id: SECTITLEREP
     type: str
     size: 2
     encoding: ASCII
@@ -113,13 +113,13 @@ seq:
       Number of times SECTITLE/PPNUM/TPP fields repeat.
       2 BCS-N, 00-99.
 
-  - id: sectitle_entries
+  - id: SECTITLE_ENTRIES
     type: sectitle_entry
     repeat: expr
-    repeat-expr: sectitlerep.to_i
+    repeat-expr: SECTITLEREP.to_i
     doc: Section title entries (SECTITLE, PPNUM, TPP groups)
 
-  - id: reqorgrep
+  - id: REQORGREP
     type: str
     size: 2
     encoding: ASCII
@@ -128,15 +128,15 @@ seq:
       Number of times REQORG field repeats.
       2 BCS-N, 00-99.
 
-  - id: reqorg_entries
+  - id: REQORG_ENTRIES
     type: str
     size: 64
     encoding: ASCII
     repeat: expr
-    repeat-expr: reqorgrep.to_i
+    repeat-expr: REQORGREP.to_i
     doc: Requesting Organization entries (64 BCS-A each)
 
-  - id: keywordrep
+  - id: KEYWORDREP
     type: str
     size: 2
     encoding: ASCII
@@ -145,15 +145,15 @@ seq:
       Number of times KEYWORD field repeats.
       2 BCS-N, 00-99.
 
-  - id: keyword_entries
+  - id: KEYWORD_ENTRIES
     type: str
     size: 255
     encoding: ASCII
     repeat: expr
-    repeat-expr: keywordrep.to_i
+    repeat-expr: KEYWORDREP.to_i
     doc: Keyword string entries (255 BCS-A each)
 
-  - id: assrptrep
+  - id: ASSRPTREP
     type: str
     size: 2
     encoding: ASCII
@@ -162,15 +162,15 @@ seq:
       Number of times ASSRPT field repeats.
       2 BCS-N, 00-99.
 
-  - id: assrpt_entries
+  - id: ASSRPT_ENTRIES
     type: str
     size: 20
     encoding: ASCII
     repeat: expr
-    repeat-expr: assrptrep.to_i
+    repeat-expr: ASSRPTREP.to_i
     doc: Associated Report entries (20 BCS-A each)
 
-  - id: atextrep
+  - id: ATEXTREP
     type: str
     size: 2
     encoding: ASCII
@@ -179,28 +179,28 @@ seq:
       Number of times ATEXT field repeats.
       2 BCS-N, 00-99.
 
-  - id: atext_entries
+  - id: ATEXT_ENTRIES
     type: str
     size: 255
     encoding: ASCII
     repeat: expr
-    repeat-expr: atextrep.to_i
+    repeat-expr: ATEXTREP.to_i
     doc: Associated Text entries (255 BCS-A each)
 
 types:
   sectitle_entry:
     seq:
-      - id: sectitle
+      - id: SECTITLE
         type: str
         size: 40
         encoding: ASCII
         doc: Section Title (40 BCS-A)
-      - id: ppnum
+      - id: PPNUM
         type: str
         size: 5
         encoding: ASCII
         doc: Page/Part Number (5 BCS-A)
-      - id: tpp
+      - id: TPP
         type: str
         size: 3
         encoding: ASCII

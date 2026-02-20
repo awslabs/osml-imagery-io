@@ -89,6 +89,17 @@ The goal is to maintain clean abstraction boundaries while allowing users to con
 
 #### Acceptance Criteria
 
-1. THE encoding hint field names SHALL match the exact field names returned by the reader's metadata (e.g., "IMODE", "IC", "NPPBH", "NPPBV", "COMRAT")
+1. THE encoding hint field names SHALL use lowercase names matching the .ksy parser output (e.g., "imode", "ic", "nppbh", "nppbv", "comrat")
 2. THE SimpleMetadataProvider Python bindings SHALL accept string keys and string values
 3. WHEN copying metadata from a reader to a writer, THE field names SHALL be identical without requiring translation
+
+### Requirement 7: Generic Metadata Exposure
+
+**User Story:** As a developer implementing read-modify-write workflows, I want all image subheader fields exposed through the metadata API, so that I can access any field without code changes.
+
+#### Acceptance Criteria
+
+1. THE metadata exposure code SHALL be driven entirely by .ksy structure definitions, not hardcoded field lists
+2. THE JBPSegmentMetadataProvider SHALL dynamically expose all fields defined in the .ksy image subheader structure
+3. WHEN new fields are added to .ksy definitions, THE metadata API SHALL automatically expose them without facade changes
+4. THE facade layer MAY access specific fields for writer logic, but THE getmetadata API SHALL remain fully dynamic

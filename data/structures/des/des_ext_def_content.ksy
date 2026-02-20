@@ -28,7 +28,7 @@ doc: |
   Reference: STDI-0002 Volume 2, Appendix K - EXT_DEF_CONTENT
 
 seq:
-  - id: content_headers_len
+  - id: CONTENT_HEADERS_LEN
     type: str
     size: 4
     encoding: BCS-N
@@ -37,9 +37,9 @@ seq:
       4 BCS-N characters.
       Unsigned integer value up to 9794.
 
-  - id: content_headers
+  - id: CONTENT_HEADERS
     type: str
-    size: content_headers_len.to_i
+    size: CONTENT_HEADERS_LEN.to_i
     encoding: ECS-A
     doc: |
       Metadata describing the embedded content (CONTENT_HEADERS)

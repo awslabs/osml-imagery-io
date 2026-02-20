@@ -17,7 +17,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix Z - SENSRB (Section Z.6.1 SENSRA to SENSRB Mapping)
 
 seq:
-  - id: ref_row
+  - id: REF_ROW
     type: str
     size: 8
     encoding: BCS-N
@@ -25,7 +25,7 @@ seq:
       Reference Row
       8 BCS-N integer representing the reference pixel row.
 
-  - id: ref_col
+  - id: REF_COL
     type: str
     size: 8
     encoding: BCS-N
@@ -33,7 +33,7 @@ seq:
       Reference Column
       8 BCS-N integer representing the reference pixel column.
 
-  - id: sensor_model
+  - id: SENSOR_MODEL
     type: str
     size: 6
     encoding: BCS-A
@@ -41,7 +41,7 @@ seq:
       Sensor Model
       6 BCS-A characters identifying the sensor model.
 
-  - id: sensor_mount
+  - id: SENSOR_MOUNT
     type: str
     size: 3
     encoding: BCS-A
@@ -50,7 +50,7 @@ seq:
       3 BCS-A characters describing the sensor mount.
       Not supported in SENSRB.
 
-  - id: sensor_loc
+  - id: SENSOR_LOC
     type: str
     size: 21
     encoding: BCS-A
@@ -59,7 +59,7 @@ seq:
       21 BCS-A characters representing geodetic coordinates (lat/lon).
       Format: ±DD.DDDDDD±DDD.DDDDDD
 
-  - id: sensor_alt_source
+  - id: SENSOR_ALT_SOURCE
     type: str
     size: 1
     encoding: BCS-A
@@ -68,7 +68,7 @@ seq:
       1 BCS-A character indicating altitude datum.
       B = MSL, G = HAE, R = AGL, M = not applicable.
 
-  - id: sensor_alt
+  - id: SENSOR_ALT
     type: str
     size: 6
     encoding: BCS-N
@@ -76,7 +76,7 @@ seq:
       Sensor Altitude
       6 BCS-N real number representing sensor altitude.
 
-  - id: sensor_alt_unit
+  - id: SENSOR_ALT_UNIT
     type: str
     size: 1
     encoding: BCS-A
@@ -85,7 +85,7 @@ seq:
       1 BCS-A character indicating unit.
       f = feet, m = meters.
 
-  - id: sensor_agl
+  - id: SENSOR_AGL
     type: str
     size: 5
     encoding: BCS-N
@@ -93,7 +93,7 @@ seq:
       Sensor Above Ground Level
       5 BCS-N real number representing height above ground.
 
-  - id: sensor_pitch
+  - id: SENSOR_PITCH
     type: str
     size: 7
     encoding: BCS-N
@@ -102,7 +102,7 @@ seq:
       7 BCS-N real number in degrees.
       Note: SENSRA angle definitions differ from SENSRB Euler angles.
 
-  - id: sensor_roll
+  - id: SENSOR_ROLL
     type: str
     size: 8
     encoding: BCS-N
@@ -111,7 +111,7 @@ seq:
       8 BCS-N real number in degrees.
       Note: SENSRA angle definitions differ from SENSRB Euler angles.
 
-  - id: sensor_yaw
+  - id: SENSOR_YAW
     type: str
     size: 8
     encoding: BCS-N
@@ -120,7 +120,7 @@ seq:
       8 BCS-N real number in degrees.
       Note: SENSRA angle definitions differ from SENSRB Euler angles.
 
-  - id: platform_pitch
+  - id: PLATFORM_PITCH
     type: str
     size: 7
     encoding: BCS-N
@@ -128,7 +128,7 @@ seq:
       Platform Pitch Angle
       7 BCS-N real number in degrees.
 
-  - id: platform_roll
+  - id: PLATFORM_ROLL
     type: str
     size: 8
     encoding: BCS-N
@@ -136,7 +136,7 @@ seq:
       Platform Roll Angle
       8 BCS-N real number in degrees.
 
-  - id: platform_hdg
+  - id: PLATFORM_HDG
     type: str
     size: 5
     encoding: BCS-N
@@ -144,7 +144,7 @@ seq:
       Platform Heading
       5 BCS-N real number in degrees (0-360).
 
-  - id: ground_spd_source
+  - id: GROUND_SPD_SOURCE
     type: str
     size: 1
     encoding: BCS-A
@@ -152,7 +152,7 @@ seq:
       Ground Speed Source
       1 BCS-A character indicating speed source.
 
-  - id: ground_spd
+  - id: GROUND_SPD
     type: str
     size: 6
     encoding: BCS-N
@@ -160,7 +160,7 @@ seq:
       Ground Speed
       6 BCS-N real number representing ground speed.
 
-  - id: ground_spd_unit
+  - id: GROUND_SPD_UNIT
     type: str
     size: 1
     encoding: BCS-A
@@ -169,7 +169,7 @@ seq:
       1 BCS-A character indicating unit.
       f = feet/sec, m = meters/sec, k = knots.
 
-  - id: ground_track
+  - id: GROUND_TRACK
     type: str
     size: 5
     encoding: BCS-N
@@ -177,7 +177,7 @@ seq:
       Ground Track Angle
       5 BCS-N real number in degrees (0-360).
 
-  - id: vert_vel
+  - id: VERT_VEL
     type: str
     size: 5
     encoding: BCS-N
@@ -186,7 +186,7 @@ seq:
       5 BCS-N real number. Positive is upward.
       Note: SENSRB uses positive downward convention.
 
-  - id: vert_vel_unit
+  - id: VERT_VEL_UNIT
     type: str
     size: 1
     encoding: BCS-A
@@ -194,7 +194,7 @@ seq:
       Vertical Velocity Unit
       1 BCS-A character indicating unit per minute.
 
-  - id: swath_frames
+  - id: SWATH_FRAMES
     type: str
     size: 4
     encoding: BCS-NPI
@@ -202,7 +202,7 @@ seq:
       Swath Frames
       4 BCS-NPI integer.
 
-  - id: n_swaths
+  - id: N_SWATHS
     type: str
     size: 4
     encoding: BCS-NPI
@@ -210,7 +210,7 @@ seq:
       Number of Swaths
       4 BCS-NPI integer.
 
-  - id: spot_num
+  - id: SPOT_NUM
     type: str
     size: 3
     encoding: BCS-NPI

@@ -231,34 +231,36 @@ class MemoryImageAssetProvider:
 
 ### Encoding Hint Fields
 
+Field names use lowercase to match the .ksy parser output, ensuring consistency between reader and writer APIs.
+
 | Field | Type | Valid Values | Default | Description |
 |-------|------|--------------|---------|-------------|
-| IMODE | String | "B", "P", "R", "S" | "B" | Band interleave mode |
-| IC | String | "NC", "NM", "C1", "C3", "C4", "C5", "C6", "C7", "C8", "M1", "M3", "M4", "M5", "M8", "I1" | "NC" | Compression code |
-| NPPBH | Integer | 1-8192 | image width | Pixels per block horizontal |
-| NPPBV | Integer | 1-8192 | image height | Pixels per block vertical |
-| COMRAT | String | varies by IC | None | Compression ratio |
+| imode | String | "B", "P", "R", "S" | "B" | Band interleave mode |
+| ic | String | "NC", "NM", "C1", "C3", "C4", "C5", "C6", "C7", "C8", "M1", "M3", "M4", "M5", "M8", "I1" | "NC" | Compression code |
+| nppbh | Integer | 1-8192 | image width | Pixels per block horizontal |
+| nppbv | Integer | 1-8192 | image height | Pixels per block vertical |
+| comrat | String | varies by ic | None | Compression ratio |
 
 ### Validation Rules
 
 | Condition | Action |
 |-----------|--------|
-| IMODE not in {B, P, R, S} | Return error |
-| IC requires unavailable codec | Return error |
-| NPPBH < 1 or > 8192 | Return error |
-| NPPBV < 1 or > 8192 | Return error |
-| NPPBH > image width | Auto-adjust to image width, log warning |
-| NPPBV > image height | Auto-adjust to image height, log warning |
-| IC is compressed but COMRAT missing | Use default COMRAT for IC type |
+| imode not in {B, P, R, S} | Return error |
+| ic requires unavailable codec | Return error |
+| nppbh < 1 or > 8192 | Return error |
+| nppbv < 1 or > 8192 | Return error |
+| nppbh > image width | Auto-adjust to image width, log warning |
+| nppbv > image height | Auto-adjust to image height, log warning |
+| ic is compressed but comrat missing | Use default comrat for ic type |
 
 ### Conflict Resolution
 
 | Conflict | Resolution |
 |----------|------------|
-| Provider num_bands ≠ metadata NBANDS | Use provider value |
-| Provider pixel_type ≠ metadata PVTYPE | Use provider value |
-| Provider dimensions ≠ metadata NROWS/NCOLS | Use provider value |
-| Metadata IREP inconsistent with num_bands | Use provider band count, log warning |
+| Provider num_bands ≠ metadata nbands | Use provider value |
+| Provider pixel_type ≠ metadata pvtype | Use provider value |
+| Provider dimensions ≠ metadata nrows/ncols | Use provider value |
+| Metadata irep inconsistent with num_bands | Use provider band count, log warning |
 
 
 
@@ -298,31 +300,31 @@ class MemoryImageAssetProvider:
 
 ### Property 6: Encoding Hints Applied to Output
 
-*For any* valid encoding hint values (IMODE ∈ {B, P, R, S}, NPPBH ∈ [1, 8192], NPPBV ∈ [1, 8192]) set in asset metadata, when the asset is written by JBPDatasetWriter and the resulting file is read back, the image subheader SHALL contain those hint values.
+*For any* valid encoding hint values (imode ∈ {B, P, R, S}, nppbh ∈ [1, 8192], nppbv ∈ [1, 8192]) set in asset metadata, when the asset is written by JBPDatasetWriter and the resulting file is read back, the image subheader SHALL contain those hint values.
 
 **Validates: Requirements 3.2, 3.4, 3.5**
 
-### Property 7: Invalid IMODE Values Cause Errors
+### Property 7: Invalid imode Values Cause Errors
 
-*For any* string S that is not in the set {B, P, R, S}, if S is set as the "IMODE" metadata value and the asset is written, JBPDatasetWriter SHALL return an error.
+*For any* string S that is not in the set {B, P, R, S}, if S is set as the "imode" metadata value and the asset is written, JBPDatasetWriter SHALL return an error.
 
 **Validates: Requirements 4.1**
 
 ### Property 8: Invalid Block Size Values Cause Errors
 
-*For any* integer N where N < 1 or N > 8192, if N is set as the "NPPBH" or "NPPBV" metadata value and the asset is written, JBPDatasetWriter SHALL return an error.
+*For any* integer N where N < 1 or N > 8192, if N is set as the "nppbh" or "nppbv" metadata value and the asset is written, JBPDatasetWriter SHALL return an error.
 
 **Validates: Requirements 4.3, 4.4**
 
 ### Property 9: Block Sizes Auto-Adjusted to Image Dimensions
 
-*For any* image with dimensions (W, H) and block size hints (NPPBH, NPPBV) where NPPBH > W or NPPBV > H, when the asset is written and read back, the actual block sizes in the output SHALL be min(NPPBH, W) and min(NPPBV, H) respectively.
+*For any* image with dimensions (W, H) and block size hints (nppbh, nppbv) where nppbh > W or nppbv > H, when the asset is written and read back, the actual block sizes in the output SHALL be min(nppbh, W) and min(nppbv, H) respectively.
 
 **Validates: Requirements 4.5**
 
 ### Property 10: Provider Structural Properties Override Metadata
 
-*For any* MemoryImageAssetProvider with num_bands=B and metadata containing a different NBANDS value, when written by JBPDatasetWriter and read back, the output SHALL have B bands.
+*For any* MemoryImageAssetProvider with num_bands=B and metadata containing a different nbands value, when written by JBPDatasetWriter and read back, the output SHALL have B bands.
 
 **Validates: Requirements 5.1, 5.3**
 
@@ -330,7 +332,7 @@ class MemoryImageAssetProvider:
 
 *For any* NITF file read by JBPDatasetReader, if the metadata is copied to a SimpleMetadataProvider and used to write a new file, the field names in the output file's metadata SHALL match the original field names without transformation.
 
-**Validates: Requirements 6.1, 6.3**
+**Validates: Requirements 6.1, 6.3, 7.1, 7.2**
 
 ## Error Handling
 
@@ -340,10 +342,10 @@ The following error conditions are handled:
 
 | Error Condition | Error Type | Message Format |
 |-----------------|------------|----------------|
-| Invalid IMODE value | `CodecError::InvalidParameter` | "Invalid IMODE value '{value}': must be B, P, R, or S" |
-| Invalid NPPBH value | `CodecError::InvalidParameter` | "Invalid NPPBH value '{value}': must be between 1 and 8192" |
-| Invalid NPPBV value | `CodecError::InvalidParameter` | "Invalid NPPBV value '{value}': must be between 1 and 8192" |
-| Unsupported IC value | `CodecError::UnsupportedFeature` | "Compression code '{value}' requires unavailable codec" |
+| Invalid imode value | `CodecError::InvalidParameter` | "Invalid imode value '{value}': must be B, P, R, or S" |
+| Invalid nppbh value | `CodecError::InvalidParameter` | "Invalid nppbh value '{value}': must be between 1 and 8192" |
+| Invalid nppbv value | `CodecError::InvalidParameter` | "Invalid nppbv value '{value}': must be between 1 and 8192" |
+| Unsupported ic value | `CodecError::UnsupportedFeature` | "Compression code '{value}' requires unavailable codec" |
 | Metadata parse error | `CodecError::InvalidParameter` | "Failed to parse encoding hint '{field}': {details}" |
 
 ### Warning Conditions
@@ -352,8 +354,8 @@ The following conditions generate warnings but do not fail:
 
 | Condition | Warning Message |
 |-----------|-----------------|
-| Block size > image dimension | "NPPBH {value} exceeds image width {width}, adjusting to {width}" |
-| IREP inconsistent with band count | "IREP '{irep}' inconsistent with {bands} bands, using provider band count" |
+| Block size > image dimension | "nppbh {value} exceeds image width {width}, adjusting to {width}" |
+| irep inconsistent with band count | "irep '{irep}' inconsistent with {bands} bands, using provider band count" |
 
 ### Error Recovery
 
@@ -384,8 +386,8 @@ Unit tests verify specific examples and edge cases:
    - Metadata is accessible via metadata() method
 
 4. **Encoding hint validation**
-   - Valid IMODE values accepted
-   - Invalid IMODE values rejected
+   - Valid imode values accepted
+   - Invalid imode values rejected
    - Valid block sizes accepted
    - Invalid block sizes rejected
    - Block sizes auto-adjusted when > image size
@@ -407,8 +409,8 @@ Property-based tests use randomized inputs to verify universal properties. Each 
 | P3 | Prefix filtering | Random keys with common prefixes |
 | P4 | from_provider copy | Random MetadataProvider contents |
 | P5 | Metadata round-trip | Random metadata through provider |
-| P6 | Encoding hints applied | Random valid IMODE, NPPBH, NPPBV |
-| P7 | Invalid IMODE errors | Random strings not in {B,P,R,S} |
+| P6 | Encoding hints applied | Random valid imode, nppbh, nppbv |
+| P7 | Invalid imode errors | Random strings not in {B,P,R,S} |
 | P8 | Invalid block size errors | Random integers outside [1,8192] |
 | P9 | Block size auto-adjust | Random block sizes > image dims |
 | P10 | Provider overrides metadata | Random conflicting values |
@@ -420,9 +422,9 @@ Property-based tests use randomized inputs to verify universal properties. Each 
 - Minimum iterations per property: 100
 - Test tag format: `Feature: dataset-writer-hints, Property N: {property_text}`
 
-### Integration Tests
+### Functional Tests (Documented for Future Implementation)
 
-Integration tests verify end-to-end workflows:
+Functional test scenarios are documented in `docs/TODO_FUNCTIONAL_TESTS.md` for future implementation:
 
 1. **Read-modify-write workflow**
    - Read NITF file

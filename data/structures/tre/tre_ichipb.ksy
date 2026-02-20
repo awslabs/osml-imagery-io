@@ -16,7 +16,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix B - ICHIPB
 
 seq:
-  - id: xfrm_flag
+  - id: XFRM_FLAG
     type: str
     size: 2
     encoding: BCS-N
@@ -25,7 +25,7 @@ seq:
       00 = non-dewarped, data provided
       01 = no data provided (remaining fields zero-filled)
 
-  - id: scale_factor
+  - id: SCALE_FACTOR
     type: str
     size: 10
     encoding: BCS-N
@@ -35,7 +35,7 @@ seq:
       Typically reciprocal of display magnification.
       Values: 0001.00000=R0, 0002.00000=R1, 0004.00000=R2, etc.
 
-  - id: anamrph_corr
+  - id: ANAMRPH_CORR
     type: str
     size: 2
     encoding: BCS-N
@@ -44,7 +44,7 @@ seq:
       00 = no anamorphic correction
       01 = anamorphic correction applied
 
-  - id: scanblk_num
+  - id: SCANBLK_NUM
     type: str
     size: 2
     encoding: BCS-N
@@ -53,7 +53,7 @@ seq:
       Range: 00-99
       00 if not applicable
 
-  - id: op_row_11
+  - id: OP_ROW_11
     type: str
     size: 12
     encoding: BCS-N
@@ -62,7 +62,7 @@ seq:
       for intelligent data. Format: xxxxxxxx.yyy
       Typically 00000000.500
 
-  - id: op_col_11
+  - id: OP_COL_11
     type: str
     size: 12
     encoding: BCS-N
@@ -71,7 +71,7 @@ seq:
       for intelligent data. Format: xxxxxxxx.yyy
       Typically 00000000.500
 
-  - id: op_row_12
+  - id: OP_ROW_12
     type: str
     size: 12
     encoding: BCS-N
@@ -79,7 +79,7 @@ seq:
       Output product row number component of grid point index (1,2)
       for intelligent data. Format: xxxxxxxx.yyy
 
-  - id: op_col_12
+  - id: OP_COL_12
     type: str
     size: 12
     encoding: BCS-N
@@ -87,7 +87,7 @@ seq:
       Output product column number component of grid point index (1,2)
       for intelligent data. Format: xxxxxxxx.yyy
 
-  - id: op_row_21
+  - id: OP_ROW_21
     type: str
     size: 12
     encoding: BCS-N
@@ -95,7 +95,7 @@ seq:
       Output product row number component of grid point index (2,1)
       for intelligent data. Format: xxxxxxxx.yyy
 
-  - id: op_col_21
+  - id: OP_COL_21
     type: str
     size: 12
     encoding: BCS-N
@@ -103,7 +103,7 @@ seq:
       Output product column number component of grid point index (2,1)
       for intelligent data. Format: xxxxxxxx.yyy
 
-  - id: op_row_22
+  - id: OP_ROW_22
     type: str
     size: 12
     encoding: BCS-N
@@ -111,7 +111,7 @@ seq:
       Output product row number component of grid point index (2,2)
       for intelligent data. Format: xxxxxxxx.yyy
 
-  - id: op_col_22
+  - id: OP_COL_22
     type: str
     size: 12
     encoding: BCS-N
@@ -119,7 +119,7 @@ seq:
       Output product column number component of grid point index (2,2)
       for intelligent data. Format: xxxxxxxx.yyy
 
-  - id: fi_row_11
+  - id: FI_ROW_11
     type: str
     size: 12
     encoding: BCS-N
@@ -127,7 +127,7 @@ seq:
       Grid point (1,1), row number in full image coordinate system.
       Format: xxxxxxxx.yyy
 
-  - id: fi_col_11
+  - id: FI_COL_11
     type: str
     size: 12
     encoding: BCS-N
@@ -135,7 +135,7 @@ seq:
       Grid point (1,1), column number in full image coordinate system.
       Format: xxxxxxxx.yyy
 
-  - id: fi_row_12
+  - id: FI_ROW_12
     type: str
     size: 12
     encoding: BCS-N
@@ -143,7 +143,7 @@ seq:
       Grid point (1,2), row number in full image coordinate system.
       Format: xxxxxxxx.yyy
 
-  - id: fi_col_12
+  - id: FI_COL_12
     type: str
     size: 12
     encoding: BCS-N
@@ -151,7 +151,7 @@ seq:
       Grid point (1,2), column number in full image coordinate system.
       Format: xxxxxxxx.yyy
 
-  - id: fi_row_21
+  - id: FI_ROW_21
     type: str
     size: 12
     encoding: BCS-N
@@ -159,7 +159,7 @@ seq:
       Grid point (2,1), row number in full image coordinate system.
       Format: xxxxxxxx.yyy
 
-  - id: fi_col_21
+  - id: FI_COL_21
     type: str
     size: 12
     encoding: BCS-N
@@ -167,7 +167,7 @@ seq:
       Grid point (2,1), column number in full image coordinate system.
       Format: xxxxxxxx.yyy
 
-  - id: fi_row_22
+  - id: FI_ROW_22
     type: str
     size: 12
     encoding: BCS-N
@@ -175,7 +175,7 @@ seq:
       Grid point (2,2), row number in full image coordinate system.
       Format: xxxxxxxx.yyy
 
-  - id: fi_col_22
+  - id: FI_COL_22
     type: str
     size: 12
     encoding: BCS-N
@@ -183,7 +183,7 @@ seq:
       Grid point (2,2), column number in full image coordinate system.
       Format: xxxxxxxx.yyy
 
-  - id: fi_row
+  - id: FI_ROW
     type: str
     size: 8
     encoding: BCS-N
@@ -191,7 +191,7 @@ seq:
       Full Image Number of Rows
       Range: 00000000 (unknown) or 00000002-99999999
 
-  - id: fi_col
+  - id: FI_COL
     type: str
     size: 8
     encoding: BCS-N

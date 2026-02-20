@@ -19,7 +19,7 @@ doc: |
   Reference: STDI-0002 Volume 2, Appendix M - GLAS-GFM
 
 seq:
-  - id: num_sets_warp_data
+  - id: NUM_SETS_WARP_DATA
     type: str
     size: 1
     encoding: BCS-N
@@ -29,7 +29,7 @@ seq:
       If the sensor is a scanner, there shall be one set of warping data.
       1 BCS-N integer, range 1-9.
 
-  - id: sensor_type
+  - id: SENSOR_TYPE
     type: str
     size: 1
     encoding: BCS-A
@@ -38,26 +38,26 @@ seq:
       Identifies the type of sensor that collected the image.
       S = line scanner, F = framing array.
 
-  - id: wrp_interp
+  - id: WRP_INTERP
     type: str
     size: 1
     encoding: BCS-N
-    if: sensor_type == "F"
+    if: SENSOR_TYPE == "F"
     doc: |
       Warping Interpolation Type (conditional: SENSOR_TYPE = F)
       Identifies the type of warping interpolation between sets of corrections.
       0 = nearest neighbor, 1 = linear.
 
-  - id: warp_sets
+  - id: WARP_SETS
     type: warp_set_t(_index)
     repeat: expr
-    repeat-expr: num_sets_warp_data.to_i
+    repeat-expr: NUM_SETS_WARP_DATA.to_i
     doc: |
       Warping Data Sets
       Array of warping data sets containing normalization parameters and
       polynomial coefficients.
 
-  - id: reserved_len
+  - id: RESERVED_LEN
     type: str
     size: 5
     encoding: BCS-N
@@ -69,24 +69,24 @@ seq:
 types:
   warp_set_t:
     params:
-      - id: set_index
+      - id: SET_INDEX
         type: s4
     doc: |
       Warping Data Set
       Contains normalization parameters and polynomial coefficients for
       line and sample de-warping.
     seq:
-      - id: fl_warp
+      - id: FL_WARP
         type: str
         size: 11
         encoding: BCS-N
-        if: _root.sensor_type == "F"
+        if: _root.SENSOR_TYPE == "F"
         doc: |
           Focal Length Associated with this Set of Warping Data
           (conditional: SENSOR_TYPE = F)
           11 BCS-N real number, range 00.00000000 to 99.99999999 meters.
 
-      - id: offset_line
+      - id: OFFSET_LINE
         type: str
         size: 7
         encoding: BCS-N
@@ -94,7 +94,7 @@ types:
           Line Coordinate Normalization Offset
           7 BCS-N integer, range 0000001 to 9999999 rows.
 
-      - id: offset_samp
+      - id: OFFSET_SAMP
         type: str
         size: 7
         encoding: BCS-N
@@ -102,7 +102,7 @@ types:
           Sample Coordinate Normalization Offset
           7 BCS-N integer, range 0000001 to 9999999 columns.
 
-      - id: scale_line
+      - id: SCALE_LINE
         type: str
         size: 7
         encoding: BCS-N
@@ -110,7 +110,7 @@ types:
           Line Coordinate Normalization Scale
           7 BCS-N integer, range 0000001 to 9999999 rows.
 
-      - id: scale_samp
+      - id: SCALE_SAMP
         type: str
         size: 7
         encoding: BCS-N
@@ -118,7 +118,7 @@ types:
           Sample Coordinate Normalization Scale
           7 BCS-N integer, range 0000001 to 9999999 columns.
 
-      - id: offset_line_unwrp
+      - id: OFFSET_LINE_UNWRP
         type: str
         size: 7
         encoding: BCS-N
@@ -126,7 +126,7 @@ types:
           Unwarped Line Coordinate Normalization Offset
           7 BCS-N integer, range 0000001 to 9999999 rows.
 
-      - id: offset_samp_unwrp
+      - id: OFFSET_SAMP_UNWRP
         type: str
         size: 7
         encoding: BCS-N
@@ -134,7 +134,7 @@ types:
           Unwarped Sample Coordinate Normalization Offset
           7 BCS-N integer, range 0000001 to 9999999 columns.
 
-      - id: scale_line_unwrp
+      - id: SCALE_LINE_UNWRP
         type: str
         size: 7
         encoding: BCS-N
@@ -142,7 +142,7 @@ types:
           Unwarped Line Coordinate Normalization Scale
           7 BCS-N integer, range 0000001 to 9999999 rows.
 
-      - id: scale_samp_unwrp
+      - id: SCALE_SAMP_UNWRP
         type: str
         size: 7
         encoding: BCS-N
@@ -150,7 +150,7 @@ types:
           Unwarped Sample Coordinate Normalization Scale
           7 BCS-N integer, range 0000001 to 9999999 columns.
 
-      - id: line_poly_order_m1
+      - id: LINE_POLY_ORDER_M1
         type: str
         size: 1
         encoding: BCS-N
@@ -158,7 +158,7 @@ types:
           Order of Line De-Warping Polynomial (Line Dependency)
           1 BCS-N integer, range 0-9.
 
-      - id: line_poly_order_m2
+      - id: LINE_POLY_ORDER_M2
         type: str
         size: 1
         encoding: BCS-N
@@ -166,7 +166,7 @@ types:
           Order of Line De-Warping Polynomial (Sample Dependency)
           1 BCS-N integer, range 0-9.
 
-      - id: samp_poly_order_n1
+      - id: SAMP_POLY_ORDER_N1
         type: str
         size: 1
         encoding: BCS-N
@@ -174,7 +174,7 @@ types:
           Order of Sample De-Warping Polynomial (Line Dependency)
           1 BCS-N integer, range 0-9.
 
-      - id: samp_poly_order_n2
+      - id: SAMP_POLY_ORDER_N2
         type: str
         size: 1
         encoding: BCS-N
@@ -182,24 +182,24 @@ types:
           Order of Sample De-Warping Polynomial (Sample Dependency)
           1 BCS-N integer, range 0-9.
 
-      - id: line_poly_coeffs
+      - id: LINE_POLY_COEFFS
         type: str
         size: 21
         encoding: BCS-A
         repeat: expr
-        repeat-expr: (line_poly_order_m1.to_i + 1) * (line_poly_order_m2.to_i + 1)
+        repeat-expr: (LINE_POLY_ORDER_M1.to_i + 1) * (LINE_POLY_ORDER_M2.to_i + 1)
         doc: |
           Line De-Warping Polynomial Coefficients A(i,j)
           Coefficients for the line de-warping polynomial.
           21 BCS-A scientific notation, range -9.99999999999999E±99 to +9.99999999999999E±99.
           Total coefficients = (LINE_POLY_ORDER_M1 + 1) × (LINE_POLY_ORDER_M2 + 1).
 
-      - id: samp_poly_coeffs
+      - id: SAMP_POLY_COEFFS
         type: str
         size: 21
         encoding: BCS-A
         repeat: expr
-        repeat-expr: (samp_poly_order_n1.to_i + 1) * (samp_poly_order_n2.to_i + 1)
+        repeat-expr: (SAMP_POLY_ORDER_N1.to_i + 1) * (SAMP_POLY_ORDER_N2.to_i + 1)
         doc: |
           Sample De-Warping Polynomial Coefficients B(i,j)
           Coefficients for the sample de-warping polynomial.

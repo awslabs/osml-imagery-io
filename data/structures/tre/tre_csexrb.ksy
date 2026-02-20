@@ -22,7 +22,7 @@ doc: |
 
 seq:
   # Core identification fields
-  - id: image_uuid
+  - id: IMAGE_UUID
     type: str
     size: 36
     encoding: BCS-A
@@ -31,7 +31,7 @@ seq:
       A valid UUID string in canonical format (e.g., dbe26dc7-e003-4d29-8edb-41acc0e86b6e).
       36 BCS-A characters.
 
-  - id: num_assoc_des
+  - id: NUM_ASSOC_DES
     type: str
     size: 3
     encoding: BCS-N
@@ -41,20 +41,20 @@ seq:
       a GLAS/GFM data model, then NUM_ASSOC_DES = 0.
       3 BCS-N integer, range 000-999.
 
-  - id: assoc_des_uuids
+  - id: ASSOC_DES_UUIDS
     type: str
     size: 36
     encoding: BCS-A
     repeat: expr
-    repeat-expr: num_assoc_des.to_i
-    if: num_assoc_des.to_i > 0
+    repeat-expr: NUM_ASSOC_DES.to_i
+    if: NUM_ASSOC_DES.to_i > 0
     doc: |
       UUIDs of Associated GLAS/GFM DESs
       Each UUID identifies a GLAS/GFM DES associated with the current image.
       36 BCS-A characters per UUID.
 
   # Platform/Sensor identification
-  - id: platform_id
+  - id: PLATFORM_ID
     type: str
     size: 6
     encoding: BCS-A
@@ -63,7 +63,7 @@ seq:
       Identifier of the system that collected the current image.
       6 BCS-A characters.
 
-  - id: payload_id
+  - id: PAYLOAD_ID
     type: str
     size: 6
     encoding: BCS-A
@@ -72,7 +72,7 @@ seq:
       Identifier of the payload that collected the current image.
       6 BCS-A characters.
 
-  - id: sensor_id
+  - id: SENSOR_ID
     type: str
     size: 6
     encoding: BCS-A
@@ -81,7 +81,7 @@ seq:
       Identifier of the sensor that collected the current image.
       6 BCS-A characters.
 
-  - id: sensor_type
+  - id: SENSOR_TYPE
     type: str
     size: 1
     encoding: BCS-A
@@ -91,7 +91,7 @@ seq:
       1 BCS-A character.
 
   # Ground reference point (ECF coordinates)
-  - id: ground_ref_point_x
+  - id: GROUND_REF_POINT_X
     type: str
     size: 12
     encoding: BCS-A
@@ -99,7 +99,7 @@ seq:
       Ground Reference Point X Coordinate (ECF)
       12 BCS-A, range -99999999.99 to +99999999.99 meters, or BCS spaces.
 
-  - id: ground_ref_point_y
+  - id: GROUND_REF_POINT_Y
     type: str
     size: 12
     encoding: BCS-A
@@ -107,7 +107,7 @@ seq:
       Ground Reference Point Y Coordinate (ECF)
       12 BCS-A, range -99999999.99 to +99999999.99 meters, or BCS spaces.
 
-  - id: ground_ref_point_z
+  - id: GROUND_REF_POINT_Z
     type: str
     size: 12
     encoding: BCS-A
@@ -116,17 +116,17 @@ seq:
       12 BCS-A, range -99999999.99 to +99999999.99 meters, or BCS spaces.
 
   # Scanner-specific fields (SENSOR_TYPE = S)
-  - id: scanner_data
+  - id: SCANNER_DATA
     type: scanner_data_t
-    if: sensor_type == "S"
+    if: SENSOR_TYPE == "S"
 
   # Framer-specific fields (SENSOR_TYPE = F)
-  - id: framer_data
+  - id: FRAMER_DATA
     type: framer_data_t
-    if: sensor_type == "F"
+    if: SENSOR_TYPE == "F"
 
   # GSD and geometry fields
-  - id: max_gsd
+  - id: MAX_GSD
     type: str
     size: 12
     encoding: BCS-A
@@ -134,7 +134,7 @@ seq:
       Maximum Mean Ground Sample Distance
       12 BCS-A, range 0000000000.0 to 9999999999.9 inches, or BCS spaces.
 
-  - id: along_scan_gsd
+  - id: ALONG_SCAN_GSD
     type: str
     size: 12
     encoding: BCS-A
@@ -142,7 +142,7 @@ seq:
       Measured Along-Scan GSD
       12 BCS-A, range 0000000000.0 to 9999999999.9 inches, or BCS spaces.
 
-  - id: cross_scan_gsd
+  - id: CROSS_SCAN_GSD
     type: str
     size: 12
     encoding: BCS-A
@@ -150,7 +150,7 @@ seq:
       Measured Cross-Scan GSD
       12 BCS-A, range 0000000000.0 to 9999999999.9 inches, or BCS spaces.
 
-  - id: geo_mean_gsd
+  - id: GEO_MEAN_GSD
     type: str
     size: 12
     encoding: BCS-A
@@ -158,7 +158,7 @@ seq:
       Measured Geometric Mean GSD
       12 BCS-A, range 0000000000.0 to 9999999999.9 inches, or BCS spaces.
 
-  - id: a_s_vert_gsd
+  - id: A_S_VERT_GSD
     type: str
     size: 12
     encoding: BCS-A
@@ -166,7 +166,7 @@ seq:
       Measured Along-Scan Vertical GSD
       12 BCS-A, range 0000000000.0 to 9999999999.9 inches, or BCS spaces.
 
-  - id: c_s_vert_gsd
+  - id: C_S_VERT_GSD
     type: str
     size: 12
     encoding: BCS-A
@@ -174,7 +174,7 @@ seq:
       Measured Cross-Scan Vertical GSD
       12 BCS-A, range 0000000000.0 to 9999999999.9 inches, or BCS spaces.
 
-  - id: geo_mean_vert_gsd
+  - id: GEO_MEAN_VERT_GSD
     type: str
     size: 12
     encoding: BCS-A
@@ -182,7 +182,7 @@ seq:
       Measured Geometric Mean Vertical GSD
       12 BCS-A, range 0000000000.0 to 9999999999.9 inches, or BCS spaces.
 
-  - id: gsd_beta_angle
+  - id: GSD_BETA_ANGLE
     type: str
     size: 5
     encoding: BCS-A
@@ -190,7 +190,7 @@ seq:
       Angle Between Along-Scan and Cross-Scan Directions
       5 BCS-A, range 000.0 to 180.0 degrees, or BCS spaces.
 
-  - id: dynamic_range
+  - id: DYNAMIC_RANGE
     type: str
     size: 5
     encoding: BCS-A
@@ -199,7 +199,7 @@ seq:
       5 BCS-A, range 00000 to 99999 digital numbers, or BCS spaces.
 
   # Image dimensions
-  - id: num_lines
+  - id: NUM_LINES
     type: str
     size: 7
     encoding: BCS-N
@@ -207,7 +207,7 @@ seq:
       Number of Lines in the Entire Image
       7 BCS-N integer, range 0000000 to 9999999 lines.
 
-  - id: num_samples
+  - id: NUM_SAMPLES
     type: str
     size: 5
     encoding: BCS-N
@@ -216,7 +216,7 @@ seq:
       5 BCS-N integer, range 00000 to 99999 samples.
 
   # Geometry angles
-  - id: angle_to_north
+  - id: ANGLE_TO_NORTH
     type: str
     size: 7
     encoding: BCS-A
@@ -224,7 +224,7 @@ seq:
       Angle to True North
       7 BCS-A, range 000.000 to 359.999 degrees, or BCS spaces.
 
-  - id: obliquity_angle
+  - id: OBLIQUITY_ANGLE
     type: str
     size: 6
     encoding: BCS-A
@@ -232,7 +232,7 @@ seq:
       Obliquity Angle
       6 BCS-A, range 00.000 to 90.000 degrees, or BCS spaces.
 
-  - id: az_of_obliquity
+  - id: AZ_OF_OBLIQUITY
     type: str
     size: 7
     encoding: BCS-A
@@ -241,7 +241,7 @@ seq:
       7 BCS-A, range 000.000 to 359.999 degrees, or BCS spaces.
 
   # Correction flags
-  - id: atm_refr_flag
+  - id: ATM_REFR_FLAG
     type: str
     size: 1
     encoding: BCS-N
@@ -250,7 +250,7 @@ seq:
       0 = Do not apply correction, 1 = Apply correction.
       1 BCS-N integer.
 
-  - id: vel_aber_flag
+  - id: VEL_ABER_FLAG
     type: str
     size: 1
     encoding: BCS-N
@@ -260,7 +260,7 @@ seq:
       1 BCS-N integer.
 
   # Environmental metadata
-  - id: grd_cover
+  - id: GRD_COVER
     type: str
     size: 1
     encoding: BCS-N
@@ -269,7 +269,7 @@ seq:
       1 = Snow, 0 = No Snow, 9 = Not Available.
       1 BCS-N integer.
 
-  - id: snow_depth_category
+  - id: SNOW_DEPTH_CATEGORY
     type: str
     size: 1
     encoding: BCS-N
@@ -278,7 +278,7 @@ seq:
       0 = 0 inches, 1 = 1-8 inches, 2 = 9-17 inches, 3 = >17 inches, 9 = Not Available.
       1 BCS-N integer.
 
-  - id: sun_azimuth
+  - id: SUN_AZIMUTH
     type: str
     size: 7
     encoding: BCS-A
@@ -286,7 +286,7 @@ seq:
       Sun Azimuth Angle
       7 BCS-A, range 000.000 to 359.999 degrees, or BCS spaces.
 
-  - id: sun_elevation
+  - id: SUN_ELEVATION
     type: str
     size: 7
     encoding: BCS-A
@@ -295,7 +295,7 @@ seq:
       7 BCS-A, range -90.000 to +90.000 degrees, or BCS spaces.
 
   # Performance metadata
-  - id: predicted_niirs
+  - id: PREDICTED_NIIRS
     type: str
     size: 3
     encoding: BCS-A
@@ -303,7 +303,7 @@ seq:
       Predicted NIIRS
       3 BCS-A, range 0.0 to 9.0 NIIRS, or BCS spaces.
 
-  - id: circl_err
+  - id: CIRCL_ERR
     type: str
     size: 5
     encoding: BCS-A
@@ -311,7 +311,7 @@ seq:
       Circular Error (CE90)
       5 BCS-A, range 000.0 to 999.9 feet, or BCS spaces.
 
-  - id: linear_err
+  - id: LINEAR_ERR
     type: str
     size: 5
     encoding: BCS-A
@@ -319,7 +319,7 @@ seq:
       Linear Error (LE90)
       5 BCS-A, range 000.0 to 999.9 feet, or BCS spaces.
 
-  - id: cloud_cover
+  - id: CLOUD_COVER
     type: str
     size: 3
     encoding: BCS-A
@@ -328,18 +328,18 @@ seq:
       3 BCS-A, range 000 to 100 percent, 999 = unknown, or BCS spaces.
 
   # Framer rolling shutter flag (SENSOR_TYPE = F only)
-  - id: rolling_shutter_flag
+  - id: ROLLING_SHUTTER_FLAG
     type: str
     size: 1
     encoding: BCS-A
-    if: sensor_type == "F"
+    if: SENSOR_TYPE == "F"
     doc: |
       Rolling Shutter Flag (conditional: SENSOR_TYPE = F)
       0 = same integration time across frame, 1 = changing time, space = N/A.
       1 BCS-A character.
 
   # Time unmodeled error flag
-  - id: ue_time_flag
+  - id: UE_TIME_FLAG
     type: str
     size: 1
     encoding: BCS-A
@@ -349,7 +349,7 @@ seq:
       1 BCS-A character.
 
   # Reserved field areas
-  - id: reserved_len
+  - id: RESERVED_LEN
     type: str
     size: 5
     encoding: BCS-N
@@ -358,9 +358,9 @@ seq:
       Total bytes of all fields in all Reserved Field Areas.
       5 BCS-N integer, 00000 or 00063 to maximum allowed.
 
-  - id: reserved_data
-    size: reserved_len.to_i
-    if: reserved_len.to_i > 0
+  - id: RESERVED_DATA
+    size: RESERVED_LEN.to_i
+    if: RESERVED_LEN.to_i > 0
     doc: |
       Reserved Field Areas
       Contains optional collection geometry, target information,
@@ -373,7 +373,7 @@ types:
       Scanner-Specific Data (SENSOR_TYPE = S)
       Contains timing information for line scanner sensors.
     seq:
-      - id: day_first_line_image
+      - id: DAY_FIRST_LINE_IMAGE
         type: str
         size: 8
         encoding: BCS-N
@@ -381,7 +381,7 @@ types:
           Day of First Line of the Synthetic Array Image
           8 BCS-N in CCYYMMDD format (UTC Zulu).
 
-      - id: time_first_line_image
+      - id: TIME_FIRST_LINE_IMAGE
         type: str
         size: 15
         encoding: BCS-N
@@ -390,7 +390,7 @@ types:
           Seconds from midnight to start of collection of first line.
           15 BCS-N real number, range 00000.000000000 to 86399.999999999 seconds (UTC Zulu).
 
-      - id: time_image_duration
+      - id: TIME_IMAGE_DURATION
         type: str
         size: 16
         encoding: BCS-N
@@ -404,7 +404,7 @@ types:
       Framer-Specific Data (SENSOR_TYPE = F)
       Contains timing information for framing sensors.
     seq:
-      - id: time_stamp_loc
+      - id: TIME_STAMP_LOC
         type: str
         size: 1
         encoding: BCS-N
@@ -413,16 +413,16 @@ types:
           0 = values in this CSEXRB TRE, 1 = values in MTIMSA TRE.
           1 BCS-N integer.
 
-      - id: frame_timing_data
+      - id: FRAME_TIMING_DATA
         type: frame_timing_data_t
-        if: time_stamp_loc == "0"
+        if: TIME_STAMP_LOC == "0"
 
   frame_timing_data_t:
     doc: |
       Frame Timing Data (TIME_STAMP_LOC = 0)
       Contains detailed frame timing information when timestamps are in CSEXRB.
     seq:
-      - id: reference_frame_num
+      - id: REFERENCE_FRAME_NUM
         type: str
         size: 9
         encoding: BCS-A
@@ -431,7 +431,7 @@ types:
           Absolute frame number of the first frame of this temporal block.
           9 BCS-A, range 000000001 to 999999999, or BCS spaces.
 
-      - id: base_timestamp
+      - id: BASE_TIMESTAMP
         type: str
         size: 24
         encoding: BCS-N
@@ -440,28 +440,28 @@ types:
           Base time stamp from which frame time stamps are derived.
           24 BCS-N in CCYYMMDDhhmmss.nnnnnnnnn format (UTC Zulu).
 
-      - id: dt_multiplier
+      - id: DT_MULTIPLIER
         type: u8be
         doc: |
           Delta Time Duration
           Number of nanoseconds equal to one "time unit".
           8-byte unsigned integer (UINT64), range 1 to 2^64-1.
 
-      - id: dt_size
+      - id: DT_SIZE
         type: u1
         doc: |
           Byte Size of the Delta Time Values
           Size in bytes of the DTn values.
           1-byte unsigned integer (UINT8), range 1-8.
 
-      - id: number_frames
+      - id: NUMBER_FRAMES
         type: u4be
         doc: |
           Number of Frames in the Current Temporal Block
           Number of frames in this image segment for this camera and temporal block.
           4-byte unsigned integer (UINT32), range 1 to 2^32-1.
 
-      - id: number_dt
+      - id: NUMBER_DT
         type: u4be
         doc: |
           Number of Delta Time Values
@@ -469,11 +469,11 @@ types:
           If NUMBER_DT = 0, no DTn values are present (single frame case).
           4-byte unsigned integer (UINT32), range 0 to 2^32-1.
 
-      - id: dt_values
+      - id: DT_VALUES
         size: dt_size
         repeat: expr
         repeat-expr: number_dt
-        if: number_dt > 0
+        if: NUMBER_DT > 0
         doc: |
           Delta Time Values (DTn)
           Number of delta time units between this frame and the previous frame.

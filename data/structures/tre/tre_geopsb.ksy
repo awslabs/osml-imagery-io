@@ -12,7 +12,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix P - GEOSDE
 
 seq:
-  - id: typ
+  - id: TYP
     type: str
     size: 3
     encoding: BCS-A
@@ -21,7 +21,7 @@ seq:
       3 BCS-A. Values: "GEO" (Geographic), "MAP" (Map Projected),
       "DIG" (DIGEST), "NA " (Not Applicable).
 
-  - id: uni
+  - id: UNI
     type: str
     size: 3
     encoding: BCS-A
@@ -30,7 +30,7 @@ seq:
       3 BCS-A. Values: "DEG" (Degrees), "M  " (Meters),
       "F  " (Feet), "NA " (Not Applicable).
 
-  - id: dag
+  - id: DAG
     type: str
     size: 80
     encoding: ECS-A
@@ -38,7 +38,7 @@ seq:
       Geodetic Datum Name (DAG)
       80 ECS-A. Full name of the geodetic datum.
 
-  - id: dcd
+  - id: DCD
     type: str
     size: 4
     encoding: BCS-A
@@ -46,7 +46,7 @@ seq:
       Geodetic Datum Code (DCD)
       4 BCS-A. Code identifying the geodetic datum.
 
-  - id: ell
+  - id: ELL
     type: str
     size: 80
     encoding: ECS-A
@@ -54,7 +54,7 @@ seq:
       Ellipsoid Name (ELL)
       80 ECS-A. Full name of the reference ellipsoid.
 
-  - id: elc
+  - id: ELC
     type: str
     size: 3
     encoding: BCS-A
@@ -62,7 +62,7 @@ seq:
       Ellipsoid Code (ELC)
       3 BCS-A. Code identifying the reference ellipsoid.
 
-  - id: dvr
+  - id: DVR
     type: str
     size: 80
     encoding: ECS-A
@@ -70,7 +70,7 @@ seq:
       Vertical Datum Reference (DVR)
       80 ECS-A. Name of the vertical datum reference.
 
-  - id: vdcdvr
+  - id: VDCDVR
     type: str
     size: 4
     encoding: BCS-A
@@ -78,7 +78,7 @@ seq:
       Vertical Datum Code for DVR (VDCDVR)
       4 BCS-A. Code for the vertical datum reference.
 
-  - id: sda
+  - id: SDA
     type: str
     size: 80
     encoding: ECS-A
@@ -86,7 +86,7 @@ seq:
       Sounding Datum (SDA)
       80 ECS-A. Name of the sounding datum.
 
-  - id: vdcsda
+  - id: VDCSDA
     type: str
     size: 4
     encoding: BCS-A
@@ -94,7 +94,7 @@ seq:
       Vertical Datum Code for SDA (VDCSDA)
       4 BCS-A. Code for the sounding datum.
 
-  - id: zor
+  - id: ZOR
     type: str
     size: 15
     encoding: BCS-N
@@ -102,7 +102,7 @@ seq:
       Z False Origin (ZOR)
       15 BCS-N. False origin for Z (elevation) values.
 
-  - id: grd
+  - id: GRD
     type: str
     size: 3
     encoding: BCS-A
@@ -110,7 +110,7 @@ seq:
       Grid Code (GRD)
       3 BCS-A. Code identifying the grid system.
 
-  - id: grn
+  - id: GRN
     type: str
     size: 80
     encoding: ECS-A
@@ -118,7 +118,7 @@ seq:
       Grid Description (GRN)
       80 ECS-A. Full description of the grid system.
 
-  - id: zna
+  - id: ZNA
     type: str
     size: 4
     encoding: BCS-N

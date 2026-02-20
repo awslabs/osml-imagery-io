@@ -19,7 +19,7 @@ doc: |
   Reference: STDI-0002 Volume 2, Appendix M - GLAS-GFM
 
 seq:
-  - id: n_rs_row_blocks
+  - id: N_RS_ROW_BLOCKS
     type: str
     size: 2
     encoding: BCS-N
@@ -28,7 +28,7 @@ seq:
       Number of equally spaced blocks in the row dimension of the image.
       2 BCS-N integer, range 01-99.
 
-  - id: m_rs_column_blocks
+  - id: M_RS_COLUMN_BLOCKS
     type: str
     size: 2
     encoding: BCS-N
@@ -37,10 +37,10 @@ seq:
       Number of equally spaced blocks in the column dimension of the image.
       2 BCS-N integer, range 01-99.
 
-  - id: rs_blocks
+  - id: RS_BLOCKS
     type: rs_block_t
     repeat: expr
-    repeat-expr: n_rs_row_blocks.to_i * m_rs_column_blocks.to_i
+    repeat-expr: N_RS_ROW_BLOCKS.to_i * M_RS_COLUMN_BLOCKS.to_i
     doc: |
       Rolling Shutter Block Data
       Array of blocks containing delta time values for each corner.
@@ -52,7 +52,7 @@ types:
       Rolling Shutter Block
       Contains delta time values for the 4 corners of a block.
     seq:
-      - id: rs_dt_1
+      - id: RS_DT_1
         type: str
         size: 12
         encoding: BCS-N
@@ -61,7 +61,7 @@ types:
           Delta time with respect to the image reference time.
           12 BCS-N real number, range -9999999999 to +9999999999 milliseconds.
 
-      - id: rs_dt_2
+      - id: RS_DT_2
         type: str
         size: 12
         encoding: BCS-N
@@ -70,7 +70,7 @@ types:
           Delta time with respect to the image reference time.
           12 BCS-N real number, range -9999999999 to +9999999999 milliseconds.
 
-      - id: rs_dt_3
+      - id: RS_DT_3
         type: str
         size: 12
         encoding: BCS-N
@@ -79,7 +79,7 @@ types:
           Delta time with respect to the image reference time.
           12 BCS-N real number, range -9999999999 to +9999999999 milliseconds.
 
-      - id: rs_dt_4
+      - id: RS_DT_4
         type: str
         size: 12
         encoding: BCS-N

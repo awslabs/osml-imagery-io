@@ -14,7 +14,7 @@ use crate::traits::MetadataProvider;
 ///
 /// This class provides access to metadata in both raw byte form and as
 /// structured dictionaries.
-#[pyclass(name = "MetadataProvider")]
+#[pyclass(name = "MetadataProvider", subclass)]
 pub struct PyMetadataProvider {
     inner: Arc<dyn MetadataProvider>,
 }

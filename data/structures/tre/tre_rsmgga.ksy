@@ -10,12 +10,12 @@ doc: |
   Contains section numbers, fit error, interpolation order, plane definitions,
   and grid point coordinates for mapping ground coordinates to image coordinates.
   
-  CEL: 390-99988 bytes (variable based on number of grid points and planes)
+  CEL: 390-99988 bytes (variable based on number of grid points and PLANES)
   
   Reference: STDI-0002 Volume 1, Appendix U - RSM
 
 seq:
-  - id: iid
+  - id: IID
     type: str
     size: 80
     encoding: BCS-A
@@ -23,7 +23,7 @@ seq:
       Image Identifier
       80 BCS-A characters identifying the image.
 
-  - id: edition
+  - id: EDITION
     type: str
     size: 40
     encoding: BCS-A
@@ -31,7 +31,7 @@ seq:
       RSM Image Support Data Edition
       40 BCS-A characters identifying the edition.
 
-  - id: ggrsn
+  - id: GGRSN
     type: str
     size: 3
     encoding: BCS-NPI
@@ -39,7 +39,7 @@ seq:
       Ground Row Section Number
       3 BCS-NPI positive integer (1 to GRNIS).
 
-  - id: ggcsn
+  - id: GGCSN
     type: str
     size: 3
     encoding: BCS-NPI
@@ -47,7 +47,7 @@ seq:
       Ground Column Section Number
       3 BCS-NPI positive integer (1 to GCNIS).
 
-  - id: ggrfep
+  - id: GGRFEP
     type: str
     size: 21
     encoding: BCS-N
@@ -55,7 +55,7 @@ seq:
       Ground Row Fit Error in Pixels
       21 BCS-N real number.
 
-  - id: ggcfep
+  - id: GGCFEP
     type: str
     size: 21
     encoding: BCS-N
@@ -63,7 +63,7 @@ seq:
       Ground Column Fit Error in Pixels
       21 BCS-N real number.
 
-  - id: intord
+  - id: INTORD
     type: str
     size: 1
     encoding: BCS-NPI
@@ -71,7 +71,7 @@ seq:
       Interpolation Order
       1 BCS-NPI digit: 1 = bilinear, 3 = bicubic.
 
-  - id: npln
+  - id: NPLN
     type: str
     size: 3
     encoding: BCS-NPI
@@ -79,7 +79,7 @@ seq:
       Number of Planes
       3 BCS-NPI positive integer.
 
-  - id: deltaz
+  - id: DELTAZ
     type: str
     size: 21
     encoding: BCS-N
@@ -87,7 +87,7 @@ seq:
       Delta Z Between Planes
       21 BCS-N real number (ground units).
 
-  - id: deltax
+  - id: DELTAX
     type: str
     size: 21
     encoding: BCS-N
@@ -95,7 +95,7 @@ seq:
       Delta X Between Grid Points
       21 BCS-N real number (ground units).
 
-  - id: deltay
+  - id: DELTAY
     type: str
     size: 21
     encoding: BCS-N
@@ -103,7 +103,7 @@ seq:
       Delta Y Between Grid Points
       21 BCS-N real number (ground units).
 
-  - id: zpln1
+  - id: ZPLN1
     type: str
     size: 21
     encoding: BCS-N
@@ -111,7 +111,7 @@ seq:
       Z Coordinate of First Plane
       21 BCS-N real number (ground units).
 
-  - id: xipln1
+  - id: XIPLN1
     type: str
     size: 21
     encoding: BCS-N
@@ -119,7 +119,7 @@ seq:
       X Coordinate of Initial Point in First Plane
       21 BCS-N real number (ground units).
 
-  - id: yipln1
+  - id: YIPLN1
     type: str
     size: 21
     encoding: BCS-N
@@ -127,7 +127,7 @@ seq:
       Y Coordinate of Initial Point in First Plane
       21 BCS-N real number (ground units).
 
-  - id: refrow
+  - id: REFROW
     type: str
     size: 9
     encoding: BCS-N
@@ -135,7 +135,7 @@ seq:
       Reference Row for Grid Origin
       9 BCS-N real number (image pixels).
 
-  - id: refcol
+  - id: REFCOL
     type: str
     size: 9
     encoding: BCS-N
@@ -143,7 +143,7 @@ seq:
       Reference Column for Grid Origin
       9 BCS-N real number (image pixels).
 
-  - id: tnumrd
+  - id: TNUMRD
     type: str
     size: 2
     encoding: BCS-NPI
@@ -151,7 +151,7 @@ seq:
       Total Number of Row Delta Values
       2 BCS-NPI positive integer.
 
-  - id: tnumcd
+  - id: TNUMCD
     type: str
     size: 2
     encoding: BCS-NPI
@@ -159,7 +159,7 @@ seq:
       Total Number of Column Delta Values
       2 BCS-NPI positive integer.
 
-  - id: fnumrd
+  - id: FNUMRD
     type: str
     size: 1
     encoding: BCS-NPI
@@ -167,7 +167,7 @@ seq:
       Field Size for Row Delta Values
       1 BCS-NPI digit (bytes per value).
 
-  - id: fnumcd
+  - id: FNUMCD
     type: str
     size: 1
     encoding: BCS-NPI
@@ -175,18 +175,18 @@ seq:
       Field Size for Column Delta Values
       1 BCS-NPI digit (bytes per value).
 
-  - id: delta_origin
+  - id: DELTA_ORIGIN
     type: delta_origin_t
     repeat: expr
-    repeat-expr: npln.to_i
+    repeat-expr: NPLN.to_i
     doc: |
       Delta Origin Values for Each Plane
       NPLN sets of row and column origin deltas.
 
-  - id: planes
+  - id: PLANES
     type: plane_t
     repeat: expr
-    repeat-expr: npln.to_i
+    repeat-expr: NPLN.to_i
     doc: |
       Grid Data for Each Plane
       NPLN plane records containing grid point data.
@@ -194,7 +194,7 @@ seq:
 types:
   delta_origin_t:
     seq:
-      - id: ixo
+      - id: IXO
         type: str
         size: 4
         encoding: BCS-NPI
@@ -202,7 +202,7 @@ types:
           X Origin Delta for Plane
           4 BCS-NPI integer (grid units).
 
-      - id: iyo
+      - id: IYO
         type: str
         size: 4
         encoding: BCS-NPI
@@ -212,7 +212,7 @@ types:
 
   plane_t:
     seq:
-      - id: nxpts
+      - id: NXPTS
         type: str
         size: 3
         encoding: BCS-NPI
@@ -220,7 +220,7 @@ types:
           Number of X Grid Points in Plane
           3 BCS-NPI positive integer.
 
-      - id: nypts
+      - id: NYPTS
         type: str
         size: 3
         encoding: BCS-NPI
@@ -228,22 +228,22 @@ types:
           Number of Y Grid Points in Plane
           3 BCS-NPI positive integer.
 
-      - id: grid_points
-        type: grid_point_t(_parent.fnumrd.to_i, _parent.fnumcd.to_i)
+      - id: GRID_POINTS
+        type: grid_point_t(_parent.FNUMRD.to_i, _parent.FNUMCD.to_i)
         repeat: expr
-        repeat-expr: nxpts.to_i * nypts.to_i
+        repeat-expr: NXPTS.to_i * NYPTS.to_i
         doc: |
           Grid Point Coordinates
           NXPTS * NYPTS grid points with row and column deltas.
 
   grid_point_t:
     params:
-      - id: row_size
+      - id: ROW_SIZE
         type: u1
-      - id: col_size
+      - id: COL_SIZE
         type: u1
     seq:
-      - id: rcoord
+      - id: RCOORD
         type: str
         size: row_size
         encoding: BCS-N
@@ -251,7 +251,7 @@ types:
           Row Coordinate Delta
           Variable size BCS-N integer (FNUMRD bytes).
 
-      - id: ccoord
+      - id: CCOORD
         type: str
         size: col_size
         encoding: BCS-N

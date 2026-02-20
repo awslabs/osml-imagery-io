@@ -21,7 +21,7 @@ doc: |
   Reference: STDI-0006 (authoritative version)
 
 seq:
-  - id: att_type
+  - id: ATT_TYPE
     type: str
     size: 12
     encoding: BCS-A
@@ -34,7 +34,7 @@ seq:
       - REFINED: Smoothed attitude data based upon provider processing
       Additional values must be registered.
 
-  - id: dt_att
+  - id: DT_ATT
     type: str
     size: 14
     encoding: BCS-N
@@ -44,7 +44,7 @@ seq:
       14 BCS-N characters.
       Range: 000.0000000001 to 999.9999999999
 
-  - id: date_att
+  - id: DATE_ATT
     type: str
     size: 8
     encoding: BCS-N
@@ -54,7 +54,7 @@ seq:
       8 BCS-N characters in format YYYYMMDD.
       YYYY = Year (2000-9999), MM = Month (01-12), DD = Day (01-31)
 
-  - id: t0_att
+  - id: T0_ATT
     type: str
     size: 13
     encoding: BCS-N
@@ -65,7 +65,7 @@ seq:
       HH = Hours (00-23), MM = Minutes (00-59), SS = Seconds (00-59),
       mmmmmm = Microseconds (000000-999999)
 
-  - id: num_att
+  - id: NUM_ATT
     type: str
     size: 5
     encoding: BCS-N

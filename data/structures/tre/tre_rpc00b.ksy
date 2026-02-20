@@ -18,7 +18,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix E - ASDE, Table E-22
 
 seq:
-  - id: success
+  - id: SUCCESS
     type: str
     size: 1
     encoding: BCS-A
@@ -27,7 +27,7 @@ seq:
       1 BCS-A character indicating if RPC fit was successful.
       '1' = success, '0' = failure
 
-  - id: err_bias
+  - id: ERR_BIAS
     type: str
     size: 7
     encoding: BCS-N
@@ -36,7 +36,7 @@ seq:
       7 BCS-N real number representing the bias error in meters.
       Range: 0000.00 to 9999.99
 
-  - id: err_rand
+  - id: ERR_RAND
     type: str
     size: 7
     encoding: BCS-N
@@ -45,7 +45,7 @@ seq:
       7 BCS-N real number representing the random error in meters.
       Range: 0000.00 to 9999.99
 
-  - id: line_off
+  - id: LINE_OFF
     type: str
     size: 6
     encoding: BCS-NPI
@@ -54,7 +54,7 @@ seq:
       6 BCS-NPI integer representing the line offset in pixels.
       Range: 000000 to 999999
 
-  - id: samp_off
+  - id: SAMP_OFF
     type: str
     size: 5
     encoding: BCS-NPI
@@ -63,7 +63,7 @@ seq:
       5 BCS-NPI integer representing the sample offset in pixels.
       Range: 00000 to 99999
 
-  - id: lat_off
+  - id: LAT_OFF
     type: str
     size: 8
     encoding: BCS-N
@@ -72,7 +72,7 @@ seq:
       8 BCS-N real number representing latitude offset in degrees.
       Range: ±90.0000
 
-  - id: long_off
+  - id: LONG_OFF
     type: str
     size: 9
     encoding: BCS-N
@@ -81,7 +81,7 @@ seq:
       9 BCS-N real number representing longitude offset in degrees.
       Range: ±180.0000
 
-  - id: height_off
+  - id: HEIGHT_OFF
     type: str
     size: 5
     encoding: BCS-NPI
@@ -90,7 +90,7 @@ seq:
       5 BCS-NPI integer representing height offset in meters.
       Range: ±9999
 
-  - id: line_scale
+  - id: LINE_SCALE
     type: str
     size: 6
     encoding: BCS-NPI
@@ -99,7 +99,7 @@ seq:
       6 BCS-NPI integer representing line scale factor in pixels.
       Range: 000001 to 999999
 
-  - id: samp_scale
+  - id: SAMP_SCALE
     type: str
     size: 5
     encoding: BCS-NPI
@@ -108,7 +108,7 @@ seq:
       5 BCS-NPI integer representing sample scale factor in pixels.
       Range: 00001 to 99999
 
-  - id: lat_scale
+  - id: LAT_SCALE
     type: str
     size: 8
     encoding: BCS-N
@@ -117,7 +117,7 @@ seq:
       8 BCS-N real number representing latitude scale in degrees.
       Range: 0.0000 to 90.0000
 
-  - id: long_scale
+  - id: LONG_SCALE
     type: str
     size: 9
     encoding: BCS-N
@@ -126,7 +126,7 @@ seq:
       9 BCS-N real number representing longitude scale in degrees.
       Range: 0.0000 to 180.0000
 
-  - id: height_scale
+  - id: HEIGHT_SCALE
     type: str
     size: 5
     encoding: BCS-NPI
@@ -135,7 +135,7 @@ seq:
       5 BCS-NPI integer representing height scale in meters.
       Range: 00001 to 99999
 
-  - id: line_num_coeff
+  - id: LINE_NUM_COEFF
     type: str
     size: 12
     encoding: BCS-N
@@ -146,7 +146,7 @@ seq:
       20 coefficients, each 12 BCS-N real numbers.
       Range: ±9.999999E±9
 
-  - id: line_den_coeff
+  - id: LINE_DEN_COEFF
     type: str
     size: 12
     encoding: BCS-N
@@ -157,7 +157,7 @@ seq:
       20 coefficients, each 12 BCS-N real numbers.
       Range: ±9.999999E±9
 
-  - id: samp_num_coeff
+  - id: SAMP_NUM_COEFF
     type: str
     size: 12
     encoding: BCS-N
@@ -168,7 +168,7 @@ seq:
       20 coefficients, each 12 BCS-N real numbers.
       Range: ±9.999999E±9
 
-  - id: samp_den_coeff
+  - id: SAMP_DEN_COEFF
     type: str
     size: 12
     encoding: BCS-N

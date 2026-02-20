@@ -11,12 +11,12 @@ doc: |
   parameter indices, and the full covariance matrix for the adjustable
   parameters across multiple images.
   
-  CEL: 597-99988 bytes (variable based on number of parameters and images)
+  CEL: 597-99988 bytes (variable based on number of parameters and IMAGES)
   
   Reference: STDI-0002 Volume 1, Appendix U - RSM
 
 seq:
-  - id: iid
+  - id: IID
     type: str
     size: 80
     encoding: BCS-A
@@ -24,7 +24,7 @@ seq:
       Image Identifier
       80 BCS-A characters identifying the image.
 
-  - id: edition
+  - id: EDITION
     type: str
     size: 40
     encoding: BCS-A
@@ -32,7 +32,7 @@ seq:
       RSM Image Support Data Edition
       40 BCS-A characters identifying the edition.
 
-  - id: tid
+  - id: TID
     type: str
     size: 40
     encoding: BCS-A
@@ -40,7 +40,7 @@ seq:
       Triangulation ID
       40 BCS-A characters identifying the triangulation solution.
 
-  - id: npar
+  - id: NPAR
     type: str
     size: 2
     encoding: BCS-NPI
@@ -48,7 +48,7 @@ seq:
       Number of Parameters per Image
       2 BCS-NPI positive integer (01-36).
 
-  - id: nimge
+  - id: NIMGE
     type: str
     size: 3
     encoding: BCS-NPI
@@ -56,7 +56,7 @@ seq:
       Number of Images
       3 BCS-NPI positive integer.
 
-  - id: npart
+  - id: NPART
     type: str
     size: 5
     encoding: BCS-NPI
@@ -64,15 +64,15 @@ seq:
       Total Number of Parameters
       5 BCS-NPI positive integer (NPAR * NIMGE).
 
-  - id: images
+  - id: IMAGES
     type: image_params_t
     repeat: expr
-    repeat-expr: nimge.to_i
+    repeat-expr: NIMGE.to_i
     doc: |
       Image Parameter Information
       NIMGE image parameter records.
 
-  - id: xuol
+  - id: XUOL
     type: str
     size: 21
     encoding: BCS-N
@@ -80,7 +80,7 @@ seq:
       X Coordinate of Local Origin
       21 BCS-N real number (meters).
 
-  - id: yuol
+  - id: YUOL
     type: str
     size: 21
     encoding: BCS-N
@@ -88,7 +88,7 @@ seq:
       Y Coordinate of Local Origin
       21 BCS-N real number (meters).
 
-  - id: zuol
+  - id: ZUOL
     type: str
     size: 21
     encoding: BCS-N
@@ -96,7 +96,7 @@ seq:
       Z Coordinate of Local Origin
       21 BCS-N real number (meters).
 
-  - id: xuxl
+  - id: XUXL
     type: str
     size: 21
     encoding: BCS-N
@@ -104,7 +104,7 @@ seq:
       Unit Vector X Component for Local X Axis
       21 BCS-N real number.
 
-  - id: xuyl
+  - id: XUYL
     type: str
     size: 21
     encoding: BCS-N
@@ -112,7 +112,7 @@ seq:
       Unit Vector Y Component for Local X Axis
       21 BCS-N real number.
 
-  - id: xuzl
+  - id: XUZL
     type: str
     size: 21
     encoding: BCS-N
@@ -120,7 +120,7 @@ seq:
       Unit Vector Z Component for Local X Axis
       21 BCS-N real number.
 
-  - id: yuxl
+  - id: YUXL
     type: str
     size: 21
     encoding: BCS-N
@@ -128,7 +128,7 @@ seq:
       Unit Vector X Component for Local Y Axis
       21 BCS-N real number.
 
-  - id: yuyl
+  - id: YUYL
     type: str
     size: 21
     encoding: BCS-N
@@ -136,7 +136,7 @@ seq:
       Unit Vector Y Component for Local Y Axis
       21 BCS-N real number.
 
-  - id: yuzl
+  - id: YUZL
     type: str
     size: 21
     encoding: BCS-N
@@ -144,7 +144,7 @@ seq:
       Unit Vector Z Component for Local Y Axis
       21 BCS-N real number.
 
-  - id: zuxl
+  - id: ZUXL
     type: str
     size: 21
     encoding: BCS-N
@@ -152,7 +152,7 @@ seq:
       Unit Vector X Component for Local Z Axis
       21 BCS-N real number.
 
-  - id: zuyl
+  - id: ZUYL
     type: str
     size: 21
     encoding: BCS-N
@@ -160,7 +160,7 @@ seq:
       Unit Vector Y Component for Local Z Axis
       21 BCS-N real number.
 
-  - id: zuzl
+  - id: ZUZL
     type: str
     size: 21
     encoding: BCS-N
@@ -168,7 +168,7 @@ seq:
       Unit Vector Z Component for Local Z Axis
       21 BCS-N real number.
 
-  - id: iro
+  - id: IRO
     type: str
     size: 2
     encoding: BCS-NPI
@@ -176,7 +176,7 @@ seq:
       Image Row Offset Parameter Index
       2 BCS-NPI non-negative integer (00 = not used).
 
-  - id: irx
+  - id: IRX
     type: str
     size: 2
     encoding: BCS-NPI
@@ -184,7 +184,7 @@ seq:
       Image Row X Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: iry
+  - id: IRY
     type: str
     size: 2
     encoding: BCS-NPI
@@ -192,7 +192,7 @@ seq:
       Image Row Y Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: irz
+  - id: IRZ
     type: str
     size: 2
     encoding: BCS-NPI
@@ -200,7 +200,7 @@ seq:
       Image Row Z Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: irxx
+  - id: IRXX
     type: str
     size: 2
     encoding: BCS-NPI
@@ -208,7 +208,7 @@ seq:
       Image Row XX Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: irxy
+  - id: IRXY
     type: str
     size: 2
     encoding: BCS-NPI
@@ -216,7 +216,7 @@ seq:
       Image Row XY Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: irxz
+  - id: IRXZ
     type: str
     size: 2
     encoding: BCS-NPI
@@ -224,7 +224,7 @@ seq:
       Image Row XZ Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: iryy
+  - id: IRYY
     type: str
     size: 2
     encoding: BCS-NPI
@@ -232,7 +232,7 @@ seq:
       Image Row YY Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: iryz
+  - id: IRYZ
     type: str
     size: 2
     encoding: BCS-NPI
@@ -240,7 +240,7 @@ seq:
       Image Row YZ Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: irzz
+  - id: IRZZ
     type: str
     size: 2
     encoding: BCS-NPI
@@ -248,7 +248,7 @@ seq:
       Image Row ZZ Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: ico
+  - id: ICO
     type: str
     size: 2
     encoding: BCS-NPI
@@ -256,7 +256,7 @@ seq:
       Image Column Offset Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: icx
+  - id: ICX
     type: str
     size: 2
     encoding: BCS-NPI
@@ -264,7 +264,7 @@ seq:
       Image Column X Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: icy
+  - id: ICY
     type: str
     size: 2
     encoding: BCS-NPI
@@ -272,7 +272,7 @@ seq:
       Image Column Y Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: icz
+  - id: ICZ
     type: str
     size: 2
     encoding: BCS-NPI
@@ -280,7 +280,7 @@ seq:
       Image Column Z Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: icxx
+  - id: ICXX
     type: str
     size: 2
     encoding: BCS-NPI
@@ -288,7 +288,7 @@ seq:
       Image Column XX Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: icxy
+  - id: ICXY
     type: str
     size: 2
     encoding: BCS-NPI
@@ -296,7 +296,7 @@ seq:
       Image Column XY Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: icxz
+  - id: ICXZ
     type: str
     size: 2
     encoding: BCS-NPI
@@ -304,7 +304,7 @@ seq:
       Image Column XZ Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: icyy
+  - id: ICYY
     type: str
     size: 2
     encoding: BCS-NPI
@@ -312,7 +312,7 @@ seq:
       Image Column YY Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: icyz
+  - id: ICYZ
     type: str
     size: 2
     encoding: BCS-NPI
@@ -320,7 +320,7 @@ seq:
       Image Column YZ Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: iczz
+  - id: ICZZ
     type: str
     size: 2
     encoding: BCS-NPI
@@ -328,7 +328,7 @@ seq:
       Image Column ZZ Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gxo
+  - id: GXO
     type: str
     size: 2
     encoding: BCS-NPI
@@ -336,7 +336,7 @@ seq:
       Ground X Offset Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gyo
+  - id: GYO
     type: str
     size: 2
     encoding: BCS-NPI
@@ -344,7 +344,7 @@ seq:
       Ground Y Offset Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gzo
+  - id: GZO
     type: str
     size: 2
     encoding: BCS-NPI
@@ -352,7 +352,7 @@ seq:
       Ground Z Offset Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gxr
+  - id: GXR
     type: str
     size: 2
     encoding: BCS-NPI
@@ -360,7 +360,7 @@ seq:
       Ground X Rotation Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gyr
+  - id: GYR
     type: str
     size: 2
     encoding: BCS-NPI
@@ -368,7 +368,7 @@ seq:
       Ground Y Rotation Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gzr
+  - id: GZR
     type: str
     size: 2
     encoding: BCS-NPI
@@ -376,7 +376,7 @@ seq:
       Ground Z Rotation Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gs
+  - id: GS
     type: str
     size: 2
     encoding: BCS-NPI
@@ -384,7 +384,7 @@ seq:
       Ground Scale Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gxx
+  - id: GXX
     type: str
     size: 2
     encoding: BCS-NPI
@@ -392,7 +392,7 @@ seq:
       Ground XX Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gxy
+  - id: GXY
     type: str
     size: 2
     encoding: BCS-NPI
@@ -400,7 +400,7 @@ seq:
       Ground XY Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gxz
+  - id: GXZ
     type: str
     size: 2
     encoding: BCS-NPI
@@ -408,7 +408,7 @@ seq:
       Ground XZ Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gyy
+  - id: GYY
     type: str
     size: 2
     encoding: BCS-NPI
@@ -416,7 +416,7 @@ seq:
       Ground YY Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gyz
+  - id: GYZ
     type: str
     size: 2
     encoding: BCS-NPI
@@ -424,7 +424,7 @@ seq:
       Ground YZ Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: gzz
+  - id: GZZ
     type: str
     size: 2
     encoding: BCS-NPI
@@ -432,12 +432,12 @@ seq:
       Ground ZZ Parameter Index
       2 BCS-NPI non-negative integer.
 
-  - id: dercov
+  - id: DERCOV
     type: str
     size: 21
     encoding: BCS-N
     repeat: expr
-    repeat-expr: (npart.to_i * (npart.to_i + 1)) / 2
+    repeat-expr: (NPART.to_i * (NPART.to_i + 1)) / 2
     doc: |
       Direct Error Covariance Matrix Elements
       Upper triangular covariance matrix stored row by row.
@@ -446,7 +446,7 @@ seq:
 types:
   image_params_t:
     seq:
-      - id: iidi
+      - id: IIDI
         type: str
         size: 80
         encoding: BCS-A
@@ -454,7 +454,7 @@ types:
           Image Identifier for Image i
           80 BCS-A characters.
 
-      - id: npari
+      - id: NPARI
         type: str
         size: 2
         encoding: BCS-NPI

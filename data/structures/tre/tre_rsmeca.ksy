@@ -15,7 +15,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix U - RSM
 
 seq:
-  - id: iid
+  - id: IID
     type: str
     size: 80
     encoding: BCS-A
@@ -23,7 +23,7 @@ seq:
       Image Identifier
       80 BCS-A characters identifying the image.
 
-  - id: edition
+  - id: EDITION
     type: str
     size: 40
     encoding: BCS-A
@@ -31,7 +31,7 @@ seq:
       RSM Image Support Data Edition
       40 BCS-A characters identifying the edition.
 
-  - id: tid
+  - id: TID
     type: str
     size: 40
     encoding: BCS-A
@@ -39,7 +39,7 @@ seq:
       Triangulation ID
       40 BCS-A characters identifying the triangulation solution.
 
-  - id: inclic
+  - id: INCLIC
     type: str
     size: 1
     encoding: BCS-A
@@ -47,7 +47,7 @@ seq:
       Include Independent Error Covariance Flag
       1 BCS-A character: 'Y' or 'N'.
 
-  - id: incluc
+  - id: INCLUC
     type: str
     size: 1
     encoding: BCS-A
@@ -55,20 +55,20 @@ seq:
       Include Unmodeled Error Covariance Flag
       1 BCS-A character: 'Y' or 'N'.
 
-  - id: independent_error
+  - id: INDEPENDENT_ERROR
     type: independent_error_t
-    if: inclic == "Y"
+    if: INCLIC == "Y"
     doc: Independent error covariance data.
 
-  - id: unmodeled_error
+  - id: UNMODELED_ERROR
     type: unmodeled_error_t
-    if: incluc == "Y"
+    if: INCLUC == "Y"
     doc: Unmodeled error covariance data.
 
 types:
   independent_error_t:
     seq:
-      - id: npar
+      - id: NPAR
         type: str
         size: 2
         encoding: BCS-NPI
@@ -76,7 +76,7 @@ types:
           Number of Independent Error Parameters
           2 BCS-NPI positive integer (01-09).
 
-      - id: nparo
+      - id: NPARO
         type: str
         size: 2
         encoding: BCS-NPI
@@ -84,7 +84,7 @@ types:
           Number of Original Parameters
           2 BCS-NPI positive integer.
 
-      - id: ign
+      - id: IGN
         type: str
         size: 2
         encoding: BCS-NPI
@@ -92,7 +92,7 @@ types:
           Number of Ground Parameters
           2 BCS-NPI non-negative integer.
 
-      - id: cvdate
+      - id: CVDATE
         type: str
         size: 8
         encoding: BCS-NI
@@ -100,7 +100,7 @@ types:
           Covariance Date (YYYYMMDD)
           8 BCS-NI date string.
 
-      - id: xuol
+      - id: XUOL
         type: str
         size: 21
         encoding: BCS-N
@@ -108,7 +108,7 @@ types:
           X Coordinate of Local Origin
           21 BCS-N real number (meters).
 
-      - id: yuol
+      - id: YUOL
         type: str
         size: 21
         encoding: BCS-N
@@ -116,7 +116,7 @@ types:
           Y Coordinate of Local Origin
           21 BCS-N real number (meters).
 
-      - id: zuol
+      - id: ZUOL
         type: str
         size: 21
         encoding: BCS-N
@@ -124,7 +124,7 @@ types:
           Z Coordinate of Local Origin
           21 BCS-N real number (meters).
 
-      - id: xuxl
+      - id: XUXL
         type: str
         size: 21
         encoding: BCS-N
@@ -132,7 +132,7 @@ types:
           Unit Vector X Component for Local X Axis
           21 BCS-N real number.
 
-      - id: xuyl
+      - id: XUYL
         type: str
         size: 21
         encoding: BCS-N
@@ -140,7 +140,7 @@ types:
           Unit Vector Y Component for Local X Axis
           21 BCS-N real number.
 
-      - id: xuzl
+      - id: XUZL
         type: str
         size: 21
         encoding: BCS-N
@@ -148,7 +148,7 @@ types:
           Unit Vector Z Component for Local X Axis
           21 BCS-N real number.
 
-      - id: yuxl
+      - id: YUXL
         type: str
         size: 21
         encoding: BCS-N
@@ -156,7 +156,7 @@ types:
           Unit Vector X Component for Local Y Axis
           21 BCS-N real number.
 
-      - id: yuyl
+      - id: YUYL
         type: str
         size: 21
         encoding: BCS-N
@@ -164,7 +164,7 @@ types:
           Unit Vector Y Component for Local Y Axis
           21 BCS-N real number.
 
-      - id: yuzl
+      - id: YUZL
         type: str
         size: 21
         encoding: BCS-N
@@ -172,7 +172,7 @@ types:
           Unit Vector Z Component for Local Y Axis
           21 BCS-N real number.
 
-      - id: zuxl
+      - id: ZUXL
         type: str
         size: 21
         encoding: BCS-N
@@ -180,7 +180,7 @@ types:
           Unit Vector X Component for Local Z Axis
           21 BCS-N real number.
 
-      - id: zuyl
+      - id: ZUYL
         type: str
         size: 21
         encoding: BCS-N
@@ -188,7 +188,7 @@ types:
           Unit Vector Y Component for Local Z Axis
           21 BCS-N real number.
 
-      - id: zuzl
+      - id: ZUZL
         type: str
         size: 21
         encoding: BCS-N
@@ -196,7 +196,7 @@ types:
           Unit Vector Z Component for Local Z Axis
           21 BCS-N real number.
 
-      - id: ir0
+      - id: IR0
         type: str
         size: 2
         encoding: BCS-NPI
@@ -204,7 +204,7 @@ types:
           Row Constant Parameter Index
           2 BCS-NPI non-negative integer.
 
-      - id: irx
+      - id: IRX
         type: str
         size: 2
         encoding: BCS-NPI
@@ -212,7 +212,7 @@ types:
           Row X Parameter Index
           2 BCS-NPI non-negative integer.
 
-      - id: iry
+      - id: IRY
         type: str
         size: 2
         encoding: BCS-NPI
@@ -220,7 +220,7 @@ types:
           Row Y Parameter Index
           2 BCS-NPI non-negative integer.
 
-      - id: irz
+      - id: IRZ
         type: str
         size: 2
         encoding: BCS-NPI
@@ -228,7 +228,7 @@ types:
           Row Z Parameter Index
           2 BCS-NPI non-negative integer.
 
-      - id: ic0
+      - id: IC0
         type: str
         size: 2
         encoding: BCS-NPI
@@ -236,7 +236,7 @@ types:
           Column Constant Parameter Index
           2 BCS-NPI non-negative integer.
 
-      - id: icx
+      - id: ICX
         type: str
         size: 2
         encoding: BCS-NPI
@@ -244,7 +244,7 @@ types:
           Column X Parameter Index
           2 BCS-NPI non-negative integer.
 
-      - id: icy
+      - id: ICY
         type: str
         size: 2
         encoding: BCS-NPI
@@ -252,7 +252,7 @@ types:
           Column Y Parameter Index
           2 BCS-NPI non-negative integer.
 
-      - id: icz
+      - id: ICZ
         type: str
         size: 2
         encoding: BCS-NPI
@@ -260,7 +260,7 @@ types:
           Column Z Parameter Index
           2 BCS-NPI non-negative integer.
 
-      - id: gx0
+      - id: GX0
         type: str
         size: 2
         encoding: BCS-NPI
@@ -268,7 +268,7 @@ types:
           Ground X Parameter Index
           2 BCS-NPI non-negative integer.
 
-      - id: gy0
+      - id: GY0
         type: str
         size: 2
         encoding: BCS-NPI
@@ -276,7 +276,7 @@ types:
           Ground Y Parameter Index
           2 BCS-NPI non-negative integer.
 
-      - id: gz0
+      - id: GZ0
         type: str
         size: 2
         encoding: BCS-NPI
@@ -284,36 +284,36 @@ types:
           Ground Z Parameter Index
           2 BCS-NPI non-negative integer.
 
-      - id: covar
+      - id: COVAR
         type: str
         size: 21
         encoding: BCS-N
         repeat: expr
-        repeat-expr: (npar.to_i * (npar.to_i + 1)) / 2
+        repeat-expr: (NPAR.to_i * (NPAR.to_i + 1)) / 2
         doc: |
           Independent Error Covariance Matrix
           Upper triangular matrix, NPAR*(NPAR+1)/2 elements.
 
-      - id: map_matrix
+      - id: MAP_MATRIX
         type: map_matrix_t
-        if: nparo.to_i > npar.to_i
+        if: NPARO.to_i > NPAR.to_i
         doc: Mapping matrix from original to reduced parameters.
 
   map_matrix_t:
     seq:
-      - id: map
+      - id: MAP
         type: str
         size: 21
         encoding: BCS-N
         repeat: expr
-        repeat-expr: _parent.npar.to_i * _parent.nparo.to_i
+        repeat-expr: _parent.NPAR.to_i * _parent.NPARO.to_i
         doc: |
           Mapping Matrix Elements
           NPAR x NPARO matrix stored row by row.
 
   unmodeled_error_t:
     seq:
-      - id: ursrc
+      - id: URSRC
         type: str
         size: 21
         encoding: BCS-N
@@ -321,7 +321,7 @@ types:
           Unmodeled Row Variance - Source
           21 BCS-N real number (pixels^2).
 
-      - id: ucsrc
+      - id: UCSRC
         type: str
         size: 21
         encoding: BCS-N
@@ -329,7 +329,7 @@ types:
           Unmodeled Column Variance - Source
           21 BCS-N real number (pixels^2).
 
-      - id: urcsrc
+      - id: URCSRC
         type: str
         size: 21
         encoding: BCS-N
@@ -337,7 +337,7 @@ types:
           Unmodeled Row-Column Covariance - Source
           21 BCS-N real number (pixels^2).
 
-      - id: usnsr
+      - id: USNSR
         type: str
         size: 21
         encoding: BCS-N
@@ -345,7 +345,7 @@ types:
           Unmodeled Row Variance - Sensor
           21 BCS-N real number (pixels^2).
 
-      - id: ucnsr
+      - id: UCNSR
         type: str
         size: 21
         encoding: BCS-N
@@ -353,7 +353,7 @@ types:
           Unmodeled Column Variance - Sensor
           21 BCS-N real number (pixels^2).
 
-      - id: urcnsr
+      - id: URCNSR
         type: str
         size: 21
         encoding: BCS-N
@@ -361,7 +361,7 @@ types:
           Unmodeled Row-Column Covariance - Sensor
           21 BCS-N real number (pixels^2).
 
-      - id: nrseg
+      - id: NRSEG
         type: str
         size: 1
         encoding: BCS-NPI
@@ -369,14 +369,14 @@ types:
           Number of Row Correlation Segments
           1 BCS-NPI digit (0-9).
 
-      - id: row_segments
+      - id: ROW_SEGMENTS
         type: correlation_segment_t
         repeat: expr
-        repeat-expr: nrseg.to_i
-        if: nrseg.to_i > 0
+        repeat-expr: NRSEG.to_i
+        if: NRSEG.to_i > 0
         doc: Row correlation segments.
 
-      - id: ncseg
+      - id: NCSEG
         type: str
         size: 1
         encoding: BCS-NPI
@@ -384,16 +384,16 @@ types:
           Number of Column Correlation Segments
           1 BCS-NPI digit (0-9).
 
-      - id: col_segments
+      - id: COL_SEGMENTS
         type: correlation_segment_t
         repeat: expr
-        repeat-expr: ncseg.to_i
-        if: ncseg.to_i > 0
+        repeat-expr: NCSEG.to_i
+        if: NCSEG.to_i > 0
         doc: Column correlation segments.
 
   correlation_segment_t:
     seq:
-      - id: rho
+      - id: RHO
         type: str
         size: 21
         encoding: BCS-N
@@ -401,7 +401,7 @@ types:
           Correlation Coefficient
           21 BCS-N real number (-1 to 1).
 
-      - id: tau
+      - id: TAU
         type: str
         size: 21
         encoding: BCS-N

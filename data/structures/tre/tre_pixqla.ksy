@@ -21,7 +21,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AA - PIXQLA
 
 seq:
-  - id: numais
+  - id: NUMAIS
     type: str
     size: 3
     encoding: BCS-A
@@ -32,13 +32,13 @@ seq:
       Otherwise, a number from 001 to 998.
       3 BCS-A characters.
 
-  - id: aisdlvl
+  - id: AISDLVL
     type: str
     size: 3
     encoding: BCS-N
     repeat: expr
-    repeat-expr: numais.to_i
-    if: numais != "ALL"
+    repeat-expr: NUMAIS.to_i
+    if: NUMAIS != "ALL"
     doc: |
       Associated Image Segment Display Level (AISDLVL)
       Identifies the Image Display Level (IDLVL) of each image segment
@@ -46,7 +46,7 @@ seq:
       Omitted if NUMAIS = "ALL".
       3 BCS-N characters, range 001-999.
 
-  - id: npixqual
+  - id: NPIXQUAL
     type: str
     size: 4
     encoding: BCS-N
@@ -57,7 +57,7 @@ seq:
       to encode pixel quality.
       4 BCS-N characters, range 0001-0064.
 
-  - id: pq_bit_value
+  - id: PQ_BIT_VALUE
     type: str
     size: 1
     encoding: BCS-A
@@ -66,12 +66,12 @@ seq:
       Identifies the value of the nth bit when PQ_CONDITIONn is present.
       1 BCS-A character, value "1".
 
-  - id: pq_condition
+  - id: PQ_CONDITION
     type: str
     size: 40
     encoding: BCS-A
     repeat: expr
-    repeat-expr: npixqual.to_i
+    repeat-expr: NPIXQUAL.to_i
     doc: |
       Pixel Quality Condition (PQ_CONDITION)
       Identifies the pixel quality condition in the associated image segment

@@ -22,7 +22,7 @@ doc: |
   Reference: STDI-0006 (for systems compliant with STDI-0006)
 
 seq:
-  - id: shape_use
+  - id: SHAPE_USE
     type: str
     size: 25
     encoding: BCS-A
@@ -37,7 +37,7 @@ seq:
       - USER_DEF_SHAPES: Miscellaneous shapes defined by the data provider
       - *_LineSample suffix: Indicates LineSample coordinates instead of WGS 84
 
-  - id: shape_class
+  - id: SHAPE_CLASS
     type: str
     size: 10
     encoding: BCS-A
@@ -49,7 +49,7 @@ seq:
       POLYLINEZ, POLYGONZ, MULTPOINTZ, POINTM, POLYLINEM, POLYGONM,
       MULTPOINTM, MULTIPATCH
 
-  - id: cc_source
+  - id: CC_SOURCE
     type: str
     size: 18
     encoding: BCS-A
@@ -61,7 +61,7 @@ seq:
       Only present if SHAPE_USE is CLOUD_SHAPES.
       Values: PAN, MS, SWIR, CAVIS (or comma-separated combination)
 
-  - id: shape1_name
+  - id: SHAPE1_NAME
     type: str
     size: 3
     encoding: BCS-A
@@ -71,7 +71,7 @@ seq:
       3 BCS-A characters.
       Values: SHP, SHX, DBF
 
-  - id: shape1_start
+  - id: SHAPE1_START
     type: str
     size: 6
     encoding: BCS-N
@@ -82,7 +82,7 @@ seq:
       6 BCS-N characters.
       Range: 000000 to 999999
 
-  - id: shape2_name
+  - id: SHAPE2_NAME
     type: str
     size: 3
     encoding: BCS-A
@@ -92,7 +92,7 @@ seq:
       3 BCS-A characters.
       Values: SHP, SHX, DBF
 
-  - id: shape2_start
+  - id: SHAPE2_START
     type: str
     size: 6
     encoding: BCS-N
@@ -103,7 +103,7 @@ seq:
       6 BCS-N characters.
       Range: 000000 to 999999
 
-  - id: shape3_name
+  - id: SHAPE3_NAME
     type: str
     size: 3
     encoding: BCS-A
@@ -113,7 +113,7 @@ seq:
       3 BCS-A characters.
       Values: SHP, SHX, DBF
 
-  - id: shape3_start
+  - id: SHAPE3_START
     type: str
     size: 6
     encoding: BCS-N

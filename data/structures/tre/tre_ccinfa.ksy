@@ -20,7 +20,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AG - CCINFA
 
 seq:
-  - id: numcode
+  - id: NUMCODE
     type: str
     size: 3
     encoding: BCS-N
@@ -29,10 +29,10 @@ seq:
       Number of code translations defined in this TRE instance.
       3 BCS-N characters, range 1-999.
 
-  - id: codes
+  - id: CODES
     type: code_entry
     repeat: expr
-    repeat-expr: numcode.to_i
+    repeat-expr: NUMCODE.to_i
     doc: |
       Code translation entries.
       Repeated NUMCODE times.
@@ -40,7 +40,7 @@ seq:
 types:
   code_entry:
     seq:
-      - id: code_len
+      - id: CODE_LEN
         type: str
         size: 1
         encoding: BCS-N
@@ -48,16 +48,16 @@ types:
           Length of the CODE field (CODE_LEN)
           1 BCS-N character, range 1-9.
 
-      - id: code
+      - id: CODE
         type: str
-        size: code_len.to_i
+        size: CODE_LEN.to_i
         encoding: BCS-A
         doc: |
           Code (CODE)
           A priori or ad hoc country code.
           1-9 BCS-A characters.
 
-      - id: eqtype
+      - id: EQTYPE
         type: str
         size: 1
         encoding: BCS-A
@@ -66,7 +66,7 @@ types:
           Space = completely equivalent, "C" = ad hoc clarification.
           1 BCS-A character.
 
-      - id: esurn_len
+      - id: ESURN_LEN
         type: str
         size: 2
         encoding: BCS-N
@@ -74,9 +74,9 @@ types:
           Length of the ESURN field (ESURN_LEN)
           2 BCS-N characters, range 9-99.
 
-      - id: esurn
+      - id: ESURN
         type: str
-        size: esurn_len.to_i
+        size: ESURN_LEN.to_i
         encoding: BCS-A
         doc: |
           Equivalent Short URN-based Individual Item Identifier (ESURN)
@@ -84,7 +84,7 @@ types:
           Example: ge:GENC:3:3-5:USA
           9-99 BCS-A characters.
 
-      - id: detail_len
+      - id: DETAIL_LEN
         type: str
         size: 5
         encoding: BCS-N
@@ -92,20 +92,20 @@ types:
           Length of the DETAIL field (DETAIL_LEN)
           5 BCS-N characters, range 0 to max remaining data.
 
-      - id: detail_cmpr
+      - id: DETAIL_CMPR
         type: str
         size: 1
         encoding: BCS-A
-        if: detail_len.to_i > 0
+        if: DETAIL_LEN.to_i > 0
         doc: |
           Code Detail Compression (DETAIL_CMPR)
           Space = uncompressed XML, "G" = gzip compressed.
           1 BCS-A character.
           Only present if DETAIL_LEN > 0.
 
-      - id: detail
-        size: detail_len.to_i
-        if: detail_len.to_i > 0
+      - id: DETAIL
+        size: DETAIL_LEN.to_i
+        if: DETAIL_LEN.to_i > 0
         doc: |
           Code Detail (DETAIL)
           XML metadata per GENC standard schema, optionally gzip compressed.

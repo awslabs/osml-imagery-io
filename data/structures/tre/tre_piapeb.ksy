@@ -12,7 +12,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix C - PIAE
 
 seq:
-  - id: lastnme
+  - id: LASTNME
     type: str
     size: 28
     encoding: ASCII
@@ -21,7 +21,7 @@ seq:
       Surname of individual captured in image.
       28 BCS-A.
 
-  - id: firstnme
+  - id: FIRSTNME
     type: str
     size: 28
     encoding: ASCII
@@ -30,7 +30,7 @@ seq:
       First name of individual captured in image.
       28 BCS-A.
 
-  - id: midnme
+  - id: MIDNME
     type: str
     size: 28
     encoding: ASCII
@@ -39,7 +39,7 @@ seq:
       Middle name of individual captured in image.
       28 BCS-A.
 
-  - id: dob
+  - id: DOB
     type: str
     size: 8
     encoding: ASCII
@@ -48,7 +48,7 @@ seq:
       Birth date of individual captured in image.
       8 BCS-A, CCMMDDYY format.
 
-  - id: assoctry
+  - id: ASSOCTRY
     type: str
     size: 2
     encoding: ASCII

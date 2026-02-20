@@ -13,7 +13,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix E - ASDE
 
 seq:
-  - id: acquisition_date
+  - id: ACQUISITION_DATE
     type: str
     size: 14
     encoding: ASCII
@@ -22,7 +22,7 @@ seq:
       Date/time of collection in UTC.
       14 BCS-A, CCYYMMDDhhmmss format.
 
-  - id: mission_no
+  - id: MISSION_NO
     type: str
     size: 4
     encoding: ASCII
@@ -31,7 +31,7 @@ seq:
       Four character descriptor of the mission (PPNN format).
       4 BCS-A.
 
-  - id: mission_identification
+  - id: MISSION_IDENTIFICATION
     type: str
     size: 10
     encoding: ASCII
@@ -40,7 +40,7 @@ seq:
       Name of the mission (Air Tasking Order Mission Number).
       10 BCS-A.
 
-  - id: flight_no
+  - id: FLIGHT_NO
     type: str
     size: 2
     encoding: ASCII
@@ -49,7 +49,7 @@ seq:
       Flight number in range 01-09, A1-A9, etc.
       2 BCS-A.
 
-  - id: op_num
+  - id: OP_NUM
     type: str
     size: 3
     encoding: ASCII
@@ -58,7 +58,7 @@ seq:
       Reset to 001 at start of each flight.
       3 BCS-N, 000-999.
 
-  - id: current_segment
+  - id: CURRENT_SEGMENT
     type: str
     size: 2
     encoding: ASCII
@@ -67,7 +67,7 @@ seq:
       Identifies which segment of an imaging operation.
       2 BCS-A, AA-ZZ.
 
-  - id: repro_num
+  - id: REPRO_NUM
     type: str
     size: 2
     encoding: ASCII
@@ -76,7 +76,7 @@ seq:
       Indicates if data was reprocessed.
       2 BCS-N, 00-99.
 
-  - id: replay
+  - id: REPLAY
     type: str
     size: 3
     encoding: ASCII
@@ -85,13 +85,13 @@ seq:
       Indicates reprocessing or retransmission.
       3 BCS-A, 000, G01-G99, P01-P99, T01-T99.
 
-  - id: reserved_001
+  - id: RESERVED_001
     type: str
     size: 1
     encoding: ASCII
     doc: Reserved (1 space)
 
-  - id: start_tile_column
+  - id: START_TILE_COLUMN
     type: str
     size: 3
     encoding: ASCII
@@ -100,7 +100,7 @@ seq:
       For tiled sub-images, first tile column number.
       3 BCS-N, 001-099.
 
-  - id: start_tile_row
+  - id: START_TILE_ROW
     type: str
     size: 5
     encoding: ASCII
@@ -109,7 +109,7 @@ seq:
       For tiled sub-images, first tile row number.
       5 BCS-N, 00001-99999.
 
-  - id: end_segment
+  - id: END_SEGMENT
     type: str
     size: 2
     encoding: ASCII
@@ -118,7 +118,7 @@ seq:
       Ending segment ID of the imaging operation.
       2 BCS-A, 00 or AA-ZZ.
 
-  - id: end_tile_column
+  - id: END_TILE_COLUMN
     type: str
     size: 3
     encoding: ASCII
@@ -127,7 +127,7 @@ seq:
       For tiled sub-images, last tile column number.
       3 BCS-N, 001-099.
 
-  - id: end_tile_row
+  - id: END_TILE_ROW
     type: str
     size: 5
     encoding: ASCII
@@ -136,22 +136,22 @@ seq:
       For tiled sub-images, last tile row number.
       5 BCS-N, 00001-99999.
 
-  - id: country
+  - id: COUNTRY
     type: str
     size: 2
     encoding: ASCII
     doc: |
       Country Code (COUNTRY)
-      Two letter code for country of image reference point.
+      Two letter code for COUNTRY of image reference point.
       2 BCS-A, AA-ZZ (FIPS PUB 10-4).
 
-  - id: reserved_002
+  - id: RESERVED_002
     type: str
     size: 4
     encoding: ASCII
     doc: Reserved (4 spaces)
 
-  - id: location
+  - id: LOCATION
     type: str
     size: 11
     encoding: ASCII
@@ -160,7 +160,7 @@ seq:
       Natural reference point of sensor for geographic coverage.
       11 BCS-A, ddmmXdddmmY format.
 
-  - id: reserved_003
+  - id: RESERVED_003
     type: str
     size: 13
     encoding: ASCII

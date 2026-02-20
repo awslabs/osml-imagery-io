@@ -27,7 +27,7 @@ doc: |
   Reference: LAS Specification, Version 1.3
 
 seq:
-  - id: indes
+  - id: INDES
     type: str
     size: 3
     encoding: BCS-N

@@ -23,7 +23,7 @@ doc: |
   Reference: STDI-0002 Volume 2, Appendix D - CSSHPA-CSSHPB
 
 seq:
-  - id: shapefile_id
+  - id: SHAPEFILE_ID
     type: str
     size: 36
     encoding: BCS-A
@@ -34,7 +34,7 @@ seq:
       instances, all have the same SHAPEFILE_ID.
       36 BCS-A characters.
 
-  - id: shapes_id
+  - id: SHAPES_ID
     type: str
     size: 36
     encoding: BCS-A
@@ -44,7 +44,7 @@ seq:
       shapefiles where the set was split into multiple independent shapefiles.
       36 BCS-A characters.
 
-  - id: numais
+  - id: NUMAIS
     type: str
     size: 3
     encoding: BCS-A
@@ -54,7 +54,7 @@ seq:
       3 BCS-A characters.
       Values: ALL (associated with all image segments), or 000-998
 
-  - id: timestamp
+  - id: TIMESTAMP
     type: str
     size: 24
     encoding: BCS-A
@@ -65,7 +65,7 @@ seq:
       Trailing digits set to hyphens if unknown precision.
       All spaces if not associated with a specific time.
 
-  - id: num_assoc_elem
+  - id: NUM_ASSOC_ELEM
     type: str
     size: 3
     encoding: BCS-N
@@ -75,7 +75,7 @@ seq:
       3 BCS-N characters.
       Range: 000 to 999
 
-  - id: shape_use
+  - id: SHAPE_USE
     type: str
     size: 25
     encoding: BCS-A
@@ -85,7 +85,7 @@ seq:
       25 BCS-A characters.
       Values: IMAGE_SHAPE, CLOUD_SHAPES, MOSAIC_SOURCE_SHAPES, USER_DEF_SHAPES
 
-  - id: num_shape_use_attr
+  - id: NUM_SHAPE_USE_ATTR
     type: str
     size: 3
     encoding: BCS-A
@@ -95,7 +95,7 @@ seq:
       3 BCS-A characters.
       Range: 000 to 999
 
-  - id: shape_class
+  - id: SHAPE_CLASS
     type: str
     size: 11
     encoding: BCS-A
@@ -107,7 +107,7 @@ seq:
       POLYLINEZ, POLYGONZ, MULTIPOINTZ, POINTM, POLYLINEM, POLYGONM,
       MULTIPOINTM, MULTIPATCH
 
-  - id: shape_coord
+  - id: SHAPE_COORD
     type: str
     size: 10
     encoding: BCS-A
@@ -117,7 +117,7 @@ seq:
       10 BCS-A characters.
       Values: WGS-84, LineSample
 
-  - id: shape_version
+  - id: SHAPE_VERSION
     type: str
     size: 11
     encoding: BCS-N
@@ -127,7 +127,7 @@ seq:
       11 BCS-N characters (signed, format %+011d).
       Range: -9999999999 to +9999999999
 
-  - id: shape_part
+  - id: SHAPE_PART
     type: str
     size: 3
     encoding: BCS-N
@@ -137,7 +137,7 @@ seq:
       3 BCS-N characters.
       Range: 001 to 999
 
-  - id: shape_num_parts
+  - id: SHAPE_NUM_PARTS
     type: str
     size: 3
     encoding: BCS-N
@@ -148,7 +148,7 @@ seq:
       3 BCS-N characters.
       Range: 001 to 999
 
-  - id: source
+  - id: SOURCE
     type: str
     size: 18
     encoding: BCS-A
@@ -158,7 +158,7 @@ seq:
       18 BCS-A characters.
       Values: PAN, MS, SWIR, CAVIS (or comma-separated combination)
 
-  - id: shape1_name
+  - id: SHAPE1_NAME
     type: str
     size: 3
     encoding: BCS-A
@@ -168,7 +168,7 @@ seq:
       3 BCS-A characters.
       Values: SHP, SHX, DBF (or spaces if no primary files in this DES for v2)
 
-  - id: shape1_start
+  - id: SHAPE1_START
     type: str
     size: 9
     encoding: BCS-A
@@ -179,7 +179,7 @@ seq:
       9 BCS-A characters.
       Range: 000000000 to 999999998 (or spaces if no primary files)
 
-  - id: shape2_name
+  - id: SHAPE2_NAME
     type: str
     size: 3
     encoding: BCS-A
@@ -189,7 +189,7 @@ seq:
       3 BCS-A characters.
       Values: SHP, SHX, DBF (or spaces if only one file)
 
-  - id: shape2_start
+  - id: SHAPE2_START
     type: str
     size: 9
     encoding: BCS-A
@@ -199,7 +199,7 @@ seq:
       9 BCS-A characters.
       Range: 000000000 to 999999998 (or spaces if only one file)
 
-  - id: shape3_name
+  - id: SHAPE3_NAME
     type: str
     size: 3
     encoding: BCS-A
@@ -209,7 +209,7 @@ seq:
       3 BCS-A characters.
       Values: SHP, SHX, DBF (or spaces if only one or two files)
 
-  - id: shape3_start
+  - id: SHAPE3_START
     type: str
     size: 9
     encoding: BCS-A

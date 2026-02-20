@@ -10,148 +10,148 @@ doc: |
 
 seq:
   # DES Segment Marker
-  - id: de
+  - id: DE
     type: str
     size: 2
     encoding: BCS-A
     doc: File part type. Always "DE" for data extension segments.
 
   # DES Unique Identifier
-  - id: desid
+  - id: DESID
     type: str
     size: 25
     encoding: BCS-A
     doc: Unique DES type identifier.
 
   # DES Version
-  - id: desver
+  - id: DESVER
     type: str
     size: 2
     encoding: BCS-N
     doc: Version of the data definition (01-99).
 
   # DES Security Classification
-  - id: desclas
+  - id: DESCLAS
     type: str
     size: 1
     encoding: BCS-A
     doc: DES security classification (T, S, C, R, or U).
 
-  - id: desclsy
+  - id: DESCLSY
     type: str
     size: 2
     encoding: BCS-A
     doc: DES security classification system.
 
-  - id: descode
+  - id: DESCODE
     type: str
     size: 11
     encoding: BCS-A
     doc: DES codewords.
 
-  - id: desctlh
+  - id: DESCTLH
     type: str
     size: 2
     encoding: BCS-A
     doc: DES control and handling.
 
-  - id: desrel
+  - id: DESREL
     type: str
     size: 20
     encoding: BCS-A
     doc: DES releasing instructions.
 
-  - id: desdctp
+  - id: DESDCTP
     type: str
     size: 2
     encoding: BCS-A
     doc: DES declassification type.
 
-  - id: desdcdt
+  - id: DESDCDT
     type: str
     size: 8
     encoding: BCS-N
     doc: DES declassification date.
 
-  - id: desdcxm
+  - id: DESDCXM
     type: str
     size: 4
     encoding: BCS-A
     doc: DES declassification exemption.
 
-  - id: desdg
+  - id: DESDG
     type: str
     size: 1
     encoding: BCS-A
     doc: DES downgrade.
 
-  - id: desdgdt
+  - id: DESDGDT
     type: str
     size: 8
     encoding: BCS-N
     doc: DES downgrade date.
 
-  - id: descltx
+  - id: DESCLTX
     type: str
     size: 43
     encoding: ECS-A
     doc: DES classification text.
 
-  - id: descatp
+  - id: DESCATP
     type: str
     size: 1
     encoding: BCS-A
     doc: DES classification authority type.
 
-  - id: descaut
+  - id: DESCAUT
     type: str
     size: 40
     encoding: ECS-A
     doc: DES classification authority.
 
-  - id: descrsn
+  - id: DESCRSN
     type: str
     size: 1
     encoding: BCS-A
     doc: DES classification reason.
 
-  - id: dessrdt
+  - id: DESSRDT
     type: str
     size: 8
     encoding: BCS-N
     doc: DES security source date.
 
-  - id: desctln
+  - id: DESCTLN
     type: str
     size: 15
     encoding: BCS-A
     doc: DES security control number.
 
   # DES Overflowed Header Type (conditional on DESID)
-  - id: desoflw
+  - id: DESOFLW
     type: str
     size: 6
     encoding: BCS-A
-    if: desid == "TRE_OVERFLOW             "
+    if: DESID == "TRE_OVERFLOW             "
     doc: Overflowed header type (UDHD, UDSHD, IXSHD, SXSHD, TXSHD).
 
   # DES Data Item Overflowed (conditional on DESID)
-  - id: desitem
+  - id: DESITEM
     type: str
     size: 3
     encoding: BCS-N
-    if: desid == "TRE_OVERFLOW             "
+    if: DESID == "TRE_OVERFLOW             "
     doc: Data item overflowed (segment index).
 
   # DES Defined Subheader Fields Length
-  - id: desshl
+  - id: DESSHL
     type: str
     size: 4
     encoding: BCS-N
     doc: Length of DES-defined subheader fields.
 
   # DES Defined Subheader Fields
-  - id: desshf
-    size: desshl.to_i
-    if: desshl.to_i > 0
+  - id: DESSHF
+    size: DESSHL.to_i
+    if: DESSHL.to_i > 0
     doc: DES-defined subheader fields.

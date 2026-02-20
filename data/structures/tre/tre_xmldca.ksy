@@ -22,7 +22,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AE - XMLDCA
 
 seq:
-  - id: treshl
+  - id: TRESHL
     type: str
     size: 4
     encoding: BCS-N
@@ -33,96 +33,96 @@ seq:
       0283 = TRECRC through TRESHTN, 0773 = All fields.
       4 BCS-N characters.
 
-  - id: trecrc
+  - id: TRECRC
     type: str
     size: 5
     encoding: BCS-N
-    if: treshl.to_i >= 5
+    if: TRESHL.to_i >= 5
     doc: |
       Cyclic Redundancy Check (TRECRC)
       CRC-16 value for the TREDATA field content.
       Value 99999 indicates CRC not calculated.
       5 BCS-N characters, range 00000-65535 or 99999.
 
-  - id: treshft
+  - id: TRESHFT
     type: str
     size: 8
     encoding: BCS-A
-    if: treshl.to_i >= 283
+    if: TRESHL.to_i >= 283
     doc: |
       XML File Type (TRESHFT)
       Representative of the XML file type.
       Examples: XSD, XML, DTD, XSL, XSLT.
       8 BCS-A characters.
 
-  - id: treshdt
+  - id: TRESHDT
     type: str
     size: 20
     encoding: BCS-A
-    if: treshl.to_i >= 283
+    if: TRESHL.to_i >= 283
     doc: |
       Date and Time (TRESHDT)
       UTC time of the XML file's origination.
       Format: YYYY-MM-DDThh:mm:ssZ.
       20 BCS-A characters.
 
-  - id: treshrp
+  - id: TRESHRP
     type: str
     size: 40
     encoding: BCS-A
-    if: treshl.to_i >= 283
+    if: TRESHL.to_i >= 283
     doc: |
       Responsible Party - Organization Identifier (TRESHRP)
       Identification of the organization responsible for the TRE content.
       40 BCS-A characters, free text.
 
-  - id: treshsi
+  - id: TRESHSI
     type: str
     size: 60
     encoding: BCS-A
-    if: treshl.to_i >= 283
+    if: TRESHL.to_i >= 283
     doc: |
       Specification Identifier (TRESHSI)
       Name of the specification used for the XML data content.
       60 BCS-A characters, free text.
 
-  - id: treshsv
+  - id: TRESHSV
     type: str
     size: 10
     encoding: BCS-A
-    if: treshl.to_i >= 283
+    if: TRESHL.to_i >= 283
     doc: |
       Specification Version (TRESHSV)
       Version or edition of the specification.
       10 BCS-A characters, free text.
 
-  - id: treshsd
+  - id: TRESHSD
     type: str
     size: 20
     encoding: BCS-A
-    if: treshl.to_i >= 283
+    if: TRESHL.to_i >= 283
     doc: |
       Specification Date (TRESHSD)
       Version or edition date for the specification.
       Format: YYYY-MM-DDThh:mm:ssZ.
       20 BCS-A characters.
 
-  - id: treshtn
+  - id: TRESHTN
     type: str
     size: 120
     encoding: BCS-A
-    if: treshl.to_i >= 283
+    if: TRESHL.to_i >= 283
     doc: |
       Target Namespace (TRESHTN)
       Identification of the target namespace designated within the XML data.
       Default is spaces.
       120 BCS-A characters, URL.
 
-  - id: treshlpg
+  - id: TRESHLPG
     type: str
     size: 125
     encoding: BCS-A
-    if: treshl.to_i >= 773
+    if: TRESHL.to_i >= 773
     doc: |
       Location - Polygon (TRESHLPG)
       Five-point boundary enclosing the area applicable to the TRE.
@@ -131,11 +131,11 @@ seq:
       Default is spaces.
       125 BCS-A characters.
 
-  - id: treshlpt
+  - id: TRESHLPT
     type: str
     size: 25
     encoding: BCS-A
-    if: treshl.to_i >= 773
+    if: TRESHL.to_i >= 773
     doc: |
       Location - Point (TRESHLPT)
       Single geographic point applicable to the TRE.
@@ -143,11 +143,11 @@ seq:
       Default is spaces.
       25 BCS-A characters.
 
-  - id: treshli
+  - id: TRESHLI
     type: str
     size: 20
     encoding: BCS-A
-    if: treshl.to_i >= 773
+    if: TRESHL.to_i >= 773
     doc: |
       Location - Identifier (TRESHLI)
       Identifier used to represent a geographic area.
@@ -155,29 +155,29 @@ seq:
       Default is spaces.
       20 BCS-A characters.
 
-  - id: treshlin
+  - id: TRESHLIN
     type: str
     size: 120
     encoding: BCS-A
-    if: treshl.to_i >= 773
+    if: TRESHL.to_i >= 773
     doc: |
       Location Identifier Namespace URI (TRESHLIN)
       URI for the namespace where the Location Identifier is described.
       Default is spaces.
       120 BCS-A characters.
 
-  - id: treshabs
+  - id: TRESHABS
     type: str
     size: 200
     encoding: BCS-A
-    if: treshl.to_i >= 773
+    if: TRESHL.to_i >= 773
     doc: |
       Abstract (TRESHABS)
       Brief narrative summary of the content of the TRE.
       Default is spaces.
       200 BCS-A characters, free text.
 
-  - id: tredata
+  - id: TREDATA
     size-eos: true
     doc: |
       User-defined Data Field (TREDATA)

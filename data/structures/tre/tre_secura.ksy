@@ -25,7 +25,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AI - SECURA
 
 seq:
-  - id: fdattim
+  - id: FDATTIM
     type: str
     size: 14
     encoding: BCS-A
@@ -35,7 +35,7 @@ seq:
       Format: CCYYMMDDhhmmss (NITF 2.1) or DDHHMMSSZmonYY (NITF 2.0).
       Used for validity check between TRE and file header.
 
-  - id: nitfver
+  - id: NITFVER
     type: str
     size: 9
     encoding: BCS-A
@@ -43,7 +43,7 @@ seq:
       NITF Version Flag.
       Values: "NITF02.00" or "NITF02.10"
 
-  - id: nfsecflds
+  - id: NFSECFLDS
     size: 207
     doc: |
       NITF Security Fields (FSEC).
@@ -57,7 +57,7 @@ seq:
       
       Used for validity check between TRE and header/subheader.
 
-  - id: secstd
+  - id: SECSTD
     type: str
     size: 8
     encoding: BCS-A
@@ -69,7 +69,7 @@ seq:
       Specification, XML Data Encoding Specification for Access
       Rights and Handling.
 
-  - id: seccomp
+  - id: SECCOMP
     type: str
     size: 8
     encoding: BCS-A
@@ -81,7 +81,7 @@ seq:
       - Spaces (8 spaces): Field is uncompressed
       - "GZIP    ": Field is compressed with GZIP per IETF RFC-1952
 
-  - id: seclen
+  - id: SECLEN
     type: str
     size: 5
     encoding: BCS-N
@@ -92,8 +92,8 @@ seq:
       not the length of the original security marking data.
       Range: 00000-99737.
 
-  - id: security
-    size: seclen.to_i
+  - id: SECURITY
+    size: SECLEN.to_i
     doc: |
       Security Data.
       The actual security data, encoded using the security standard

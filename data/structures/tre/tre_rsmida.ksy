@@ -15,7 +15,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix U - RSM
 
 seq:
-  - id: iid
+  - id: IID
     type: str
     size: 80
     encoding: BCS-A
@@ -23,7 +23,7 @@ seq:
       Image Identifier
       80 BCS-A characters identifying the image.
 
-  - id: edition
+  - id: EDITION
     type: str
     size: 40
     encoding: BCS-A
@@ -31,7 +31,7 @@ seq:
       RSM Image Support Data Edition
       40 BCS-A characters identifying the edition.
 
-  - id: isid
+  - id: ISID
     type: str
     size: 40
     encoding: BCS-A
@@ -39,7 +39,7 @@ seq:
       Image Sequence Identifier
       40 BCS-A characters identifying the image sequence.
 
-  - id: sid
+  - id: SID
     type: str
     size: 40
     encoding: BCS-A
@@ -47,7 +47,7 @@ seq:
       Sensor Identifier
       40 BCS-A characters identifying the sensor.
 
-  - id: stid
+  - id: STID
     type: str
     size: 40
     encoding: BCS-A
@@ -55,7 +55,7 @@ seq:
       Sensor Type Identifier
       40 BCS-A characters identifying the sensor type.
 
-  - id: year
+  - id: YEAR
     type: str
     size: 4
     encoding: BCS-NPI
@@ -63,7 +63,7 @@ seq:
       Year of Image Acquisition
       4 BCS-NPI digits (YYYY).
 
-  - id: month
+  - id: MONTH
     type: str
     size: 2
     encoding: BCS-NPI
@@ -71,7 +71,7 @@ seq:
       Month of Image Acquisition
       2 BCS-NPI digits (MM), range 01-12.
 
-  - id: day
+  - id: DAY
     type: str
     size: 2
     encoding: BCS-NPI
@@ -79,7 +79,7 @@ seq:
       Day of Image Acquisition
       2 BCS-NPI digits (DD), range 01-31.
 
-  - id: hour
+  - id: HOUR
     type: str
     size: 2
     encoding: BCS-NPI
@@ -87,7 +87,7 @@ seq:
       Hour of Image Acquisition
       2 BCS-NPI digits (HH), range 00-23.
 
-  - id: minute
+  - id: MINUTE
     type: str
     size: 2
     encoding: BCS-NPI
@@ -95,7 +95,7 @@ seq:
       Minute of Image Acquisition
       2 BCS-NPI digits (MM), range 00-59.
 
-  - id: second
+  - id: SECOND
     type: str
     size: 9
     encoding: BCS-N
@@ -103,7 +103,7 @@ seq:
       Second of Image Acquisition
       9 BCS-N real number (SS.SSSSSS), range 00.000000-59.999999.
 
-  - id: nrg
+  - id: NRG
     type: str
     size: 8
     encoding: BCS-NPI
@@ -111,7 +111,7 @@ seq:
       Number of Row Sections in RSM Grid
       8 BCS-NPI positive integer.
 
-  - id: ncg
+  - id: NCG
     type: str
     size: 8
     encoding: BCS-NPI
@@ -119,7 +119,7 @@ seq:
       Number of Column Sections in RSM Grid
       8 BCS-NPI positive integer.
 
-  - id: trg
+  - id: TRG
     type: str
     size: 21
     encoding: BCS-N
@@ -127,7 +127,7 @@ seq:
       Total Number of Rows in RSM Ground Domain
       21 BCS-N real number.
 
-  - id: tcg
+  - id: TCG
     type: str
     size: 21
     encoding: BCS-N
@@ -135,7 +135,7 @@ seq:
       Total Number of Columns in RSM Ground Domain
       21 BCS-N real number.
 
-  - id: grndd
+  - id: GRNDD
     type: str
     size: 1
     encoding: BCS-A
@@ -143,7 +143,7 @@ seq:
       Ground Domain Form
       1 BCS-A character: 'G' = Geographic, 'R' = Rectangular.
 
-  - id: xuor
+  - id: XUOR
     type: str
     size: 21
     encoding: BCS-N
@@ -151,7 +151,7 @@ seq:
       X/Longitude Coordinate of Ground Reference Point Origin
       21 BCS-N real number.
 
-  - id: yuor
+  - id: YUOR
     type: str
     size: 21
     encoding: BCS-N
@@ -159,7 +159,7 @@ seq:
       Y/Latitude Coordinate of Ground Reference Point Origin
       21 BCS-N real number.
 
-  - id: zuor
+  - id: ZUOR
     type: str
     size: 21
     encoding: BCS-N
@@ -167,7 +167,7 @@ seq:
       Z/Height Coordinate of Ground Reference Point Origin
       21 BCS-N real number.
 
-  - id: xuxr
+  - id: XUXR
     type: str
     size: 21
     encoding: BCS-N
@@ -175,7 +175,7 @@ seq:
       Unit Vector X Component for X/Longitude Axis
       21 BCS-N real number.
 
-  - id: xuyr
+  - id: XUYR
     type: str
     size: 21
     encoding: BCS-N
@@ -183,7 +183,7 @@ seq:
       Unit Vector Y Component for X/Longitude Axis
       21 BCS-N real number.
 
-  - id: xuzr
+  - id: XUZR
     type: str
     size: 21
     encoding: BCS-N
@@ -191,7 +191,7 @@ seq:
       Unit Vector Z Component for X/Longitude Axis
       21 BCS-N real number.
 
-  - id: yuxr
+  - id: YUXR
     type: str
     size: 21
     encoding: BCS-N
@@ -199,7 +199,7 @@ seq:
       Unit Vector X Component for Y/Latitude Axis
       21 BCS-N real number.
 
-  - id: yuyr
+  - id: YUYR
     type: str
     size: 21
     encoding: BCS-N
@@ -207,7 +207,7 @@ seq:
       Unit Vector Y Component for Y/Latitude Axis
       21 BCS-N real number.
 
-  - id: yuzr
+  - id: YUZR
     type: str
     size: 21
     encoding: BCS-N
@@ -215,7 +215,7 @@ seq:
       Unit Vector Z Component for Y/Latitude Axis
       21 BCS-N real number.
 
-  - id: zuxr
+  - id: ZUXR
     type: str
     size: 21
     encoding: BCS-N
@@ -223,7 +223,7 @@ seq:
       Unit Vector X Component for Z/Height Axis
       21 BCS-N real number.
 
-  - id: zuyr
+  - id: ZUYR
     type: str
     size: 21
     encoding: BCS-N
@@ -231,7 +231,7 @@ seq:
       Unit Vector Y Component for Z/Height Axis
       21 BCS-N real number.
 
-  - id: zuzr
+  - id: ZUZR
     type: str
     size: 21
     encoding: BCS-N
@@ -239,7 +239,7 @@ seq:
       Unit Vector Z Component for Z/Height Axis
       21 BCS-N real number.
 
-  - id: v1x
+  - id: V1X
     type: str
     size: 21
     encoding: BCS-N
@@ -247,7 +247,7 @@ seq:
       Vertex 1 X/Longitude Coordinate
       21 BCS-N real number.
 
-  - id: v1y
+  - id: V1Y
     type: str
     size: 21
     encoding: BCS-N
@@ -255,7 +255,7 @@ seq:
       Vertex 1 Y/Latitude Coordinate
       21 BCS-N real number.
 
-  - id: v1z
+  - id: V1Z
     type: str
     size: 21
     encoding: BCS-N
@@ -263,7 +263,7 @@ seq:
       Vertex 1 Z/Height Coordinate
       21 BCS-N real number.
 
-  - id: v2x
+  - id: V2X
     type: str
     size: 21
     encoding: BCS-N
@@ -271,7 +271,7 @@ seq:
       Vertex 2 X/Longitude Coordinate
       21 BCS-N real number.
 
-  - id: v2y
+  - id: V2Y
     type: str
     size: 21
     encoding: BCS-N
@@ -279,7 +279,7 @@ seq:
       Vertex 2 Y/Latitude Coordinate
       21 BCS-N real number.
 
-  - id: v2z
+  - id: V2Z
     type: str
     size: 21
     encoding: BCS-N
@@ -287,7 +287,7 @@ seq:
       Vertex 2 Z/Height Coordinate
       21 BCS-N real number.
 
-  - id: v3x
+  - id: V3X
     type: str
     size: 21
     encoding: BCS-N
@@ -295,7 +295,7 @@ seq:
       Vertex 3 X/Longitude Coordinate
       21 BCS-N real number.
 
-  - id: v3y
+  - id: V3Y
     type: str
     size: 21
     encoding: BCS-N
@@ -303,7 +303,7 @@ seq:
       Vertex 3 Y/Latitude Coordinate
       21 BCS-N real number.
 
-  - id: v3z
+  - id: V3Z
     type: str
     size: 21
     encoding: BCS-N
@@ -311,7 +311,7 @@ seq:
       Vertex 3 Z/Height Coordinate
       21 BCS-N real number.
 
-  - id: v4x
+  - id: V4X
     type: str
     size: 21
     encoding: BCS-N
@@ -319,7 +319,7 @@ seq:
       Vertex 4 X/Longitude Coordinate
       21 BCS-N real number.
 
-  - id: v4y
+  - id: V4Y
     type: str
     size: 21
     encoding: BCS-N
@@ -327,7 +327,7 @@ seq:
       Vertex 4 Y/Latitude Coordinate
       21 BCS-N real number.
 
-  - id: v4z
+  - id: V4Z
     type: str
     size: 21
     encoding: BCS-N
@@ -335,7 +335,7 @@ seq:
       Vertex 4 Z/Height Coordinate
       21 BCS-N real number.
 
-  - id: v5x
+  - id: V5X
     type: str
     size: 21
     encoding: BCS-N
@@ -343,7 +343,7 @@ seq:
       Vertex 5 X/Longitude Coordinate
       21 BCS-N real number.
 
-  - id: v5y
+  - id: V5Y
     type: str
     size: 21
     encoding: BCS-N
@@ -351,7 +351,7 @@ seq:
       Vertex 5 Y/Latitude Coordinate
       21 BCS-N real number.
 
-  - id: v5z
+  - id: V5Z
     type: str
     size: 21
     encoding: BCS-N
@@ -359,7 +359,7 @@ seq:
       Vertex 5 Z/Height Coordinate
       21 BCS-N real number.
 
-  - id: v6x
+  - id: V6X
     type: str
     size: 21
     encoding: BCS-N
@@ -367,7 +367,7 @@ seq:
       Vertex 6 X/Longitude Coordinate
       21 BCS-N real number.
 
-  - id: v6y
+  - id: V6Y
     type: str
     size: 21
     encoding: BCS-N
@@ -375,7 +375,7 @@ seq:
       Vertex 6 Y/Latitude Coordinate
       21 BCS-N real number.
 
-  - id: v6z
+  - id: V6Z
     type: str
     size: 21
     encoding: BCS-N
@@ -383,7 +383,7 @@ seq:
       Vertex 6 Z/Height Coordinate
       21 BCS-N real number.
 
-  - id: v7x
+  - id: V7X
     type: str
     size: 21
     encoding: BCS-N
@@ -391,7 +391,7 @@ seq:
       Vertex 7 X/Longitude Coordinate
       21 BCS-N real number.
 
-  - id: v7y
+  - id: V7Y
     type: str
     size: 21
     encoding: BCS-N
@@ -399,7 +399,7 @@ seq:
       Vertex 7 Y/Latitude Coordinate
       21 BCS-N real number.
 
-  - id: v7z
+  - id: V7Z
     type: str
     size: 21
     encoding: BCS-N
@@ -407,7 +407,7 @@ seq:
       Vertex 7 Z/Height Coordinate
       21 BCS-N real number.
 
-  - id: v8x
+  - id: V8X
     type: str
     size: 21
     encoding: BCS-N
@@ -415,7 +415,7 @@ seq:
       Vertex 8 X/Longitude Coordinate
       21 BCS-N real number.
 
-  - id: v8y
+  - id: V8Y
     type: str
     size: 21
     encoding: BCS-N
@@ -423,7 +423,7 @@ seq:
       Vertex 8 Y/Latitude Coordinate
       21 BCS-N real number.
 
-  - id: v8z
+  - id: V8Z
     type: str
     size: 21
     encoding: BCS-N
@@ -431,7 +431,7 @@ seq:
       Vertex 8 Z/Height Coordinate
       21 BCS-N real number.
 
-  - id: grpx
+  - id: GRPX
     type: str
     size: 21
     encoding: BCS-N
@@ -439,7 +439,7 @@ seq:
       Ground Reference Point X/Longitude Coordinate
       21 BCS-N real number.
 
-  - id: grpy
+  - id: GRPY
     type: str
     size: 21
     encoding: BCS-N
@@ -447,7 +447,7 @@ seq:
       Ground Reference Point Y/Latitude Coordinate
       21 BCS-N real number.
 
-  - id: grpz
+  - id: GRPZ
     type: str
     size: 21
     encoding: BCS-N
@@ -455,7 +455,7 @@ seq:
       Ground Reference Point Z/Height Coordinate
       21 BCS-N real number.
 
-  - id: fullr
+  - id: FULLR
     type: str
     size: 8
     encoding: BCS-NPI
@@ -463,7 +463,7 @@ seq:
       Number of Rows in Full Image
       8 BCS-NPI positive integer.
 
-  - id: fullc
+  - id: FULLC
     type: str
     size: 8
     encoding: BCS-NPI
@@ -471,7 +471,7 @@ seq:
       Number of Columns in Full Image
       8 BCS-NPI positive integer.
 
-  - id: minr
+  - id: MINR
     type: str
     size: 8
     encoding: BCS-NPI
@@ -479,7 +479,7 @@ seq:
       Minimum Row of Valid RSM
       8 BCS-NPI non-negative integer.
 
-  - id: maxr
+  - id: MAXR
     type: str
     size: 8
     encoding: BCS-NPI
@@ -487,7 +487,7 @@ seq:
       Maximum Row of Valid RSM
       8 BCS-NPI positive integer.
 
-  - id: minc
+  - id: MINC
     type: str
     size: 8
     encoding: BCS-NPI
@@ -495,7 +495,7 @@ seq:
       Minimum Column of Valid RSM
       8 BCS-NPI non-negative integer.
 
-  - id: maxc
+  - id: MAXC
     type: str
     size: 8
     encoding: BCS-NPI
@@ -503,7 +503,7 @@ seq:
       Maximum Column of Valid RSM
       8 BCS-NPI positive integer.
 
-  - id: ie0
+  - id: IE0
     type: str
     size: 21
     encoding: BCS-N
@@ -511,7 +511,7 @@ seq:
       Illumination Elevation Angle Constant Coefficient
       21 BCS-N real number (degrees).
 
-  - id: ier
+  - id: IER
     type: str
     size: 21
     encoding: BCS-N
@@ -519,7 +519,7 @@ seq:
       Illumination Elevation Angle Row Coefficient
       21 BCS-N real number (degrees/row).
 
-  - id: iec
+  - id: IEC
     type: str
     size: 21
     encoding: BCS-N
@@ -527,7 +527,7 @@ seq:
       Illumination Elevation Angle Column Coefficient
       21 BCS-N real number (degrees/column).
 
-  - id: ierr
+  - id: IERR
     type: str
     size: 21
     encoding: BCS-N
@@ -535,7 +535,7 @@ seq:
       Illumination Elevation Angle Row-Row Coefficient
       21 BCS-N real number.
 
-  - id: ierc
+  - id: IERC
     type: str
     size: 21
     encoding: BCS-N
@@ -543,7 +543,7 @@ seq:
       Illumination Elevation Angle Row-Column Coefficient
       21 BCS-N real number.
 
-  - id: iecc
+  - id: IECC
     type: str
     size: 21
     encoding: BCS-N
@@ -551,7 +551,7 @@ seq:
       Illumination Elevation Angle Column-Column Coefficient
       21 BCS-N real number.
 
-  - id: ia0
+  - id: IA0
     type: str
     size: 21
     encoding: BCS-N
@@ -559,7 +559,7 @@ seq:
       Illumination Azimuth Angle Constant Coefficient
       21 BCS-N real number (degrees).
 
-  - id: iar
+  - id: IAR
     type: str
     size: 21
     encoding: BCS-N
@@ -567,7 +567,7 @@ seq:
       Illumination Azimuth Angle Row Coefficient
       21 BCS-N real number (degrees/row).
 
-  - id: iac
+  - id: IAC
     type: str
     size: 21
     encoding: BCS-N
@@ -575,7 +575,7 @@ seq:
       Illumination Azimuth Angle Column Coefficient
       21 BCS-N real number (degrees/column).
 
-  - id: iarr
+  - id: IARR
     type: str
     size: 21
     encoding: BCS-N
@@ -583,7 +583,7 @@ seq:
       Illumination Azimuth Angle Row-Row Coefficient
       21 BCS-N real number.
 
-  - id: iarc
+  - id: IARC
     type: str
     size: 21
     encoding: BCS-N
@@ -591,7 +591,7 @@ seq:
       Illumination Azimuth Angle Row-Column Coefficient
       21 BCS-N real number.
 
-  - id: iacc
+  - id: IACC
     type: str
     size: 21
     encoding: BCS-N
@@ -599,7 +599,7 @@ seq:
       Illumination Azimuth Angle Column-Column Coefficient
       21 BCS-N real number.
 
-  - id: spx
+  - id: SPX
     type: str
     size: 21
     encoding: BCS-N
@@ -607,7 +607,7 @@ seq:
       Sensor X Position
       21 BCS-N real number (meters).
 
-  - id: svx
+  - id: SVX
     type: str
     size: 21
     encoding: BCS-N
@@ -615,7 +615,7 @@ seq:
       Sensor X Velocity
       21 BCS-N real number (meters/second).
 
-  - id: sax
+  - id: SAX
     type: str
     size: 21
     encoding: BCS-N
@@ -623,7 +623,7 @@ seq:
       Sensor X Acceleration
       21 BCS-N real number (meters/second^2).
 
-  - id: spy
+  - id: SPY
     type: str
     size: 21
     encoding: BCS-N
@@ -631,7 +631,7 @@ seq:
       Sensor Y Position
       21 BCS-N real number (meters).
 
-  - id: svy
+  - id: SVY
     type: str
     size: 21
     encoding: BCS-N
@@ -639,7 +639,7 @@ seq:
       Sensor Y Velocity
       21 BCS-N real number (meters/second).
 
-  - id: say
+  - id: SAY
     type: str
     size: 21
     encoding: BCS-N
@@ -647,7 +647,7 @@ seq:
       Sensor Y Acceleration
       21 BCS-N real number (meters/second^2).
 
-  - id: spz
+  - id: SPZ
     type: str
     size: 21
     encoding: BCS-N
@@ -655,7 +655,7 @@ seq:
       Sensor Z Position
       21 BCS-N real number (meters).
 
-  - id: svz
+  - id: SVZ
     type: str
     size: 21
     encoding: BCS-N
@@ -663,7 +663,7 @@ seq:
       Sensor Z Velocity
       21 BCS-N real number (meters/second).
 
-  - id: saz
+  - id: SAZ
     type: str
     size: 21
     encoding: BCS-N

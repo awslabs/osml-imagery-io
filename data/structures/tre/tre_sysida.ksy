@@ -24,7 +24,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AS - SYSIDA v1.0
 
 seq:
-  - id: platform_id_len
+  - id: PLATFORM_ID_LEN
     type: str
     size: 3
     encoding: BCS-N
@@ -32,17 +32,17 @@ seq:
       Length of PLATFORM_ID field in bytes.
       3 BCS-N characters, range 000-999.
 
-  - id: platform_id
+  - id: PLATFORM_ID
     type: str
-    size: platform_id_len.to_i
+    size: PLATFORM_ID_LEN.to_i
     encoding: ECS-A
-    if: platform_id_len.to_i > 0
+    if: PLATFORM_ID_LEN.to_i > 0
     doc: |
       Standard identifier for the collection platform.
       Value is case sensitive. See NITF Field Value Registry.
       Variable length ECS-A characters (length specified by PLATFORM_ID_LEN).
 
-  - id: payload_id_len
+  - id: PAYLOAD_ID_LEN
     type: str
     size: 3
     encoding: BCS-N
@@ -50,17 +50,17 @@ seq:
       Length of PAYLOAD_ID field in bytes.
       3 BCS-N characters, range 000-999.
 
-  - id: payload_id
+  - id: PAYLOAD_ID
     type: str
-    size: payload_id_len.to_i
+    size: PAYLOAD_ID_LEN.to_i
     encoding: ECS-A
-    if: payload_id_len.to_i > 0
+    if: PAYLOAD_ID_LEN.to_i > 0
     doc: |
       Standard identifier for the payload.
       Value is case sensitive. See NITF Field Value Registry.
       Variable length ECS-A characters (length specified by PAYLOAD_ID_LEN).
 
-  - id: sensor_id_len
+  - id: SENSOR_ID_LEN
     type: str
     size: 3
     encoding: BCS-N
@@ -68,11 +68,11 @@ seq:
       Length of SENSOR_ID field in bytes.
       3 BCS-N characters, range 000-999.
 
-  - id: sensor_id
+  - id: SENSOR_ID
     type: str
-    size: sensor_id_len.to_i
+    size: SENSOR_ID_LEN.to_i
     encoding: ECS-A
-    if: sensor_id_len.to_i > 0
+    if: SENSOR_ID_LEN.to_i > 0
     doc: |
       Standard identifier for the sensor.
       Value is case sensitive. See NITF Field Value Registry.

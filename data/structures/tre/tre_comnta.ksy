@@ -20,7 +20,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AU - COMNTA
 
 seq:
-  - id: comment
+  - id: COMMENT
     type: str
     size-eos: true
     encoding: UTF-8
