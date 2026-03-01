@@ -7,14 +7,13 @@ name = "aws-osml-io"
 version = "0.1.0"
 description = "Geospatial image format codecs (NITF, GeoTIFF) for the OversightML ecosystem"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 requires-python = ">=3.9"
+keywords = ["geospatial", "nitf", "geotiff", "imagery", "remote-sensing"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
-    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -22,42 +21,39 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: GIS",
-    "Topic :: Scientific/Engineering :: Image Processing",
 ]
-keywords = ["geospatial", "nitf", "geotiff", "imagery", "remote-sensing", "osml"]
+
+dependencies = [
+    "numpy>=1.20",
+]
 
 [project.optional-dependencies]
 dev = [
+    "maturin>=1.7",
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "maturin>=1.7",
+    "ruff>=0.1",
+    "hypothesis>=6.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/aws-solutions-library-samples/osml-io"
-Repository = "https://github.com/aws-solutions-library-samples/osml-io"
-Documentation = "https://github.com/aws-solutions-library-samples/osml-io#readme"
+Repository = "https://github.com/awslabs/osml-imagery-io"
 
 [tool.maturin]
 python-source = "python"
 module-name = "aws.osml.io._io"
 features = ["extension-module"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
-markers = [
-    "integration: marks tests as integration tests (requires test data in data/integration/)",
-]
-
 [tool.ruff]
-line-length = 120
+line-length = 100
 target-version = "py39"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "D", "UP"]
-ignore = ["D100", "D104"]
+select = ["E", "F", "I", "W"]
 
-[tool.ruff.lint.pydocstyle]
-convention = "google"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests requiring integration data",
+    "benchmark: marks benchmark tests",
+]

@@ -27,20 +27,34 @@ pip install aws-osml-io
 
 - Python 3.9+
 - Rust 1.70+
-- [Maturin](https://www.maturin.rs/)
+- Conda (Miniconda or Anaconda)
 
 ### Setup
 
+Create and activate the conda environment:
+
 ```bash
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate
+# Create environment from environment.yml
+conda env create -f environment.yml
 
-# Install maturin
-pip install maturin
+# Activate the environment
+conda activate osml-imagery-io-dev
 
-# Build and install in development mode
+# If you use mise for runtime management, trust the project config
+# This disables mise's Python/Node so conda takes precedence
+mise trust
+
+# Configure library paths for PyO3
+source scripts/setup-dev-env.sh
+
+# Build the extension module
 maturin develop
+```
+
+To update the environment after changes to `environment.yml`:
+
+```bash
+conda env update -f environment.yml
 ```
 
 ### Building
@@ -49,15 +63,13 @@ maturin develop
 # Build wheel
 maturin build --release
 
-# Build and install
-maturin develop --release
+# Build and install for development
+maturin develop
 ```
 
 ### Testing
 
 ```bash
-pip install -e ".[dev]"
-
 # Run Python tests
 pytest
 
@@ -65,15 +77,15 @@ pytest
 cargo test
 ```
 
-#### Running Rust Tests with PyO3
-
-This project uses PyO3 for Python bindings, which requires access to the Python shared library at runtime. On macOS with conda/venv, add this to your `~/.zshrc`:
+### Linting
 
 ```bash
-export DYLD_LIBRARY_PATH="/opt/miniconda3/lib:$DYLD_LIBRARY_PATH"
-```
+# Python
+ruff check .
 
-Then restart your terminal. For other setups, see `.kiro/steering/tech.md` for detailed instructions.
+# Rust
+cargo clippy
+```
 
 ## License
 

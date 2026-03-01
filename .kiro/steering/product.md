@@ -1,6 +1,6 @@
 # Product Overview
 
-AWS OSML IO provides high-performance Rust implementations of image format decoders and encoders for geospatial imagery formats, with Python bindings for the OversightML ecosystem.
+OversightML's Imagery IO library provides high-performance Rust implementations of image format decoders and encoders for geospatial imagery formats, with Python bindings.
 
 ## Purpose
 
@@ -16,4 +16,4 @@ AWS OSML IO provides high-performance Rust implementations of image format decod
 
 ## Repository
 
-https://github.com/aws-solutions-library-samples/osml-io
+https://github.com/awslabs/osml-imagery-io

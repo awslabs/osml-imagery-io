@@ -1,0 +1,5 @@
+# Disable mise for this project - use conda environment instead
+# See environment.yml for conda setup
+
+[settings]
+disable_tools = ["python", "node"]
