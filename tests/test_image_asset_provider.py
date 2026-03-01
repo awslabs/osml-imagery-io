@@ -35,7 +35,7 @@ class TestImageAssetProviderProperties:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # Verify dimensions are positive integers
@@ -47,7 +47,7 @@ class TestImageAssetProviderProperties:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # sample_nitf21.ntf has 1 band (grayscale)
@@ -58,7 +58,7 @@ class TestImageAssetProviderProperties:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # Block dimensions should be positive
@@ -70,7 +70,7 @@ class TestImageAssetProviderProperties:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # 8-bit grayscale image
@@ -82,7 +82,7 @@ class TestImageAssetProviderProperties:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # Should return a PixelType enum value
@@ -94,7 +94,7 @@ class TestImageAssetProviderProperties:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         shape = asset.image_shape
@@ -108,7 +108,7 @@ class TestImageAssetProviderProperties:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         shape = asset.block_shape
@@ -122,7 +122,7 @@ class TestImageAssetProviderProperties:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         grid_size = asset.block_grid_size
@@ -137,7 +137,7 @@ class TestImageAssetProviderProperties:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # Uncompressed images have 1 resolution level
@@ -148,7 +148,7 @@ class TestImageAssetProviderProperties:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # Should return a float
@@ -168,7 +168,7 @@ class TestHasBlock:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # Block (0, 0) should always exist
@@ -179,7 +179,7 @@ class TestHasBlock:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # Very large coordinates should not exist
@@ -190,7 +190,7 @@ class TestHasBlock:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # Uncompressed images only have resolution level 0
@@ -209,7 +209,7 @@ class TestGetBlock:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         block = asset.get_block(0, 0, 0)
@@ -220,7 +220,7 @@ class TestGetBlock:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         block = asset.get_block(0, 0, 0)
@@ -234,7 +234,7 @@ class TestGetBlock:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         block = asset.get_block(0, 0, 0)
@@ -247,7 +247,7 @@ class TestGetBlock:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         block = asset.get_block(0, 0, 0)
@@ -261,7 +261,7 @@ class TestGetBlock:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         with pytest.raises(Exception):
@@ -280,7 +280,7 @@ class TestBandSelection:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # Without bands parameter, should return all bands
@@ -292,7 +292,7 @@ class TestBandSelection:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # Select only band 0
@@ -304,7 +304,7 @@ class TestBandSelection:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         # Empty list should return all bands (or raise error)
@@ -330,7 +330,7 @@ class TestImageMetadata:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         metadata = asset.get_metadata()
@@ -341,7 +341,7 @@ class TestImageMetadata:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         metadata = asset.get_metadata()
@@ -356,7 +356,7 @@ class TestImageMetadata:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
 
         metadata = asset.get_metadata()
@@ -380,7 +380,7 @@ class TestMultiSegmentImages:
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(MULTI_SEGMENT), "r")
+        reader = IO.open([str(MULTI_SEGMENT)], "r")
 
         # Get image keys
         image_keys = reader.get_asset_keys(asset_type=AssetType.Image)
@@ -398,7 +398,7 @@ class TestMultiSegmentImages:
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(MULTI_SEGMENT), "r")
+        reader = IO.open([str(MULTI_SEGMENT)], "r")
 
         img0 = reader.get_asset("image_segment_0")
         img1 = reader.get_asset("image_segment_1")
@@ -414,7 +414,7 @@ class TestMultiSegmentImages:
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
 
-        reader = IO.open(str(MULTI_SEGMENT), "r")
+        reader = IO.open([str(MULTI_SEGMENT)], "r")
 
         image_keys = reader.get_asset_keys(asset_type=AssetType.Image)
 

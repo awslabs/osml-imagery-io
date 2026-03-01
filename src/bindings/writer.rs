@@ -50,7 +50,8 @@ impl PyDatasetWriter {
     /// # Arguments
     ///
     /// * `key` - The unique string identifier for the asset.
-    /// * `provider` - The AssetProvider containing the asset data.
+    /// * `provider` - The AssetProvider containing the asset data. Can be any AssetProvider
+    ///   subtype including AssetProvider, MemoryImageAssetProvider, etc.
     /// * `title` - A human-readable title for the asset.
     /// * `description` - A detailed description of the asset.
     /// * `roles` - Semantic roles for the asset (e.g., "data", "thumbnail", "metadata").
@@ -58,55 +59,42 @@ impl PyDatasetWriter {
     /// # Raises
     ///
     /// * ValueError - If an asset with the given key already exists.
+    /// * TypeError - If provider is not a valid AssetProvider type.
     #[pyo3(signature = (key, provider, title, description, roles))]
     fn add_asset(
         &mut self,
+        _py: Python<'_>,
         key: &str,
-        provider: &PyAssetProvider,
+        provider: &Bound<'_, PyAny>,
         title: &str,
         description: &str,
         roles: Vec<String>,
     ) -> PyResult<()> {
         let inner = self.get_inner_mut()?;
-        let asset_provider = Arc::clone(provider.inner());
-        inner.add_asset(key, asset_provider, title, description, &roles)?;
-        Ok(())
-    }
 
-    /// Adds an image asset to the dataset using a MemoryImageAssetProvider.
-    ///
-    /// This method accepts a MemoryImageAssetProvider which contains image
-    /// configuration (dimensions, pixel type, blocking, etc.) that will be
-    /// used to create the proper NITF image subheader.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The unique string identifier for the asset.
-    /// * `provider` - The MemoryImageAssetProvider containing the image data and configuration.
-    /// * `title` - A human-readable title for the asset.
-    /// * `description` - A detailed description of the asset.
-    /// * `roles` - Semantic roles for the asset (e.g., "data", "thumbnail", "metadata").
-    ///
-    /// # Raises
-    ///
-    /// * ValueError - If an asset with the given key already exists.
-    #[pyo3(signature = (key, provider, title, description, roles))]
-    fn add_image_asset(
-        &mut self,
-        key: &str,
-        provider: &PyMemoryImageAssetProvider,
-        title: &str,
-        description: &str,
-        roles: Vec<String>,
-    ) -> PyResult<()> {
-        let inner = self.get_inner_mut()?;
-        // Clone the Arc and cast to dyn AssetProvider
-        let asset_provider: Arc<dyn AssetProvider> = provider.inner().clone();
-        inner.add_asset(key, asset_provider, title, description, &roles)?;
-        Ok(())
+        // Try to extract as PyAssetProvider first
+        if let Ok(asset_provider) = provider.extract::<PyRef<PyAssetProvider>>() {
+            let arc_provider = Arc::clone(asset_provider.inner());
+            inner.add_asset(key, arc_provider, title, description, &roles)?;
+            return Ok(());
+        }
+
+        // Try to extract as PyMemoryImageAssetProvider
+        if let Ok(memory_provider) = provider.extract::<PyRef<PyMemoryImageAssetProvider>>() {
+            let arc_provider: Arc<dyn AssetProvider> = memory_provider.inner().clone();
+            inner.add_asset(key, arc_provider, title, description, &roles)?;
+            return Ok(());
+        }
+
+        // If neither worked, raise TypeError
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "provider must be an AssetProvider or MemoryImageAssetProvider",
+        ))
     }
 
     /// Sets the dataset-level metadata.
+    ///
+    /// This property allows setting metadata for the dataset using a MetadataProvider.
     ///
     /// # Arguments
     ///
@@ -115,7 +103,8 @@ impl PyDatasetWriter {
     /// # Raises
     ///
     /// * IOError - If the metadata cannot be set.
-    fn set_metadata(&mut self, metadata: &PyMetadataProvider) -> PyResult<()> {
+    #[setter]
+    fn metadata(&mut self, metadata: &PyMetadataProvider) -> PyResult<()> {
         let inner = self.get_inner_mut()?;
         let metadata_provider = Arc::clone(metadata.inner());
         inner.set_metadata(metadata_provider)?;

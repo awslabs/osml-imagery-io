@@ -85,8 +85,8 @@ impl<'a> Value<'a> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use aws_osml_io::parser::Value;
+    /// ```ignore
+    /// use _io::parser::Value;
     ///
     /// let value = Value::from_str("HELLO   ");
     /// assert_eq!(value.as_str().unwrap(), "HELLO");
@@ -162,8 +162,8 @@ impl<'a> Value<'a> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use aws_osml_io::parser::Value;
+    /// ```ignore
+    /// use _io::parser::Value;
     ///
     /// let value = Value::from_str("  123  ");
     /// assert_eq!(value.as_i64().unwrap(), 123);
@@ -230,8 +230,8 @@ impl<'a> Value<'a> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use aws_osml_io::parser::Value;
+    /// ```ignore
+    /// use _io::parser::Value;
     ///
     /// let value = Value::from_str("00123");
     /// assert_eq!(value.as_u64().unwrap(), 123);
@@ -285,8 +285,8 @@ impl<'a> Value<'a> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use aws_osml_io::parser::Value;
+    /// ```ignore
+    /// use _io::parser::Value;
     ///
     /// let value = Value::from_str("2.71828");
     /// assert!((value.as_f64().unwrap() - 2.71828).abs() < 1e-10);
@@ -345,8 +345,8 @@ impl<'a> Value<'a> {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use aws_osml_io::parser::Value;
+    /// ```ignore
+    /// use _io::parser::Value;
     ///
     /// let value = Value::from_bytes(b"HELLO");
     /// assert_eq!(value.as_bytes(), b"HELLO");

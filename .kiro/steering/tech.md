@@ -85,6 +85,20 @@ cargo test
 
 PyO3 links against `libpython` at runtime. When using conda or venv, the Python shared library is in a non-standard location that the dynamic linker doesn't search by default. The `DYLD_LIBRARY_PATH` (macOS) or `LD_LIBRARY_PATH` (Linux) tells the linker where to find it.
 
+## Running Python Tests
+
+**Note for Kiro**: If the default `python3` or `pytest` commands fail with import errors (e.g., `ModuleNotFoundError: No module named 'math'`), use the conda Python explicitly:
+
+```bash
+# Build the extension with conda Python
+PATH="/opt/miniconda3/bin:$PATH" maturin develop
+
+# Run Python tests with conda Python
+PATH="/opt/miniconda3/bin:$PATH" /opt/miniconda3/bin/python3 -m pytest tests/
+```
+
+This ensures the correct Python environment is used for both building and testing.
+
 ## Test Markers
 
 ```bash

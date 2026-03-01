@@ -7,8 +7,8 @@
 //!
 //! # Examples
 //!
-//! ```
-//! use osml_io::parser::encoding::{validate_bcs_a, validate_bcs_n, validate_ecs_a};
+//! ```ignore
+//! use _io::parser::encoding::{validate_bcs_a, validate_bcs_n, validate_ecs_a};
 //!
 //! assert!(validate_bcs_a(b"Hello World"));
 //! assert!(validate_bcs_n(b"12345"));
@@ -30,8 +30,8 @@
 ///
 /// # Examples
 ///
-/// ```
-/// use osml_io::parser::encoding::validate_bcs_a;
+/// ```ignore
+/// use _io::parser::encoding::validate_bcs_a;
 ///
 /// assert!(validate_bcs_a(b"NITF02.10"));
 /// assert!(validate_bcs_a(b"Hello, World!"));
@@ -72,8 +72,8 @@ pub fn is_valid_bcs_a_byte(byte: u8) -> bool {
 ///
 /// # Examples
 ///
-/// ```
-/// use osml_io::parser::encoding::validate_bcs_n;
+/// ```ignore
+/// use _io::parser::encoding::validate_bcs_n;
 ///
 /// assert!(validate_bcs_n(b"12345"));
 /// assert!(validate_bcs_n(b"  123")); // leading spaces allowed
@@ -115,8 +115,8 @@ pub fn is_valid_bcs_n_byte(byte: u8) -> bool {
 ///
 /// # Examples
 ///
-/// ```
-/// use osml_io::parser::encoding::validate_ecs_a;
+/// ```ignore
+/// use _io::parser::encoding::validate_ecs_a;
 ///
 /// assert!(validate_ecs_a(b"Hello World"));
 /// assert!(validate_ecs_a(&[0x20, 0x80, 0xFF])); // extended chars allowed

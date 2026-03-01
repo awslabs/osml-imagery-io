@@ -54,7 +54,7 @@ def describe_text_asset(asset, show_metadata: bool) -> None:
         print(f"    Encoding: {asset.encoding}")
         print(f"    Format: {asset.format}")
         try:
-            text = asset.get_text()
+            text = asset.text
             preview = text[:100] + "..." if len(text) > 100 else text
             print(f"    Content preview: {preview!r}")
         except Exception as e:
@@ -70,8 +70,8 @@ def describe_text_asset(asset, show_metadata: bool) -> None:
 def describe_data_asset(asset, show_metadata: bool) -> None:
     """Print details for a data asset."""
     # Check if this is a typed DataAssetProvider
-    if hasattr(asset, 'get_mime_type'):
-        print(f"    MIME type: {asset.get_mime_type()}")
+    if hasattr(asset, 'mime_type'):
+        print(f"    MIME type: {asset.mime_type}")
     
     if show_metadata:
         print("    Metadata:")
@@ -115,7 +115,7 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
             if show_metadata:
                 print("File Metadata:")
                 print("-" * 40)
-                file_meta = reader.get_metadata()
+                file_meta = reader.metadata
                 meta_dict = file_meta.as_dict()
                 print(format_metadata(meta_dict))
                 print()

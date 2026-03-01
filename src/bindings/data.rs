@@ -92,17 +92,25 @@ impl PyDataAssetProvider {
     // DataAssetProvider-specific methods
 
     /// Returns the MIME type of the data.
-    fn get_mime_type(&self) -> &str {
+    #[getter]
+    fn mime_type(&self) -> &str {
         self.inner.mime_type()
     }
 
-    /// Parses the content as XML and returns a string representation.
+    /// Parses the content as XML and returns an ElementTree Element object.
     ///
     /// # Errors
     ///
     /// Raises a ValueError if the content is not valid XML.
-    fn parse_as_xml(&self) -> PyResult<String> {
-        Ok(self.inner.parse_as_xml()?)
+    fn parse_as_xml(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let xml_string = self.inner.parse_as_xml()?;
+        
+        // Import xml.etree.ElementTree and parse the XML string
+        let et_module = py.import_bound("xml.etree.ElementTree")?;
+        let fromstring = et_module.getattr("fromstring")?;
+        let element = fromstring.call1((xml_string,))?;
+        
+        Ok(element.into())
     }
 
     /// Parses the content as JSON and returns a Python dictionary.

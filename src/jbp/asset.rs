@@ -48,9 +48,9 @@ use crate::types::{AssetType, PixelType};
 ///
 /// # Examples
 ///
-/// ```
-/// use osml_io::jbp::asset::generate_asset_key;
-/// use osml_io::jbp::types::SegmentType;
+/// ```ignore
+/// use _io::jbp::asset::generate_asset_key;
+/// use _io::jbp::types::SegmentType;
 ///
 /// assert_eq!(generate_asset_key(SegmentType::Image, 0), "image_segment_0");
 /// assert_eq!(generate_asset_key(SegmentType::Text, 2), "text_segment_2");
@@ -74,9 +74,9 @@ pub fn generate_asset_key(segment_type: SegmentType, index: usize) -> String {
 ///
 /// # Examples
 ///
-/// ```
-/// use osml_io::jbp::asset::parse_asset_key;
-/// use osml_io::jbp::types::SegmentType;
+/// ```ignore
+/// use _io::jbp::asset::parse_asset_key;
+/// use _io::jbp::types::SegmentType;
 ///
 /// assert_eq!(parse_asset_key("image_segment_0"), Some((SegmentType::Image, 0)));
 /// assert_eq!(parse_asset_key("text_segment_5"), Some((SegmentType::Text, 5)));

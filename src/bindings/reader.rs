@@ -138,7 +138,8 @@ impl PyDatasetReader {
     }
 
     /// Returns the dataset-level metadata provider.
-    fn get_metadata(&self) -> PyResult<PyMetadataProvider> {
+    #[getter]
+    fn metadata(&self) -> PyResult<PyMetadataProvider> {
         let inner = self.get_inner()?;
         Ok(PyMetadataProvider::new(inner.metadata()))
     }

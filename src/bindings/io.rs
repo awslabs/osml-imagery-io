@@ -84,10 +84,11 @@ impl IO {
     ///
     /// # Arguments
     ///
-    /// * `uri` - The URI or path to the dataset. Supports:
-    ///   - Local file paths (e.g., "image.ntf", "/path/to/image.tif")
-    ///   - File URIs (e.g., "file:///path/to/image.ntf")
-    ///   - S3 URIs (e.g., "s3://bucket/key/image.ntf")
+    /// * `paths` - A list of URIs or paths to the dataset. For single-file formats,
+    ///   only the first path is used. Supports:
+    ///   - Local file paths (e.g., ["image.ntf"], ["/path/to/image.tif"])
+    ///   - File URIs (e.g., ["file:///path/to/image.ntf"])
+    ///   - S3 URIs (e.g., ["s3://bucket/key/image.ntf"])
     ///
     /// * `mode` - The access mode:
     ///   - "r" for reading (returns DatasetReader)
@@ -102,11 +103,21 @@ impl IO {
     ///
     /// # Raises
     ///
-    /// * ValueError - If the mode is invalid or the file format is not supported.
+    /// * ValueError - If paths is empty, the mode is invalid, or the file format is not supported.
     /// * IOError - If the file cannot be opened.
     #[staticmethod]
-    #[pyo3(signature = (uri, mode="r", format=None))]
-    fn open(py: Python<'_>, uri: &str, mode: &str, format: Option<&str>) -> PyResult<PyObject> {
+    #[pyo3(signature = (paths, mode="r", format=None))]
+    fn open(
+        py: Python<'_>,
+        paths: Vec<String>,
+        mode: &str,
+        format: Option<&str>,
+    ) -> PyResult<PyObject> {
+        // Validate that paths is not empty
+        let uri = paths.first().ok_or_else(|| {
+            PyValueError::new_err("paths list cannot be empty")
+        })?;
+
         let parsed = ParsedUri::parse(uri);
 
         match mode {

@@ -43,6 +43,24 @@ use crate::types::AssetType;
 /// Maximum TRE data size for UDID field (UDIDL max 99999 - 3 bytes for UDOFL).
 const MAX_UDID_TRE_SIZE: usize = 99996;
 
+/// Truncate a UTF-8 string to at most `max_bytes` bytes, ensuring the result
+/// ends at a valid character boundary. Returns a string slice that is safe
+/// to use with byte-based operations.
+///
+/// NITF fields are fixed-width ASCII fields, so we need to truncate strings
+/// that may contain multi-byte UTF-8 characters without splitting a character.
+fn truncate_to_bytes(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    // Find the largest byte index <= max_bytes that is a char boundary
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Maximum TRE data size for IXSHD field (IXSHDL max 99999 - 3 bytes for IXSOFL).
 #[allow(dead_code)]
 const MAX_IXSHD_TRE_SIZE: usize = 99996;
@@ -1047,14 +1065,14 @@ impl JBPDatasetWriter {
         // IM (2) - File Part Type
         subheader.extend_from_slice(b"IM");
         // IID1 (10) - Image Identifier 1
-        let iid1 = format!("{:10}", &asset.key[..asset.key.len().min(10)]);
+        let iid1 = format!("{:10}", truncate_to_bytes(&asset.key, 10));
         subheader.extend_from_slice(iid1.as_bytes());
         // IDATIM (14) - Image Date and Time
         subheader.extend_from_slice(b"              ");
         // TGTID (17) - Target Identifier
         subheader.extend_from_slice(&[b' '; 17]);
         // IID2 (80) - Image Identifier 2
-        let iid2 = format!("{:80}", &asset.title[..asset.title.len().min(80)]);
+        let iid2 = format!("{:80}", truncate_to_bytes(&asset.title, 80));
         subheader.extend_from_slice(iid2.as_bytes());
         // ISCLAS (1) - Image Security Classification
         subheader.extend_from_slice(b"U");
@@ -1267,14 +1285,14 @@ impl JBPDatasetWriter {
         // TE (2) - File Part Type
         subheader.extend_from_slice(b"TE");
         // TEXTID (7) - Text Identifier
-        let textid = format!("{:7}", &asset.key[..asset.key.len().min(7)]);
+        let textid = format!("{:7}", truncate_to_bytes(&asset.key, 7));
         subheader.extend_from_slice(textid.as_bytes());
         // TXTALVL (3) - Text Attachment Level
         subheader.extend_from_slice(b"000");
         // TXTDT (14) - Text Date and Time
         subheader.extend_from_slice(b"              ");
         // TXTITL (80) - Text Title
-        let txtitl = format!("{:80}", &asset.title[..asset.title.len().min(80)]);
+        let txtitl = format!("{:80}", truncate_to_bytes(&asset.title, 80));
         subheader.extend_from_slice(txtitl.as_bytes());
         // TSCLAS (1) - Text Security Classification
         subheader.extend_from_slice(b"U");
@@ -1323,10 +1341,10 @@ impl JBPDatasetWriter {
         // SY (2) - File Part Type
         subheader.extend_from_slice(b"SY");
         // SID (10) - Graphic Identifier
-        let sid = format!("{:10}", &asset.key[..asset.key.len().min(10)]);
+        let sid = format!("{:10}", truncate_to_bytes(&asset.key, 10));
         subheader.extend_from_slice(sid.as_bytes());
         // SNAME (20) - Graphic Name
-        let sname = format!("{:20}", &asset.title[..asset.title.len().min(20)]);
+        let sname = format!("{:20}", truncate_to_bytes(&asset.title, 20));
         subheader.extend_from_slice(sname.as_bytes());
         // SSCLAS (1) - Graphic Security Classification
         subheader.extend_from_slice(b"U");
@@ -1393,7 +1411,7 @@ impl JBPDatasetWriter {
         // DE (2) - File Part Type
         subheader.extend_from_slice(b"DE");
         // DESID (25) - DES Identifier
-        let desid = format!("{:25}", &asset.key[..asset.key.len().min(25)]);
+        let desid = format!("{:25}", truncate_to_bytes(&asset.key, 25));
         subheader.extend_from_slice(desid.as_bytes());
         // DESVER (2) - DES Version
         subheader.extend_from_slice(b"01");

@@ -33,28 +33,28 @@ class TestIOCreate:
         """Test creating a NITF writer."""
         output_path = tmp_path / "output.ntf"
         
-        writer = IO.open(str(output_path), "w", "nitf")
+        writer = IO.open([str(output_path)], "w", "nitf")
         assert writer is not None
 
     def test_create_nitf21_writer(self, tmp_path):
         """Test creating a NITF 2.1 writer with explicit format."""
         output_path = tmp_path / "output.ntf"
         
-        writer = IO.open(str(output_path), "w", "nitf21")
+        writer = IO.open([str(output_path)], "w", "nitf21")
         assert writer is not None
 
     def test_create_nsif_writer(self, tmp_path):
         """Test creating an NSIF writer."""
         output_path = tmp_path / "output.nsif"
         
-        writer = IO.open(str(output_path), "w", "nsif")
+        writer = IO.open([str(output_path)], "w", "nsif")
         assert writer is not None
 
     def test_create_nsif10_writer(self, tmp_path):
         """Test creating an NSIF 1.0 writer with explicit format."""
         output_path = tmp_path / "output.nsif"
         
-        writer = IO.open(str(output_path), "w", "nsif10")
+        writer = IO.open([str(output_path)], "w", "nsif10")
         assert writer is not None
 
     def test_create_requires_format(self, tmp_path):
@@ -62,7 +62,7 @@ class TestIOCreate:
         output_path = tmp_path / "output.ntf"
         
         with pytest.raises(Exception) as exc_info:
-            IO.open(str(output_path), "w")
+            IO.open([str(output_path)], "w")
         
         assert "format" in str(exc_info.value).lower()
 
@@ -71,7 +71,7 @@ class TestIOCreate:
         output_path = tmp_path / "output.ntf"
         
         with pytest.raises(Exception) as exc_info:
-            IO.open(str(output_path), "w", "invalid_format")
+            IO.open([str(output_path)], "w", "invalid_format")
         
         assert "Unsupported" in str(exc_info.value) or "format" in str(exc_info.value).lower()
 
@@ -80,7 +80,7 @@ class TestIOCreate:
         output_path = tmp_path / "output.ntf"
         
         with pytest.raises(Exception) as exc_info:
-            IO.open(str(output_path), "w", "jbp")
+            IO.open([str(output_path)], "w", "jbp")
         
         assert "Unsupported" in str(exc_info.value) or "format" in str(exc_info.value).lower()
 
@@ -96,7 +96,7 @@ class TestAddAsset:
         """Test adding an image asset."""
         output_path = tmp_path / "output.ntf"
         
-        writer = IO.open(str(output_path), "w", "nitf")
+        writer = IO.open([str(output_path)], "w", "nitf")
         
         image_data = bytes([i % 256 for i in range(100)])
         asset = AssetProvider.from_bytes(
@@ -123,7 +123,7 @@ class TestAddAsset:
         """Test adding a text asset."""
         output_path = tmp_path / "output.ntf"
         
-        writer = IO.open(str(output_path), "w", "nitf")
+        writer = IO.open([str(output_path)], "w", "nitf")
         
         text_data = b"This is test text content."
         asset = AssetProvider.from_bytes(
@@ -149,7 +149,7 @@ class TestAddAsset:
         """Test adding a data (DES) asset."""
         output_path = tmp_path / "output.ntf"
         
-        writer = IO.open(str(output_path), "w", "nitf")
+        writer = IO.open([str(output_path)], "w", "nitf")
         
         des_data = b"Binary DES content"
         asset = AssetProvider.from_bytes(
@@ -175,7 +175,7 @@ class TestAddAsset:
         """Test adding multiple assets of different types."""
         output_path = tmp_path / "output.ntf"
         
-        writer = IO.open(str(output_path), "w", "nitf")
+        writer = IO.open([str(output_path)], "w", "nitf")
         
         # Add image
         image_asset = AssetProvider.from_bytes(
@@ -212,7 +212,7 @@ class TestAddAsset:
         """Test that adding a duplicate key raises an error."""
         output_path = tmp_path / "output.ntf"
         
-        writer = IO.open(str(output_path), "w", "nitf")
+        writer = IO.open([str(output_path)], "w", "nitf")
         
         asset1 = AssetProvider.from_bytes(
             key="image_segment_0",
@@ -246,7 +246,7 @@ class TestClose:
         """Test that close() produces a valid NITF file."""
         output_path = tmp_path / "output.ntf"
         
-        writer = IO.open(str(output_path), "w", "nitf")
+        writer = IO.open([str(output_path)], "w", "nitf")
         
         asset = AssetProvider.from_bytes(
             key="image_segment_0",
@@ -267,7 +267,7 @@ class TestClose:
         """Test that close() produces a valid NSIF file."""
         output_path = tmp_path / "output.nsif"
         
-        writer = IO.open(str(output_path), "w", "nsif")
+        writer = IO.open([str(output_path)], "w", "nsif")
         
         asset = AssetProvider.from_bytes(
             key="image_segment_0",
@@ -288,7 +288,7 @@ class TestClose:
         """Test that context manager calls close() automatically."""
         output_path = tmp_path / "output.ntf"
         
-        with IO.open(str(output_path), "w", "nitf") as writer:
+        with IO.open([str(output_path)], "w", "nitf") as writer:
             asset = AssetProvider.from_bytes(
                 key="image_segment_0",
                 data=bytes([64] * 100),
@@ -320,7 +320,7 @@ class TestRoundTrip:
         # Write
         original_data = bytes([i % 256 for i in range(256)])
         
-        with IO.open(str(output_path), "w", "nitf") as writer:
+        with IO.open([str(output_path)], "w", "nitf") as writer:
             asset = AssetProvider.from_bytes(
                 key="image_segment_0",
                 data=original_data,
@@ -330,7 +330,7 @@ class TestRoundTrip:
             writer.add_asset("image_segment_0", asset, "Test Image", "", ["data"])
         
         # Read back
-        with IO.open(str(output_path), "r") as reader:
+        with IO.open([str(output_path)], "r") as reader:
             keys = reader.get_asset_keys()
             assert len(keys) == 1
             assert "image_segment_0" in keys
@@ -347,7 +347,7 @@ class TestRoundTrip:
         
         original_text = b"This is test text content for round-trip testing."
         
-        with IO.open(str(output_path), "w", "nitf") as writer:
+        with IO.open([str(output_path)], "w", "nitf") as writer:
             asset = AssetProvider.from_bytes(
                 key="text_segment_0",
                 data=original_text,
@@ -356,7 +356,7 @@ class TestRoundTrip:
             )
             writer.add_asset("text_segment_0", asset, "Test Text", "", ["metadata"])
         
-        with IO.open(str(output_path), "r") as reader:
+        with IO.open([str(output_path)], "r") as reader:
             keys = reader.get_asset_keys()
             assert "text_segment_0" in keys
             
@@ -375,7 +375,7 @@ class TestRoundTrip:
         text_data = b"Multi-segment test text"
         des_data = b"DES binary data"
         
-        with IO.open(str(output_path), "w", "nitf") as writer:
+        with IO.open([str(output_path)], "w", "nitf") as writer:
             # Add first image
             asset1 = AssetProvider.from_bytes(
                 key="image_segment_0",
@@ -413,7 +413,7 @@ class TestRoundTrip:
             writer.add_asset("des_segment_0", des_asset, "DES", "", ["data"])
         
         # Read back and verify
-        with IO.open(str(output_path), "r") as reader:
+        with IO.open([str(output_path)], "r") as reader:
             keys = reader.get_asset_keys()
             assert len(keys) == 4
             
@@ -437,7 +437,7 @@ class TestRoundTrip:
         """Test that round-trip preserves asset order."""
         output_path = tmp_path / "round_trip_order.ntf"
         
-        with IO.open(str(output_path), "w", "nitf") as writer:
+        with IO.open([str(output_path)], "w", "nitf") as writer:
             for i in range(5):
                 asset = AssetProvider.from_bytes(
                     key=f"image_segment_{i}",
@@ -447,7 +447,7 @@ class TestRoundTrip:
                 )
                 writer.add_asset(f"image_segment_{i}", asset, f"Image {i}", "", ["data"])
         
-        with IO.open(str(output_path), "r") as reader:
+        with IO.open([str(output_path)], "r") as reader:
             keys = reader.get_asset_keys()
             expected = [f"image_segment_{i}" for i in range(5)]
             assert keys == expected
@@ -458,7 +458,7 @@ class TestRoundTrip:
         
         original_data = bytes([42] * 128)
         
-        with IO.open(str(output_path), "w", "nsif") as writer:
+        with IO.open([str(output_path)], "w", "nsif") as writer:
             asset = AssetProvider.from_bytes(
                 key="image_segment_0",
                 data=original_data,
@@ -467,7 +467,7 @@ class TestRoundTrip:
             )
             writer.add_asset("image_segment_0", asset, "NSIF Image", "", ["data"])
         
-        with IO.open(str(output_path), "r") as reader:
+        with IO.open([str(output_path)], "r") as reader:
             keys = reader.get_asset_keys()
             assert len(keys) == 1
             
@@ -482,7 +482,7 @@ class TestRoundTrip:
         # 1MB of data
         original_data = bytes([i % 256 for i in range(1024 * 1024)])
         
-        with IO.open(str(output_path), "w", "nitf") as writer:
+        with IO.open([str(output_path)], "w", "nitf") as writer:
             asset = AssetProvider.from_bytes(
                 key="image_segment_0",
                 data=original_data,
@@ -491,7 +491,7 @@ class TestRoundTrip:
             )
             writer.add_asset("image_segment_0", asset, "Large Image", "", ["data"])
         
-        with IO.open(str(output_path), "r") as reader:
+        with IO.open([str(output_path)], "r") as reader:
             asset = reader.get_asset("image_segment_0")
             read_data = asset.get_raw_asset().read()
             assert read_data == original_data

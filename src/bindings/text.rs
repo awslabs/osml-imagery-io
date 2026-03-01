@@ -96,7 +96,8 @@ impl PyTextAssetProvider {
     /// # Errors
     ///
     /// Raises a ValueError if the text cannot be decoded.
-    fn get_text(&self) -> PyResult<String> {
+    #[getter]
+    fn text(&self) -> PyResult<String> {
         Ok(self.inner.text()?)
     }
 

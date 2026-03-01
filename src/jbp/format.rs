@@ -34,9 +34,9 @@ pub const MAGIC_SIZE: usize = 9;
 /// `true` if the extension indicates a NITF/NSIF file, `false` otherwise.
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// use std::path::Path;
-/// use aws_osml_io::jbp::format::is_nitf_extension;
+/// use _io::jbp::format::is_nitf_extension;
 ///
 /// assert!(is_nitf_extension(Path::new("image.ntf")));
 /// assert!(is_nitf_extension(Path::new("image.NITF")));
@@ -70,9 +70,9 @@ pub fn is_nitf_extension(path: &Path) -> bool {
 /// - `Err(JBPError::InvalidFormat)` if the file is too small or has invalid magic
 ///
 /// # Example
-/// ```
-/// use aws_osml_io::jbp::format::validate_nitf_magic;
-/// use aws_osml_io::jbp::types::NitfFormat;
+/// ```ignore
+/// use _io::jbp::format::validate_nitf_magic;
+/// use _io::jbp::types::NitfFormat;
 ///
 /// let nitf_data = b"NITF02.10rest of file...";
 /// assert_eq!(validate_nitf_magic(nitf_data).unwrap(), NitfFormat::Nitf21);

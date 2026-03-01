@@ -426,7 +426,7 @@ class ImageWriter:
         
         try:
             # Add image asset to writer using the MemoryImageAssetProvider
-            writer.add_image_asset(
+            writer.add_asset(
                 key="image_segment_0",
                 provider=image_provider,
                 title="Synthetic Test Image",

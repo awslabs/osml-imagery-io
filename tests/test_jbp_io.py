@@ -45,8 +45,8 @@ class TestProperty23FormatAutoDetection:
             pytest.skip("Test data file not available")
         
         # Open without specifying format - should auto-detect from .ntf extension
-        # IO.open(uri, mode="r", format=None)
-        reader = IO.open(str(SMALL_NTF), "r")
+        # IO.open(paths, mode="r", format=None)
+        reader = IO.open([str(SMALL_NTF)], "r")
         assert reader is not None, "IO.open() should return a reader for NITF files"
         
         # Should be able to get asset keys without errors
@@ -61,12 +61,12 @@ class TestProperty23FormatAutoDetection:
             assert "_segment_" in key, f"Asset key '{key}' should follow pattern '{{type}}_segment_{{index}}'"
 
     def test_open_with_string_path(self):
-        """Test that IO.open() accepts string paths."""
+        """Test that IO.open() accepts list of string paths."""
         if not SMALL_NTF.exists():
             pytest.skip("Test data file not available")
         
-        # Open with string path (convert pathlib.Path to str)
-        reader = IO.open(str(SMALL_NTF), "r")
+        # Open with list of string paths (convert pathlib.Path to str)
+        reader = IO.open([str(SMALL_NTF)], "r")
         assert reader is not None, "IO.open() should accept string paths"
         
         keys = reader.get_asset_keys()
@@ -80,7 +80,7 @@ class TestProperty23FormatAutoDetection:
         if not SMALL_NTF.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(SMALL_NTF), "r")
+        reader = IO.open([str(SMALL_NTF)], "r")
         keys = reader.get_asset_keys()
         
         for key in keys:
@@ -91,7 +91,7 @@ class TestProperty23FormatAutoDetection:
         if not SMALL_NTF.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(SMALL_NTF), "r")
+        reader = IO.open([str(SMALL_NTF)], "r")
         
         # These should all return False
         assert not reader.has_asset("nonexistent_key")
@@ -103,7 +103,7 @@ class TestProperty23FormatAutoDetection:
         if not SMALL_NTF.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(SMALL_NTF), "r")
+        reader = IO.open([str(SMALL_NTF)], "r")
         keys = reader.get_asset_keys()
         
         if len(keys) > 0:
@@ -118,7 +118,7 @@ class TestProperty23FormatAutoDetection:
         """Test that IO.open() rejects files with unsupported extensions."""
         # Try to open a file with unsupported extension
         with pytest.raises(Exception) as exc_info:
-            IO.open("nonexistent.jpg", "r")
+            IO.open(["nonexistent.jpg"], "r")
         
         # Should mention unsupported format
         assert "Unsupported" in str(exc_info.value) or "format" in str(exc_info.value).lower()
@@ -126,7 +126,7 @@ class TestProperty23FormatAutoDetection:
     def test_open_rejects_nonexistent_file(self):
         """Test that IO.open() raises error for nonexistent files."""
         with pytest.raises(Exception):
-            IO.open("nonexistent_file.ntf", "r")
+            IO.open(["nonexistent_file.ntf"], "r")
 
     def test_default_mode_is_read(self):
         """Test that default mode is 'r' (read)."""
@@ -134,7 +134,7 @@ class TestProperty23FormatAutoDetection:
             pytest.skip("Test data file not available")
         
         # Open without specifying mode - should default to read
-        reader = IO.open(str(SMALL_NTF))
+        reader = IO.open([str(SMALL_NTF)])
         assert reader is not None
         
         # Should be able to read asset keys (reader behavior)
@@ -150,8 +150,8 @@ class TestIOOpenWithFormat:
         if not SMALL_NTF.exists():
             pytest.skip("Test data file not available")
         
-        # IO.open(uri, mode, format)
-        reader = IO.open(str(SMALL_NTF), "r", "nitf")
+        # IO.open(paths, mode, format)
+        reader = IO.open([str(SMALL_NTF)], "r", "nitf")
         assert reader is not None
         
         keys = reader.get_asset_keys()
@@ -162,7 +162,7 @@ class TestIOOpenWithFormat:
         if not SMALL_NTF.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(SMALL_NTF), "r", "jbp")
+        reader = IO.open([str(SMALL_NTF)], "r", "jbp")
         assert reader is not None
         
         keys = reader.get_asset_keys()
@@ -174,7 +174,7 @@ class TestIOOpenWithFormat:
             pytest.skip("Test data file not available")
         
         with pytest.raises(Exception) as exc_info:
-            IO.open(str(SMALL_NTF), "r", "invalid_format")
+            IO.open([str(SMALL_NTF)], "r", "invalid_format")
         
         assert "Unsupported" in str(exc_info.value) or "format" in str(exc_info.value).lower()
 
@@ -186,14 +186,14 @@ class TestIOCreate:
         """Test IO.open() with 'w' mode and 'nitf' format."""
         output_path = tmp_path / "output.ntf"
         
-        writer = IO.open(str(output_path), "w", "nitf")
+        writer = IO.open([str(output_path)], "w", "nitf")
         assert writer is not None
 
     def test_create_with_nsif_format(self, tmp_path):
         """Test IO.open() with 'w' mode and 'nsif' format."""
         output_path = tmp_path / "output.nsif"
         
-        writer = IO.open(str(output_path), "w", "nsif")
+        writer = IO.open([str(output_path)], "w", "nsif")
         assert writer is not None
 
     def test_create_rejects_jbp_format(self, tmp_path):
@@ -201,7 +201,7 @@ class TestIOCreate:
         output_path = tmp_path / "output.ntf"
         
         with pytest.raises(Exception) as exc_info:
-            IO.open(str(output_path), "w", "jbp")
+            IO.open([str(output_path)], "w", "jbp")
         
         assert "Unsupported" in str(exc_info.value) or "format" in str(exc_info.value).lower()
 
@@ -210,7 +210,7 @@ class TestIOCreate:
         output_path = tmp_path / "output.ntf"
         
         with pytest.raises(Exception) as exc_info:
-            IO.open(str(output_path), "w", "invalid_format")
+            IO.open([str(output_path)], "w", "invalid_format")
         
         assert "Unsupported" in str(exc_info.value) or "format" in str(exc_info.value).lower()
 
@@ -219,7 +219,7 @@ class TestIOCreate:
         output_path = tmp_path / "output.ntf"
         
         with pytest.raises(Exception) as exc_info:
-            IO.open(str(output_path), "w")
+            IO.open([str(output_path)], "w")
         
         # Should mention that format is required
         assert "format" in str(exc_info.value).lower() or "must be specified" in str(exc_info.value).lower()
@@ -234,9 +234,44 @@ class TestIOInvalidMode:
             pytest.skip("Test data file not available")
         
         with pytest.raises(Exception) as exc_info:
-            IO.open(str(SMALL_NTF), "x")  # Invalid mode
+            IO.open([str(SMALL_NTF)], "x")  # Invalid mode
         
         assert "mode" in str(exc_info.value).lower() or "Invalid" in str(exc_info.value)
+
+
+class TestIOOpenPathsList:
+    """Tests for IO.open() paths list parameter.
+    
+    **Validates: Requirements 1.2, 1.3**
+    """
+
+    def test_single_element_list(self):
+        """Test IO.open() with single-element list."""
+        if not SMALL_NTF.exists():
+            pytest.skip("Test data file not available")
+        
+        reader = IO.open([str(SMALL_NTF)], "r")
+        assert reader is not None
+        keys = reader.get_asset_keys()
+        assert len(keys) > 0
+
+    def test_multi_element_list_uses_first(self):
+        """Test IO.open() with multi-element list uses first path."""
+        if not SMALL_NTF.exists():
+            pytest.skip("Test data file not available")
+        
+        # Second path is invalid, but should be ignored since first is used
+        reader = IO.open([str(SMALL_NTF), "nonexistent.ntf"], "r")
+        assert reader is not None
+        keys = reader.get_asset_keys()
+        assert len(keys) > 0
+
+    def test_empty_list_raises_value_error(self):
+        """Test IO.open() with empty list raises ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            IO.open([], "r")
+        
+        assert "empty" in str(exc_info.value).lower()
 
 
 # =============================================================================
@@ -262,7 +297,7 @@ class TestProperty20RoundTripConsistency:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         keys = reader.get_asset_keys()
         
         # The sample_nitf21.ntf was created with 1 image segment
@@ -276,7 +311,7 @@ class TestProperty20RoundTripConsistency:
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(SAMPLE_NITF21), "r")
+        reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
         
         # Verify asset properties
@@ -296,7 +331,7 @@ class TestProperty20RoundTripConsistency:
         if not SAMPLE_NSIF10.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(SAMPLE_NSIF10), "r")
+        reader = IO.open([str(SAMPLE_NSIF10)], "r")
         keys = reader.get_asset_keys()
         
         # The sample_nsif10.nsif was created with 1 image segment
@@ -310,7 +345,7 @@ class TestProperty20RoundTripConsistency:
         if not SAMPLE_NSIF10.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(SAMPLE_NSIF10), "r")
+        reader = IO.open([str(SAMPLE_NSIF10)], "r")
         asset = reader.get_asset("image_segment_0")
         
         # Verify asset properties
@@ -329,7 +364,7 @@ class TestProperty20RoundTripConsistency:
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(MULTI_SEGMENT), "r")
+        reader = IO.open([str(MULTI_SEGMENT)], "r")
         keys = reader.get_asset_keys()
         
         # The multi_segment.ntf was created with:
@@ -349,7 +384,7 @@ class TestProperty20RoundTripConsistency:
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(MULTI_SEGMENT), "r")
+        reader = IO.open([str(MULTI_SEGMENT)], "r")
         
         # First image: 16x16 = 256 bytes
         asset0 = reader.get_asset("image_segment_0")
@@ -368,7 +403,7 @@ class TestProperty20RoundTripConsistency:
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(MULTI_SEGMENT), "r")
+        reader = IO.open([str(MULTI_SEGMENT)], "r")
         
         asset = reader.get_asset("text_segment_0")
         assert asset.asset_type == AssetType.Text
@@ -385,7 +420,7 @@ class TestProperty20RoundTripConsistency:
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
         
-        reader = IO.open(str(MULTI_SEGMENT), "r")
+        reader = IO.open([str(MULTI_SEGMENT)], "r")
         
         asset = reader.get_asset("des_segment_0")
         assert asset.asset_type == AssetType.Data
@@ -406,7 +441,7 @@ class TestProperty20RoundTripConsistency:
         test_text_data = b"Round-trip test text content"
         
         # Write file
-        writer = IO.open(str(output_path), "w", "nitf")
+        writer = IO.open([str(output_path)], "w", "nitf")
         
         image_asset = AssetProvider.from_bytes(
             key="image_segment_0",
@@ -439,7 +474,7 @@ class TestProperty20RoundTripConsistency:
         writer.close()
         
         # Read file back
-        reader = IO.open(str(output_path), "r")
+        reader = IO.open([str(output_path)], "r")
         keys = reader.get_asset_keys()
         
         # Verify asset count
@@ -462,7 +497,7 @@ class TestProperty20RoundTripConsistency:
         output_path = tmp_path / "order_test.ntf"
         
         # Write file with multiple images in specific order
-        writer = IO.open(str(output_path), "w", "nitf")
+        writer = IO.open([str(output_path)], "w", "nitf")
         
         for i in range(3):
             data = bytes([i] * 10)
@@ -483,7 +518,7 @@ class TestProperty20RoundTripConsistency:
         writer.close()
         
         # Read back and verify order
-        reader = IO.open(str(output_path), "r")
+        reader = IO.open([str(output_path)], "r")
         keys = reader.get_asset_keys()
         
         assert keys == ["image_segment_0", "image_segment_1", "image_segment_2"], \

@@ -135,9 +135,9 @@ class TestStructureDefinition:
         """Test getting field names."""
         field_names = nitf_definition.field_names
         assert isinstance(field_names, list)
-        assert "fhdr" in field_names
-        assert "fver" in field_names
-        assert "clevel" in field_names
+        assert "FHDR" in field_names
+        assert "FVER" in field_names
+        assert "CLEVEL" in field_names
 
     def test_definition_len(self, nitf_definition):
         """Test getting number of fields."""
@@ -174,11 +174,11 @@ class TestStructureAccessor:
         accessor = StructureAccessor(nitf_definition, synthetic_data)
         
         # Access string fields
-        fhdr = accessor["fhdr"]
+        fhdr = accessor["FHDR"]
         assert isinstance(fhdr, Value)
         assert fhdr.as_str() == "NITF"
         
-        fver = accessor["fver"]
+        fver = accessor["FVER"]
         assert fver.as_str() == "02.10"
 
     def test_accessor_getitem_unknown_field(self, nitf_definition, synthetic_data):
@@ -192,16 +192,16 @@ class TestStructureAccessor:
         """Test checking field existence with has()."""
         accessor = StructureAccessor(nitf_definition, synthetic_data)
         
-        assert accessor.has("fhdr") is True
-        assert accessor.has("fver") is True
+        assert accessor.has("FHDR") is True
+        assert accessor.has("FVER") is True
         assert accessor.has("nonexistent") is False
 
     def test_accessor_contains(self, nitf_definition, synthetic_data):
         """Test 'in' operator support."""
         accessor = StructureAccessor(nitf_definition, synthetic_data)
         
-        assert "fhdr" in accessor
-        assert "fver" in accessor
+        assert "FHDR" in accessor
+        assert "FVER" in accessor
         assert "nonexistent" not in accessor
 
     def test_accessor_fields(self, nitf_definition, synthetic_data):
@@ -210,16 +210,16 @@ class TestStructureAccessor:
         
         fields = accessor.fields()
         assert isinstance(fields, list)
-        assert "fhdr" in fields
-        assert "fver" in fields
-        assert "clevel" in fields
+        assert "FHDR" in fields
+        assert "FVER" in fields
+        assert "CLEVEL" in fields
 
     def test_accessor_numeric_field(self, nitf_definition, synthetic_data):
         """Test accessing numeric fields."""
         accessor = StructureAccessor(nitf_definition, synthetic_data)
         
-        # clevel is a BCS-N field
-        clevel = accessor["clevel"]
+        # CLEVEL is a BCS-N field
+        clevel = accessor["CLEVEL"]
         assert clevel.as_int() == 3
 
     def test_accessor_data_property(self, nitf_definition, synthetic_data):
@@ -263,32 +263,32 @@ class TestStructureWriter:
         writer = StructureWriter.new_streaming(nitf_definition)
         
         # Write string fields in order (streaming mode requires order)
-        writer["fhdr"] = "NITF"
-        writer["fver"] = "02.10"
+        writer["FHDR"] = "NITF"
+        writer["FVER"] = "02.10"
         
         # Check field is set
-        assert writer.is_set("fhdr") is True
-        assert writer.is_set("fver") is True
+        assert writer.is_set("FHDR") is True
+        assert writer.is_set("FVER") is True
 
     def test_writer_set_method(self, nitf_definition):
         """Test set() method."""
         writer = StructureWriter.new_streaming(nitf_definition)
         
-        writer.set("fhdr", "NITF")
-        assert writer.is_set("fhdr") is True
+        writer.set("FHDR", "NITF")
+        assert writer.is_set("FHDR") is True
 
     def test_writer_is_set(self, nitf_definition):
         """Test checking if field has been written."""
         writer = StructureWriter.new_streaming(nitf_definition)
         
-        assert writer.is_set("fhdr") is False
-        writer["fhdr"] = "NITF"
-        assert writer.is_set("fhdr") is True
+        assert writer.is_set("FHDR") is False
+        writer["FHDR"] = "NITF"
+        assert writer.is_set("FHDR") is True
 
     def test_writer_buffer(self, nitf_definition):
         """Test getting current buffer contents."""
         writer = StructureWriter.new_streaming(nitf_definition)
-        writer["fhdr"] = "NITF"
+        writer["FHDR"] = "NITF"
         
         buffer = writer.buffer()
         assert isinstance(buffer, bytes)
@@ -316,55 +316,55 @@ class TestValue:
 
     def test_value_as_str(self, accessor):
         """Test as_str() conversion."""
-        value = accessor["fhdr"]
+        value = accessor["FHDR"]
         result = value.as_str()
         assert isinstance(result, str)
         assert result == "NITF"
 
     def test_value_as_str_trimmed(self, accessor):
         """Test as_str() trims trailing padding."""
-        # ftitle has trailing spaces
-        value = accessor["ftitle"]
+        # FTITLE has trailing spaces
+        value = accessor["FTITLE"]
         result = value.as_str()
         assert not result.endswith(" ")
 
     def test_value_as_int(self, accessor):
         """Test as_int() conversion for numeric strings."""
-        value = accessor["clevel"]
+        value = accessor["CLEVEL"]
         result = value.as_int()
         assert isinstance(result, int)
         assert result == 3
 
     def test_value_as_int_with_leading_zeros(self, accessor):
         """Test as_int() handles leading zeros."""
-        value = accessor["numi"]
+        value = accessor["NUMI"]
         result = value.as_int()
         assert isinstance(result, int)
         assert result == 1
 
     def test_value_as_float(self, accessor):
         """Test as_float() conversion."""
-        value = accessor["clevel"]
+        value = accessor["CLEVEL"]
         result = value.as_float()
         assert isinstance(result, float)
         assert result == 3.0
 
     def test_value_as_bytes(self, accessor):
         """Test as_bytes() conversion."""
-        value = accessor["fhdr"]
+        value = accessor["FHDR"]
         result = value.as_bytes()
         assert isinstance(result, bytes)
         assert result == b"NITF"
 
     def test_value_repr(self, accessor):
         """Test string representation of Value."""
-        value = accessor["fhdr"]
+        value = accessor["FHDR"]
         repr_str = repr(value)
         assert "Value" in repr_str
 
     def test_value_len(self, accessor):
         """Test len() on Value."""
-        value = accessor["fhdr"]
+        value = accessor["FHDR"]
         assert len(value) == 4
 
 
@@ -389,20 +389,20 @@ class TestRawView:
 
     def test_raw_view_returns_bytes(self, accessor):
         """Test raw_view() returns bytes."""
-        raw = accessor.raw_view("fhdr")
+        raw = accessor.raw_view("FHDR")
         assert isinstance(raw, bytes)
         assert raw == b"NITF"
 
     def test_raw_view_field_byte_range(self, accessor):
         """Test field_byte_range() returns offset and length."""
-        offset, length = accessor.field_byte_range("fhdr")
+        offset, length = accessor.field_byte_range("FHDR")
         assert offset == 0
         assert length == 4
 
     def test_raw_view_consistency(self, accessor):
         """Test raw_view matches field_byte_range slice."""
-        raw = accessor.raw_view("fver")
-        offset, length = accessor.field_byte_range("fver")
+        raw = accessor.raw_view("FVER")
+        offset, length = accessor.field_byte_range("FVER")
         
         # Get the same bytes from the data property
         data = accessor.data
@@ -433,7 +433,7 @@ class TestMmapSupport:
                 accessor = StructureAccessor(nitf_definition, mm)
                 
                 # Should be able to access fields
-                fhdr = accessor["fhdr"]
+                fhdr = accessor["FHDR"]
                 assert fhdr.as_str() == "NITF"
             finally:
                 mm.close()
@@ -446,7 +446,7 @@ class TestMmapSupport:
         mv = memoryview(data)
         accessor = StructureAccessor(nitf_definition, mv)
         
-        fhdr = accessor["fhdr"]
+        fhdr = accessor["FHDR"]
         assert fhdr.as_str() == "NITF"
 
     def test_accessor_with_bytearray(self, nitf_definition):
@@ -456,7 +456,7 @@ class TestMmapSupport:
         
         accessor = StructureAccessor(nitf_definition, data)
         
-        fhdr = accessor["fhdr"]
+        fhdr = accessor["FHDR"]
         assert fhdr.as_str() == "NITF"
 
 
@@ -484,13 +484,13 @@ class TestRoundTrip:
         """Test reading and writing simple string fields."""
         # Read original values
         accessor = StructureAccessor(nitf_definition, synthetic_data)
-        original_fhdr = accessor["fhdr"].as_str()
-        original_fver = accessor["fver"].as_str()
+        original_fhdr = accessor["FHDR"].as_str()
+        original_fver = accessor["FVER"].as_str()
         
         # Write to a new structure using streaming mode
         writer = StructureWriter.new_streaming(nitf_definition)
-        writer["fhdr"] = original_fhdr
-        writer["fver"] = original_fver
+        writer["FHDR"] = original_fhdr
+        writer["FVER"] = original_fver
         
         # Verify written values match
         buffer = writer.buffer()

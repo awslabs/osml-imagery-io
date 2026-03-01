@@ -136,11 +136,11 @@ def parse_nitf_file(file_path: Path) -> ParsingResult:
     result = ParsingResult(file_path=file_path, success=False)
     
     try:
-        reader = IO.open(str(file_path), "r")
+        reader = IO.open([str(file_path)], "r")
         result.success = True
         
         # Detect format from magic bytes
-        metadata = reader.get_metadata()
+        metadata = reader.metadata
         raw_bytes = metadata.raw.read()
         if raw_bytes[:4] == b"NITF":
             result.format_detected = "NITF 2.1"

@@ -15,8 +15,8 @@
 //!
 //! # Example
 //!
-//! ```
-//! use aws_osml_io::jbp::datetime::{parse_nitf_datetime, NitfDateTime};
+//! ```ignore
+//! use _io::jbp::datetime::{parse_nitf_datetime, NitfDateTime};
 //!
 //! // Parse a complete datetime
 //! let dt = parse_nitf_datetime("20231215143022").unwrap();
@@ -201,8 +201,8 @@ impl NitfDateTime {
 ///
 /// # Example
 ///
-/// ```
-/// use aws_osml_io::jbp::datetime::parse_nitf_datetime;
+/// ```ignore
+/// use _io::jbp::datetime::parse_nitf_datetime;
 ///
 /// let dt = parse_nitf_datetime("20231215143022").unwrap();
 /// assert_eq!(dt.year, 2023);

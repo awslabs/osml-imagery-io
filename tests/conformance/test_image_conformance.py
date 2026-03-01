@@ -153,7 +153,7 @@ def test_image_segment_parsing(path: str, entry: Optional[TestFileEntry]):
     actual_exception: Optional[BaseException] = None
     
     try:
-        reader = IO.open(str(file_path), "r")
+        reader = IO.open([str(file_path)], "r")
         
         # Get all image segment keys
         image_keys = reader.get_asset_keys(asset_type=AssetType.Image)
@@ -259,7 +259,7 @@ def test_image_block_reading(path: str, entry: Optional[TestFileEntry]):
     actual_exception: Optional[BaseException] = None
     
     try:
-        reader = IO.open(str(file_path), "r")
+        reader = IO.open([str(file_path)], "r")
         image_keys = reader.get_asset_keys(asset_type=AssetType.Image)
         
         for key in image_keys:
@@ -363,7 +363,7 @@ def test_multiband_image_handling(path: str, entry: Optional[TestFileEntry]):
     actual_exception: Optional[BaseException] = None
     
     try:
-        reader = IO.open(str(file_path), "r")
+        reader = IO.open([str(file_path)], "r")
         image_keys = reader.get_asset_keys(asset_type=AssetType.Image)
         
         for key in image_keys:

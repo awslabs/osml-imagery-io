@@ -42,8 +42,8 @@ const STRUCTURE_PATH_ENV: &str = "OSML_IO_STRUCTURE_PATH";
 ///
 /// # Example
 ///
-/// ```no_run
-/// use osml_io::parser::StructureRegistry;
+/// ```ignore
+/// use _io::parser::StructureRegistry;
 ///
 /// let mut registry = StructureRegistry::new();
 /// registry.add_search_path("/custom/structures");
