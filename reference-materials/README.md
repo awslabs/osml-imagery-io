@@ -1,6 +1,6 @@
-# Specifications
+# Reference Materials
 
-This directory contains reference specifications for the image formats supported by this library.
+This directory contains reference materials and specifications for the image formats supported by this library.
 
 ## Contents
 

@@ -19,7 +19,7 @@
 │   ├── unit/               # Small synthetic test files (checked in)
 │   ├── integration/        # 3rd party validation data (gitignored)
 │   └── benchmark/          # User-provided benchmark data (gitignored)
-└── specification/          # Reference specifications (gitignored)
+└── reference-materials/    # Reference specifications (gitignored)
 ```
 
 ## Rust Source Organization

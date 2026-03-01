@@ -1,10 +1,10 @@
-# Working with PDF Specifications
+# Working with PDF Reference Materials
 
-This project uses PDF specifications for NITF/NSIF format implementation. These PDFs are large (often 100-200+ pages) and cannot be read in their entirety. Always use targeted page reads.
+This project uses PDF reference materials for NITF/NSIF format implementation. These PDFs are large (often 100-200+ pages) and cannot be read in their entirety. Always use targeted page reads.
 
-## Specification Location
+## Reference Materials Location
 
-PDF specifications are located in `specification/`:
+PDF reference materials are located in `reference-materials/`:
 
 - `Joint-BIIF-Profile-V2024.1_2024-01-18.pdf` - Main JBP format specification (201 pages)
 - `STDI-0002-2024.1_2023-10-26/` - TRE and DES definitions:
