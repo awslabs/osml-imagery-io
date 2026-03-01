@@ -1,6 +1,6 @@
-"""Tests for SimpleMetadataProvider functionality.
+"""Tests for BufferedMetadataProvider functionality.
 
-This module tests the SimpleMetadataProvider implementation through the Python bindings,
+This module tests the BufferedMetadataProvider implementation through the Python bindings,
 including construction, set/get/remove/clear operations, and as_dict with prefix filtering.
 
 Requirements: 1.7
@@ -8,19 +8,19 @@ Requirements: 1.7
 
 import pytest
 
-from aws.osml.io import SimpleMetadataProvider, MetadataProvider
+from aws.osml.io import BufferedMetadataProvider, MetadataProvider
 
 
 # =============================================================================
 # Construction Tests
 # =============================================================================
 
-class TestSimpleMetadataProviderConstruction:
-    """Tests for SimpleMetadataProvider construction."""
+class TestBufferedMetadataProviderConstruction:
+    """Tests for BufferedMetadataProvider construction."""
 
     def test_empty_construction(self):
-        """Test creating an empty SimpleMetadataProvider."""
-        provider = SimpleMetadataProvider()
+        """Test creating an empty BufferedMetadataProvider."""
+        provider = BufferedMetadataProvider()
         assert provider is not None
         
         # Empty provider should have no keys
@@ -29,15 +29,15 @@ class TestSimpleMetadataProviderConstruction:
         assert len(all_data) == 0
 
     def test_construction_from_existing_provider(self):
-        """Test creating SimpleMetadataProvider from an existing provider."""
+        """Test creating BufferedMetadataProvider from an existing provider."""
         # Create source provider with some data
-        source = SimpleMetadataProvider()
+        source = BufferedMetadataProvider()
         source.set("KEY1", "value1")
         source.set("KEY2", "value2")
         source.set("PREFIX_A", "a_value")
         
         # Create new provider from source
-        copied = SimpleMetadataProvider(source=source)
+        copied = BufferedMetadataProvider(source=source)
         
         # Verify all data was copied
         assert copied.get("KEY1") == "value1"
@@ -50,10 +50,10 @@ class TestSimpleMetadataProviderConstruction:
 
     def test_construction_from_provider_is_independent(self):
         """Test that copied provider is independent from source."""
-        source = SimpleMetadataProvider()
+        source = BufferedMetadataProvider()
         source.set("KEY", "original")
         
-        copied = SimpleMetadataProvider(source=source)
+        copied = BufferedMetadataProvider(source=source)
         
         # Modify source
         source.set("KEY", "modified")
@@ -64,9 +64,9 @@ class TestSimpleMetadataProviderConstruction:
         assert copied.get("NEW_KEY") is None
 
     def test_is_metadata_provider(self):
-        """Test that SimpleMetadataProvider is a MetadataProvider."""
-        provider = SimpleMetadataProvider()
-        # SimpleMetadataProvider extends MetadataProvider, so it should have
+        """Test that BufferedMetadataProvider is a MetadataProvider."""
+        provider = BufferedMetadataProvider()
+        # BufferedMetadataProvider extends MetadataProvider, so it should have
         # all MetadataProvider methods
         assert hasattr(provider, 'as_dict')
         assert hasattr(provider, 'raw')
@@ -81,7 +81,7 @@ class TestSetGetOperations:
 
     def test_set_and_get_single_value(self):
         """Test setting and getting a single value."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         
         provider.set("imode", "B")
         result = provider.get("imode")
@@ -90,7 +90,7 @@ class TestSetGetOperations:
 
     def test_set_overwrites_existing_value(self):
         """Test that set() overwrites existing values."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         
         provider.set("imode", "B")
         assert provider.get("imode") == "B"
@@ -100,14 +100,14 @@ class TestSetGetOperations:
 
     def test_get_nonexistent_key_returns_none(self):
         """Test that get() returns None for nonexistent keys."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         
         result = provider.get("nonexistent")
         assert result is None
 
     def test_set_multiple_values(self):
         """Test setting multiple key-value pairs."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         
         provider.set("imode", "B")
         provider.set("ic", "NC")
@@ -121,7 +121,7 @@ class TestSetGetOperations:
 
     def test_set_empty_string_value(self):
         """Test setting an empty string value."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         
         provider.set("empty", "")
         result = provider.get("empty")
@@ -130,7 +130,7 @@ class TestSetGetOperations:
 
     def test_set_value_with_spaces(self):
         """Test setting a value containing spaces."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         
         provider.set("title", "Test Image Title")
         result = provider.get("title")
@@ -147,7 +147,7 @@ class TestRemoveOperation:
 
     def test_remove_existing_key(self):
         """Test removing an existing key."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         provider.set("key", "value")
         
         removed = provider.remove("key")
@@ -157,7 +157,7 @@ class TestRemoveOperation:
 
     def test_remove_nonexistent_key(self):
         """Test removing a nonexistent key returns None."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         
         removed = provider.remove("nonexistent")
         
@@ -165,7 +165,7 @@ class TestRemoveOperation:
 
     def test_remove_does_not_affect_other_keys(self):
         """Test that remove() only affects the specified key."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         provider.set("key1", "value1")
         provider.set("key2", "value2")
         
@@ -184,7 +184,7 @@ class TestClearOperation:
 
     def test_clear_removes_all_keys(self):
         """Test that clear() removes all key-value pairs."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         provider.set("key1", "value1")
         provider.set("key2", "value2")
         provider.set("key3", "value3")
@@ -198,7 +198,7 @@ class TestClearOperation:
 
     def test_clear_on_empty_provider(self):
         """Test that clear() on empty provider doesn't raise."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         
         # Should not raise
         provider.clear()
@@ -215,7 +215,7 @@ class TestAsDict:
 
     def test_as_dict_returns_all_pairs(self):
         """Test that as_dict() without prefix returns all pairs."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         provider.set("imode", "B")
         provider.set("ic", "NC")
         provider.set("nppbh", "256")
@@ -230,7 +230,7 @@ class TestAsDict:
 
     def test_as_dict_with_prefix_filters_keys(self):
         """Test that as_dict() with prefix filters keys correctly."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         provider.set("img_imode", "B")
         provider.set("img_ic", "NC")
         provider.set("file_header", "NITF")
@@ -247,7 +247,7 @@ class TestAsDict:
 
     def test_as_dict_with_prefix_no_matches(self):
         """Test as_dict() with prefix that matches no keys."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         provider.set("key1", "value1")
         provider.set("key2", "value2")
         
@@ -258,7 +258,7 @@ class TestAsDict:
 
     def test_as_dict_with_empty_prefix(self):
         """Test as_dict() with empty string prefix returns all keys."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         provider.set("key1", "value1")
         provider.set("key2", "value2")
         
@@ -269,7 +269,7 @@ class TestAsDict:
 
     def test_as_dict_on_empty_provider(self):
         """Test as_dict() on empty provider returns empty dict."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         
         result = provider.as_dict()
         
@@ -286,13 +286,13 @@ class TestRawProperty:
 
     def test_raw_returns_bytes_io(self):
         """Test that raw property returns a BytesIO-like object."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         provider.set("key", "value")
         
         raw_io = provider.raw
         data = raw_io.read()
         
-        # SimpleMetadataProvider returns empty bytes for raw
+        # BufferedMetadataProvider returns empty bytes for raw
         assert isinstance(data, bytes)
 
 
@@ -301,11 +301,11 @@ class TestRawProperty:
 # =============================================================================
 
 class TestIntegration:
-    """Integration tests for SimpleMetadataProvider."""
+    """Integration tests for BufferedMetadataProvider."""
 
     def test_typical_encoding_hints_workflow(self):
         """Test typical workflow of setting encoding hints."""
-        provider = SimpleMetadataProvider()
+        provider = BufferedMetadataProvider()
         
         # Set encoding hints (uppercase field names match .ksy definitions)
         provider.set("IMODE", "P")
@@ -323,13 +323,13 @@ class TestIntegration:
     def test_modify_copied_metadata(self):
         """Test workflow of copying and modifying metadata."""
         # Create original with some values
-        original = SimpleMetadataProvider()
+        original = BufferedMetadataProvider()
         original.set("IMODE", "B")
         original.set("IC", "NC")
         original.set("title", "Original Title")
         
         # Copy and modify
-        modified = SimpleMetadataProvider(source=original)
+        modified = BufferedMetadataProvider(source=original)
         modified.set("IMODE", "P")  # Change IMODE
         modified.set("COMRAT", "01.0")  # Add new field
         

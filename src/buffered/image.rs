@@ -1,6 +1,6 @@
 //! In-memory image asset provider for synthetic image generation.
 //!
-//! This module provides [`MemoryImageAssetProvider`] which implements the
+//! This module provides [`BufferedImageAssetProvider`] which implements the
 //! [`ImageAssetProvider`] trait for creating synthetic images in memory.
 //! It allows setting image parameters and block data programmatically.
 
@@ -110,7 +110,7 @@ impl MemoryImageConfig {
     }
 }
 
-/// Empty metadata provider for MemoryImageAssetProvider.
+/// Empty metadata provider for BufferedImageAssetProvider.
 struct EmptyMetadataProvider {
     empty_bytes: Vec<u8>,
 }
@@ -141,7 +141,7 @@ impl MetadataProvider for EmptyMetadataProvider {
 /// # Example
 ///
 /// ```ignore
-/// use aws_osml_io::memory_image::{MemoryImageAssetProvider, MemoryImageConfig};
+/// use aws_osml_io::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
 /// use aws_osml_io::types::PixelType;
 ///
 /// let config = MemoryImageConfig::new(512, 512)
@@ -149,13 +149,13 @@ impl MetadataProvider for EmptyMetadataProvider {
 ///     .with_block_size(256, 256)
 ///     .with_pixel_type(PixelType::UInt8);
 ///
-/// let mut provider = MemoryImageAssetProvider::new("image_0", config);
+/// let mut provider = BufferedImageAssetProvider::new("image_0", config);
 ///
 /// // Set block data
 /// let block_data = vec![128u8; 256 * 256 * 3];
 /// provider.set_block(0, 0, &block_data)?;
 /// ```
-pub struct MemoryImageAssetProvider {
+pub struct BufferedImageAssetProvider {
     /// Unique key identifying this asset
     key: String,
     /// Human-readable title
@@ -172,7 +172,7 @@ pub struct MemoryImageAssetProvider {
     metadata: Arc<dyn MetadataProvider>,
 }
 
-impl MemoryImageAssetProvider {
+impl BufferedImageAssetProvider {
     /// Create a new memory image asset provider.
     ///
     /// # Arguments
@@ -212,15 +212,15 @@ impl MemoryImageAssetProvider {
     /// # Example
     ///
     /// ```ignore
-    /// use aws_osml_io::memory_image::{MemoryImageAssetProvider, MemoryImageConfig};
-    /// use aws_osml_io::SimpleMetadataProvider;
+    /// use aws_osml_io::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
+    /// use aws_osml_io::BufferedMetadataProvider;
     ///
-    /// let metadata = SimpleMetadataProvider::new();
+    /// let metadata = BufferedMetadataProvider::new();
     /// metadata.set("imode", "P");
     /// metadata.set("nppbh", "256");
     ///
     /// let config = MemoryImageConfig::new(512, 512);
-    /// let provider = MemoryImageAssetProvider::new("image_0", config)
+    /// let provider = BufferedImageAssetProvider::new("image_0", config)
     ///     .with_metadata(Arc::new(metadata));
     /// ```
     pub fn with_metadata(mut self, metadata: Arc<dyn MetadataProvider>) -> Self {
@@ -424,7 +424,7 @@ impl MemoryImageAssetProvider {
     }
 }
 
-impl AssetProvider for MemoryImageAssetProvider {
+impl AssetProvider for BufferedImageAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -462,7 +462,7 @@ impl AssetProvider for MemoryImageAssetProvider {
     }
 }
 
-impl ImageAssetProvider for MemoryImageAssetProvider {
+impl ImageAssetProvider for BufferedImageAssetProvider {
     fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
         if resolution_level != 0 {
             return false;
@@ -585,9 +585,9 @@ impl ImageAssetProvider for MemoryImageAssetProvider {
     }
 }
 
-// Ensure MemoryImageAssetProvider is Send + Sync
-unsafe impl Send for MemoryImageAssetProvider {}
-unsafe impl Sync for MemoryImageAssetProvider {}
+// Ensure BufferedImageAssetProvider is Send + Sync
+unsafe impl Send for BufferedImageAssetProvider {}
+unsafe impl Sync for BufferedImageAssetProvider {}
 
 #[cfg(test)]
 mod tests {
@@ -635,7 +635,7 @@ mod tests {
     #[test]
     fn test_provider_creation() {
         let config = MemoryImageConfig::new(512, 512);
-        let provider = MemoryImageAssetProvider::new("test_image", config);
+        let provider = BufferedImageAssetProvider::new("test_image", config);
 
         assert_eq!(provider.key(), "test_image");
         assert_eq!(provider.asset_type(), AssetType::Image);
@@ -647,7 +647,7 @@ mod tests {
     fn test_set_and_get_block() {
         let config = MemoryImageConfig::new(256, 256)
             .with_block_size(256, 256);
-        let provider = MemoryImageAssetProvider::new("test", config);
+        let provider = BufferedImageAssetProvider::new("test", config);
 
         // Create test data (256x256 pixels, 1 band, 1 byte per pixel)
         let block_data = vec![128u8; 256 * 256];
@@ -662,15 +662,15 @@ mod tests {
 
     #[test]
     fn test_with_metadata() {
-        use crate::simple_metadata::SimpleMetadataProvider;
+        use crate::buffered::metadata::BufferedMetadataProvider;
 
         // Create a metadata provider with encoding hints
-        let metadata = SimpleMetadataProvider::new();
+        let metadata = BufferedMetadataProvider::new();
         metadata.set("imode", "P");
         metadata.set("nppbh", "256");
 
         let config = MemoryImageConfig::new(512, 512);
-        let provider = MemoryImageAssetProvider::new("test_image", config)
+        let provider = BufferedImageAssetProvider::new("test_image", config)
             .with_metadata(Arc::new(metadata));
 
         // Verify metadata is accessible
@@ -683,7 +683,7 @@ mod tests {
     #[test]
     fn test_default_metadata_is_empty() {
         let config = MemoryImageConfig::new(512, 512);
-        let provider = MemoryImageAssetProvider::new("test_image", config);
+        let provider = BufferedImageAssetProvider::new("test_image", config);
 
         // Default metadata should be empty
         let meta = provider.metadata();
@@ -692,11 +692,11 @@ mod tests {
     }
 }
 
-/// Property-based tests for MemoryImageAssetProvider metadata round-trip.
+/// Property-based tests for BufferedImageAssetProvider metadata round-trip.
 #[cfg(test)]
 mod property_tests {
     use super::*;
-    use crate::simple_metadata::SimpleMetadataProvider;
+    use crate::buffered::metadata::BufferedMetadataProvider;
     use proptest::prelude::*;
 
     /// Strategy for generating valid metadata keys (NITF field names).
@@ -712,10 +712,10 @@ mod property_tests {
     }
 
     proptest! {
-        /// Property 5: MemoryImageAssetProvider Metadata Round-Trip
+        /// Property 5: BufferedImageAssetProvider Metadata Round-Trip
         /// 
-        /// For any SimpleMetadataProvider M with key-value pairs, if a 
-        /// MemoryImageAssetProvider is created with M, then calling 
+        /// For any BufferedMetadataProvider M with key-value pairs, if a 
+        /// BufferedImageAssetProvider is created with M, then calling 
         /// metadata().as_dict(None) on the provider SHALL return the same 
         /// key-value pairs as M.as_dict(None).
         /// 
@@ -725,7 +725,7 @@ mod property_tests {
             pairs in prop::collection::vec((valid_metadata_key(), valid_metadata_value()), 1..10)
         ) {
             // Create metadata provider with random key-value pairs
-            let metadata = SimpleMetadataProvider::new();
+            let metadata = BufferedMetadataProvider::new();
             for (key, value) in &pairs {
                 metadata.set(key, value);
             }
@@ -733,9 +733,9 @@ mod property_tests {
             // Get the original dict before attaching to provider
             let original_dict = metadata.as_dict(None);
 
-            // Create MemoryImageAssetProvider with the metadata
+            // Create BufferedImageAssetProvider with the metadata
             let config = MemoryImageConfig::new(256, 256);
-            let provider = MemoryImageAssetProvider::new("test_image", config)
+            let provider = BufferedImageAssetProvider::new("test_image", config)
                 .with_metadata(Arc::new(metadata));
 
             // Get metadata back from provider
@@ -763,7 +763,7 @@ mod property_tests {
 
         /// Property 5b: Multiple metadata providers are independent
         /// 
-        /// Creating multiple MemoryImageAssetProviders with different metadata
+        /// Creating multiple BufferedImageAssetProviders with different metadata
         /// should not affect each other's metadata.
         #[test]
         fn property_metadata_independence(
@@ -771,14 +771,14 @@ mod property_tests {
             pairs2 in prop::collection::vec((valid_metadata_key(), valid_metadata_value()), 1..5)
         ) {
             // Create first metadata provider
-            let metadata1 = SimpleMetadataProvider::new();
+            let metadata1 = BufferedMetadataProvider::new();
             for (key, value) in &pairs1 {
                 metadata1.set(key, value);
             }
             let original_dict1 = metadata1.as_dict(None);
 
             // Create second metadata provider
-            let metadata2 = SimpleMetadataProvider::new();
+            let metadata2 = BufferedMetadataProvider::new();
             for (key, value) in &pairs2 {
                 metadata2.set(key, value);
             }
@@ -786,9 +786,9 @@ mod property_tests {
 
             // Create two providers with different metadata
             let config = MemoryImageConfig::new(256, 256);
-            let provider1 = MemoryImageAssetProvider::new("image1", config.clone())
+            let provider1 = BufferedImageAssetProvider::new("image1", config.clone())
                 .with_metadata(Arc::new(metadata1));
-            let provider2 = MemoryImageAssetProvider::new("image2", config)
+            let provider2 = BufferedImageAssetProvider::new("image2", config)
                 .with_metadata(Arc::new(metadata2));
 
             // Verify each provider has its own metadata

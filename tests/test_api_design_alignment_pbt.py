@@ -15,7 +15,7 @@ from aws.osml.io import (
     IO,
     AssetProvider,
     AssetType,
-    MemoryImageAssetProvider,
+    BufferedImageAssetProvider,
     PixelType,
 )
 
@@ -81,8 +81,8 @@ class TestAddAssetTypeHierarchy:
         num_bands=st.integers(min_value=1, max_value=4),
     )
     @settings(max_examples=100, deadline=None)
-    def test_add_asset_accepts_memory_image_asset_provider(self, key, title, description, num_cols, num_rows, num_bands):
-        """For any MemoryImageAssetProvider, add_asset SHALL succeed.
+    def test_add_asset_accepts_buffered_image_asset_provider(self, key, title, description, num_cols, num_rows, num_bands):
+        """For any BufferedImageAssetProvider, add_asset SHALL succeed.
         
         **Validates: Requirements 3.2**
         """
@@ -90,8 +90,8 @@ class TestAddAssetTypeHierarchy:
             path = f.name
         
         try:
-            # Create a MemoryImageAssetProvider
-            provider = MemoryImageAssetProvider.create(
+            # Create a BufferedImageAssetProvider
+            provider = BufferedImageAssetProvider.create(
                 key=key,
                 num_columns=num_cols,
                 num_rows=num_rows,

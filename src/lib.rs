@@ -6,23 +6,21 @@
 use pyo3::prelude::*;
 
 mod bindings;
+pub mod buffered;
 mod error;
 pub mod jbp;
-pub mod memory_image;
 pub mod parser;
-pub mod simple_metadata;
 mod traits;
 mod types;
 
 pub use bindings::{
     PyAssetProvider, PyDataAssetProvider, PyDatasetReader, PyDatasetWriter,
-    PyGraphicsAssetProvider, PyImageAssetProvider, PyMemoryImageAssetProvider,
-    PyMetadataProvider, PySimpleMetadataProvider, PyTextAssetProvider,
+    PyGraphicsAssetProvider, PyImageAssetProvider, PyBufferedImageAssetProvider,
+    PyMetadataProvider, PyBufferedMetadataProvider, PyTextAssetProvider,
     PyStructureAccessor, PyStructureDefinition, PyStructureRegistry, PyStructureWriter, PyValue,
     IO,
 };
-pub use memory_image::{MemoryImageAssetProvider, MemoryImageConfig};
-pub use simple_metadata::SimpleMetadataProvider;
+pub use buffered::{BufferedImageAssetProvider, BufferedMetadataProvider, MemoryImageConfig};
 pub use traits::{
     AssetProvider, DataAssetProvider, DatasetReader, DatasetWriter, GraphicsAssetProvider,
     ImageAssetProvider, MetadataProvider, TextAssetProvider,
@@ -36,10 +34,10 @@ fn _io(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AssetType>()?;
     m.add_class::<PixelType>()?;
     m.add_class::<PyMetadataProvider>()?;
-    m.add_class::<PySimpleMetadataProvider>()?;
+    m.add_class::<PyBufferedMetadataProvider>()?;
     m.add_class::<PyAssetProvider>()?;
     m.add_class::<PyImageAssetProvider>()?;
-    m.add_class::<PyMemoryImageAssetProvider>()?;
+    m.add_class::<PyBufferedImageAssetProvider>()?;
     m.add_class::<PyTextAssetProvider>()?;
     m.add_class::<PyDataAssetProvider>()?;
     m.add_class::<PyGraphicsAssetProvider>()?;

@@ -1,7 +1,7 @@
-//! Python bindings for SimpleMetadataProvider.
+//! Python bindings for BufferedMetadataProvider.
 //!
-//! This module provides the PySimpleMetadataProvider wrapper that exposes the
-//! SimpleMetadataProvider to Python, allowing programmatic setting of metadata
+//! This module provides the PyBufferedMetadataProvider wrapper that exposes the
+//! BufferedMetadataProvider to Python, allowing programmatic setting of metadata
 //! values for encoding hints.
 
 use std::sync::Arc;
@@ -9,24 +9,24 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 
 use crate::bindings::PyMetadataProvider;
-use crate::simple_metadata::SimpleMetadataProvider;
+use crate::buffered::BufferedMetadataProvider;
 use crate::traits::MetadataProvider;
 
-/// Python wrapper for SimpleMetadataProvider.
+/// Python wrapper for BufferedMetadataProvider.
 ///
 /// This class extends MetadataProvider and provides a mutable metadata provider 
 /// for setting encoding hints and other metadata values programmatically.
 ///
-/// Since SimpleMetadataProvider extends MetadataProvider, it can be used anywhere
+/// Since BufferedMetadataProvider extends MetadataProvider, it can be used anywhere
 /// a MetadataProvider is expected.
 ///
 /// # Example
 ///
 /// ```python
-/// from aws.osml.io import SimpleMetadataProvider
+/// from aws.osml.io import BufferedMetadataProvider
 ///
 /// # Create empty provider
-/// provider = SimpleMetadataProvider()
+/// provider = BufferedMetadataProvider()
 ///
 /// # Set encoding hints (lowercase field names match .ksy parser output)
 /// provider.set("imode", "B")
@@ -42,14 +42,14 @@ use crate::traits::MetadataProvider;
 /// # Can be used anywhere MetadataProvider is expected
 /// writer.set_metadata(provider)
 /// ```
-#[pyclass(name = "SimpleMetadataProvider", extends = PyMetadataProvider)]
-pub struct PySimpleMetadataProvider {
-    inner: Arc<SimpleMetadataProvider>,
+#[pyclass(name = "BufferedMetadataProvider", extends = PyMetadataProvider)]
+pub struct PyBufferedMetadataProvider {
+    inner: Arc<BufferedMetadataProvider>,
 }
 
-impl PySimpleMetadataProvider {
-    /// Returns a reference to the inner SimpleMetadataProvider.
-    pub fn inner(&self) -> &Arc<SimpleMetadataProvider> {
+impl PyBufferedMetadataProvider {
+    /// Returns a reference to the inner BufferedMetadataProvider.
+    pub fn inner(&self) -> &Arc<BufferedMetadataProvider> {
         &self.inner
     }
 
@@ -60,8 +60,8 @@ impl PySimpleMetadataProvider {
 }
 
 #[pymethods]
-impl PySimpleMetadataProvider {
-    /// Create a new SimpleMetadataProvider.
+impl PyBufferedMetadataProvider {
+    /// Create a new BufferedMetadataProvider.
     ///
     /// # Arguments
     ///
@@ -70,23 +70,23 @@ impl PySimpleMetadataProvider {
     ///
     /// # Returns
     ///
-    /// A new SimpleMetadataProvider instance.
+    /// A new BufferedMetadataProvider instance.
     ///
     /// # Example
     ///
     /// ```python
     /// # Create empty provider
-    /// provider = SimpleMetadataProvider()
+    /// provider = BufferedMetadataProvider()
     ///
     /// # Create from existing provider (copies all metadata)
-    /// copied = SimpleMetadataProvider(source=existing_provider)
+    /// copied = BufferedMetadataProvider(source=existing_provider)
     /// ```
     #[new]
     #[pyo3(signature = (source=None))]
     fn py_new(source: Option<PyRef<'_, PyMetadataProvider>>) -> (Self, PyMetadataProvider) {
         let simple = match source {
-            Some(src) => SimpleMetadataProvider::from_provider(src.inner().as_ref()),
-            None => SimpleMetadataProvider::new(),
+            Some(src) => BufferedMetadataProvider::from_provider(src.inner().as_ref()),
+            None => BufferedMetadataProvider::new(),
         };
         let inner = Arc::new(simple);
         

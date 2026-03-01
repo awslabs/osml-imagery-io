@@ -355,7 +355,7 @@ class ImageWriter:
     to band-sequential format before writing.
     
     The writer:
-    - Creates a MemoryImageAssetProvider with the correct configuration
+    - Creates a BufferedImageAssetProvider with the correct configuration
     - Generates all tiles and sets them as the full image
     - Uses IO.open() to create a DatasetWriter
     - Writes the file using DatasetWriter.add_image_asset() and close()
@@ -367,7 +367,7 @@ class ImageWriter:
         
         Creates a synthetic NITF image with checkerboard pattern and tile IDs.
         The image is written using the IO library's DatasetWriter with a
-        MemoryImageAssetProvider that contains the proper image configuration.
+        BufferedImageAssetProvider that contains the proper image configuration.
         
         Args:
             config: Image configuration containing all parameters
@@ -376,18 +376,18 @@ class ImageWriter:
             RuntimeError: If the IO library fails to create or write the file
             ImportError: If the IO library is not available
         """
-        from aws.osml.io import IO, MemoryImageAssetProvider, SimpleMetadataProvider, PixelType
+        from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
         
         # Map pixel type string to PixelType enum
         pixel_type = PixelType.UInt8 if config.pixel_type == "uint8" else PixelType.UInt16
         
         # Create metadata provider with encoding hints (uppercase field names match .ksy definitions)
-        metadata = SimpleMetadataProvider()
+        metadata = BufferedMetadataProvider()
         metadata.set("IMODE", config.imode)
         
-        # Create MemoryImageAssetProvider with the correct configuration
+        # Create BufferedImageAssetProvider with the correct configuration
         try:
-            image_provider = MemoryImageAssetProvider.create(
+            image_provider = BufferedImageAssetProvider.create(
                 key="image_segment_0",
                 num_columns=config.width,
                 num_rows=config.height,
@@ -420,12 +420,12 @@ class ImageWriter:
         
         # Create writer for NITF format
         try:
-            writer = IO.open(config.output_path, "w", "nitf")
+            writer = IO.open([config.output_path], "w", "nitf")
         except Exception as e:
             raise RuntimeError(f"Failed to create NITF writer for {config.output_path}: {e}")
         
         try:
-            # Add image asset to writer using the MemoryImageAssetProvider
+            # Add image asset to writer using the BufferedImageAssetProvider
             writer.add_asset(
                 key="image_segment_0",
                 provider=image_provider,
@@ -478,7 +478,7 @@ class ImageWriter:
     def _to_bsq(image: np.ndarray, config: ImageConfig) -> np.ndarray:
         """Convert image array to band-sequential format.
         
-        The MemoryImageAssetProvider expects band-sequential format
+        The BufferedImageAssetProvider expects band-sequential format
         (bands, rows, cols).
         
         Args:

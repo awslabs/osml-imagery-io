@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 
-use crate::bindings::{PyAssetProvider, PyMemoryImageAssetProvider, PyMetadataProvider};
+use crate::bindings::{PyAssetProvider, PyBufferedImageAssetProvider, PyMetadataProvider};
 use crate::error::CodecError;
 use crate::traits::{AssetProvider, DatasetWriter};
 
@@ -51,7 +51,7 @@ impl PyDatasetWriter {
     ///
     /// * `key` - The unique string identifier for the asset.
     /// * `provider` - The AssetProvider containing the asset data. Can be any AssetProvider
-    ///   subtype including AssetProvider, MemoryImageAssetProvider, etc.
+    ///   subtype including AssetProvider, BufferedImageAssetProvider, etc.
     /// * `title` - A human-readable title for the asset.
     /// * `description` - A detailed description of the asset.
     /// * `roles` - Semantic roles for the asset (e.g., "data", "thumbnail", "metadata").
@@ -79,8 +79,8 @@ impl PyDatasetWriter {
             return Ok(());
         }
 
-        // Try to extract as PyMemoryImageAssetProvider
-        if let Ok(memory_provider) = provider.extract::<PyRef<PyMemoryImageAssetProvider>>() {
+        // Try to extract as PyBufferedImageAssetProvider
+        if let Ok(memory_provider) = provider.extract::<PyRef<PyBufferedImageAssetProvider>>() {
             let arc_provider: Arc<dyn AssetProvider> = memory_provider.inner().clone();
             inner.add_asset(key, arc_provider, title, description, &roles)?;
             return Ok(());
@@ -88,7 +88,7 @@ impl PyDatasetWriter {
 
         // If neither worked, raise TypeError
         Err(pyo3::exceptions::PyTypeError::new_err(
-            "provider must be an AssetProvider or MemoryImageAssetProvider",
+            "provider must be an AssetProvider or BufferedImageAssetProvider",
         ))
     }
 

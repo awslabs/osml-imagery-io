@@ -1,4 +1,4 @@
-//! Python bindings for MemoryImageAssetProvider.
+//! Python bindings for BufferedImageAssetProvider.
 //!
 //! This module provides Python bindings for creating synthetic images in memory.
 
@@ -9,11 +9,11 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use crate::bindings::PyMetadataProvider;
-use crate::memory_image::{MemoryImageAssetProvider, MemoryImageConfig};
+use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
 use crate::traits::{AssetProvider, ImageAssetProvider};
 use crate::types::{AssetType, PixelType};
 
-/// Python wrapper for MemoryImageAssetProvider.
+/// Python wrapper for BufferedImageAssetProvider.
 ///
 /// This class allows creating synthetic images in memory with configurable
 /// dimensions, tile sizes, pixel types, and band configurations.
@@ -21,11 +21,11 @@ use crate::types::{AssetType, PixelType};
 /// # Example
 ///
 /// ```python
-/// from aws.osml.io import MemoryImageAssetProvider, PixelType
+/// from aws.osml.io import BufferedImageAssetProvider, PixelType
 /// import numpy as np
 ///
 /// # Create a 512x512 RGB image with 256x256 tiles
-/// provider = MemoryImageAssetProvider.create(
+/// provider = BufferedImageAssetProvider.create(
 ///     key="synthetic_image",
 ///     num_columns=512,
 ///     num_rows=512,
@@ -39,14 +39,14 @@ use crate::types::{AssetType, PixelType};
 /// image_data = np.zeros((3, 512, 512), dtype=np.uint8)
 /// provider.set_full_image(image_data)
 /// ```
-#[pyclass(name = "MemoryImageAssetProvider")]
-pub struct PyMemoryImageAssetProvider {
-    inner: Arc<MemoryImageAssetProvider>,
+#[pyclass(name = "BufferedImageAssetProvider")]
+pub struct PyBufferedImageAssetProvider {
+    inner: Arc<BufferedImageAssetProvider>,
 }
 
-impl PyMemoryImageAssetProvider {
+impl PyBufferedImageAssetProvider {
     /// Returns a reference to the inner provider.
-    pub fn inner(&self) -> &Arc<MemoryImageAssetProvider> {
+    pub fn inner(&self) -> &Arc<BufferedImageAssetProvider> {
         &self.inner
     }
 
@@ -57,8 +57,8 @@ impl PyMemoryImageAssetProvider {
 }
 
 #[pymethods]
-impl PyMemoryImageAssetProvider {
-    /// Create a new MemoryImageAssetProvider with the specified parameters.
+impl PyBufferedImageAssetProvider {
+    /// Create a new BufferedImageAssetProvider with the specified parameters.
     ///
     /// # Arguments
     ///
@@ -76,19 +76,19 @@ impl PyMemoryImageAssetProvider {
     ///
     /// # Returns
     ///
-    /// A new MemoryImageAssetProvider instance.
+    /// A new BufferedImageAssetProvider instance.
     ///
     /// # Example
     ///
     /// ```python
-    /// from aws.osml.io import MemoryImageAssetProvider, SimpleMetadataProvider, PixelType
+    /// from aws.osml.io import BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
     ///
     /// # Create with encoding hints (lowercase field names match .ksy parser output)
-    /// metadata = SimpleMetadataProvider()
+    /// metadata = BufferedMetadataProvider()
     /// metadata.set("imode", "P")  # Pixel interleave mode
     /// metadata.set("nppbh", "256")  # Block width
     ///
-    /// provider = MemoryImageAssetProvider.create(
+    /// provider = BufferedImageAssetProvider.create(
     ///     key="synthetic_image",
     ///     num_columns=512,
     ///     num_rows=512,
@@ -132,7 +132,7 @@ impl PyMemoryImageAssetProvider {
             config = config.with_actual_bits_per_pixel(abpp);
         }
 
-        let mut provider = MemoryImageAssetProvider::new(key, config);
+        let mut provider = BufferedImageAssetProvider::new(key, config);
 
         // Apply metadata if provided
         if let Some(meta) = metadata {

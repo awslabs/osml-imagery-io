@@ -110,7 +110,7 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
     print()
     
     try:
-        with IO.open(str(file_path), "r") as reader:
+        with IO.open([str(file_path)], "r") as reader:
             # Dataset-level metadata
             if show_metadata:
                 print("File Metadata:")

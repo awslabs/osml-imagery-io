@@ -1,4 +1,4 @@
-//! SimpleMetadataProvider - A mutable metadata provider for encoding hints.
+//! BufferedMetadataProvider - A mutable metadata provider for encoding hints.
 //!
 //! This module provides a simple, thread-safe implementation of the MetadataProvider
 //! trait that allows programmatic setting of key-value pairs. It's primarily used
@@ -17,15 +17,15 @@ use crate::traits::MetadataProvider;
 ///
 /// # Thread Safety
 ///
-/// SimpleMetadataProvider is thread-safe (Send + Sync) and uses RwLock for
+/// BufferedMetadataProvider is thread-safe (Send + Sync) and uses RwLock for
 /// concurrent read access with exclusive write access.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use osml_io::SimpleMetadataProvider;
+/// use osml_io::BufferedMetadataProvider;
 ///
-/// let provider = SimpleMetadataProvider::new();
+/// let provider = BufferedMetadataProvider::new();
 /// provider.set("imode", "B");
 /// provider.set("nppbh", "256");
 ///
@@ -34,20 +34,20 @@ use crate::traits::MetadataProvider;
 /// let dict = provider.as_dict(None);
 /// assert!(dict.contains_key("imode"));
 /// ```
-pub struct SimpleMetadataProvider {
+pub struct BufferedMetadataProvider {
     /// Thread-safe storage for metadata key-value pairs.
     data: RwLock<HashMap<String, serde_json::Value>>,
 }
 
-impl SimpleMetadataProvider {
-    /// Create a new empty SimpleMetadataProvider.
+impl BufferedMetadataProvider {
+    /// Create a new empty BufferedMetadataProvider.
     pub fn new() -> Self {
         Self {
             data: RwLock::new(HashMap::new()),
         }
     }
 
-    /// Create a SimpleMetadataProvider initialized from an existing MetadataProvider.
+    /// Create a BufferedMetadataProvider initialized from an existing MetadataProvider.
     ///
     /// This copies all key-value pairs from the source provider, allowing users
     /// to duplicate metadata and selectively update fields.
@@ -60,7 +60,7 @@ impl SimpleMetadataProvider {
     ///
     /// ```ignore
     /// // Copy metadata from an existing provider and modify
-    /// let new_provider = SimpleMetadataProvider::from_provider(&existing_provider);
+    /// let new_provider = BufferedMetadataProvider::from_provider(&existing_provider);
     /// new_provider.set("imode", "P"); // Override imode
     /// ```
     pub fn from_provider(source: &dyn MetadataProvider) -> Self {
@@ -130,14 +130,14 @@ impl SimpleMetadataProvider {
     }
 }
 
-impl Default for SimpleMetadataProvider {
+impl Default for BufferedMetadataProvider {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl MetadataProvider for SimpleMetadataProvider {
-    /// Returns empty bytes (SimpleMetadataProvider has no raw representation).
+impl MetadataProvider for BufferedMetadataProvider {
+    /// Returns empty bytes (BufferedMetadataProvider has no raw representation).
     fn raw(&self) -> &[u8] {
         &[]
     }
@@ -174,21 +174,21 @@ mod tests {
 
     #[test]
     fn new_creates_empty_provider() {
-        let provider = SimpleMetadataProvider::new();
+        let provider = BufferedMetadataProvider::new();
         let dict = provider.as_dict(None);
         assert!(dict.is_empty());
     }
 
     #[test]
     fn set_and_get_single_value() {
-        let provider = SimpleMetadataProvider::new();
+        let provider = BufferedMetadataProvider::new();
         provider.set("imode", "B");
         assert_eq!(provider.get("imode"), Some("B".to_string()));
     }
 
     #[test]
     fn set_overwrites_existing_value() {
-        let provider = SimpleMetadataProvider::new();
+        let provider = BufferedMetadataProvider::new();
         provider.set("imode", "B");
         provider.set("imode", "P");
         assert_eq!(provider.get("imode"), Some("P".to_string()));
@@ -196,13 +196,13 @@ mod tests {
 
     #[test]
     fn get_nonexistent_key_returns_none() {
-        let provider = SimpleMetadataProvider::new();
+        let provider = BufferedMetadataProvider::new();
         assert_eq!(provider.get("nonexistent"), None);
     }
 
     #[test]
     fn remove_returns_previous_value() {
-        let provider = SimpleMetadataProvider::new();
+        let provider = BufferedMetadataProvider::new();
         provider.set("imode", "B");
         let removed = provider.remove("imode");
         assert_eq!(removed, Some("B".to_string()));
@@ -211,13 +211,13 @@ mod tests {
 
     #[test]
     fn remove_nonexistent_returns_none() {
-        let provider = SimpleMetadataProvider::new();
+        let provider = BufferedMetadataProvider::new();
         assert_eq!(provider.remove("nonexistent"), None);
     }
 
     #[test]
     fn clear_removes_all_keys() {
-        let provider = SimpleMetadataProvider::new();
+        let provider = BufferedMetadataProvider::new();
         provider.set("imode", "B");
         provider.set("ic", "NC");
         provider.set("nppbh", "256");
@@ -230,14 +230,14 @@ mod tests {
 
     #[test]
     fn raw_returns_empty_bytes() {
-        let provider = SimpleMetadataProvider::new();
+        let provider = BufferedMetadataProvider::new();
         provider.set("imode", "B");
         assert!(provider.raw().is_empty());
     }
 
     #[test]
     fn as_dict_none_returns_all_pairs() {
-        let provider = SimpleMetadataProvider::new();
+        let provider = BufferedMetadataProvider::new();
         provider.set("imode", "B");
         provider.set("ic", "NC");
         provider.set("nppbh", "256");
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn as_dict_with_prefix_filters_correctly() {
-        let provider = SimpleMetadataProvider::new();
+        let provider = BufferedMetadataProvider::new();
         provider.set("imode", "B");
         provider.set("ic", "NC");
         provider.set("nppbh", "256");
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn as_dict_with_nonmatching_prefix_returns_empty() {
-        let provider = SimpleMetadataProvider::new();
+        let provider = BufferedMetadataProvider::new();
         provider.set("imode", "B");
         provider.set("ic", "NC");
         
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn default_creates_empty_provider() {
-        let provider = SimpleMetadataProvider::default();
+        let provider = BufferedMetadataProvider::default();
         let dict = provider.as_dict(None);
         assert!(dict.is_empty());
     }
@@ -291,13 +291,13 @@ mod tests {
     #[test]
     fn from_provider_copies_all_pairs() {
         // Create a source provider with some values
-        let source = SimpleMetadataProvider::new();
+        let source = BufferedMetadataProvider::new();
         source.set("imode", "B");
         source.set("ic", "NC");
         source.set("nppbh", "256");
 
         // Create a new provider from the source
-        let copied = SimpleMetadataProvider::from_provider(&source);
+        let copied = BufferedMetadataProvider::from_provider(&source);
 
         // Verify all pairs were copied
         let dict = copied.as_dict(None);
@@ -309,10 +309,10 @@ mod tests {
 
     #[test]
     fn from_provider_allows_modification_without_affecting_source() {
-        let source = SimpleMetadataProvider::new();
+        let source = BufferedMetadataProvider::new();
         source.set("imode", "B");
 
-        let copied = SimpleMetadataProvider::from_provider(&source);
+        let copied = BufferedMetadataProvider::from_provider(&source);
         copied.set("imode", "P");
         copied.set("new_key", "NEW_VALUE");
 

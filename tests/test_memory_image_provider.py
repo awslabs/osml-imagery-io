@@ -1,6 +1,6 @@
-"""Tests for MemoryImageAssetProvider Python bindings.
+"""Tests for BufferedImageAssetProvider Python bindings.
 
-This module tests the MemoryImageAssetProvider implementation through the Python bindings,
+This module tests the BufferedImageAssetProvider implementation through the Python bindings,
 including construction with metadata, set_full_image, and metadata round-trip.
 
 Requirements: 2.1, 2.2, 2.3
@@ -9,15 +9,15 @@ Requirements: 2.1, 2.2, 2.3
 import numpy as np
 import pytest
 
-from aws.osml.io import MemoryImageAssetProvider, SimpleMetadataProvider, PixelType
+from aws.osml.io import BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 
 
-class TestMemoryImageAssetProviderConstruction:
-    """Tests for MemoryImageAssetProvider construction."""
+class TestBufferedImageAssetProviderConstruction:
+    """Tests for BufferedImageAssetProvider construction."""
 
     def test_basic_construction(self):
-        """Test creating a basic MemoryImageAssetProvider."""
-        provider = MemoryImageAssetProvider.create(
+        """Test creating a basic BufferedImageAssetProvider."""
+        provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=256,
             num_rows=256,
@@ -29,7 +29,7 @@ class TestMemoryImageAssetProviderConstruction:
 
     def test_construction_with_bands(self):
         """Test creating a multi-band image."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="rgb_image",
             num_columns=512,
             num_rows=512,
@@ -40,7 +40,7 @@ class TestMemoryImageAssetProviderConstruction:
 
     def test_construction_with_block_size(self):
         """Test creating an image with custom block size."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="tiled_image",
             num_columns=1024,
             num_rows=1024,
@@ -52,7 +52,7 @@ class TestMemoryImageAssetProviderConstruction:
 
     def test_construction_with_pixel_type(self):
         """Test creating an image with different pixel types."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="uint16_image",
             num_columns=256,
             num_rows=256,
@@ -62,18 +62,18 @@ class TestMemoryImageAssetProviderConstruction:
         assert provider.num_bits_per_pixel == 16
 
 
-class TestMemoryImageAssetProviderWithMetadata:
-    """Tests for MemoryImageAssetProvider with custom metadata."""
+class TestBufferedImageAssetProviderWithMetadata:
+    """Tests for BufferedImageAssetProvider with custom metadata."""
 
     def test_construction_with_metadata(self):
-        """Test creating a MemoryImageAssetProvider with metadata."""
+        """Test creating a BufferedImageAssetProvider with metadata."""
         # Create metadata with encoding hints
-        metadata = SimpleMetadataProvider()
+        metadata = BufferedMetadataProvider()
         metadata.set("IMODE", "P")
         metadata.set("NPPBH", "256")
         metadata.set("NPPBV", "256")
 
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=512,
             num_rows=512,
@@ -89,12 +89,12 @@ class TestMemoryImageAssetProviderWithMetadata:
         **Validates: Requirements 2.2**
         """
         # Create metadata with encoding hints
-        metadata = SimpleMetadataProvider()
+        metadata = BufferedMetadataProvider()
         metadata.set("IMODE", "P")
         metadata.set("IC", "NC")
         metadata.set("NPPBH", "256")
 
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=512,
             num_rows=512,
@@ -112,7 +112,7 @@ class TestMemoryImageAssetProviderWithMetadata:
 
     def test_default_metadata_is_empty(self):
         """Test that default metadata is empty when not provided."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=256,
             num_rows=256,
@@ -125,14 +125,14 @@ class TestMemoryImageAssetProviderWithMetadata:
 
     def test_metadata_with_all_encoding_hints(self):
         """Test metadata with all supported encoding hints."""
-        metadata = SimpleMetadataProvider()
+        metadata = BufferedMetadataProvider()
         metadata.set("IMODE", "B")
         metadata.set("IC", "NC")
         metadata.set("NPPBH", "512")
         metadata.set("NPPBV", "512")
         metadata.set("COMRAT", "01.0")
 
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=1024,
             num_rows=1024,
@@ -147,12 +147,12 @@ class TestMemoryImageAssetProviderWithMetadata:
         assert retrieved.get("COMRAT") == "01.0"
 
 
-class TestMemoryImageAssetProviderSetImage:
+class TestBufferedImageAssetProviderSetImage:
     """Tests for setting image data."""
 
     def test_set_full_image_grayscale(self):
         """Test setting full image data for grayscale image."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=64,
             num_rows=64,
@@ -172,7 +172,7 @@ class TestMemoryImageAssetProviderSetImage:
 
     def test_set_full_image_rgb(self):
         """Test setting full image data for RGB image."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="rgb_image",
             num_columns=64,
             num_rows=64,
@@ -194,7 +194,7 @@ class TestMemoryImageAssetProviderSetImage:
 
     def test_get_block_after_set_full_image(self):
         """Test retrieving block data after setting full image."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=64,
             num_rows=64,
@@ -214,12 +214,12 @@ class TestMemoryImageAssetProviderSetImage:
         assert np.all(block == 200)
 
 
-class TestMemoryImageAssetProviderProperties:
-    """Tests for MemoryImageAssetProvider properties."""
+class TestBufferedImageAssetProviderProperties:
+    """Tests for BufferedImageAssetProvider properties."""
 
     def test_irep_mono(self):
         """Test IREP is MONO for single band images."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="mono_image",
             num_columns=256,
             num_rows=256,
@@ -229,7 +229,7 @@ class TestMemoryImageAssetProviderProperties:
 
     def test_irep_rgb(self):
         """Test IREP is RGB for 3-band images."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="rgb_image",
             num_columns=256,
             num_rows=256,
@@ -239,7 +239,7 @@ class TestMemoryImageAssetProviderProperties:
 
     def test_irep_multi(self):
         """Test IREP is MULTI for multi-band images."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="multi_image",
             num_columns=256,
             num_rows=256,
@@ -249,7 +249,7 @@ class TestMemoryImageAssetProviderProperties:
 
     def test_image_shape(self):
         """Test image_shape property."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=512,
             num_rows=256,
@@ -259,7 +259,7 @@ class TestMemoryImageAssetProviderProperties:
 
     def test_block_shape(self):
         """Test block_shape property."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=512,
             num_rows=512,
@@ -271,7 +271,7 @@ class TestMemoryImageAssetProviderProperties:
 
     def test_block_grid_size(self):
         """Test block_grid_size property."""
-        provider = MemoryImageAssetProvider.create(
+        provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=512,
             num_rows=256,

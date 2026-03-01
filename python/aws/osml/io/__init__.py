@@ -13,12 +13,12 @@ from aws.osml.io._io import (
     DatasetWriter,
     AssetProvider,
     ImageAssetProvider,
-    MemoryImageAssetProvider,
+    BufferedImageAssetProvider,
     TextAssetProvider,
     DataAssetProvider,
     GraphicsAssetProvider,
     MetadataProvider,
-    SimpleMetadataProvider,
+    BufferedMetadataProvider,
     # Parser bindings
     StructureRegistry,
     StructureAccessor,
@@ -44,13 +44,13 @@ __all__ = [
     # Asset Providers
     "AssetProvider",
     "ImageAssetProvider",
-    "MemoryImageAssetProvider",
+    "BufferedImageAssetProvider",
     "TextAssetProvider",
     "DataAssetProvider",
     "GraphicsAssetProvider",
     # Metadata
     "MetadataProvider",
-    "SimpleMetadataProvider",
+    "BufferedMetadataProvider",
     # Parser
     "StructureRegistry",
     "StructureAccessor",

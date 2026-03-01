@@ -476,18 +476,18 @@ impl JBPDatasetWriter {
 
     /// Extract image properties from an asset provider.
     /// 
-    /// If the provider implements ImageAssetProvider (via MemoryImageAssetProvider),
+    /// If the provider implements ImageAssetProvider (via BufferedImageAssetProvider),
     /// extract the image properties. Otherwise, return default values.
     /// 
     /// Note: IMODE, NPPBH, and NPPBV are set to defaults here. The actual values
     /// should come from encoding hints extracted via `extract_encoding_hints()`.
     /// Callers should override these fields with validated encoding hints.
     fn extract_image_properties(asset: &QueuedAsset) -> ImageProperties {
-        use crate::memory_image::MemoryImageAssetProvider;
+        use crate::buffered::BufferedImageAssetProvider;
         use crate::traits::ImageAssetProvider;
         
-        // Try to downcast to MemoryImageAssetProvider
-        if let Some(memory_provider) = asset.provider.as_any().downcast_ref::<MemoryImageAssetProvider>() {
+        // Try to downcast to BufferedImageAssetProvider
+        if let Some(memory_provider) = asset.provider.as_any().downcast_ref::<BufferedImageAssetProvider>() {
             let config = memory_provider.config();
             ImageProperties {
                 nrows: memory_provider.num_rows(),
@@ -509,13 +509,13 @@ impl JBPDatasetWriter {
         }
     }
 
-    /// Check if an asset is a MemoryImageAssetProvider.
+    /// Check if an asset is a BufferedImageAssetProvider.
     ///
     /// This is used to determine whether IMODE conversion should be applied.
-    /// Only MemoryImageAssetProvider provides data in BSQ format that needs conversion.
+    /// Only BufferedImageAssetProvider provides data in BSQ format that needs conversion.
     fn is_memory_image_provider(asset: &QueuedAsset) -> bool {
-        use crate::memory_image::MemoryImageAssetProvider;
-        asset.provider.as_any().downcast_ref::<MemoryImageAssetProvider>().is_some()
+        use crate::buffered::BufferedImageAssetProvider;
+        asset.provider.as_any().downcast_ref::<BufferedImageAssetProvider>().is_some()
     }
 
     /// Extract encoding hints from asset metadata.
@@ -1798,7 +1798,7 @@ impl DatasetWriter for JBPDatasetWriter {
             // Get raw data from the provider
             let raw_data = asset.provider.raw_asset()?;
             
-            // Only apply IMODE conversion for MemoryImageAssetProvider
+            // Only apply IMODE conversion for BufferedImageAssetProvider
             // which provides data in BSQ format. Other providers pass through as-is.
             let data = if Self::is_memory_image_provider(asset) {
                 let mut props = Self::extract_image_properties(asset);
