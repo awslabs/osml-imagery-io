@@ -40,6 +40,10 @@ ENV/
 .coverage
 htmlcov/
 .tox/
+.hypothesis/
 
 # Maturin
 *.whl
+
+# macOS debug symbols
+*.dSYM/
