@@ -102,6 +102,8 @@ pub struct EncodingHints {
     pub nppbv: u32,
     /// Compression ratio (for compressed images)
     pub comrat: Option<String>,
+    /// JPEG 2000 specific encoding hints (for IC=C8 or CD)
+    pub j2k_hints: Option<crate::jbp::j2k::comrat::J2KEncodingHints>,
 }
 
 impl Default for EncodingHints {
@@ -112,6 +114,7 @@ impl Default for EncodingHints {
             nppbh: 0, // 0 means use image dimensions
             nppbv: 0, // 0 means use image dimensions
             comrat: None,
+            j2k_hints: None,
         }
     }
 }
@@ -534,6 +537,8 @@ impl JBPDatasetWriter {
     /// # Returns
     /// EncodingHints with values from metadata or defaults.
     fn extract_encoding_hints(asset: &QueuedAsset, image_props: &ImageProperties) -> EncodingHints {
+        use crate::jbp::j2k::comrat::J2KEncodingHints;
+        
         let metadata = asset.provider.metadata();
         let dict = metadata.as_dict(None);
         
@@ -589,12 +594,85 @@ impl JBPDatasetWriter {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         
+        // Extract J2K-specific encoding hints for IC=C8 or CD
+        let ic_trimmed = ic.trim();
+        let j2k_hints = if ic_trimmed == "C8" || ic_trimmed == "CD" {
+            // Extract lossless flag
+            let lossless = dict.get("J2K_LOSSLESS")
+                .and_then(|v| {
+                    if let Some(b) = v.as_bool() {
+                        Some(b)
+                    } else if let Some(s) = v.as_str() {
+                        match s.trim().to_lowercase().as_str() {
+                            "true" | "1" | "yes" => Some(true),
+                            "false" | "0" | "no" => Some(false),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false);
+            
+            // Extract compression ratio
+            let compression_ratio = dict.get("J2K_COMPRESSION_RATIO")
+                .and_then(|v| {
+                    if let Some(n) = v.as_f64() {
+                        Some(n)
+                    } else if let Some(s) = v.as_str() {
+                        s.trim().parse::<f64>().ok()
+                    } else {
+                        None
+                    }
+                });
+            
+            // Extract decomposition levels
+            let decomposition_levels = dict.get("J2K_DECOMPOSITION_LEVELS")
+                .and_then(|v| {
+                    if let Some(n) = v.as_u64() {
+                        Some(n as u8)
+                    } else if let Some(s) = v.as_str() {
+                        s.trim().parse::<u8>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(5);
+            
+            // Extract quality layers
+            let quality_layers = dict.get("J2K_QUALITY_LAYERS")
+                .and_then(|v| {
+                    if let Some(n) = v.as_u64() {
+                        Some(n as u8)
+                    } else if let Some(s) = v.as_str() {
+                        s.trim().parse::<u8>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(1);
+            
+            // HTJ2K is determined by IC=CD
+            let htj2k = ic_trimmed == "CD";
+            
+            Some(J2KEncodingHints {
+                compression_ratio: if lossless { None } else { compression_ratio.or(Some(10.0)) },
+                lossless,
+                decomposition_levels,
+                quality_layers,
+                htj2k,
+            })
+        } else {
+            None
+        };
+        
         EncodingHints {
             imode,
             ic,
             nppbh,
             nppbv,
             comrat,
+            j2k_hints,
         }
     }
 
@@ -764,6 +842,10 @@ impl JBPDatasetWriter {
     /// - NPPBH must be in range [1, 8192]
     /// - NPPBV must be in range [1, 8192]
     /// - Block sizes larger than image dimensions are auto-adjusted
+    /// - For JPEG 2000 (IC=C8 or CD):
+    ///   - IMODE must be "B" (BPJ2K01.20 requirement)
+    ///   - NBPP must be in range [1, 38]
+    ///   - ABPP must equal NBPP
     ///
     /// # Arguments
     /// * `hints` - The encoding hints to validate
@@ -775,6 +857,9 @@ impl JBPDatasetWriter {
         hints: &EncodingHints,
         image_props: &ImageProperties,
     ) -> Result<EncodingHints, CodecError> {
+        let ic_trimmed = hints.ic.trim();
+        let is_j2k = ic_trimmed == "C8" || ic_trimmed == "CD";
+        
         // Validate IMODE
         let valid_imodes = ["B", "P", "R", "S"];
         if !valid_imodes.contains(&hints.imode.as_str()) {
@@ -782,6 +867,32 @@ impl JBPDatasetWriter {
                 "Invalid IMODE value '{}': must be B, P, R, or S",
                 hints.imode
             )));
+        }
+        
+        // BPJ2K01.20: IMODE must be "B" for JPEG 2000 images
+        if is_j2k && hints.imode != "B" {
+            return Err(CodecError::InvalidFormat(format!(
+                "JPEG 2000 images (IC={}) must have IMODE=B, got '{}' (BPJ2K01.20 requirement)",
+                ic_trimmed, hints.imode
+            )));
+        }
+        
+        // BPJ2K01.20: NBPP must be 1-38 for JPEG 2000 images
+        if is_j2k {
+            if image_props.nbpp < 1 || image_props.nbpp > 38 {
+                return Err(CodecError::InvalidFormat(format!(
+                    "JPEG 2000 images (IC={}) must have NBPP in range [1, 38], got {} (BPJ2K01.20 requirement)",
+                    ic_trimmed, image_props.nbpp
+                )));
+            }
+            
+            // BPJ2K01.20: ABPP must equal NBPP for JPEG 2000 images
+            if image_props.abpp != image_props.nbpp {
+                return Err(CodecError::InvalidFormat(format!(
+                    "JPEG 2000 images (IC={}) must have ABPP equal to NBPP, got ABPP={} and NBPP={} (BPJ2K01.20 requirement)",
+                    ic_trimmed, image_props.abpp, image_props.nbpp
+                )));
+            }
         }
         
         // Validate NPPBH range
@@ -815,9 +926,10 @@ impl JBPDatasetWriter {
             adjusted.nppbv = image_props.nrows;
         }
         
-        // Note: IC validation for unsupported codecs would be done here
-        // For now, we only support NC (no compression)
-        // Future: Add validation for C1, C3, C4, C5, C6, C7, C8, M1, M3, M4, M5, M8, I1
+        // For JPEG 2000, force IMODE to "B" if not already set
+        if is_j2k {
+            adjusted.imode = "B".to_string();
+        }
         
         Ok(adjusted)
     }
@@ -858,16 +970,36 @@ impl JBPDatasetWriter {
             hints.imode.chars().next().unwrap_or('B')
         )?;
 
+        // Determine if pixel values are signed
+        let is_signed = props.pvtype == "SI";
+
         // Create the block encoder based on IC code
+        #[cfg(feature = "openjpeg")]
         let mut encoder = create_block_encoder(
             &hints.ic,
             props.nrows,
             props.ncols,
             props.nbands,
             props.nbpp as u8,
+            is_signed,
             imode,
             hints.nppbh,
             hints.nppbv,
+            hints.j2k_hints.as_ref(),
+        )?;
+
+        #[cfg(not(feature = "openjpeg"))]
+        let mut encoder = create_block_encoder(
+            &hints.ic,
+            props.nrows,
+            props.ncols,
+            props.nbands,
+            props.nbpp as u8,
+            is_signed,
+            imode,
+            hints.nppbh,
+            hints.nppbv,
+            None,
         )?;
 
         // Create tile assembler to read source tiles and produce output tiles
@@ -973,6 +1105,27 @@ impl JBPDatasetWriter {
         subheader.extend_from_slice(b"0");
         // IC (2) - Image Compression (from encoding hints)
         subheader.extend_from_slice(format!("{:2}", hints.ic).as_bytes());
+        
+        // COMRAT (4) - Compression Rate Code (only for compressed images)
+        // Present when IC is not NC or NM
+        let ic_trimmed = hints.ic.trim();
+        if ic_trimmed != "NC" && ic_trimmed != "NM" {
+            // Generate COMRAT from J2K hints if available, otherwise use provided comrat or default
+            let comrat = if let Some(ref j2k_hints) = hints.j2k_hints {
+                crate::jbp::j2k::comrat::generate_comrat(j2k_hints)
+            } else if let Some(ref comrat_str) = hints.comrat {
+                // Use provided COMRAT, ensure it's 4 characters
+                format!("{:4}", comrat_str)
+            } else {
+                // Default to numerically lossless for J2K
+                if ic_trimmed == "C8" || ic_trimmed == "CD" {
+                    "N1.0".to_string()
+                } else {
+                    "    ".to_string()
+                }
+            };
+            subheader.extend_from_slice(comrat.as_bytes());
+        }
         
         // NBANDS (1) or XBANDS (5) - Number of Bands
         // If nbands > 9, use XBANDS format (NBANDS=0, then XBANDS field)

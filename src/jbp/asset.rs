@@ -306,7 +306,7 @@ impl ImageAssetProvider for JBPImageAssetProvider {
                 resolution_level,
             ));
         }
-        decoder.decode_block(block_row, block_col, bands)
+        decoder.decode_block(block_row, block_col, resolution_level, bands)
     }
 
     fn num_resolution_levels(&self) -> u32 {

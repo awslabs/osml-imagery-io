@@ -8,14 +8,14 @@ The implementation builds on the existing `BlockDecoder` and `BlockEncoder` trai
 
 ## Tasks
 
-- [ ] 1. Create custom OpenJPEG FFI bindings
-  - [ ] 1.1 Create src/jbp/j2k/mod.rs module structure
+- [x] 1. Create custom OpenJPEG FFI bindings
+  - [x] 1.1 Create src/jbp/j2k/mod.rs module structure
     - Create `src/jbp/j2k/` directory
     - Add mod.rs with submodule declarations
     - Export public types from the module
     - _Requirements: 0.1_
   
-  - [ ] 1.2 Create src/jbp/j2k/sys.rs with raw OpenJPEG FFI declarations
+  - [x] 1.2 Create src/jbp/j2k/sys.rs with raw OpenJPEG FFI declarations
     - Declare opaque types: opj_codec_t, opj_stream_t
     - Declare struct representations: opj_image_t, opj_image_comp_t, opj_image_cmptparm_t
     - Declare parameter structs: opj_cparameters_t, opj_dparameters_t
@@ -33,13 +33,13 @@ The implementation builds on the existing `BlockDecoder` and `BlockEncoder` trai
     - Declare constants: OPJ_CODEC_J2K, OPJ_CODEC_JP2, OPJ_TRUE, OPJ_FALSE, OPJ_CLRSPC_* color spaces, OPJ_PROG_ORDER progression orders
     - _Requirements: 20.1, 20.2_
   
-  - [ ] 1.3 Update Cargo.toml with OpenJPEG linking configuration
+  - [x] 1.3 Update Cargo.toml with OpenJPEG linking configuration
     - Add `openjpeg` feature flag (default enabled)
     - Add build.rs or pkg-config dependency for finding libopenjp2
     - Configure conditional compilation for openjpeg feature
     - _Requirements: 20.1, 20.2_
   
-  - [ ] 1.4 Create src/jbp/j2k/ffi.rs with safe OpenJPEG wrapper
+  - [x] 1.4 Create src/jbp/j2k/ffi.rs with safe OpenJPEG wrapper
     - Wrap raw sys types in safe Rust abstractions
     - Implement Drop for opj_image_t, opj_codec_t, and opj_stream_t handles
     - Implement MemoryReadStream adapter for reading from &[u8] byte slices:
@@ -57,8 +57,8 @@ The implementation builds on the existing `BlockDecoder` and `BlockEncoder` trai
     - Implement message handler callbacks to capture OpenJPEG warnings/errors
     - _Requirements: 20.1, 20.3_
 
-- [ ] 2. Implement J2KCodec trait and OpenJpegCodec
-  - [ ] 2.1 Create src/jbp/j2k/codec.rs with J2KCodec trait
+- [x] 2. Implement J2KCodec trait and OpenJpegCodec
+  - [x] 2.1 Create src/jbp/j2k/codec.rs with J2KCodec trait
     - Define J2KCodecCapabilities struct
     - Define J2KDecodeParams and J2KEncodeParams structs
     - Define J2KDecodeResult struct
@@ -66,7 +66,7 @@ The implementation builds on the existing `BlockDecoder` and `BlockEncoder` trai
     - Define J2KEncodeState trait for incremental encoding
     - _Requirements: 0.1, 0.2, 0.3, 0.4, 0.5_
   
-  - [ ] 2.2 Implement OpenJpegCodec in src/jbp/j2k/openjpeg.rs
+  - [x] 2.2 Implement OpenJpegCodec in src/jbp/j2k/openjpeg.rs
     - Implement J2KCodec::capabilities() returning max_bit_depth=38, htj2k=false
     - Implement J2KCodec::decode() using opj_decode()
     - Implement J2KCodec::start_encode() returning OpenJpegEncodeState
@@ -74,18 +74,18 @@ The implementation builds on the existing `BlockDecoder` and `BlockEncoder` trai
     - Implement J2KCodec::get_dimensions() by reading SIZ marker
     - _Requirements: 20.1, 20.3, 20.4, 20.5_
   
-  - [ ] 2.3 Write unit tests for OpenJpegCodec
+  - [x] 2.3 Write unit tests for OpenJpegCodec
     - Test capabilities() returns correct values
     - Test decode() with synthetic J2K codestream
     - Test get_resolution_levels() and get_dimensions()
     - Test error handling for invalid codestreams
     - _Requirements: 20.1, 20.3_
 
-- [ ] 3. Checkpoint - Verify OpenJPEG integration
+- [x] 3. Checkpoint - Verify OpenJPEG integration
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 4. Implement COMRAT parsing and generation
-  - [ ] 4.1 Create src/jbp/j2k/comrat.rs with J2KComrat enum
+- [x] 4. Implement COMRAT parsing and generation
+  - [x] 4.1 Create src/jbp/j2k/comrat.rs with J2KComrat enum
     - Implement J2KComrat::parse() for "Nnnn.n", "Vnnn.n", "nn.n" formats
     - Implement J2KComrat::to_string() for generating COMRAT
     - Implement generate_comrat() from J2KEncodingHints
@@ -95,19 +95,19 @@ The implementation builds on the existing `BlockDecoder` and `BlockEncoder` trai
     - **Property 9: COMRAT Parse-Generate Round-Trip**
     - **Validates: Requirements 5.1, 10.4**
   
-  - [ ] 4.3 Write unit tests for COMRAT edge cases
+  - [x] 4.3 Write unit tests for COMRAT edge cases
     - Test parsing invalid COMRAT values
     - Test boundary values for bpp rates
     - _Requirements: 5.5, 16.3_
 
-- [ ] 5. Implement Jpeg2000BlockDecoder
-  - [ ] 5.1 Create src/jbp/j2k/decoder.rs with Jpeg2000BlockDecoder struct
+- [x] 5. Implement Jpeg2000BlockDecoder
+  - [x] 5.1 Create src/jbp/j2k/decoder.rs with Jpeg2000BlockDecoder struct
     - Store codestream, dimensions, nbands, nbpp, pvtype, ic, comrat, codec
     - Implement constructor with BPJ2K01.20 validation (IMODE=B, NBPP 1-38, ABPP=NBPP)
     - Implement select_bands() helper for band selection
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 6.1, 6.2, 6.3, 6.4, 6.5_
   
-  - [ ] 5.2 Implement BlockDecoder trait for Jpeg2000BlockDecoder
+  - [x] 5.2 Implement BlockDecoder trait for Jpeg2000BlockDecoder
     - Implement decode_block() delegating to J2KCodec::decode()
     - Implement has_block() returning true only for (0,0)
     - Implement compression_type() returning IC value
@@ -132,22 +132,22 @@ The implementation builds on the existing `BlockDecoder` and `BlockEncoder` trai
     - Test ABPP != NBPP validation error
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 16.4_
 
-- [ ] 6. Checkpoint - Verify decoder implementation
+- [x] 6. Checkpoint - Verify decoder implementation
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 7. Implement Jpeg2000BlockEncoder
-  - [ ] 7.1 Create src/jbp/j2k/encoder.rs with J2KEncodingHints struct
+- [x] 7. Implement Jpeg2000BlockEncoder
+  - [x] 7.1 Create src/jbp/j2k/encoder.rs with J2KEncodingHints struct
     - Define compression_ratio, lossless, decomposition_levels, quality_layers, htj2k fields
     - Implement Default trait with sensible defaults
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5_
   
-  - [ ] 7.2 Implement Jpeg2000BlockEncoder struct
+  - [x] 7.2 Implement Jpeg2000BlockEncoder struct
     - Store codec, encode_state, block_grid, block_dims, ic, encoded_blocks
     - Implement constructor validating HTJ2K codec support
     - Calculate block grid from image dimensions and tile size
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
   
-  - [ ] 7.3 Implement BlockEncoder trait for Jpeg2000BlockEncoder
+  - [x] 7.3 Implement BlockEncoder trait for Jpeg2000BlockEncoder
     - Implement encode_block() validating coordinates and delegating to J2KEncodeState::encode_tile()
     - Implement finalize() verifying all blocks encoded and calling J2KEncodeState::finalize()
     - Implement compression_type() returning "C8" or "CD"
@@ -158,27 +158,27 @@ The implementation builds on the existing `BlockDecoder` and `BlockEncoder` trai
     - **Property 2: Lossy Round-Trip Quality Tolerance**
     - **Validates: Requirements 15.2**
 
-- [ ] 8. Extend factory functions for J2K support
-  - [ ] 8.1 Update create_block_decoder() in src/jbp/image/decoder.rs
+- [x] 8. Extend factory functions for J2K support
+  - [x] 8.1 Update create_block_decoder() in src/jbp/image/decoder.rs
     - Add match arms for "C8" and "CD" IC codes
     - Create Jpeg2000BlockDecoder with default OpenJpegCodec
     - _Requirements: 17.1, 17.2_
   
-  - [ ] 8.2 Update create_block_encoder() in src/jbp/image/encoder.rs
+  - [x] 8.2 Update create_block_encoder() in src/jbp/image/encoder.rs
     - Add match arms for "C8" and "CD" IC codes
     - Create Jpeg2000BlockEncoder with J2KEncodingHints
     - _Requirements: 18.1, 18.2_
   
-  - [ ] 8.3 Add get_j2k_codec() function for codec selection
+  - [x] 8.3 Add get_j2k_codec() function for codec selection
     - Read OSML_IO_J2K_CODEC environment variable
     - Return OpenJpegCodec as default
     - _Requirements: 0.6, 0.7, 21.2, 21.3_
 
-- [ ] 9. Checkpoint - Verify encoder and factory integration
+- [x] 9. Checkpoint - Verify encoder and factory integration
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 10. Integrate with JBPDatasetReader
-  - [ ] 10.1 Update JBPImageAssetProvider to use Jpeg2000BlockDecoder
+- [x] 10. Integrate with JBPDatasetReader
+  - [x] 10.1 Update JBPImageAssetProvider to use Jpeg2000BlockDecoder
     - Pass J2K codec to create_block_decoder() for IC=C8/CD
     - Expose num_resolution_levels() for J2K images
     - Support band selection for J2K images
@@ -188,20 +188,20 @@ The implementation builds on the existing `BlockDecoder` and `BlockEncoder` trai
     - **Property 4: Decoded Dimensions Match Subheader**
     - **Validates: Requirements 2.2**
 
-- [ ] 11. Integrate with JBPDatasetWriter
-  - [ ] 11.1 Update JBPDatasetWriter to use Jpeg2000BlockEncoder
+- [x] 11. Integrate with JBPDatasetWriter
+  - [x] 11.1 Update JBPDatasetWriter to use Jpeg2000BlockEncoder
     - Accept IC hint "C8" or "CD" for J2K compression
     - Accept J2KEncodingHints via encoding hints
     - Validate J2K constraints before encoding
     - _Requirements: 18.1, 18.2, 18.3, 18.4_
   
-  - [ ] 11.2 Implement IC and COMRAT field generation
+  - [x] 11.2 Implement IC and COMRAT field generation
     - Set IC to "C8" for Part 1, "CD" for HTJ2K
     - Set IMODE to "B" for J2K images
     - Generate COMRAT from encoding hints
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 10.1, 10.2, 10.3, 10.4_
   
-  - [ ] 11.3 Implement codestream embedding
+  - [x] 11.3 Implement codestream embedding
     - Embed J2K codestream in image data area
     - Calculate correct image data length
     - Ensure correct offset after subheader
@@ -211,29 +211,34 @@ The implementation builds on the existing `BlockDecoder` and `BlockEncoder` trai
     - **Property 10: Codestream Embedding Integrity**
     - **Validates: Requirements 12.1, 12.2, 12.3, 12.4**
 
-- [ ] 12. Checkpoint - Verify reader/writer integration
+- [x] 12. Checkpoint - Verify reader/writer integration
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 13. Update Python bindings
-  - [ ] 13.1 Update PyJBPImageAssetProvider for J2K support
+- [x] 13. Update Python bindings
+  - [x] 13.1 Update PyJBPImageAssetProvider for J2K support
     - Add resolution_level parameter to get_block()
-    - Expose num_resolution_levels() method
+    - Expose num_resolution_levels property
     - Return correct NumPy dtypes for all J2K bit depths
     - _Requirements: 19.1, 19.2, 19.3_
   
-  - [ ] 13.2 Update PyJBPDatasetWriter for J2K support
-    - Accept ic="C8" or ic="CD" parameter
-    - Accept compression configuration parameters (lossless, compression_ratio, etc.)
+  - [x] 13.2 Verify BufferedMetadataProvider supports J2K encoding hints
+    - Ensure IC="C8" or IC="CD" can be set via metadata.set()
+    - Ensure COMRAT can be set via metadata.set() (controls lossless/lossy and compression ratio)
+    - Ensure J2K_DECOMPOSITION_LEVELS can be set via metadata.set() (controls resolution pyramid depth)
+    - Ensure J2K_QUALITY_LAYERS can be set via metadata.set() (controls progressive quality layers)
+    - Document the encoding hint field names for J2K compression
     - _Requirements: 19.4_
+    - _Note: J2K compression parameters flow through MetadataProvider, not direct writer parameters. COMRAT is the primary hint for lossless/lossy mode and compression ratio. See docs/DATASET_WRITER_HINTS.md for the established pattern._
   
-  - [ ] 13.3 Write Python integration tests
+  - [x] 13.3 Write Python integration tests
     - Test reading J2K image at different resolution levels
-    - Test writing lossless J2K image and reading back
-    - Test writing lossy J2K image with compression ratio
+    - Test writing lossless J2K image using BufferedMetadataProvider with IC="C8" and lossless hint
+    - Test writing lossy J2K image using BufferedMetadataProvider with IC="C8" and compression_ratio hint
+    - Test chipping workflow: read NITF, extract chip, set J2K encoding hints, write compressed output
     - _Requirements: 19.1, 19.2, 19.3, 19.4_
 
-- [ ] 14. Add error handling and validation
-  - [ ] 14.1 Add J2K-specific error variants to CodecError
+- [x] 14. Add error handling and validation
+  - [x] 14.1 Add J2K-specific error variants to CodecError
     - Add InvalidResolutionLevel error with requested and available levels
     - Ensure decode errors include codec error message and byte offset
     - Ensure encode errors include encoding parameters and failure reason
@@ -245,7 +250,7 @@ The implementation builds on the existing `BlockDecoder` and `BlockEncoder` trai
     - Test profile validation error includes constraint and JBP requirement ID
     - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.5_
 
-- [ ] 15. Final checkpoint - Complete integration testing
+- [x] 15. Final checkpoint - Complete integration testing
   - Ensure all tests pass, ask the user if questions arise.
   - Run integration tests with real J2K-compressed NITF files from data/integration/
 

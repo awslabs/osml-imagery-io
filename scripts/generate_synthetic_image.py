@@ -51,6 +51,8 @@ class ImageConfig:
         pixel_type: Pixel data type - "uint8" or "uint16"
         abpp: Actual bits per pixel (defaults to full range for pixel_type)
         imode: Interleave mode - "B", "P", "R", or "S"
+        compression: Compression type - "NC" (none) or "C8" (JPEG2000)
+        comrat: Compression ratio for JPEG2000 (e.g., "N001.0" for lossless, "01.0" for 1.0 bpp)
     """
     output_path: str
     width: int = 512
@@ -61,6 +63,8 @@ class ImageConfig:
     pixel_type: str = "uint8"
     abpp: Optional[int] = None
     imode: str = "B"
+    compression: str = "NC"
+    comrat: Optional[str] = None
     
     def __post_init__(self) -> None:
         """Validate configuration and set defaults."""
@@ -91,6 +95,10 @@ class ImageConfig:
         # Validate IMODE
         if self.imode not in ("B", "P", "R", "S"):
             raise ValueError(f"IMODE must be 'B', 'P', 'R', or 'S', got '{self.imode}'")
+        
+        # Validate compression
+        if self.compression not in ("NC", "C8"):
+            raise ValueError(f"Compression must be 'NC' or 'C8', got '{self.compression}'")
         
         # Set ABPP to full bit depth if not specified
         max_bits = 8 if self.pixel_type == "uint8" else 16
@@ -384,6 +392,10 @@ class ImageWriter:
         # Create metadata provider with encoding hints (uppercase field names match .ksy definitions)
         metadata = BufferedMetadataProvider()
         metadata.set("IMODE", config.imode)
+        metadata.set("IC", config.compression)
+        
+        if config.compression == "C8" and config.comrat:
+            metadata.set("COMRAT", config.comrat)
         
         # Create BufferedImageAssetProvider with the correct configuration
         try:
@@ -589,6 +601,22 @@ Examples:
         help="Interleave mode: B (block), P (pixel), R (row), S (sequential) (default: B)"
     )
     
+    # Compression options
+    parser.add_argument(
+        "--compression",
+        type=str,
+        default="NC",
+        choices=["NC", "C8"],
+        help="Compression: NC (none) or C8 (JPEG2000) (default: NC)"
+    )
+    parser.add_argument(
+        "--comrat",
+        type=str,
+        default=None,
+        metavar="RATIO",
+        help="Compression ratio for JPEG2000: N001.0 (lossless), 01.0 (1.0 bpp), etc."
+    )
+    
     parsed = parser.parse_args(args)
     
     return ImageConfig(
@@ -601,6 +629,8 @@ Examples:
         pixel_type=parsed.pixel_type,
         abpp=parsed.abpp,
         imode=parsed.imode,
+        compression=parsed.compression,
+        comrat=parsed.comrat,
     )
 
 

@@ -9,6 +9,8 @@
 //! | IC Code | Description | Implementation |
 //! |---------|-------------|----------------|
 //! | NC | No compression | [`UncompressedBlockEncoder`] |
+//! | C8 | JPEG 2000 Part 1 | [`Jpeg2000BlockEncoder`] |
+//! | CD | JPEG 2000 Part 15 (HTJ2K) | [`Jpeg2000BlockEncoder`] |
 //!
 //! # Example
 //!
@@ -17,7 +19,7 @@
 //! use osml_io::jbp::image::types::InterleaveMode;
 //!
 //! let mut encoder = create_block_encoder(
-//!     "NC", 64, 64, 3, 8, InterleaveMode::B, 32, 32
+//!     "NC", 64, 64, 3, 8, false, InterleaveMode::B, 32, 32, None
 //! )?;
 //! encoder.encode_block(0, 0, &block_data, [32, 32, 3])?;
 //! let encoded = Box::new(encoder).finalize()?;
@@ -26,6 +28,9 @@
 use crate::error::CodecError;
 use crate::jbp::image::interleave::from_band_sequential;
 use crate::jbp::image::types::InterleaveMode;
+
+#[cfg(feature = "openjpeg")]
+use crate::jbp::j2k::{J2KEncodingHints, Jpeg2000BlockEncoder};
 
 /// Trait for encoding image blocks to various compression formats.
 ///
@@ -89,36 +94,76 @@ pub trait BlockEncoder: Send + Sync {
 /// Factory function to create the appropriate block encoder based on IC field.
 ///
 /// # Arguments
-/// * `ic` - Image compression code (e.g., "NC", "C8")
+/// * `ic` - Image compression code (e.g., "NC", "C8", "CD")
 /// * `nrows` - Image height in pixels
 /// * `ncols` - Image width in pixels
 /// * `nbands` - Number of bands
 /// * `nbpp` - Bits per pixel
-/// * `imode` - Target interleave mode
+/// * `is_signed` - Whether pixel values are signed (for J2K encoding)
+/// * `imode` - Target interleave mode (ignored for J2K, which always uses IMODE=B)
 /// * `nppbh` - Block width in pixels
 /// * `nppbv` - Block height in pixels
+/// * `j2k_hints` - Optional JPEG 2000 encoding hints (required for C8/CD)
 ///
 /// # Returns
 /// A boxed `BlockEncoder` implementation appropriate for the compression type.
 ///
 /// # Errors
 /// Returns `CodecError::Unsupported` if the compression type is not supported.
+///
+/// # Supported Compression Types
+/// - `NC`: Uncompressed imagery
+/// - `C8`: JPEG 2000 Part 1 (requires `openjpeg` feature)
+/// - `CD`: JPEG 2000 Part 15 HTJ2K (requires `openjpeg` feature)
+#[allow(clippy::too_many_arguments)]
 pub fn create_block_encoder(
     ic: &str,
     nrows: u32,
     ncols: u32,
     nbands: u32,
     nbpp: u8,
+    is_signed: bool,
     imode: InterleaveMode,
     nppbh: u32,
     nppbv: u32,
+    #[cfg(feature = "openjpeg")] j2k_hints: Option<&J2KEncodingHints>,
+    #[cfg(not(feature = "openjpeg"))] _j2k_hints: Option<&()>,
 ) -> Result<Box<dyn BlockEncoder>, CodecError> {
     match ic.trim() {
         "NC" => Ok(Box::new(UncompressedBlockEncoder::new(
             nrows, ncols, nbands, nbpp, imode, nppbh, nppbv,
         ))),
+        #[cfg(feature = "openjpeg")]
+        "C8" => {
+            let hints = j2k_hints
+                .cloned()
+                .unwrap_or_default();
+            let encoder = Jpeg2000BlockEncoder::new(
+                nrows, ncols, nbands, nbpp, is_signed, nppbh, nppbv, &hints,
+            )?;
+            Ok(Box::new(encoder))
+        }
+        #[cfg(feature = "openjpeg")]
+        "CD" => {
+            let hints = j2k_hints
+                .cloned()
+                .map(|mut h| {
+                    h.htj2k = true;
+                    h
+                })
+                .unwrap_or_else(|| J2KEncodingHints::htj2k(false));
+            let encoder = Jpeg2000BlockEncoder::new(
+                nrows, ncols, nbands, nbpp, is_signed, nppbh, nppbv, &hints,
+            )?;
+            Ok(Box::new(encoder))
+        }
+        #[cfg(not(feature = "openjpeg"))]
+        "C8" | "CD" => Err(CodecError::Unsupported(format!(
+            "JPEG 2000 compression (IC='{}') requires the 'openjpeg' feature to be enabled.",
+            ic.trim()
+        ))),
         _ => Err(CodecError::Unsupported(format!(
-            "Unsupported compression type for encoding: '{}'. Only NC is currently supported.",
+            "Unsupported compression type for encoding: '{}'. Supported: NC, C8, CD.",
             ic
         ))),
     }
@@ -767,21 +812,44 @@ mod tests {
         use super::*;
 
         #[test]
-        fn unsupported_ic_returns_error() {
+        #[cfg(feature = "openjpeg")]
+        fn c8_returns_encoder() {
             let result = create_block_encoder(
                 "C8",
                 64,
                 64,
                 3,
                 8,
+                false,
                 InterleaveMode::B,
                 32,
                 32,
+                None,
+            );
+            assert!(result.is_ok());
+            let encoder = result.unwrap();
+            assert_eq!(encoder.compression_type(), "C8");
+        }
+
+        #[test]
+        #[cfg(not(feature = "openjpeg"))]
+        fn c8_without_feature_returns_error() {
+            let result = create_block_encoder(
+                "C8",
+                64,
+                64,
+                3,
+                8,
+                false,
+                InterleaveMode::B,
+                32,
+                32,
+                None,
             );
             assert!(result.is_err());
             match result {
                 Err(CodecError::Unsupported(msg)) => {
-                    assert!(msg.contains("C8"));
+                    assert!(msg.contains("openjpeg"));
                 }
                 _ => panic!("Expected Unsupported error"),
             }
@@ -789,15 +857,31 @@ mod tests {
 
         #[test]
         fn nc_returns_encoder() {
+            #[cfg(feature = "openjpeg")]
             let result = create_block_encoder(
                 "NC",
                 64,
                 64,
                 3,
                 8,
+                false,
                 InterleaveMode::B,
                 32,
                 32,
+                None,
+            );
+            #[cfg(not(feature = "openjpeg"))]
+            let result = create_block_encoder(
+                "NC",
+                64,
+                64,
+                3,
+                8,
+                false,
+                InterleaveMode::B,
+                32,
+                32,
+                None,
             );
             assert!(result.is_ok());
             let encoder = result.unwrap();
@@ -807,21 +891,63 @@ mod tests {
         }
 
         #[test]
-        fn ic_with_whitespace_is_trimmed() {
+        #[cfg(feature = "openjpeg")]
+        fn cd_returns_encoder() {
             let result = create_block_encoder(
-                "  C8  ",
+                "CD",
                 64,
                 64,
                 3,
                 8,
+                false,
                 InterleaveMode::B,
                 32,
                 32,
+                None,
+            );
+            // CD (HTJ2K) may fail if codec doesn't support it
+            // OpenJPEG doesn't support HTJ2K, so this should fail
+            assert!(result.is_err());
+            match result {
+                Err(CodecError::Unsupported(msg)) => {
+                    assert!(msg.contains("HTJ2K"));
+                }
+                _ => panic!("Expected Unsupported error for HTJ2K"),
+            }
+        }
+
+        #[test]
+        fn unsupported_ic_returns_error() {
+            #[cfg(feature = "openjpeg")]
+            let result = create_block_encoder(
+                "XX",
+                64,
+                64,
+                3,
+                8,
+                false,
+                InterleaveMode::B,
+                32,
+                32,
+                None,
+            );
+            #[cfg(not(feature = "openjpeg"))]
+            let result = create_block_encoder(
+                "XX",
+                64,
+                64,
+                3,
+                8,
+                false,
+                InterleaveMode::B,
+                32,
+                32,
+                None,
             );
             assert!(result.is_err());
             match result {
                 Err(CodecError::Unsupported(msg)) => {
-                    assert!(msg.contains("C8"));
+                    assert!(msg.contains("XX"));
                 }
                 _ => panic!("Expected Unsupported error"),
             }
@@ -829,15 +955,31 @@ mod tests {
 
         #[test]
         fn nc_with_whitespace_is_trimmed() {
+            #[cfg(feature = "openjpeg")]
             let result = create_block_encoder(
                 "  NC  ",
                 64,
                 64,
                 3,
                 8,
+                false,
                 InterleaveMode::B,
                 32,
                 32,
+                None,
+            );
+            #[cfg(not(feature = "openjpeg"))]
+            let result = create_block_encoder(
+                "  NC  ",
+                64,
+                64,
+                3,
+                8,
+                false,
+                InterleaveMode::B,
+                32,
+                32,
+                None,
             );
             assert!(result.is_ok());
         }
@@ -1350,7 +1492,7 @@ mod property_tests {
             );
 
             // Decode the block
-            let (decoded_data, shape) = decoder.decode_block(0, 0, None).unwrap();
+            let (decoded_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
 
             // Verify shape matches
             prop_assert_eq!(shape, [nrows, ncols, nbands]);
@@ -1441,8 +1583,14 @@ mod property_tests {
             &self,
             block_row: u32,
             block_col: u32,
+            resolution_level: u32,
             _bands: Option<&[u32]>,
         ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+            // Test decoder only supports resolution level 0
+            if resolution_level != 0 {
+                return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, resolution_level));
+            }
+            
             if block_row >= self.nbpc || block_col >= self.nbpr {
                 return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
             }

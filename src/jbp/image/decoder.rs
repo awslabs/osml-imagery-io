@@ -10,7 +10,8 @@
 //! |---------|-------------|----------------|
 //! | NC | No compression | [`UncompressedBlockDecoder`] |
 //! | NM | No compression with mask | [`UncompressedBlockDecoder`] |
-//! | C8 | JPEG 2000 | Future |
+//! | C8 | JPEG 2000 Part 1 | [`Jpeg2000BlockDecoder`] |
+//! | CD | JPEG 2000 Part 15 (HTJ2K) | [`Jpeg2000BlockDecoder`] |
 //! | M8 | JPEG 2000 with mask | Future |
 //!
 //! # Example
@@ -20,7 +21,7 @@
 //! use osml_io::jbp::image::facade::ImageSubheaderFacade;
 //!
 //! let decoder = create_block_decoder(&facade, image_data)?;
-//! let (block_data, shape) = decoder.decode_block(0, 0, None)?;
+//! let (block_data, shape) = decoder.decode_block(0, 0, 0, None)?;
 //! ```
 
 use std::sync::Arc;
@@ -29,6 +30,9 @@ use crate::error::CodecError;
 use crate::jbp::image::facade::ImageSubheaderFacade;
 use crate::jbp::image::interleave::to_band_sequential;
 use crate::jbp::image::types::{InterleaveMode, PixelJustification, PixelValueType};
+
+#[cfg(feature = "openjpeg")]
+use crate::jbp::j2k::{get_j2k_codec, Jpeg2000BlockDecoder};
 
 /// Trait for decoding image blocks from various compression formats.
 ///
@@ -46,19 +50,22 @@ pub trait BlockDecoder: Send + Sync {
     /// # Arguments
     /// * `block_row` - Row index of the block in the block grid (0-indexed)
     /// * `block_col` - Column index of the block in the block grid (0-indexed)
+    /// * `resolution_level` - Resolution level to decode (0 = full resolution, N = 1/2^N)
     /// * `bands` - Optional slice of band indices to retrieve. If `None`, all bands are returned.
     ///
     /// # Returns
     /// A tuple of `(data, shape)` where:
     /// - `data` is the raw pixel data in band-sequential format
-    /// - `shape` is `[rows, cols, bands]` describing the block dimensions
+    /// - `shape` is `[rows, cols, bands]` describing the block dimensions at the requested resolution
     ///
     /// # Errors
-    /// Returns `CodecError::InvalidBlockCoordinates` if the block coordinates are out of bounds.
+    /// Returns `CodecError::InvalidBlockCoordinates` if the block coordinates or resolution level
+    /// are out of bounds.
     fn decode_block(
         &self,
         block_row: u32,
         block_col: u32,
+        resolution_level: u32,
         bands: Option<&[u32]>,
     ) -> Result<(Vec<u8>, [u32; 3]), CodecError>;
 
@@ -102,6 +109,11 @@ pub trait BlockDecoder: Send + Sync {
 ///
 /// # Errors
 /// Returns `CodecError::Unsupported` if the compression type is not supported.
+///
+/// # Supported Compression Types
+/// - `NC`, `NM`: Uncompressed imagery
+/// - `C8`: JPEG 2000 Part 1 (requires `openjpeg` feature)
+/// - `CD`: JPEG 2000 Part 15 HTJ2K (requires `openjpeg` feature)
 pub fn create_block_decoder(
     subheader: &ImageSubheaderFacade,
     image_data: Arc<[u8]>,
@@ -114,8 +126,19 @@ pub fn create_block_decoder(
             let decoder = UncompressedBlockDecoder::new(subheader, image_data)?;
             Ok(Box::new(decoder))
         }
+        #[cfg(feature = "openjpeg")]
+        "C8" | "CD" => {
+            let codec = get_j2k_codec();
+            let decoder = Jpeg2000BlockDecoder::new(subheader, image_data, codec)?;
+            Ok(Box::new(decoder))
+        }
+        #[cfg(not(feature = "openjpeg"))]
+        "C8" | "CD" => Err(CodecError::Unsupported(format!(
+            "JPEG 2000 compression (IC='{}') requires the 'openjpeg' feature to be enabled.",
+            ic_trimmed
+        ))),
         _ => Err(CodecError::Unsupported(format!(
-            "Unsupported compression type: '{}'. Only NC and NM are currently supported.",
+            "Unsupported compression type: '{}'. Supported: NC, NM, C8, CD.",
             ic_trimmed
         ))),
     }
@@ -482,8 +505,18 @@ impl BlockDecoder for UncompressedBlockDecoder {
         &self,
         block_row: u32,
         block_col: u32,
+        resolution_level: u32,
         bands: Option<&[u32]>,
     ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        // Uncompressed images only support resolution level 0
+        if resolution_level != 0 {
+            return Err(CodecError::InvalidBlockCoordinates(
+                block_row,
+                block_col,
+                resolution_level,
+            ));
+        }
+
         // Validate block coordinates
         if block_row >= self.nbpc || block_col >= self.nbpr {
             return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
@@ -689,7 +722,7 @@ mod tests {
                 data.clone(),
             );
 
-            let (block_data, shape) = decoder.decode_block(0, 0, None).unwrap();
+            let (block_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
             assert_eq!(shape, [4, 4, 1]);
             assert_eq!(block_data, data);
         }
@@ -706,10 +739,10 @@ mod tests {
                 vec![0u8; 16],
             );
 
-            let result = decoder.decode_block(1, 0, None);
+            let result = decoder.decode_block(1, 0, 0, None);
             assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(1, 0, 0))));
 
-            let result = decoder.decode_block(0, 1, None);
+            let result = decoder.decode_block(0, 1, 0, None);
             assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(0, 1, 0))));
         }
 
@@ -728,12 +761,12 @@ mod tests {
             );
 
             // Select only band 1
-            let (block_data, shape) = decoder.decode_block(0, 0, Some(&[1])).unwrap();
+            let (block_data, shape) = decoder.decode_block(0, 0, 0, Some(&[1])).unwrap();
             assert_eq!(shape, [4, 4, 1]);
             assert_eq!(block_data.len(), 16); // 4x4x1 band
 
             // Select bands 0 and 2
-            let (block_data, shape) = decoder.decode_block(0, 0, Some(&[0, 2])).unwrap();
+            let (block_data, shape) = decoder.decode_block(0, 0, 0, Some(&[0, 2])).unwrap();
             assert_eq!(shape, [4, 4, 2]);
             assert_eq!(block_data.len(), 32); // 4x4x2 bands
         }
@@ -801,22 +834,22 @@ mod tests {
             );
 
             // Top-left block: full 4x4
-            let (block_data, shape) = decoder.decode_block(0, 0, None).unwrap();
+            let (block_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
             assert_eq!(shape, [4, 4, 1]);
             assert_eq!(block_data.len(), 16);
 
             // Top-right block: 4 rows x 2 cols (edge)
-            let (block_data, shape) = decoder.decode_block(0, 1, None).unwrap();
+            let (block_data, shape) = decoder.decode_block(0, 1, 0, None).unwrap();
             assert_eq!(shape, [4, 2, 1]);
             assert_eq!(block_data.len(), 8);
 
             // Bottom-left block: 2 rows x 4 cols (edge)
-            let (block_data, shape) = decoder.decode_block(1, 0, None).unwrap();
+            let (block_data, shape) = decoder.decode_block(1, 0, 0, None).unwrap();
             assert_eq!(shape, [2, 4, 1]);
             assert_eq!(block_data.len(), 8);
 
             // Bottom-right block: 2 rows x 2 cols (corner)
-            let (block_data, shape) = decoder.decode_block(1, 1, None).unwrap();
+            let (block_data, shape) = decoder.decode_block(1, 1, 0, None).unwrap();
             assert_eq!(shape, [2, 2, 1]);
             assert_eq!(block_data.len(), 4);
         }
@@ -1042,7 +1075,7 @@ mod property_tests {
                 nppbh, nppbv, nbpr, nbpc, nbands, imode
             );
 
-            let result = decoder.decode_block(block_row, block_col, None);
+            let result = decoder.decode_block(block_row, block_col, 0, None);
             prop_assert!(result.is_ok(), "decode_block should succeed for valid coordinates");
 
             let (block_data, shape) = result.unwrap();
@@ -1097,7 +1130,7 @@ mod property_tests {
 
             // Test row out of bounds
             let invalid_row = nbpc + extra_row;
-            let result = decoder.decode_block(invalid_row, 0, None);
+            let result = decoder.decode_block(invalid_row, 0, 0, None);
             prop_assert!(
                 matches!(result, Err(CodecError::InvalidBlockCoordinates(r, 0, 0)) if r == invalid_row),
                 "Should return InvalidBlockCoordinates for row {} >= nbpc {}",
@@ -1106,7 +1139,7 @@ mod property_tests {
 
             // Test col out of bounds
             let invalid_col = nbpr + extra_col;
-            let result = decoder.decode_block(0, invalid_col, None);
+            let result = decoder.decode_block(0, invalid_col, 0, None);
             prop_assert!(
                 matches!(result, Err(CodecError::InvalidBlockCoordinates(0, c, 0)) if c == invalid_col),
                 "Should return InvalidBlockCoordinates for col {} >= nbpr {}",
@@ -1114,7 +1147,7 @@ mod property_tests {
             );
 
             // Test both out of bounds
-            let result = decoder.decode_block(invalid_row, invalid_col, None);
+            let result = decoder.decode_block(invalid_row, invalid_col, 0, None);
             prop_assert!(
                 matches!(result, Err(CodecError::InvalidBlockCoordinates(r, c, 0)) if r == invalid_row && c == invalid_col),
                 "Should return InvalidBlockCoordinates for ({}, {}) >= ({}, {})",
@@ -1139,7 +1172,7 @@ mod property_tests {
             // Read all blocks and verify they match expected values
             for block_row in 0..nbpc {
                 for block_col in 0..nbpr {
-                    let result = decoder.decode_block(block_row, block_col, None);
+                    let result = decoder.decode_block(block_row, block_col, 0, None);
                     prop_assert!(result.is_ok(), "decode_block should succeed");
 
                     let (block_data, shape) = result.unwrap();

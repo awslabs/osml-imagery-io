@@ -15,6 +15,9 @@ dependencies:
   # Core dependencies
   - numpy>=1.20
 
+  # Native libraries for image codec support
+  - openjpeg>=2.5  # JPEG 2000 codec (libopenjp2)
+
   # Development tools
   - pytest>=7.0
   - pytest-cov>=4.0

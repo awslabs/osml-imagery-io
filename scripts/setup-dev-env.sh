@@ -85,6 +85,14 @@ case "$(uname -s)" in
             export DYLD_LIBRARY_PATH="${PYTHON_LIBDIR}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
         fi
         echo_success "DYLD_LIBRARY_PATH includes: ${PYTHON_LIBDIR}"
+        
+        # Add conda lib directory for native libraries (e.g., OpenJPEG)
+        if [ -n "$CONDA_PREFIX" ] && [ -d "$CONDA_PREFIX/lib" ]; then
+            if [[ ":$DYLD_LIBRARY_PATH:" != *":$CONDA_PREFIX/lib:"* ]]; then
+                export DYLD_LIBRARY_PATH="${CONDA_PREFIX}/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+            fi
+            echo_success "DYLD_LIBRARY_PATH includes: ${CONDA_PREFIX}/lib"
+        fi
         ;;
     Linux*)
         # Linux
@@ -92,6 +100,14 @@ case "$(uname -s)" in
             export LD_LIBRARY_PATH="${PYTHON_LIBDIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         fi
         echo_success "LD_LIBRARY_PATH includes: ${PYTHON_LIBDIR}"
+        
+        # Add conda lib directory for native libraries (e.g., OpenJPEG)
+        if [ -n "$CONDA_PREFIX" ] && [ -d "$CONDA_PREFIX/lib" ]; then
+            if [[ ":$LD_LIBRARY_PATH:" != *":$CONDA_PREFIX/lib:"* ]]; then
+                export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            fi
+            echo_success "LD_LIBRARY_PATH includes: ${CONDA_PREFIX}/lib"
+        fi
         ;;
     *)
         echo_warning "Unknown OS: $(uname -s). You may need to set library paths manually."

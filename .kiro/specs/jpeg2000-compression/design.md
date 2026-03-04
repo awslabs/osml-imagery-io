@@ -853,6 +853,151 @@ let (data, shape) = image.get_block(0, 0, 0, None)?;
 // OSML_IO_J2K_CODEC=nvjpeg2000 ./my_program
 ```
 
+### Encoding Hints via Metadata Provider
+
+JPEG 2000 encoding parameters are passed to the writer through the `BufferedMetadataProvider` interface, following the pattern established in the dataset-writer-hints specification. This approach keeps format-specific parameters out of abstract interfaces and enables seamless metadata copying from reader to writer.
+
+The writer extracts J2K encoding hints from `asset.metadata().as_dict()` using the following field names:
+
+| Metadata Field | Type | Description |
+|----------------|------|-------------|
+| `IC` | String | Compression code: "C8" (J2K Part 1) or "CD" (HTJ2K) |
+| `COMRAT` | String | Compression ratio in NITF format - controls lossless/lossy and quality |
+| `J2K_DECOMPOSITION_LEVELS` | String | Number of wavelet decomposition levels (default "5") - controls resolution pyramid depth |
+| `J2K_QUALITY_LAYERS` | String | Number of quality layers (default "1") - controls progressive decoding |
+
+**COMRAT Format:**
+- `Nnnn.n` - Numerically lossless (e.g., "N001.0")
+- `Vnnn.n` - Visually lossless with quality factor (e.g., "V020.0")  
+- `nn.n` - Target bits per pixel for lossy (e.g., "01.0" = 1.0 bpp, "00.5" = 0.5 bpp)
+
+The writer parses COMRAT to determine lossless mode and compression ratio, so separate `J2K_LOSSLESS` and `J2K_COMPRESSION_RATIO` hints are not needed.
+
+**Python Example - Writing J2K Compressed NITF:**
+
+```python
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
+import numpy as np
+
+# Create metadata with J2K encoding hints
+metadata = BufferedMetadataProvider()
+metadata.set("IC", "C8")                      # JPEG 2000 Part 1
+metadata.set("COMRAT", "01.0")                # Target 1.0 bpp (lossy)
+metadata.set("J2K_DECOMPOSITION_LEVELS", "5") # 5 resolution levels
+metadata.set("NPPBH", "1024")                 # Block width
+metadata.set("NPPBV", "1024")                 # Block height
+
+# Create image provider with encoding hints
+provider = BufferedImageAssetProvider.create(
+    key="compressed_image",
+    num_columns=2048,
+    num_rows=2048,
+    num_bands=3,
+    block_width=1024,
+    block_height=1024,
+    pixel_type=PixelType.UInt8,
+    metadata=metadata,
+)
+
+# Set image data
+image_data = np.zeros((3, 2048, 2048), dtype=np.uint8)
+provider.set_full_image(image_data)
+
+# Write - writer reads IC and J2K hints from provider.metadata()
+with IO.open(["output_j2k.ntf"], "w") as writer:
+    writer.add_asset("image_0", provider)
+```
+
+**Chipping and Transcoding Workflow:**
+
+```python
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider
+
+# Read uncompressed NITF, chip, and write as J2K compressed
+with IO.open(["large_uncompressed.ntf"], "r") as reader:
+    image_asset = reader.get_asset("image_segment_0")
+    original_meta = image_asset.metadata.as_dict()
+    
+    # Extract a chip
+    full_image = image_asset.get_block(0, 0, resolution_level=0)
+    chip = full_image[:, 1000:2024, 2000:3024]  # 1024x1024 chip
+    
+    # Create metadata for J2K output
+    metadata = BufferedMetadataProvider()
+    
+    # Preserve descriptive metadata from original
+    for field in ["IID1", "IID2", "TGTID", "ISORCE"]:
+        if field in original_meta:
+            metadata.set(field, str(original_meta[field]))
+    
+    # Set J2K compression parameters
+    metadata.set("IC", "C8")
+    metadata.set("J2K_COMPRESSION_RATIO", "15.0")  # 15:1 compression
+    metadata.set("J2K_DECOMPOSITION_LEVELS", "4")  # 4 resolution levels
+    
+    # Create provider
+    provider = BufferedImageAssetProvider.create(
+        key="chip",
+        num_columns=1024,
+        num_rows=1024,
+        num_bands=chip.shape[0],
+        pixel_type=image_asset.pixel_value_type,
+        metadata=metadata,
+    )
+    provider.set_full_image(chip)
+
+# Write compressed chip
+with IO.open(["chip_compressed.ntf"], "w") as writer:
+    writer.add_asset("image_0", provider)
+```
+
+**Writer Hint Extraction:**
+
+**Writer Hint Extraction:**
+
+The `JBPDatasetWriter` extracts J2K encoding hints in `extract_encoding_hints()`:
+
+```rust
+fn extract_j2k_hints(metadata: &HashMap<String, Value>) -> J2KEncodingHints {
+    // Parse COMRAT to determine lossless mode and compression ratio
+    let comrat = metadata.get("COMRAT")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim());
+    
+    let (lossless, compression_ratio) = match comrat {
+        Some(c) if c.starts_with('N') => (true, None),  // Numerically lossless
+        Some(c) if c.starts_with('V') => {
+            // Visually lossless - parse quality factor
+            let bpp: f64 = c[1..].parse().unwrap_or(1.0);
+            (false, Some(8.0 / bpp))  // Convert bpp to ratio
+        }
+        Some(c) => {
+            // Target bpp (e.g., "01.0" = 1.0 bpp)
+            let bpp: f64 = c.parse().unwrap_or(1.0);
+            (false, Some(8.0 / bpp))  // Convert bpp to ratio
+        }
+        None => (false, Some(10.0)),  // Default: lossy 10:1
+    };
+    
+    J2KEncodingHints {
+        lossless,
+        compression_ratio,
+        decomposition_levels: metadata.get("J2K_DECOMPOSITION_LEVELS")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5),
+        quality_layers: metadata.get("J2K_QUALITY_LAYERS")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1),
+        htj2k: metadata.get("IC")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim() == "CD")
+            .unwrap_or(false),
+    }
+}
+```
+
 ## Data Models
 
 ### IC Code to Codec Mapping

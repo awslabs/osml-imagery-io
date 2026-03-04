@@ -191,6 +191,78 @@ direction LR
     ImageAssetProvider <|-- BufferedImageAssetProvider
 ```
 
+### Accessing Image Blocks with get_block()
+
+The `get_block()` method retrieves a rectangular tile of image data from the underlying image. Large geospatial images are typically stored as grids of blocks (tiles) to enable efficient random access without loading the entire image into memory.
+
+```python
+def get_block(
+    block_row: int,
+    block_col: int,
+    resolution_level: int = 0,
+    bands: Optional[List[int]] = None
+) -> ndarray
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `block_row` | int | Row index of the block in the block grid (0-indexed from top) |
+| `block_col` | int | Column index of the block in the block grid (0-indexed from left) |
+| `resolution_level` | int | Resolution level to retrieve (0 = full resolution, higher = reduced) |
+| `bands` | Optional[List[int]] | Specific bands to retrieve, or None for all bands |
+
+**Resolution Levels:**
+
+The `resolution_level` parameter selects from a pyramid of progressively smaller versions of the block. Level 0 is always the full-resolution. Each subsequent level reduces the dimensions by a factor of 2 in each direction:
+
+| Level | Scale Factor | Dimension Reduction |
+|-------|--------------|---------------------|
+| 0 | 1:1 | Full resolution |
+| 1 | 1:2 | Half resolution |
+| 2 | 1:4 | Quarter resolution |
+| 3 | 1:8 | Eighth resolution |
+| n | 1:2^n | 2^n times smaller |
+
+**Example: Block Shapes at Different Resolution Levels**
+
+Consider an image with blocks of size 2048×2048 pixels and 3 bands. The returned ndarray shape varies by resolution level:
+
+```python
+from aws.osml.io import IO
+
+with IO.open(["image.ntf"], "r") as dataset:
+    image = dataset.get_asset("image_segment_001")
+    
+    # Full resolution block: shape is (bands, rows, cols)
+    block_r0 = image.get_block(0, 0, resolution_level=0)
+    print(block_r0.shape)  # (3, 2048, 2048)
+    
+    # Half resolution: dimensions halved
+    block_r1 = image.get_block(0, 0, resolution_level=1)
+    print(block_r1.shape)  # (3, 1024, 1024)
+    
+    # Quarter resolution
+    block_r2 = image.get_block(0, 0, resolution_level=2)
+    print(block_r2.shape)  # (3, 512, 512)
+    
+    # Eighth resolution
+    block_r3 = image.get_block(0, 0, resolution_level=3)
+    print(block_r3.shape)  # (3, 256, 256)
+    
+    # Check available resolution levels
+    print(f"Available levels: {image.num_resolution_levels}")
+```
+
+**Use Cases for Resolution Levels:**
+
+- **Level 0**: Full-quality processing, analysis, and output generation
+- **Level 1-2**: Interactive visualization, quick previews
+- **Level 3+**: Thumbnail generation, overview displays, rapid navigation
+
+The number of available resolution levels depends on the image format and how it was encoded. Use `num_resolution_levels` to check how many levels are available before requesting a specific level.
+
 ### Image Data Format: Band-Sequential (Channels First)
 
 This library uses band-sequential (BSQ) ordering for image data, where NumPy arrays have shape `(bands, rows, cols)`. This is also known as "channels first" or CHW format.
@@ -431,6 +503,157 @@ provider = BufferedImageAssetProvider.create(
 image_data = np.zeros((3, 512, 512), dtype=np.uint8)
 provider.set_full_image(image_data)
 ```
+
+## Writer API: Chipping and Transcoding Workflows
+
+The writer side of the API uses the same `BufferedMetadataProvider` pattern to control how images are encoded when written to disk. This enables powerful workflows like:
+
+- **Chipping**: Extract a region from a large image and write it as a new file
+- **Transcoding**: Read an image in one compression format and write it in another
+- **Metadata modification**: Copy an image while changing specific metadata fields
+
+### How the Writer Uses Encoding Hints
+
+When you call `writer.add_asset()`, the writer reads encoding hints from `asset.metadata()` to determine how to encode the output:
+
+```mermaid
+flowchart LR
+    A[BufferedMetadataProvider] -->|"set('IC', 'C8')"| B[metadata storage]
+    B --> C[BufferedImageAssetProvider]
+    C -->|"metadata()"| D[DatasetWriter]
+    D -->|"reads IC, IMODE, etc."| E[Encoder Selection]
+    E --> F[Output File]
+```
+
+The writer looks for specific field names that match the output format's native field names. For NITF files:
+
+| Field | Description | Example Values |
+|-------|-------------|----------------|
+| `IC` | Image compression | `NC` (none), `C8` (JPEG 2000), `CD` (HTJ2K) |
+| `IMODE` | Band interleave mode | `B` (block), `P` (pixel), `R` (row), `S` (sequential) |
+| `NPPBH` | Block width in pixels | `256`, `512`, `1024` |
+| `NPPBV` | Block height in pixels | `256`, `512`, `1024` |
+| `COMRAT` | Compression ratio | `N001.0` (lossless), `01.0` (target bpp) |
+
+For JPEG 2000 compression, COMRAT controls lossless/lossy mode and compression ratio. Additional hints control encoder parameters:
+
+| Field | Description | Example Values |
+|-------|-------------|----------------|
+| `COMRAT` | Compression ratio (NITF-native) | `N001.0` (lossless), `V020.0` (visually lossless), `01.0` (1.0 bpp) |
+| `J2K_DECOMPOSITION_LEVELS` | Resolution pyramid depth | `5` (default), `3`, `6` |
+| `J2K_QUALITY_LAYERS` | Progressive quality layers | `1` (default) |
+
+**COMRAT Format:**
+- `Nnnn.n` - Numerically lossless (e.g., "N001.0")
+- `Vnnn.n` - Visually lossless with quality factor
+- `nn.n` - Target bits per pixel (e.g., "01.0" = 1.0 bpp, "00.5" = 0.5 bpp)
+
+### Chipping Workflow
+
+Extract a region from a large image and write it as a new file:
+
+```python
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider
+
+with IO.open(["large_image.ntf"], "r") as reader:
+    image_asset = reader.get_asset("image_segment_0")
+    original_meta = image_asset.metadata.as_dict()
+    
+    # Read a specific block or region
+    # For large images, read only the blocks you need
+    block = image_asset.get_block(block_row=2, block_col=3, resolution_level=0)
+    
+    # Create metadata for the chip - preserve relevant fields
+    metadata = BufferedMetadataProvider()
+    for field in ["IID1", "IID2", "TGTID", "ISORCE", "IREP"]:
+        if field in original_meta:
+            metadata.set(field, str(original_meta[field]))
+    
+    # Keep same encoding or change it
+    metadata.set("IC", original_meta.get("IC", "NC"))
+    metadata.set("IMODE", "B")
+    
+    # Create provider for the chip
+    rows, cols, bands = block.shape[1], block.shape[2], block.shape[0]
+    provider = BufferedImageAssetProvider.create(
+        key="chip",
+        num_columns=cols,
+        num_rows=rows,
+        num_bands=bands,
+        pixel_type=image_asset.pixel_value_type,
+        metadata=metadata,
+    )
+    provider.set_full_image(block)
+
+with IO.open(["chip.ntf"], "w") as writer:
+    writer.add_asset("image_0", provider)
+```
+
+### Transcoding Workflow
+
+Read an uncompressed image and write it with JPEG 2000 compression:
+
+```python
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider
+
+with IO.open(["uncompressed.ntf"], "r") as reader:
+    image_asset = reader.get_asset("image_segment_0")
+    original_meta = image_asset.metadata.as_dict()
+    
+    # Read the full image (or process block by block for large images)
+    image_data = image_asset.get_block(0, 0, resolution_level=0)
+    
+    # Create metadata with JPEG 2000 encoding hints
+    metadata = BufferedMetadataProvider()
+    
+    # Preserve descriptive metadata
+    for field in ["IID1", "IID2", "TGTID", "ISORCE", "IREP", "ICAT"]:
+        if field in original_meta:
+            metadata.set(field, str(original_meta[field]))
+    
+    # Set JPEG 2000 compression parameters
+    metadata.set("IC", "C8")                      # JPEG 2000 Part 1
+    metadata.set("COMRAT", "00.5")                # Target 0.5 bpp (~16:1 compression)
+    metadata.set("J2K_DECOMPOSITION_LEVELS", "5") # 5 resolution levels
+    metadata.set("NPPBH", "1024")                 # 1024x1024 tiles
+    metadata.set("NPPBV", "1024")
+    
+    # Create provider
+    provider = BufferedImageAssetProvider.create(
+        key="compressed",
+        num_columns=image_asset.num_columns,
+        num_rows=image_asset.num_rows,
+        num_bands=image_asset.num_bands,
+        pixel_type=image_asset.pixel_value_type,
+        metadata=metadata,
+    )
+    provider.set_full_image(image_data)
+
+with IO.open(["compressed.ntf"], "w") as writer:
+    writer.add_asset("image_0", provider)
+```
+
+### Lossless JPEG 2000 Encoding
+
+For archival or when pixel-perfect preservation is required:
+
+```python
+metadata = BufferedMetadataProvider()
+metadata.set("IC", "C8")
+metadata.set("COMRAT", "N001.0")               # Numerically lossless
+metadata.set("J2K_DECOMPOSITION_LEVELS", "6")  # More resolution levels for large images
+```
+
+### Why Encoding Hints Use Metadata
+
+This design keeps format-specific parameters out of abstract interfaces:
+
+1. **Clean abstractions**: `BufferedImageAssetProvider` doesn't need NITF-specific parameters
+2. **Seamless copying**: Metadata from a reader can flow directly to a writer
+3. **Consistent naming**: The same field names used when reading are used when writing
+4. **Format flexibility**: Different output formats read different hint fields
+
+The writer knows what format it's writing, so it knows which metadata fields to look for. This allows the same `BufferedImageAssetProvider` to be written to NITF, GeoTIFF, or other formats by simply changing the writer and the encoding hints.
 
 ## ImageOperation Pattern for Large Image Processing
 

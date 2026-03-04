@@ -14,10 +14,12 @@ name = "_io"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
+default = ["openjpeg"]
 # extension-module is required for building as a Python extension
 # but must be disabled for running Rust tests
 extension-module = ["pyo3/extension-module"]
+# Enable OpenJPEG-based JPEG 2000 codec (requires libopenjp2)
+openjpeg = []
 
 [dependencies]
 pyo3 = { version = "0.22", features = ["auto-initialize"] }

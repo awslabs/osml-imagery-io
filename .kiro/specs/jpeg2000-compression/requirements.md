@@ -263,9 +263,10 @@ JPEG 2000 (J2K) provides superior compression efficiency compared to legacy form
 #### Acceptance Criteria
 
 1. THE Python ImageAssetProvider binding SHALL support resolution_level parameter in get_block()
-2. THE Python bindings SHALL expose num_resolution_levels() for J2K images
+2. THE Python bindings SHALL expose num_resolution_levels property for J2K images
 3. THE Python bindings SHALL return correct NumPy dtypes for all J2K bit depths
-4. THE Python bindings SHALL support compression configuration when writing J2K images
+4. THE Python bindings SHALL support J2K compression configuration via BufferedMetadataProvider encoding hints (IC, COMRAT, J2K_DECOMPOSITION_LEVELS, J2K_QUALITY_LAYERS)
+5. THE Python bindings SHALL NOT add J2K-specific parameters directly to writer methods, maintaining the metadata-based hints pattern established in dataset-writer-hints
 
 ### Requirement 20: OpenJPEG Default Implementation
 

@@ -67,21 +67,41 @@ impl PixelValueType {
     ///
     /// # Returns
     /// The corresponding `PixelType` for the ImageAssetProvider trait.
+    ///
+    /// # Note
+    /// For JPEG 2000 images, NBPP can range from 1-38 bits. This function
+    /// returns the smallest PixelType that can hold the specified bit depth:
+    /// - 1-8 bits: UInt8/Int8
+    /// - 9-16 bits: UInt16/Int16
+    /// - 17-32 bits: UInt32/Int32
+    /// - 33-64 bits: Float64 (for very high bit depths)
     pub fn to_pixel_type(&self, nbpp: u8) -> PixelType {
-        match (self, nbpp) {
-            (PixelValueType::UnsignedInt, 8) => PixelType::UInt8,
-            (PixelValueType::UnsignedInt, 16) => PixelType::UInt16,
-            (PixelValueType::UnsignedInt, 32) => PixelType::UInt32,
-            (PixelValueType::UnsignedInt, _) => PixelType::UInt8, // Default fallback
-            (PixelValueType::SignedInt, 8) => PixelType::Int8,
-            (PixelValueType::SignedInt, 16) => PixelType::Int16,
-            (PixelValueType::SignedInt, 32) => PixelType::Int32,
-            (PixelValueType::SignedInt, _) => PixelType::Int8, // Default fallback
-            (PixelValueType::Real, 32) => PixelType::Float32,
-            (PixelValueType::Real, 64) => PixelType::Float64,
-            (PixelValueType::Real, _) => PixelType::Float32, // Default fallback
-            (PixelValueType::Complex, _) => PixelType::Float32, // Complex uses pairs of Float32
-            (PixelValueType::BiLevel, _) => PixelType::UInt8, // Bi-level unpacks to bytes
+        match self {
+            PixelValueType::UnsignedInt => {
+                match nbpp {
+                    1..=8 => PixelType::UInt8,
+                    9..=16 => PixelType::UInt16,
+                    17..=32 => PixelType::UInt32,
+                    _ => PixelType::UInt32, // 33+ bits, use largest unsigned type
+                }
+            }
+            PixelValueType::SignedInt => {
+                match nbpp {
+                    1..=8 => PixelType::Int8,
+                    9..=16 => PixelType::Int16,
+                    17..=32 => PixelType::Int32,
+                    _ => PixelType::Int32, // 33+ bits, use largest signed type
+                }
+            }
+            PixelValueType::Real => {
+                match nbpp {
+                    32 => PixelType::Float32,
+                    64 => PixelType::Float64,
+                    _ => PixelType::Float32, // Default fallback
+                }
+            }
+            PixelValueType::Complex => PixelType::Float32, // Complex uses pairs of Float32
+            PixelValueType::BiLevel => PixelType::UInt8,   // Bi-level unpacks to bytes
         }
     }
 }
@@ -457,10 +477,46 @@ mod tests {
         }
 
         #[test]
+        fn to_pixel_type_unsigned_int_j2k_bit_depths() {
+            // J2K supports 1-38 bits per pixel
+            // 1-8 bits -> UInt8
+            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(1), PixelType::UInt8);
+            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(4), PixelType::UInt8);
+            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(8), PixelType::UInt8);
+            // 9-16 bits -> UInt16
+            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(10), PixelType::UInt16);
+            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(12), PixelType::UInt16);
+            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(14), PixelType::UInt16);
+            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(16), PixelType::UInt16);
+            // 17-32 bits -> UInt32
+            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(20), PixelType::UInt32);
+            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(24), PixelType::UInt32);
+            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(32), PixelType::UInt32);
+            // 33+ bits -> UInt32 (largest available)
+            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(38), PixelType::UInt32);
+        }
+
+        #[test]
         fn to_pixel_type_signed_int() {
             assert_eq!(PixelValueType::SignedInt.to_pixel_type(8), PixelType::Int8);
             assert_eq!(PixelValueType::SignedInt.to_pixel_type(16), PixelType::Int16);
             assert_eq!(PixelValueType::SignedInt.to_pixel_type(32), PixelType::Int32);
+        }
+
+        #[test]
+        fn to_pixel_type_signed_int_j2k_bit_depths() {
+            // J2K supports 1-38 bits per pixel for signed integers
+            // 1-8 bits -> Int8
+            assert_eq!(PixelValueType::SignedInt.to_pixel_type(1), PixelType::Int8);
+            assert_eq!(PixelValueType::SignedInt.to_pixel_type(8), PixelType::Int8);
+            // 9-16 bits -> Int16
+            assert_eq!(PixelValueType::SignedInt.to_pixel_type(12), PixelType::Int16);
+            assert_eq!(PixelValueType::SignedInt.to_pixel_type(16), PixelType::Int16);
+            // 17-32 bits -> Int32
+            assert_eq!(PixelValueType::SignedInt.to_pixel_type(24), PixelType::Int32);
+            assert_eq!(PixelValueType::SignedInt.to_pixel_type(32), PixelType::Int32);
+            // 33+ bits -> Int32 (largest available)
+            assert_eq!(PixelValueType::SignedInt.to_pixel_type(38), PixelType::Int32);
         }
 
         #[test]

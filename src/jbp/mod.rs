@@ -30,6 +30,7 @@ mod error;
 pub mod format;
 pub mod image;
 pub mod io;
+pub mod j2k;
 mod metadata;
 pub mod overflow;
 mod reader;
