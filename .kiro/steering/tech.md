@@ -10,6 +10,33 @@
 - Maturin 1.7+ - Builds Rust code as Python extension module
 - Cargo - Rust package manager
 
+## License Requirements
+
+This project has strict licensing requirements for all dependencies:
+
+### Allowed Licenses
+- Apache 2.0 (preferred)
+- MIT (preferred)
+- BSD-2-Clause, BSD-3-Clause
+- ISC
+- Zlib
+- Public Domain / Unlicense
+
+### Prohibited Licenses
+- GPL (any version) - NOT ALLOWED
+- LGPL (any version) - NOT ALLOWED
+- AGPL - NOT ALLOWED
+- Any copyleft license that would require this project to be released under the same license
+
+### Implications
+- Do NOT add crate dependencies with GPL/LGPL licenses
+- When linking to system libraries (e.g., OpenJPEG), use dynamic linking to avoid license contamination
+- For FFI bindings, write custom bindings rather than using `-sys` crates that may have incompatible licenses
+- Always verify license compatibility before adding new dependencies using `cargo license` or similar tools
+
+### Example: OpenJPEG
+OpenJPEG (libopenjp2) is BSD-2-Clause licensed, which is compatible. However, some Rust wrapper crates like `openjpeg-sys` or `openjpeg2-sys` may have different licensing. We use custom FFI bindings to avoid any licensing issues.
+
 ## Key Dependencies
 
 ### Rust
