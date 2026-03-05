@@ -6,11 +6,23 @@ This project uses PDF reference materials for NITF/NSIF format implementation. T
 
 PDF reference materials are located in `reference-materials/`:
 
-- `Joint-BIIF-Profile-V2024.1_2024-01-18.pdf` - Main JBP format specification (201 pages)
-- `STDI-0002-2024.1_2023-10-26/` - TRE and DES definitions:
-  - `Vol-1-App {X} - {NAME}.pdf` - TRE specifications
-  - `Vol-2-App {X} - {NAME}.pdf` - DES specifications
-  - `STDI-0002-Volume-{N}-*.pdf` - Main reference documents
+- `JBP/` - Joint BIIF Profile (NITF format):
+  - `Joint-BIIF-Profile-V2024.1_2024-01-18.pdf` - Main JBP format specification (201 pages)
+  - `STDI-0002-2024.1_2023-10-26/` - TRE and DES definitions:
+    - `Vol-1-App {X} - {NAME}.pdf` - TRE specifications
+    - `Vol-2-App {X} - {NAME}.pdf` - DES specifications
+    - `STDI-0002-Volume-{N}-*.pdf` - Main reference documents
+- `SICD/` - Sensor Independent Complex Data (SAR complex imagery):
+  - `NGA.STND.0024-1_1.3.0_SICD_DIDD_FINAL.pdf` - Design & Implementation
+  - `NGA.STND.0024-2_1.3.0_SICD_FFDD_FINAL.pdf` - File Format
+  - `NGA.STND.0024-3_1.3.0_SICD_IPDD_FINAL.pdf` - Image Projections
+- `SIDD/` - Sensor Independent Derived Data (SAR derived products):
+  - `NGA.STND.0025-1_3.0_SIDD_DIDD.pdf` - Design & Implementation
+  - `NGA.STND.0025-2_3.0_SIDD_NITF_FFDD.pdf` - NITF File Format
+  - `NGA.STND.0025-3_3.0-SIDD_GEOTIFF.pdf` - GeoTIFF File Format
+- `SIPS/` - SAR Image Processing Standard (image operators):
+  - `SIPS_v24_21Aug2019.pdf` - Main SIPS specification
+  - `SAND2015-2309.pdf`, `SAND2019-2371.pdf` - Supporting Sandia reports
 
 ## General Strategy for Reading PDFs
 
@@ -99,3 +111,44 @@ To implement SENSRB TRE:
 3. Read field specs: `pages: [18, 19, 20, 21, 22, 23, 24, 25]`
 4. If TRE has conditional modules, read implementation notes section
 5. Create definition file based on extracted field information
+
+## SAR Standards (SICD, SIDD, SIPS)
+
+### Overview
+
+SICD and SIDD are specialized NITF-based formats for SAR (Synthetic Aperture Radar) imagery. They build on the JBP specification with additional XML metadata stored in Data Extension Segments (DES).
+
+- **SICD** - Complex SAR data (Single Look Complex / Level 1). Contains phase and magnitude information.
+- **SIDD** - Derived SAR products (detected imagery, etc.). The output of processing SICD data.
+- **SIPS** - Image processing algorithms for SAR. Useful for implementing image operators.
+
+### SICD Documents
+
+| Document | Content | Use For |
+|----------|---------|---------|
+| Volume 1 (DIDD) | Design & Implementation | Understanding SICD concepts, XML schema structure |
+| Volume 2 (FFDD) | File Format | NITF structure, DES placement, TRE requirements |
+| Volume 3 (IPDD) | Image Projections | Coordinate transformations, geolocation algorithms |
+
+### SIDD Documents
+
+| Document | Content | Use For |
+|----------|---------|---------|
+| Volume 1 (DIDD) | Design & Implementation | Understanding SIDD concepts, XML schema structure |
+| Volume 2 (NITF FFDD) | NITF File Format | NITF structure for SIDD files |
+| Volume 3 (GeoTIFF) | GeoTIFF File Format | Alternative GeoTIFF packaging |
+
+### SIPS Documents
+
+The SIPS specification defines image processing algorithms. Key topics include:
+- Radiometric calibration
+- Geometric corrections
+- Filtering and enhancement
+- Phase history processing
+
+### Reading Strategy for SAR Documents
+
+1. Start with Volume 1 (DIDD) to understand concepts and XML schema
+2. Use Volume 2 (FFDD) for NITF file structure and DES/TRE requirements
+3. Reference Volume 3 for projection/geolocation (SICD) or GeoTIFF (SIDD)
+4. Cross-reference with JBP for underlying NITF structure
