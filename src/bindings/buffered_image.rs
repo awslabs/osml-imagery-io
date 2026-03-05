@@ -13,10 +13,97 @@ use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
 use crate::traits::{AssetProvider, ImageAssetProvider};
 use crate::types::{AssetType, PixelType};
 
+/// Extract raw bytes from a NumPy array of any supported dtype.
+///
+/// This function inspects the array's dtype at runtime and extracts the
+/// underlying bytes appropriately. Supported dtypes: uint8, int8, uint16,
+/// int16, uint32, int32, float32, float64.
+fn extract_array_bytes(py: Python<'_>, data: &PyObject) -> PyResult<Vec<u8>> {
+    // Get the dtype string from the array
+    let dtype_str: String = data
+        .getattr(py, "dtype")?
+        .getattr(py, "name")?
+        .extract(py)?;
+
+    match dtype_str.as_str() {
+        "uint8" => {
+            let array: PyReadonlyArrayDyn<'_, u8> = data.extract(py)?;
+            let slice = array.as_slice().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
+            })?;
+            Ok(slice.to_vec())
+        }
+        "int8" => {
+            let array: PyReadonlyArrayDyn<'_, i8> = data.extract(py)?;
+            let slice = array.as_slice().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
+            })?;
+            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+        }
+        "uint16" => {
+            let array: PyReadonlyArrayDyn<'_, u16> = data.extract(py)?;
+            let slice = array.as_slice().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
+            })?;
+            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+        }
+        "int16" => {
+            let array: PyReadonlyArrayDyn<'_, i16> = data.extract(py)?;
+            let slice = array.as_slice().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
+            })?;
+            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+        }
+        "uint32" => {
+            let array: PyReadonlyArrayDyn<'_, u32> = data.extract(py)?;
+            let slice = array.as_slice().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
+            })?;
+            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+        }
+        "int32" => {
+            let array: PyReadonlyArrayDyn<'_, i32> = data.extract(py)?;
+            let slice = array.as_slice().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
+            })?;
+            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+        }
+        "float32" => {
+            let array: PyReadonlyArrayDyn<'_, f32> = data.extract(py)?;
+            let slice = array.as_slice().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
+            })?;
+            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+        }
+        "float64" => {
+            let array: PyReadonlyArrayDyn<'_, f64> = data.extract(py)?;
+            let slice = array.as_slice().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
+            })?;
+            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+        }
+        _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "Unsupported array dtype '{}'. Supported: uint8, int8, uint16, int16, uint32, int32, float32, float64",
+            dtype_str
+        ))),
+    }
+}
+
 /// Python wrapper for BufferedImageAssetProvider.
 ///
 /// This class allows creating synthetic images in memory with configurable
 /// dimensions, tile sizes, pixel types, and band configurations.
+///
+/// # Array Format
+///
+/// All image data uses band-sequential (BSQ) ordering, also known as
+/// "channels first" or CHW format. NumPy arrays should have shape
+/// `(bands, rows, cols)`. This matches PyTorch's tensor format and
+/// provides natural support for per-band operations common in remote sensing.
+///
+/// For interoperability with OpenCV or Pillow (which use HWC format),
+/// use `np.transpose(array, (1, 2, 0))` to convert from CHW to HWC,
+/// or `np.transpose(array, (2, 0, 1))` to convert from HWC to CHW.
 ///
 /// # Example
 ///
@@ -35,9 +122,17 @@ use crate::types::{AssetType, PixelType};
 ///     pixel_type=PixelType.UInt8,
 /// )
 ///
-/// # Set the full image data
+/// # Set the full image data - shape is (bands, rows, cols)
 /// image_data = np.zeros((3, 512, 512), dtype=np.uint8)
 /// provider.set_full_image(image_data)
+///
+/// # Set a single block - shape is (bands, block_rows, block_cols)
+/// block_data = np.ones((3, 256, 256), dtype=np.uint8) * 128
+/// provider.set_block(0, 0, block_data)
+///
+/// # Get a block back - returns shape (bands, block_rows, block_cols)
+/// result = provider.get_block(0, 0, 0)
+/// assert result.shape == (3, 256, 256)
 /// ```
 #[pyclass(name = "BufferedImageAssetProvider")]
 pub struct PyBufferedImageAssetProvider {
@@ -156,59 +251,67 @@ impl PyBufferedImageAssetProvider {
 
     /// Set the full image data from a numpy array.
     ///
-    /// The array should be in band-sequential format with shape (bands, rows, cols).
+    /// The array must be in band-sequential (BSQ) format, also known as
+    /// "channels first" or CHW format, with shape `(bands, rows, cols)`.
     ///
     /// # Arguments
     ///
-    /// * `data` - NumPy array with shape (bands, rows, cols)
+    /// * `data` - NumPy array with shape `(bands, rows, cols)`. Supported dtypes:
+    ///   uint8, int8, uint16, int16, uint32, int32, float32, float64.
+    ///   The dtype should match the provider's `pixel_type` configuration.
     ///
     /// # Raises
     ///
-    /// * ValueError - If the array shape doesn't match the image configuration
-    fn set_full_image(&self, data: PyReadonlyArrayDyn<'_, u8>) -> PyResult<()> {
-        let array = data.as_array();
-        let bytes = array.as_slice().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("Array must be contiguous")
-        })?;
-
-        self.inner.set_full_image(bytes)?;
-        Ok(())
-    }
-
-    /// Set the full image data from a numpy array (16-bit version).
+    /// * `ValueError` - If the array size doesn't match the image configuration
+    ///   (expected size = bands × rows × cols × bytes_per_pixel)
+    /// * `TypeError` - If the array dtype is not supported
     ///
-    /// The array should be in band-sequential format with shape (bands, rows, cols).
+    /// # Example
     ///
-    /// # Arguments
+    /// ```python
+    /// import numpy as np
     ///
-    /// * `data` - NumPy array with shape (bands, rows, cols)
-    fn set_full_image_u16(&self, data: PyReadonlyArrayDyn<'_, u16>) -> PyResult<()> {
-        let array = data.as_array();
-        let slice = array.as_slice().ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("Array must be contiguous")
-        })?;
-
-        // Convert u16 slice to bytes
-        let bytes: Vec<u8> = slice
-            .iter()
-            .flat_map(|&v| v.to_ne_bytes())
-            .collect();
-
+    /// # Create RGB image data in CHW format: (3, 512, 512)
+    /// image_data = np.zeros((3, 512, 512), dtype=np.uint8)
+    /// image_data[0, :, :] = 255  # Red channel
+    /// provider.set_full_image(image_data)
+    /// ```
+    fn set_full_image(&self, py: Python<'_>, data: PyObject) -> PyResult<()> {
+        let bytes = extract_array_bytes(py, &data)?;
         self.inner.set_full_image(&bytes)?;
         Ok(())
     }
 
     /// Set block data at the given coordinates.
     ///
-    /// The data should be in band-interleaved-by-pixel format.
+    /// The array must be in band-sequential (BSQ) format, also known as
+    /// "channels first" or CHW format, with shape `(bands, block_rows, block_cols)`.
     ///
     /// # Arguments
     ///
-    /// * `block_row` - Row index of the block
-    /// * `block_col` - Column index of the block
-    /// * `data` - Raw pixel data as bytes
-    fn set_block(&self, block_row: u32, block_col: u32, data: &[u8]) -> PyResult<()> {
-        self.inner.set_block(block_row, block_col, data)?;
+    /// * `block_row` - Row index of the block in the block grid (0-indexed)
+    /// * `block_col` - Column index of the block in the block grid (0-indexed)
+    /// * `data` - NumPy array with shape `(bands, block_rows, block_cols)`. Supported
+    ///   dtypes: uint8, int8, uint16, int16, uint32, int32, float32, float64.
+    ///   The dtype should match the provider's `pixel_type` configuration.
+    ///
+    /// # Raises
+    ///
+    /// * `ValueError` - If the array is not contiguous or block coordinates are invalid
+    /// * `TypeError` - If the array dtype is not supported
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// import numpy as np
+    ///
+    /// # Create block data in CHW format: (3, 256, 256)
+    /// block_data = np.ones((3, 256, 256), dtype=np.uint8) * 128
+    /// provider.set_block(0, 0, block_data)  # Set top-left block
+    /// ```
+    fn set_block(&self, py: Python<'_>, block_row: u32, block_col: u32, data: PyObject) -> PyResult<()> {
+        let bytes = extract_array_bytes(py, &data)?;
+        self.inner.set_block(block_row, block_col, &bytes)?;
         Ok(())
     }
 
@@ -361,6 +464,33 @@ impl PyBufferedImageAssetProvider {
     }
 
     /// Retrieve block data as a numpy ndarray.
+    ///
+    /// Returns the block in band-sequential (BSQ) format, also known as
+    /// "channels first" or CHW format, with shape `(bands, rows, cols)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_row` - Row index of the block in the block grid (0-indexed)
+    /// * `block_col` - Column index of the block in the block grid (0-indexed)
+    /// * `resolution_level` - Resolution level (0 = full resolution)
+    /// * `bands` - Optional list of band indices to retrieve (None = all bands)
+    ///
+    /// # Returns
+    ///
+    /// NumPy array with shape `(bands, rows, cols)` in CHW format.
+    /// The dtype matches the provider's `pixel_type` configuration.
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// # Get full block with all bands
+    /// block = provider.get_block(0, 0, 0)
+    /// print(block.shape)  # (3, 256, 256) for RGB with 256x256 blocks
+    ///
+    /// # Get only the red channel (band 0)
+    /// red_band = provider.get_block(0, 0, 0, bands=[0])
+    /// print(red_band.shape)  # (1, 256, 256)
+    /// ```
     #[pyo3(signature = (block_row, block_col, resolution_level, bands=None))]
     fn get_block<'py>(
         &self,

@@ -469,7 +469,7 @@ image_data = np.zeros((3, 512, 512), dtype=np.uint8)
 provider.set_full_image(image_data)
 
 # Or set individual blocks
-block_data = np.zeros((3, 256, 256), dtype=np.uint8).tobytes()
+block_data = np.zeros((3, 256, 256), dtype=np.uint8)
 provider.set_block(block_row=0, block_col=0, data=block_data)
 ```
 
