@@ -77,6 +77,20 @@ pytest
 cargo test
 ```
 
+#### Property-Based Testing
+
+This project uses property-based testing (PBT) to validate image codec correctness across many generated inputs. Property tests verify universal properties like roundtrip preservation, block access completeness, and metadata consistency.
+
+```bash
+# Run only property tests
+pytest -m property
+
+# Run only unit tests (exclude property tests)
+pytest -m "not property"
+```
+
+For details on the PBT framework, available strategies, and how to add new properties, see [docs/PROPERTY_BASED_TESTING.md](docs/PROPERTY_BASED_TESTING.md).
+
 ### Linting
 
 ```bash

@@ -14,6 +14,11 @@
 ├── python/
 │   └── aws/osml/io/        # Python package (namespace package)
 ├── tests/                  # Python tests
+│   └── property/           # Property-based tests (hypothesis)
+│       ├── conftest.py     # Shared fixtures, pytest configuration
+│       ├── strategies.py   # Reusable hypothesis strategies
+│       ├── quality.py      # PSNR/SSIM calculation utilities
+│       └── test_*.py       # Property test modules
 ├── benches/                # Rust benchmarks (Criterion)
 ├── data/                   # Test data directory
 │   ├── unit/               # Small synthetic test files (checked in)
@@ -67,3 +72,30 @@ Three categories of test data, consolidated under `data/`:
 - Rust unit tests: inline with source in `src/` using `#[cfg(test)]`
 - Python tests: in `tests/` directory, run with pytest
 - Rust benchmarks: in `benches/` directory, run with Criterion
+
+## Property-Based Testing
+
+Property tests are organized under `tests/property/` and validate universal correctness properties across many generated inputs.
+
+### Key Files
+
+- `conftest.py` - Shared fixtures (temp file handling) and pytest marker registration
+- `strategies.py` - Reusable hypothesis strategies for generating images, block coordinates, and metadata
+- `quality.py` - PSNR and SSIM calculation for lossy compression validation
+
+### Test Modules
+
+- `test_roundtrip.py` - Lossless/lossy roundtrip and idempotent encoding properties
+- `test_block_access.py` - Block access completeness and reassembly properties
+- `test_metadata.py` - Metadata preservation properties
+- `test_api_contracts.py` - API polymorphism and contract tests
+- `test_io_contracts.py` - IO factory and format auto-detection tests
+- `test_strategies.py` - Strategy validation tests
+
+### Relationship to Unit Tests
+
+- Property tests validate universal properties across many generated inputs (100+ iterations)
+- Unit tests validate specific examples, edge cases, and error conditions
+- Both are complementary and run together with `pytest`
+- Use `pytest -m property` to run only property tests
+- Use `pytest -m "not property"` to run only unit tests

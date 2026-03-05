@@ -253,6 +253,8 @@ pub fn create_numpy_array(
             Ok(reshaped.into_py(py))
         }
         PixelType::UInt16 => {
+            // Use native byte order for internal representation
+            // The NITF encoder handles conversion to big-endian at the file boundary
             let typed_data: Vec<u16> = data
                 .chunks_exact(2)
                 .map(|chunk| u16::from_ne_bytes([chunk[0], chunk[1]]))
@@ -262,6 +264,7 @@ pub fn create_numpy_array(
             Ok(reshaped.into_py(py))
         }
         PixelType::Int16 => {
+            // Use native byte order for internal representation
             let typed_data: Vec<i16> = data
                 .chunks_exact(2)
                 .map(|chunk| i16::from_ne_bytes([chunk[0], chunk[1]]))
@@ -271,6 +274,7 @@ pub fn create_numpy_array(
             Ok(reshaped.into_py(py))
         }
         PixelType::UInt32 => {
+            // Use native byte order for internal representation
             let typed_data: Vec<u32> = data
                 .chunks_exact(4)
                 .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
@@ -280,6 +284,7 @@ pub fn create_numpy_array(
             Ok(reshaped.into_py(py))
         }
         PixelType::Int32 => {
+            // Use native byte order for internal representation
             let typed_data: Vec<i32> = data
                 .chunks_exact(4)
                 .map(|chunk| i32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
@@ -289,6 +294,7 @@ pub fn create_numpy_array(
             Ok(reshaped.into_py(py))
         }
         PixelType::Float32 => {
+            // Use native byte order for internal representation
             let typed_data: Vec<f32> = data
                 .chunks_exact(4)
                 .map(|chunk| f32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
@@ -298,6 +304,7 @@ pub fn create_numpy_array(
             Ok(reshaped.into_py(py))
         }
         PixelType::Float64 => {
+            // Use native byte order for internal representation
             let typed_data: Vec<f64> = data
                 .chunks_exact(8)
                 .map(|chunk| {

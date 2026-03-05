@@ -44,11 +44,13 @@ OpenJPEG (libopenjp2) is BSD-2-Clause licensed, which is compatible. However, so
 - numpy - NumPy array interop
 - thiserror - Error handling
 - serde_json - JSON serialization
+- proptest - Property-based testing framework (dev dependency)
 
 ### Python
 - pytest - Testing framework
 - pytest-cov - Coverage reporting
 - ruff - Linting and formatting
+- hypothesis - Property-based testing framework
 
 ## Common Commands
 
@@ -188,4 +190,13 @@ pytest -m integration
 
 # Run benchmark tests
 pytest -m benchmark
+
+# Run property-based tests only
+pytest -m property
+
+# Run unit tests only (exclude property tests)
+pytest -m "not property"
+
+# Run property tests with verbose output
+pytest -m property -v
 ```

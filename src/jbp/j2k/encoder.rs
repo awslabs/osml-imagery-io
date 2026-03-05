@@ -63,6 +63,8 @@ pub struct Jpeg2000BlockEncoder {
     ic: String,
     /// Track which blocks have been encoded
     encoded_blocks: HashSet<(u32, u32)>,
+    /// Bytes per pixel (derived from bits per pixel)
+    bytes_per_pixel: usize,
 }
 
 impl std::fmt::Debug for Jpeg2000BlockEncoder {
@@ -72,6 +74,7 @@ impl std::fmt::Debug for Jpeg2000BlockEncoder {
             .field("block_dims", &self.block_dims)
             .field("ic", &self.ic)
             .field("encoded_blocks", &self.encoded_blocks.len())
+            .field("bytes_per_pixel", &self.bytes_per_pixel)
             .finish()
     }
 }
@@ -187,6 +190,9 @@ impl Jpeg2000BlockEncoder {
         let block_cols = (ncols + nppbh - 1) / nppbh;
         let block_rows = (nrows + nppbv - 1) / nppbv;
 
+        // Calculate bytes per pixel (round up bits to bytes)
+        let bytes_per_pixel = ((nbpp as usize) + 7) / 8;
+
         Ok(Self {
             codec,
             encode_state,
@@ -194,6 +200,7 @@ impl Jpeg2000BlockEncoder {
             block_dims: (nppbv, nppbh),
             ic: if hints.htj2k { "CD" } else { "C8" }.to_string(),
             encoded_blocks: HashSet::new(),
+            bytes_per_pixel,
         })
     }
 }
@@ -216,13 +223,16 @@ impl BlockEncoder for Jpeg2000BlockEncoder {
             ));
         }
 
-        // Validate data size matches shape
-        let expected_size = (shape[0] as usize) * (shape[1] as usize) * (shape[2] as usize);
+        // Validate data size matches shape (accounting for bytes per pixel)
+        // Shape is [bands, rows, cols], data is raw bytes
+        let num_elements = (shape[0] as usize) * (shape[1] as usize) * (shape[2] as usize);
+        let expected_size = num_elements * self.bytes_per_pixel;
         if data.len() != expected_size {
             return Err(CodecError::Encode(format!(
-                "Data size {} doesn't match shape {:?} (expected {})",
+                "Data size {} doesn't match shape {:?} with {} bytes/pixel (expected {})",
                 data.len(),
                 shape,
+                self.bytes_per_pixel,
                 expected_size
             )));
         }

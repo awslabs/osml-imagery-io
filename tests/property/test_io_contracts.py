@@ -1,13 +1,14 @@
-"""Property-based tests for JBP IO factory format auto-detection.
+"""Property-based tests for IO contracts.
 
-Property 23: Python Format Auto-Detection
-For any NITF or NSIF file opened via Python `IO.open()`, the returned reader
-SHALL be able to access all segments without the caller specifying the format.
+This module contains property tests that validate IO factory behavior including:
+- Format auto-detection (Property 23)
+- Dataset round-trip consistency (Property 20)
 
-**Validates: Requirements 19.3**
+Tests are migrated from tests/test_jbp_io.py.
+
+**Validates: Requirements 9.1, 9.5, 17.1, 17.2, 17.3, 19.3**
 """
 
-import os
 from pathlib import Path
 
 import pytest
@@ -21,18 +22,23 @@ from aws.osml.io import IO
 
 UNIT_DATA_DIR = Path("data/unit")
 SMALL_NTF = UNIT_DATA_DIR / "small.ntf"
+SAMPLE_NITF21 = UNIT_DATA_DIR / "sample_nitf21.ntf"
+SAMPLE_NSIF10 = UNIT_DATA_DIR / "sample_nsif10.nsif"
+MULTI_SEGMENT = UNIT_DATA_DIR / "multi_segment.ntf"
 
 
 # =============================================================================
 # Property 23: Python Format Auto-Detection Tests
 # =============================================================================
 
-class TestProperty23FormatAutoDetection:
+@pytest.mark.property
+class TestFormatAutoDetection:
     """Property 23: Python Format Auto-Detection
     
     For any NITF or NSIF file opened via Python `IO.open()`, the returned reader
     SHALL be able to access all segments without the caller specifying the format.
     
+    **Feature: property-based-testing-framework, Property 23: Format Auto-Detection**
     **Validates: Requirements 19.3**
     """
 
@@ -45,7 +51,6 @@ class TestProperty23FormatAutoDetection:
             pytest.skip("Test data file not available")
         
         # Open without specifying format - should auto-detect from .ntf extension
-        # IO.open(paths, mode="r", format=None)
         reader = IO.open([str(SMALL_NTF)], "r")
         assert reader is not None, "IO.open() should return a reader for NITF files"
         
@@ -65,7 +70,6 @@ class TestProperty23FormatAutoDetection:
         if not SMALL_NTF.exists():
             pytest.skip("Test data file not available")
         
-        # Open with list of string paths (convert pathlib.Path to str)
         reader = IO.open([str(SMALL_NTF)], "r")
         assert reader is not None, "IO.open() should accept string paths"
         
@@ -84,7 +88,8 @@ class TestProperty23FormatAutoDetection:
         keys = reader.get_asset_keys()
         
         for key in keys:
-            assert reader.has_asset(key), f"has_asset('{key}') should return True for key from get_asset_keys()"
+            assert reader.has_asset(key), \
+                f"has_asset('{key}') should return True for key from get_asset_keys()"
 
     def test_has_asset_false_for_invalid_key(self):
         """Test that has_asset() returns False for invalid keys."""
@@ -116,11 +121,9 @@ class TestProperty23FormatAutoDetection:
 
     def test_open_rejects_unsupported_extension(self):
         """Test that IO.open() rejects files with unsupported extensions."""
-        # Try to open a file with unsupported extension
         with pytest.raises(Exception) as exc_info:
             IO.open(["nonexistent.jpg"], "r")
         
-        # Should mention unsupported format
         assert "Unsupported" in str(exc_info.value) or "format" in str(exc_info.value).lower()
 
     def test_open_rejects_nonexistent_file(self):
@@ -133,24 +136,26 @@ class TestProperty23FormatAutoDetection:
         if not SMALL_NTF.exists():
             pytest.skip("Test data file not available")
         
-        # Open without specifying mode - should default to read
         reader = IO.open([str(SMALL_NTF)])
         assert reader is not None
         
-        # Should be able to read asset keys (reader behavior)
         keys = reader.get_asset_keys()
         assert len(keys) > 0
 
 
+@pytest.mark.property
 class TestIOOpenWithFormat:
-    """Tests for IO.open() with explicit format specification."""
+    """Tests for IO.open() with explicit format specification.
+    
+    **Feature: property-based-testing-framework, Property 23: Format Auto-Detection**
+    **Validates: Requirements 19.3**
+    """
 
     def test_open_with_nitf_format(self):
         """Test IO.open() with explicit 'nitf' format."""
         if not SMALL_NTF.exists():
             pytest.skip("Test data file not available")
         
-        # IO.open(paths, mode, format)
         reader = IO.open([str(SMALL_NTF)], "r", "nitf")
         assert reader is not None
         
@@ -179,8 +184,13 @@ class TestIOOpenWithFormat:
         assert "Unsupported" in str(exc_info.value) or "format" in str(exc_info.value).lower()
 
 
+@pytest.mark.property
 class TestIOCreate:
-    """Tests for IO.open() with write mode."""
+    """Tests for IO.open() with write mode.
+    
+    **Feature: property-based-testing-framework, Property 23: Format Auto-Detection**
+    **Validates: Requirements 19.3**
+    """
 
     def test_create_with_nitf_format(self, tmp_path):
         """Test IO.open() with 'w' mode and 'nitf' format."""
@@ -221,12 +231,16 @@ class TestIOCreate:
         with pytest.raises(Exception) as exc_info:
             IO.open([str(output_path)], "w")
         
-        # Should mention that format is required
         assert "format" in str(exc_info.value).lower() or "must be specified" in str(exc_info.value).lower()
 
 
+@pytest.mark.property
 class TestIOInvalidMode:
-    """Tests for IO.open() with invalid mode."""
+    """Tests for IO.open() with invalid mode.
+    
+    **Feature: property-based-testing-framework, Property 23: Format Auto-Detection**
+    **Validates: Requirements 19.3**
+    """
 
     def test_invalid_mode_rejected(self):
         """Test IO.open() rejects invalid mode strings."""
@@ -239,9 +253,11 @@ class TestIOInvalidMode:
         assert "mode" in str(exc_info.value).lower() or "Invalid" in str(exc_info.value)
 
 
+@pytest.mark.property
 class TestIOOpenPathsList:
     """Tests for IO.open() paths list parameter.
     
+    **Feature: property-based-testing-framework, Property 23: Format Auto-Detection**
     **Validates: Requirements 1.2, 1.3**
     """
 
@@ -278,17 +294,14 @@ class TestIOOpenPathsList:
 # Property 20: Dataset Round-Trip Consistency Tests
 # =============================================================================
 
-SAMPLE_NITF21 = UNIT_DATA_DIR / "sample_nitf21.ntf"
-SAMPLE_NSIF10 = UNIT_DATA_DIR / "sample_nsif10.nsif"
-MULTI_SEGMENT = UNIT_DATA_DIR / "multi_segment.ntf"
-
-
-class TestProperty20RoundTripConsistency:
+@pytest.mark.property
+class TestDatasetRoundTripConsistency:
     """Property 20: Dataset Round-Trip Consistency
     
     For any valid dataset written with JBPDatasetWriter, reading it back with
     JBPDatasetReader SHALL produce equivalent metadata and asset data.
     
+    **Feature: property-based-testing-framework, Property 20: Dataset Round-Trip Consistency**
     **Validates: Requirements 17.1, 17.2, 17.3**
     """
 

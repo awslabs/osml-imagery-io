@@ -90,7 +90,7 @@ class TestImageAssetProviderProperties:
         assert pixel_type is not None
 
     def test_image_shape(self):
-        """Test image_shape convenience property."""
+        """Test image_shape convenience property - returns CHW format (bands, rows, cols)."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
@@ -100,11 +100,11 @@ class TestImageAssetProviderProperties:
         shape = asset.image_shape
         assert isinstance(shape, tuple)
         assert len(shape) == 3
-        # Verify shape matches individual properties
-        assert shape == (asset.num_rows, asset.num_columns, asset.num_bands)
+        # Verify shape matches individual properties in CHW format (bands, rows, cols)
+        assert shape == (asset.num_bands, asset.num_rows, asset.num_columns)
 
     def test_block_shape(self):
-        """Test block_shape convenience property."""
+        """Test block_shape convenience property - returns CHW format (bands, rows, cols)."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
@@ -114,8 +114,8 @@ class TestImageAssetProviderProperties:
         shape = asset.block_shape
         assert isinstance(shape, tuple)
         assert len(shape) == 3
-        # (block_rows, block_cols, bands)
-        assert shape[2] == 1  # 1 band
+        # Shape is (bands, rows, cols) - CHW format
+        assert shape[0] == 1  # 1 band
 
     def test_block_grid_size(self):
         """Test block_grid_size property."""
@@ -216,7 +216,7 @@ class TestGetBlock:
         assert isinstance(block, np.ndarray)
 
     def test_get_block_shape(self):
-        """Test that get_block() returns array with correct shape (rows, cols, bands)."""
+        """Test that get_block() returns array with correct shape (bands, rows, cols)."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
 
@@ -225,9 +225,9 @@ class TestGetBlock:
 
         block = asset.get_block(0, 0, 0)
 
-        # Shape should be (rows, cols, bands)
+        # Shape should be (bands, rows, cols) - CHW format
         assert len(block.shape) == 3
-        assert block.shape[2] == 1  # 1 band for grayscale
+        assert block.shape[0] == 1  # 1 band for grayscale
 
     def test_get_block_dtype_uint8(self):
         """Test that get_block() returns correct dtype for 8-bit images."""

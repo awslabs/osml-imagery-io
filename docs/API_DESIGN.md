@@ -954,9 +954,9 @@ with IO.open(["large_image.nitf"], "r") as dataset:
     # Get image specific metadata
     image_metadata = main_image.metadata.as_dict()
     
-    # Get image properties
-    height, width, bands = main_image.image_shape
-    block_height, block_width, _ = main_image.block_shape
+    # Get image properties (CHW format: bands, rows, cols)
+    bands, height, width = main_image.image_shape
+    _, block_height, block_width = main_image.block_shape
     
     # Read specific blocks
     for block_row in range(main_image.block_grid_size[0]):

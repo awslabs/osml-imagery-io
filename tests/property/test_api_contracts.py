@@ -1,7 +1,10 @@
-"""Property-based tests for API Design Alignment spec.
+"""Property-based tests for API contracts.
 
-These tests validate the correctness properties defined in the design document
-for the API alignment changes.
+This module contains property tests that validate API contracts and polymorphism
+behavior. Tests are migrated from tests/test_api_design_alignment_pbt.py.
+
+**Property 3: add_asset accepts all AssetProvider subtypes**
+**Validates: Requirements 3.2, 9.1, 9.5**
 """
 
 import os
@@ -20,15 +23,29 @@ from aws.osml.io import (
 )
 
 
-class TestAddAssetTypeHierarchy:
+@pytest.mark.property
+class TestAssetProviderPolymorphism:
     """Property tests for add_asset accepting all AssetProvider subtypes.
     
     **Property 3: add_asset accepts all AssetProvider subtypes**
     **Validates: Requirements 3.2**
+    
+    These tests verify that the add_asset method correctly accepts any
+    implementation of the AssetProvider interface, including:
+    - BytesAssetProvider (created via AssetProvider.from_bytes)
+    - BufferedImageAssetProvider
     """
 
     @given(
-        key=st.text(min_size=1, max_size=20, alphabet=st.characters(whitelist_categories=('L', 'N'), min_codepoint=ord('a'), max_codepoint=ord('z'))),
+        key=st.text(
+            min_size=1,
+            max_size=20,
+            alphabet=st.characters(
+                whitelist_categories=('L', 'N'),
+                min_codepoint=ord('a'),
+                max_codepoint=ord('z')
+            )
+        ),
         title=st.text(min_size=1, max_size=50),
         description=st.text(max_size=100),
         asset_type=st.sampled_from([AssetType.Image, AssetType.Text, AssetType.Data]),
@@ -37,6 +54,7 @@ class TestAddAssetTypeHierarchy:
     def test_add_asset_accepts_bytes_asset_provider(self, key, title, description, asset_type):
         """For any AssetProvider created via from_bytes, add_asset SHALL succeed.
         
+        **Feature: property-based-testing-framework, Property: AssetProvider Polymorphism**
         **Validates: Requirements 3.2**
         """
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
@@ -73,7 +91,15 @@ class TestAddAssetTypeHierarchy:
                 os.unlink(path)
 
     @given(
-        key=st.text(min_size=1, max_size=20, alphabet=st.characters(whitelist_categories=('L', 'N'), min_codepoint=ord('a'), max_codepoint=ord('z'))),
+        key=st.text(
+            min_size=1,
+            max_size=20,
+            alphabet=st.characters(
+                whitelist_categories=('L', 'N'),
+                min_codepoint=ord('a'),
+                max_codepoint=ord('z')
+            )
+        ),
         title=st.text(min_size=1, max_size=50),
         description=st.text(max_size=100),
         num_cols=st.integers(min_value=16, max_value=128),
@@ -81,9 +107,12 @@ class TestAddAssetTypeHierarchy:
         num_bands=st.integers(min_value=1, max_value=4),
     )
     @settings(max_examples=100, deadline=None)
-    def test_add_asset_accepts_buffered_image_asset_provider(self, key, title, description, num_cols, num_rows, num_bands):
+    def test_add_asset_accepts_buffered_image_asset_provider(
+        self, key, title, description, num_cols, num_rows, num_bands
+    ):
         """For any BufferedImageAssetProvider, add_asset SHALL succeed.
         
+        **Feature: property-based-testing-framework, Property: AssetProvider Polymorphism**
         **Validates: Requirements 3.2**
         """
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:

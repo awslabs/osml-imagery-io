@@ -1035,19 +1035,39 @@ impl JBPDatasetWriter {
         // Extract image properties from the asset provider
         let props = Self::extract_image_properties(asset);
         
+        // Get metadata for user-settable fields
+        let metadata = asset.provider.metadata();
+        let metadata_dict = metadata.as_dict(None);
+        
+        // Helper to get metadata value or default
+        let get_field = |key: &str, default: &str, max_len: usize| -> String {
+            metadata_dict
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| default.to_string())
+                .chars()
+                .take(max_len)
+                .collect::<String>()
+        };
+        
         let mut subheader = Vec::new();
 
         // IM (2) - File Part Type
         subheader.extend_from_slice(b"IM");
-        // IID1 (10) - Image Identifier 1
-        let iid1 = format!("{:10}", truncate_to_bytes(&asset.key, 10));
+        // IID1 (10) - Image Identifier 1 (use metadata if provided, else asset.key)
+        let iid1_default = truncate_to_bytes(&asset.key, 10);
+        let iid1 = format!("{:10}", get_field("IID1", &iid1_default, 10));
         subheader.extend_from_slice(iid1.as_bytes());
         // IDATIM (14) - Image Date and Time
-        subheader.extend_from_slice(b"              ");
+        let idatim = format!("{:14}", get_field("IDATIM", "", 14));
+        subheader.extend_from_slice(idatim.as_bytes());
         // TGTID (17) - Target Identifier
-        subheader.extend_from_slice(&[b' '; 17]);
-        // IID2 (80) - Image Identifier 2
-        let iid2 = format!("{:80}", truncate_to_bytes(&asset.title, 80));
+        let tgtid = format!("{:17}", get_field("TGTID", "", 17));
+        subheader.extend_from_slice(tgtid.as_bytes());
+        // IID2 (80) - Image Identifier 2 (use metadata if provided, else asset.title)
+        let iid2_default = truncate_to_bytes(&asset.title, 80);
+        let iid2 = format!("{:80}", get_field("IID2", &iid2_default, 80));
         subheader.extend_from_slice(iid2.as_bytes());
         // ISCLAS (1) - Image Security Classification
         subheader.extend_from_slice(b"U");
@@ -1083,8 +1103,9 @@ impl JBPDatasetWriter {
         subheader.extend_from_slice(&[b' '; 15]);
         // ENCRYP (1) - Encryption
         subheader.extend_from_slice(b"0");
-        // ISORCE (42) - Image Source
-        subheader.extend_from_slice(&[b' '; 42]);
+        // ISORCE (42) - Image Source (use metadata if provided)
+        let isorce = format!("{:42}", get_field("ISORCE", "", 42));
+        subheader.extend_from_slice(isorce.as_bytes());
         // NROWS (8) - Number of Significant Rows
         subheader.extend_from_slice(format!("{:08}", props.nrows).as_bytes());
         // NCOLS (8) - Number of Significant Columns
