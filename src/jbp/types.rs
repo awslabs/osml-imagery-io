@@ -33,42 +33,32 @@ impl NitfFormat {
 
     /// Returns the structure definition name for the file header.
     pub fn file_header_definition(&self) -> &'static str {
-        match self {
-            NitfFormat::Nitf21 => "nitf_02.10_file_header",
-            NitfFormat::Nsif10 => "nsif_01.00_file_header",
-        }
+        // NSIF 1.0 uses the same structure as NITF 2.1
+        "nitf_02.10_file_header"
     }
 
     /// Returns the structure definition name for image subheaders.
     pub fn image_subheader_definition(&self) -> &'static str {
-        match self {
-            NitfFormat::Nitf21 => "nitf_02.10_image_subheader",
-            NitfFormat::Nsif10 => "nsif_01.00_image_subheader",
-        }
+        // NSIF 1.0 uses the same structure as NITF 2.1
+        "nitf_02.10_image_subheader"
     }
 
     /// Returns the structure definition name for graphic subheaders.
     pub fn graphic_subheader_definition(&self) -> &'static str {
-        match self {
-            NitfFormat::Nitf21 => "nitf_02.10_graphic_subheader",
-            NitfFormat::Nsif10 => "nsif_01.00_graphic_subheader",
-        }
+        // NSIF 1.0 uses the same structure as NITF 2.1
+        "nitf_02.10_graphic_subheader"
     }
 
     /// Returns the structure definition name for text subheaders.
     pub fn text_subheader_definition(&self) -> &'static str {
-        match self {
-            NitfFormat::Nitf21 => "nitf_02.10_text_subheader",
-            NitfFormat::Nsif10 => "nsif_01.00_text_subheader",
-        }
+        // NSIF 1.0 uses the same structure as NITF 2.1
+        "nitf_02.10_text_subheader"
     }
 
     /// Returns the structure definition name for DES subheaders.
     pub fn des_subheader_definition(&self) -> &'static str {
-        match self {
-            NitfFormat::Nitf21 => "nitf_02.10_des_subheader",
-            NitfFormat::Nsif10 => "nsif_01.00_des_subheader",
-        }
+        // NSIF 1.0 uses the same structure as NITF 2.1
+        "nitf_02.10_des_subheader"
     }
 }
 
@@ -448,13 +438,15 @@ mod tests {
 
     #[test]
     fn nitf_format_file_header_definition() {
+        // Both NITF 2.1 and NSIF 1.0 use the same structure definitions
+        // since NSIF 1.0 is structurally identical to NITF 2.1
         assert_eq!(
             NitfFormat::Nitf21.file_header_definition(),
             "nitf_02.10_file_header"
         );
         assert_eq!(
             NitfFormat::Nsif10.file_header_definition(),
-            "nsif_01.00_file_header"
+            "nitf_02.10_file_header"
         );
     }
 

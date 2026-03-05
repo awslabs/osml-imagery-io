@@ -61,14 +61,19 @@ pub struct Jpeg2000BlockDecoder {
     /// Image dimensions from subheader
     nrows: u32,
     ncols: u32,
+    /// Block dimensions from subheader (NPPBH, NPPBV)
+    nppbh: u32,
+    nppbv: u32,
     /// Number of bands
     nbands: u32,
     /// Bits per pixel
     nbpp: u8,
     /// Pixel value type
     pvtype: PixelValueType,
-    /// Compression type (C8 or CD)
+    /// Compression type (C8, CD, M8, or MD)
     ic: String,
+    /// Whether this is a masked image (IC=M8 or MD)
+    is_masked: bool,
     /// COMRAT value
     #[allow(dead_code)]
     comrat: Option<String>,
@@ -109,6 +114,16 @@ impl Jpeg2000BlockDecoder {
         let ic = subheader.ic()?.trim().to_string();
         let imode = subheader.imode()?;
 
+        // Check if this is a masked image (IC=M8 or MD)
+        let is_masked = ic == "M8" || ic == "MD";
+        
+        // Get the effective IC for codec capability checks (unmask M8->C8, MD->CD)
+        let effective_ic = match ic.as_str() {
+            "M8" => "C8",
+            "MD" => "CD",
+            other => other,
+        };
+
         // BPJ2K01.20: IMODE must be B for J2K
         if imode != InterleaveMode::B {
             return Err(CodecError::InvalidFormat(format!(
@@ -137,30 +152,36 @@ impl Jpeg2000BlockDecoder {
         }
 
         // Check codec capabilities for HTJ2K
-        if ic == "CD" && !codec.capabilities().htj2k_decode {
+        if effective_ic == "CD" && !codec.capabilities().htj2k_decode {
             return Err(CodecError::Unsupported(format!(
-                "Codec '{}' does not support HTJ2K (IC=CD) decoding",
-                codec.capabilities().name
+                "Codec '{}' does not support HTJ2K (IC={}) decoding",
+                codec.capabilities().name, ic
             )));
         }
 
         // Validate codestream magic bytes (SOC marker: 0xFF4F)
-        if codestream.len() < 2 {
-            return Err(CodecError::InvalidFormat(
-                "Invalid JPEG 2000 codestream: too short (less than 2 bytes)".into(),
-            ));
-        }
-        if codestream[0] != 0xFF || codestream[1] != 0x4F {
-            return Err(CodecError::InvalidFormat(format!(
-                "Invalid JPEG 2000 codestream: missing SOC marker at offset 0 \
-                 (found 0x{:02X}{:02X}, expected 0xFF4F)",
-                codestream[0], codestream[1]
-            )));
+        // For masked images, the codestream starts with the mask table, not the SOC marker.
+        // The actual J2K codestreams are at offsets specified in the mask table.
+        if !is_masked {
+            if codestream.len() < 2 {
+                return Err(CodecError::InvalidFormat(
+                    "Invalid JPEG 2000 codestream: too short (less than 2 bytes)".into(),
+                ));
+            }
+            if codestream[0] != 0xFF || codestream[1] != 0x4F {
+                return Err(CodecError::InvalidFormat(format!(
+                    "Invalid JPEG 2000 codestream: missing SOC marker at offset 0 \
+                     (found 0x{:02X}{:02X}, expected 0xFF4F)",
+                    codestream[0], codestream[1]
+                )));
+            }
         }
 
         let pvtype = subheader.pvtype()?;
         let nrows = subheader.nrows()?;
         let ncols = subheader.ncols()?;
+        let nppbh = subheader.nppbh()?;
+        let nppbv = subheader.nppbv()?;
         let nbands = subheader.band_count()? as u32;
         let comrat = subheader.comrat()?;
 
@@ -168,10 +189,13 @@ impl Jpeg2000BlockDecoder {
             codestream,
             nrows,
             ncols,
+            nppbh,
+            nppbv,
             nbands,
             nbpp,
             pvtype,
             ic,
+            is_masked,
             comrat,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -180,9 +204,20 @@ impl Jpeg2000BlockDecoder {
     }
 
     /// Get or compute the number of resolution levels.
+    /// 
+    /// For masked images, returns 1 since each block has its own codestream
+    /// and we can't determine the resolution levels without parsing each block.
     fn resolution_levels(&self) -> Result<u32, CodecError> {
         if let Some(&levels) = self.num_resolution_levels.get() {
             return Ok(levels);
+        }
+        
+        // For masked images, we can't determine resolution levels from the
+        // raw codestream since it starts with the mask table. Return 1 as
+        // a safe default - each block's codestream may have different levels.
+        if self.is_masked {
+            let _ = self.num_resolution_levels.set(1);
+            return Ok(1);
         }
         
         let levels = self.codec.get_resolution_levels(&self.codestream)?;
@@ -193,8 +228,20 @@ impl Jpeg2000BlockDecoder {
 
     /// Get or compute the tile grid information.
     /// Returns (tile_width, tile_height, num_tiles_x, num_tiles_y).
+    /// 
+    /// For masked images, returns the image dimensions as a single tile
+    /// since each block is encoded as a separate single-tile codestream.
     fn tile_grid_info(&self) -> Result<(u32, u32, u32, u32), CodecError> {
         if let Some(&info) = self.tile_info.get() {
+            return Ok(info);
+        }
+        
+        // For masked images, we can't parse tile info from the raw codestream
+        // since it starts with the mask table. Return image dimensions as
+        // a single tile - the actual tile info is per-block.
+        if self.is_masked {
+            let info = (self.ncols, self.nrows, 1, 1);
+            let _ = self.tile_info.set(info);
             return Ok(info);
         }
         
@@ -406,6 +453,138 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
     /// - 3.1, 3.2, 3.3, 3.4, 3.5: Resolution level support
     fn num_resolution_levels(&self) -> u32 {
         self.resolution_levels().unwrap_or(1)
+    }
+
+    /// Decode a block at a specific byte offset.
+    ///
+    /// For JPEG 2000 masked images, each block's codestream is stored at the
+    /// offset specified in the Image Data Mask table. This method extracts
+    /// the J2K codestream starting at the given offset and decodes it.
+    ///
+    /// # Arguments
+    /// * `offset` - Byte offset from the start of image data to the J2K codestream
+    /// * `block_row` - Row index of the block (for validation and dimension calculation)
+    /// * `block_col` - Column index of the block (for validation and dimension calculation)
+    /// * `resolution_level` - Resolution level to decode (0 = full resolution)
+    /// * `bands` - Optional slice of band indices to retrieve
+    ///
+    /// # Returns
+    /// A tuple of `(data, shape)` where:
+    /// - `data` is the raw pixel data in band-sequential format
+    /// - `shape` is `[bands, rows, cols]` at the requested resolution (CHW format)
+    ///
+    /// # Errors
+    /// Returns `CodecError::Decode` if the offset is invalid or decoding fails.
+    ///
+    /// # Requirements
+    /// - 6.1, 6.2: Masked JPEG 2000 decoding using offsets from mask table
+    fn decode_block_at_offset(
+        &self,
+        offset: u64,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+        bands: Option<&[u32]>,
+    ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        // Validate resolution level
+        let num_levels = self.resolution_levels()?;
+        if resolution_level >= num_levels {
+            return Err(CodecError::InvalidResolutionLevelRange {
+                requested: resolution_level,
+                available: num_levels,
+                max_valid: num_levels.saturating_sub(1),
+            });
+        }
+
+        // Validate offset is within bounds
+        let offset_usize = offset as usize;
+        if offset_usize >= self.codestream.len() {
+            return Err(CodecError::Decode(format!(
+                "Block offset {} exceeds codestream length {}",
+                offset, self.codestream.len()
+            )));
+        }
+
+        // Extract the J2K codestream starting at the offset
+        // For masked J2K images, each block has its own complete codestream
+        let block_codestream = &self.codestream[offset_usize..];
+
+        // Validate codestream magic bytes (SOC marker: 0xFF4F)
+        if block_codestream.len() < 2 {
+            return Err(CodecError::Decode(format!(
+                "Block codestream at offset {} too short (less than 2 bytes)",
+                offset
+            )));
+        }
+        if block_codestream[0] != 0xFF || block_codestream[1] != 0x4F {
+            return Err(CodecError::Decode(format!(
+                "Invalid J2K codestream at offset {}: missing SOC marker \
+                 (found 0x{:02X}{:02X}, expected 0xFF4F)",
+                offset, block_codestream[0], block_codestream[1]
+            )));
+        }
+
+        // Decode the block codestream
+        // For masked images, each block is a single-tile codestream, so tile_index is 0
+        let params = super::codec::J2KDecodeParams {
+            resolution_level,
+            region: None,
+        };
+
+        let result = self.codec.decode_tile(block_codestream, 0, &params)?;
+
+        // For masked images, use block dimensions from subheader (NPPBH, NPPBV)
+        // For non-masked images, use tile dimensions from the J2K codestream
+        let (tile_width, tile_height) = if self.is_masked {
+            (self.nppbh, self.nppbv)
+        } else {
+            let (tw, th, _, _) = self.tile_grid_info()?;
+            (tw, th)
+        };
+
+        // Calculate expected tile dimensions at this resolution level
+        let scale = 1u32 << resolution_level;
+
+        // For edge tiles, dimensions may be smaller than the nominal tile size
+        let tile_x0 = block_col * tile_width;
+        let tile_y0 = block_row * tile_height;
+        let actual_tile_width = (self.ncols.saturating_sub(tile_x0)).min(tile_width);
+        let actual_tile_height = (self.nrows.saturating_sub(tile_y0)).min(tile_height);
+        let expected_width = (actual_tile_width + scale - 1) / scale;
+        let expected_height = (actual_tile_height + scale - 1) / scale;
+
+        // Validate decoded dimensions match expected scaled dimensions
+        if result.width != expected_width || result.height != expected_height {
+            return Err(CodecError::Decode(format!(
+                "Decoded block dimensions {}x{} don't match expected {}x{} at resolution level {} for block ({}, {})",
+                result.width, result.height, expected_width, expected_height, resolution_level, block_row, block_col
+            )));
+        }
+
+        // Validate decoded band count
+        if result.num_components != self.nbands {
+            return Err(CodecError::Decode(format!(
+                "Decoded band count {} doesn't match subheader NBANDS={}",
+                result.num_components, self.nbands
+            )));
+        }
+
+        // Calculate bytes per pixel
+        let bytes_per_pixel = ((self.nbpp as usize) + 7) / 8;
+        let pixels_per_band = (result.width * result.height) as usize;
+
+        // Apply band selection if specified
+        let (data, num_bands) = match bands {
+            Some(band_indices) if !band_indices.is_empty() => {
+                let selected =
+                    self.select_bands(&result.data, band_indices, pixels_per_band, bytes_per_pixel)?;
+                (selected, band_indices.len() as u32)
+            }
+            _ => (result.data, result.num_components),
+        };
+
+        // Return shape as [bands, rows, cols] (CHW format)
+        Ok((data, [num_bands, result.height, result.width]))
     }
 }
 
@@ -632,10 +811,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 4,
             ncols: 4,
+            nppbh: 4,
+            nppbv: 4,
             nbands: 3,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "C8".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -665,10 +847,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 4,
             ncols: 4,
+            nppbh: 4,
+            nppbv: 4,
             nbands: 3,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "C8".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -698,10 +883,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 4,
             ncols: 4,
+            nppbh: 4,
+            nppbv: 4,
             nbands: 3,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "C8".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -732,10 +920,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 64,
             ncols: 64,
+            nppbh: 32,
+            nppbv: 32,
             nbands: 1,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "C8".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -762,10 +953,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 64,
             ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
             nbands: 1,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "C8".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -787,10 +981,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 64,
             ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
             nbands: 1,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "C8".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -808,10 +1005,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 64,
             ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
             nbands: 1,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "CD".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -829,10 +1029,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 64,
             ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
             nbands: 1,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "C8".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -852,10 +1055,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 64,
             ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
             nbands: 1,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "C8".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -879,10 +1085,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 64,
             ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
             nbands: 3,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "C8".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -909,10 +1118,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 128,
             ncols: 128,
+            nppbh: 64,
+            nppbv: 64,
             nbands: 3,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "C8".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -945,10 +1157,13 @@ mod tests {
             codestream: create_mock_codestream(),
             nrows: 64,
             ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
             nbands: 3,
             nbpp: 8,
             pvtype: PixelValueType::UnsignedInt,
             ic: "C8".to_string(),
+            is_masked: false,
             comrat: None,
             codec,
             num_resolution_levels: OnceLock::new(),
@@ -961,6 +1176,95 @@ mod tests {
 
         let (data, shape) = result.unwrap();
         // Shape is [bands, rows, cols] (CHW format)
+        assert_eq!(shape, [1, 64, 64]);
+        assert_eq!(data.len(), 64 * 64 * 1);
+    }
+
+    #[test]
+    fn test_decode_block_at_offset_success() {
+        let codec = Arc::new(MockJ2KCodec::new()
+            .with_decode_result(64, 64, 3, 8));
+        
+        let decoder = Jpeg2000BlockDecoder {
+            codestream: create_mock_codestream(),
+            nrows: 64,
+            ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
+            nbands: 3,
+            nbpp: 8,
+            pvtype: PixelValueType::UnsignedInt,
+            ic: "C8".to_string(),
+            is_masked: false,
+            comrat: None,
+            codec,
+            num_resolution_levels: OnceLock::new(),
+            tile_info: OnceLock::new(),
+        };
+
+        // Decode at offset 0 (start of codestream)
+        let result = decoder.decode_block_at_offset(0, 0, 0, 0, None);
+        assert!(result.is_ok());
+
+        let (data, shape) = result.unwrap();
+        assert_eq!(shape, [3, 64, 64]);
+        assert_eq!(data.len(), 64 * 64 * 3);
+    }
+
+    #[test]
+    fn test_decode_block_at_offset_invalid_offset() {
+        let codec = Arc::new(MockJ2KCodec::new()
+            .with_decode_result(64, 64, 1, 8));
+        
+        let decoder = Jpeg2000BlockDecoder {
+            codestream: create_mock_codestream(),
+            nrows: 64,
+            ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
+            nbands: 1,
+            nbpp: 8,
+            pvtype: PixelValueType::UnsignedInt,
+            ic: "C8".to_string(),
+            is_masked: false,
+            comrat: None,
+            codec,
+            num_resolution_levels: OnceLock::new(),
+            tile_info: OnceLock::new(),
+        };
+
+        // Offset beyond codestream length should fail
+        let result = decoder.decode_block_at_offset(1000, 0, 0, 0, None);
+        assert!(matches!(result, Err(CodecError::Decode(_))));
+    }
+
+    #[test]
+    fn test_decode_block_at_offset_with_band_selection() {
+        let codec = Arc::new(MockJ2KCodec::new()
+            .with_decode_result(64, 64, 3, 8));
+        
+        let decoder = Jpeg2000BlockDecoder {
+            codestream: create_mock_codestream(),
+            nrows: 64,
+            ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
+            nbands: 3,
+            nbpp: 8,
+            pvtype: PixelValueType::UnsignedInt,
+            ic: "C8".to_string(),
+            is_masked: false,
+            comrat: None,
+            codec,
+            num_resolution_levels: OnceLock::new(),
+            tile_info: OnceLock::new(),
+        };
+
+        // Select only band 1
+        let result = decoder.decode_block_at_offset(0, 0, 0, 0, Some(&[1]));
+        assert!(result.is_ok());
+
+        let (data, shape) = result.unwrap();
         assert_eq!(shape, [1, 64, 64]);
         assert_eq!(data.len(), 64 * 64 * 1);
     }

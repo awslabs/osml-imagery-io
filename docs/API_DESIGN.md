@@ -644,6 +644,158 @@ metadata.set("COMRAT", "N001.0")               # Numerically lossless
 metadata.set("J2K_DECOMPOSITION_LEVELS", "6")  # More resolution levels for large images
 ```
 
+### Working with Masked (Sparse) Images
+
+Masked images allow efficient storage of sparse imagery where some blocks are empty. This is useful for:
+- Satellite imagery with irregular boundaries
+- Cloud-masked regions
+- Partial coverage areas
+
+NITF supports masked variants of compression types. The IC (Image Compression) field indicates masking:
+
+| Non-Masked | Masked | Description |
+|------------|--------|-------------|
+| NC | NM | Uncompressed with mask |
+| C8 | M8 | JPEG 2000 with mask |
+| CD | MD | HTJ2K with mask |
+
+When using a masked IC value, you only need to provide blocks that contain actual data. Missing blocks are automatically marked as empty (masked) in the output file.
+
+#### Writing Sparse Images with Masked IC
+
+To create a sparse image, use `set_block()` to provide only the blocks that contain data:
+
+```python
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
+import numpy as np
+
+# Create metadata with masked IC value
+metadata = BufferedMetadataProvider()
+metadata.set("IC", "NM")  # Uncompressed with mask (or "M8" for JPEG 2000)
+
+# Create image provider
+provider = BufferedImageAssetProvider.create(
+    key="sparse_image",
+    num_columns=1024,
+    num_rows=1024,
+    num_bands=3,
+    block_width=256,
+    block_height=256,
+    pixel_type=PixelType.UInt8,
+    metadata=metadata,
+)
+
+# Only set blocks that contain actual data
+# Block grid is 4x4 (1024/256 = 4)
+# Here we only provide blocks in a checkerboard pattern
+for block_row in range(4):
+    for block_col in range(4):
+        if (block_row + block_col) % 2 == 0:  # Checkerboard pattern
+            # Create block data (bands, rows, cols)
+            block_data = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
+            provider.set_block(block_row, block_col, block_data)
+
+# Write to file - blocks not set will be marked as masked
+with IO.open(["sparse_output.ntf"], "w", "nitf") as writer:
+    writer.add_asset(
+        key="image_segment_0",
+        provider=provider,
+        title="Sparse Image",
+        description="Image with masked blocks",
+        roles=["data"],
+    )
+```
+
+#### Reading Masked Images and Iterating Over Valid Blocks
+
+When reading a masked image, use `has_block()` to check which blocks contain data before attempting to read them:
+
+```python
+from aws.osml.io import IO
+
+with IO.open(["sparse_image.ntf"], "r") as reader:
+    asset = reader.get_asset("image_segment_0")
+    
+    # Get block grid dimensions
+    block_grid_rows, block_grid_cols = asset.block_grid_size
+    
+    # Iterate over all possible blocks
+    valid_blocks = []
+    masked_blocks = []
+    
+    for block_row in range(block_grid_rows):
+        for block_col in range(block_grid_cols):
+            if asset.has_block(block_row, block_col, resolution_level=0):
+                # Block has data - safe to read
+                valid_blocks.append((block_row, block_col))
+                block_data = asset.get_block(block_row, block_col, resolution_level=0)
+                # Process block_data...
+            else:
+                # Block is masked (empty) - skip it
+                masked_blocks.append((block_row, block_col))
+    
+    print(f"Valid blocks: {len(valid_blocks)}")
+    print(f"Masked blocks: {len(masked_blocks)}")
+    
+    # Access pad pixel value if defined
+    pad_value = asset.pad_pixel_value
+    print(f"Pad pixel value: {pad_value}")
+```
+
+#### Masked JPEG 2000 Images
+
+For compressed sparse images, use IC=M8 (JPEG 2000 with mask):
+
+```python
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
+import numpy as np
+
+# Create metadata for masked JPEG 2000
+metadata = BufferedMetadataProvider()
+metadata.set("IC", "M8")                       # JPEG 2000 with mask
+metadata.set("COMRAT", "N001.0")               # Lossless compression
+metadata.set("J2K_DECOMPOSITION_LEVELS", "5")  # Resolution levels
+
+# Create provider
+provider = BufferedImageAssetProvider.create(
+    key="sparse_j2k_image",
+    num_columns=2048,
+    num_rows=2048,
+    num_bands=1,
+    block_width=512,
+    block_height=512,
+    pixel_type=PixelType.UInt16,
+    metadata=metadata,
+)
+
+# Set only border blocks (simulating irregular coverage)
+block_grid_rows = 4  # 2048/512
+block_grid_cols = 4
+
+for block_row in range(block_grid_rows):
+    for block_col in range(block_grid_cols):
+        # Only set border blocks
+        is_border = (block_row == 0 or block_row == block_grid_rows - 1 or
+                     block_col == 0 or block_col == block_grid_cols - 1)
+        if is_border:
+            block_data = np.random.randint(0, 65535, (1, 512, 512), dtype=np.uint16)
+            provider.set_block(block_row, block_col, block_data)
+
+# Write sparse J2K image
+with IO.open(["sparse_j2k.ntf"], "w", "nitf") as writer:
+    writer.add_asset("image_segment_0", provider)
+```
+
+#### Important Notes on Masked Images
+
+1. **IC value determines behavior**: Using a masked IC (NM, M8, MD) allows sparse data. Using a non-masked IC (NC, C8, CD) requires all blocks to be provided.
+
+2. **Error on missing blocks with non-masked IC**: If you use a non-masked IC value but don't provide all blocks, the writer will raise a `MissingBlocks` error.
+
+3. **has_block() is essential**: Always check `has_block()` before calling `get_block()` on masked images to avoid errors.
+
+4. **Block offsets**: The mask table stores offsets for each block. Empty blocks have offset `0xFFFFFFFF`.
+
 ### Why Encoding Hints Use Metadata
 
 This design keeps format-specific parameters out of abstract interfaces:

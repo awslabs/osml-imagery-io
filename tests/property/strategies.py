@@ -13,7 +13,7 @@ This module provides reusable strategies for generating:
 Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 5.2
 """
 
-from typing import Tuple
+from typing import Set, Tuple
 
 import numpy as np
 from hypothesis import strategies as st
@@ -457,6 +457,195 @@ J2K_PIXEL_TYPES = [
     PixelType.UInt16,
     PixelType.Int16,
 ]
+
+
+@st.composite
+def mask_patterns(
+    draw,
+    num_block_rows: int,
+    num_block_cols: int,
+) -> set:
+    """Strategy for generating block mask patterns.
+    
+    Generates various mask patterns indicating which blocks are present (not masked).
+    
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        num_block_rows: Number of block rows in the image
+        num_block_cols: Number of block columns in the image
+    
+    Returns:
+        A set of (row, col) tuples indicating which blocks are present.
+    
+    Requirements: 10.1
+    
+    **Feature: image-masking, Mask Pattern Generation**
+    """
+    pattern_type = draw(st.sampled_from([
+        "all_present",      # No blocks masked
+        "all_masked",       # All blocks masked (edge case)
+        "checkerboard",     # Alternating pattern
+        "border_only",      # Only edge blocks present
+        "random",           # Random subset of blocks
+        "single_block",     # Only one block present
+    ]))
+    
+    all_blocks = {(r, c) for r in range(num_block_rows) for c in range(num_block_cols)}
+    
+    if pattern_type == "all_present":
+        return all_blocks
+    elif pattern_type == "all_masked":
+        return set()
+    elif pattern_type == "checkerboard":
+        return {(r, c) for r, c in all_blocks if (r + c) % 2 == 0}
+    elif pattern_type == "border_only":
+        return {(r, c) for r, c in all_blocks 
+                if r == 0 or r == num_block_rows - 1 or c == 0 or c == num_block_cols - 1}
+    elif pattern_type == "single_block":
+        if all_blocks:
+            return {draw(st.sampled_from(sorted(list(all_blocks))))}
+        return set()
+    else:  # random
+        if all_blocks:
+            return set(draw(st.lists(st.sampled_from(sorted(list(all_blocks))), unique=True)))
+        return set()
+
+
+def calculate_safe_j2k_decomposition_levels(
+    block_height: int, 
+    block_width: int,
+    num_rows: int = None,
+    num_cols: int = None
+) -> int:
+    """Calculate safe JPEG 2000 decomposition levels for given block dimensions.
+    
+    OpenJPEG requires that the tile dimensions are large enough to support
+    the requested number of decomposition levels. The requirement is:
+    min_dim >= 2^decomposition_levels
+    
+    When image dimensions are provided, this also considers partial blocks
+    at the edges which may be smaller than the nominal block size.
+    
+    Args:
+        block_height: Height of the block/tile
+        block_width: Width of the block/tile
+        num_rows: Optional total image rows (to calculate partial block sizes)
+        num_cols: Optional total image columns (to calculate partial block sizes)
+    
+    Returns:
+        Safe number of decomposition levels (minimum 0)
+    """
+    min_dim = min(block_height, block_width)
+    
+    # If image dimensions provided, consider partial blocks at edges
+    if num_rows is not None and num_cols is not None:
+        # Calculate the size of the last partial block (if any)
+        last_block_height = num_rows % block_height
+        last_block_width = num_cols % block_width
+        
+        # If there's a partial block, consider its dimensions
+        if last_block_height > 0:
+            min_dim = min(min_dim, last_block_height)
+        if last_block_width > 0:
+            min_dim = min(min_dim, last_block_width)
+    
+    # Calculate max levels based on OpenJPEG's requirement:
+    # min_dim >= 2^decomposition_levels
+    # Therefore: decomposition_levels <= floor(log2(min_dim))
+    if min_dim <= 1:
+        return 0  # 1-pixel blocks can only have 0 decomposition levels
+    
+    # floor(log2(min_dim)) gives max safe levels, cap at 5 for reasonable compression
+    max_levels = int(np.floor(np.log2(min_dim)))
+    return min(5, max_levels)
+
+
+@st.composite
+def masked_image(
+    draw,
+    min_size: int = 32,
+    max_size: int = 128,
+    min_bands: int = 1,
+    max_bands: int = 3,
+) -> Tuple[np.ndarray, PixelType, int, int, int, int, int, Set[Tuple[int, int]], str]:
+    """Composite strategy for generating masked images with metadata.
+    
+    Generates a random image with a mask pattern indicating which blocks are present.
+    This is used for testing masked image roundtrip operations.
+    
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        min_size: Minimum dimension size (default 32)
+        max_size: Maximum dimension size (default 128)
+        min_bands: Minimum band count (default 1)
+        max_bands: Maximum band count (default 3)
+    
+    Returns:
+        Tuple of (array, pixel_type, num_bands, num_rows, num_cols, 
+                  block_height, block_width, provided_blocks, ic_value)
+        - array: numpy array with shape (num_bands, num_rows, num_cols)
+        - pixel_type: PixelType enum value
+        - num_bands: number of bands
+        - num_rows: number of rows
+        - num_cols: number of columns
+        - block_height: height of each block
+        - block_width: width of each block
+        - provided_blocks: set of (row, col) tuples for blocks that have data
+        - ic_value: IC value (NM for uncompressed masked, M8 for J2K masked)
+    
+    Requirements: 10.1
+    
+    **Feature: image-masking, Masked Image Generation**
+    """
+    # Generate base image parameters
+    # Use pixel types that work with both uncompressed and J2K
+    pixel_type = draw(st.sampled_from([PixelType.UInt8, PixelType.UInt16, PixelType.Int16]))
+    num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
+    block_height, block_width = draw(block_sizes())
+    
+    # Choose IC value (masked variant) first, as it affects dimension constraints
+    # NM = uncompressed with mask, M8 = JPEG 2000 with mask
+    ic_value = draw(st.sampled_from(["NM", "M8"]))
+    
+    # For M8 (JPEG 2000), OpenJPEG has minimum tile size requirements.
+    # Even with 0 decomposition levels, tiles smaller than ~32 pixels in any
+    # dimension fail. To ensure valid partial blocks at image edges, we
+    # constrain image dimensions to be multiples of the block size for M8.
+    # This is a reasonable constraint since real-world imagery rarely has
+    # such small partial blocks.
+    if ic_value == "M8":
+        # For M8, ensure image dimensions are multiples of block size
+        # This avoids partial blocks that are too small for OpenJPEG
+        min_blocks = max(1, min_size // block_height)
+        max_blocks = max(min_blocks, max_size // block_height)
+        num_block_rows = draw(st.integers(min_value=min_blocks, max_value=max_blocks))
+        num_rows = num_block_rows * block_height
+        
+        min_blocks = max(1, min_size // block_width)
+        max_blocks = max(min_blocks, max_size // block_width)
+        num_block_cols = draw(st.integers(min_value=min_blocks, max_value=max_blocks))
+        num_cols = num_block_cols * block_width
+    else:
+        # For NM (uncompressed), any dimensions work
+        num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
+        
+        # Ensure block size doesn't exceed image dimensions
+        block_height = min(block_height, num_rows)
+        block_width = min(block_width, num_cols)
+        
+        # Calculate block grid
+        num_block_rows = (num_rows + block_height - 1) // block_height
+        num_block_cols = (num_cols + block_width - 1) // block_width
+    
+    # Generate mask pattern
+    provided_blocks = draw(mask_patterns(num_block_rows, num_block_cols))
+    
+    # Generate image data
+    dtype = get_numpy_dtype(pixel_type)
+    array = draw(arrays(dtype=dtype, shape=(num_bands, num_rows, num_cols)))
+    
+    return (array, pixel_type, num_bands, num_rows, num_cols, 
+            block_height, block_width, provided_blocks, ic_value)
 
 
 @st.composite

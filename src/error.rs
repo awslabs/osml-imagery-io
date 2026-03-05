@@ -99,6 +99,57 @@ pub enum CodecError {
         /// Whether lossless encoding was requested
         lossless: bool,
     },
+
+    // =========================================================================
+    // Image masking error variants (Phase 6)
+    // =========================================================================
+
+    /// Block not found error for masked or out-of-bounds blocks.
+    ///
+    /// This error is returned when attempting to access a block that either:
+    /// - Is masked (empty) in a masked image (offset = 0xFFFFFFFF)
+    /// - Is outside the valid block grid
+    ///
+    /// # Requirements
+    /// - 2.3: get_block() on masked block SHALL raise appropriate error
+    #[error("Block not found: row={row}, col={col}")]
+    BlockNotFound {
+        /// Block row index
+        row: u32,
+        /// Block column index
+        col: u32,
+    },
+
+    /// Missing blocks error when non-masked IC is used with sparse data.
+    ///
+    /// This error is returned when attempting to write an image with a non-masked
+    /// IC value (NC, C8, CD, etc.) but not all blocks have been provided.
+    ///
+    /// # Requirements
+    /// - 7.2: Non-masked IC requires all blocks to be provided
+    /// - 7.3: Raise MissingBlocks error with expected/provided counts
+    #[error("Missing blocks for non-masked IC '{ic}': expected {expected} blocks, but only {provided} were provided")]
+    MissingBlocks {
+        /// Total number of blocks expected
+        expected: u32,
+        /// Number of blocks actually provided
+        provided: u32,
+        /// The IC value that was set
+        ic: String,
+    },
+
+    /// Invalid mask table format error.
+    ///
+    /// This error is returned when parsing an Image Data Mask table that has
+    /// an invalid or corrupt format.
+    ///
+    /// # Requirements
+    /// - 1.1: Parse Image Data Mask table from masked image segments
+    #[error("Invalid mask table: {reason}")]
+    InvalidMaskTable {
+        /// Description of why the mask table is invalid
+        reason: String,
+    },
 }
 
 impl From<CodecError> for PyErr {
@@ -140,6 +191,20 @@ impl From<CodecError> for PyErr {
                 "J2K encode error: {} (params: {}x{}, {} bands, {} bpp, lossless={})",
                 reason, width, height, num_components, bits_per_component, lossless
             )),
+            CodecError::BlockNotFound { row, col } => {
+                PyIndexError::new_err(format!("Block not found: row={}, col={}", row, col))
+            }
+            CodecError::MissingBlocks {
+                expected,
+                provided,
+                ic,
+            } => PyValueError::new_err(format!(
+                "Missing blocks for non-masked IC '{}': expected {} blocks, but only {} were provided",
+                ic, expected, provided
+            )),
+            CodecError::InvalidMaskTable { reason } => {
+                PyValueError::new_err(format!("Invalid mask table: {}", reason))
+            }
             CodecError::Parse(msg) => PyValueError::new_err(format!("Parse error: {}", msg)),
             _ => PyIOError::new_err(err.to_string()),
         }

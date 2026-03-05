@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given, settings, Phase
+from hypothesis import given, settings, Phase, assume
 
 from aws.osml.io import (
     IO,
@@ -28,6 +28,7 @@ from aws.osml.io import (
 from .strategies import (
     random_image,
     realistic_image_for_compression,
+    masked_image,
     pixel_types,
     image_dimensions,
     band_counts,
@@ -603,3 +604,109 @@ class TestIdempotentEncoding:
                 result[:, start_row:end_row, start_col:end_col] = block[:, :actual_rows, :actual_cols]
         
         return result
+
+
+@pytest.mark.property
+class TestMaskedImageRoundtrip:
+    """Property tests for masked image roundtrip operations.
+    
+    These tests verify that masked images with sparse block data survive
+    roundtrip encoding and decoding, with valid blocks preserved exactly.
+    
+    **Feature: image-masking, Masked Image Roundtrip**
+    **Validates: Requirements 8.1**
+    """
+    
+    @given(masked_image(min_size=32, max_size=64, min_bands=1, max_bands=3))
+    @pbt_settings
+    def test_masked_image_lossless_roundtrip(self, image_tuple):
+        """Masked Image Lossless Roundtrip
+        
+        For any masked image with lossless compression (IC=NM), encoding then
+        decoding SHALL produce valid blocks that exactly match the original data.
+        
+        **Feature: image-masking, Masked Image Roundtrip**
+        **Validates: Requirements 8.1**
+        """
+        (array, pixel_type, num_bands, num_rows, num_cols, 
+         block_height, block_width, provided_blocks, ic_value) = image_tuple
+        
+        # Skip if no blocks are provided (all_masked pattern)
+        assume(len(provided_blocks) > 0)
+        
+        # Only test uncompressed masked (NM) for lossless roundtrip
+        assume(ic_value == "NM")
+        
+        with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
+            path = Path(f.name)
+        
+        try:
+            # Create metadata for masked uncompressed image
+            metadata = BufferedMetadataProvider()
+            metadata.set("IC", "NM")
+            
+            # Create image provider
+            provider = BufferedImageAssetProvider.create(
+                key="image_segment_0",
+                num_columns=num_cols,
+                num_rows=num_rows,
+                num_bands=num_bands,
+                block_width=block_width,
+                block_height=block_height,
+                pixel_type=pixel_type,
+                metadata=metadata,
+            )
+            
+            # Set only the provided blocks (sparse data)
+            for block_row, block_col in provided_blocks:
+                start_row = block_row * block_height
+                start_col = block_col * block_width
+                end_row = min(start_row + block_height, num_rows)
+                end_col = min(start_col + block_width, num_cols)
+                
+                block = array[:, start_row:end_row, start_col:end_col].copy()
+                provider.set_block(block_row, block_col, block)
+            
+            # Write to NITF file
+            writer = IO.open([str(path)], "w", "nitf")
+            writer.add_asset(
+                key="image_segment_0",
+                provider=provider,
+                title="Test Masked Image",
+                description="Property test masked image",
+                roles=["data"],
+            )
+            writer.close()
+            
+            # Read back
+            reader = IO.open([str(path)], "r")
+            asset = reader.get_asset("image_segment_0")
+            
+            # Verify each provided block matches original
+            for block_row, block_col in provided_blocks:
+                # Verify has_block returns true
+                assert asset.has_block(block_row, block_col, 0), (
+                    f"has_block({block_row}, {block_col}) should return True"
+                )
+                
+                # Get decoded block
+                decoded_block = asset.get_block(block_row, block_col, 0)
+                
+                # Get original block
+                start_row = block_row * block_height
+                start_col = block_col * block_width
+                end_row = min(start_row + block_height, num_rows)
+                end_col = min(start_col + block_width, num_cols)
+                original_block = array[:, start_row:end_row, start_col:end_col]
+                
+                # Verify exact equality
+                np.testing.assert_array_equal(
+                    decoded_block, original_block,
+                    err_msg=f"Block ({block_row}, {block_col}) data mismatch"
+                )
+            
+            reader.close()
+            
+        finally:
+            if path.exists():
+                path.unlink()

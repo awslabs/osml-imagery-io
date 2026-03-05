@@ -5,7 +5,7 @@
 //! It allows setting image parameters and block data programmatically.
 
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use crate::error::CodecError;
@@ -168,6 +168,9 @@ pub struct BufferedImageAssetProvider {
     config: MemoryImageConfig,
     /// Block data storage (block_row, block_col) -> data
     blocks: RwLock<HashMap<(u32, u32), Vec<u8>>>,
+    /// Set of block coordinates that have been provided via set_block()
+    /// Used for sparse image support with masked IC values
+    provided_blocks: RwLock<HashSet<(u32, u32)>>,
     /// Metadata provider
     metadata: Arc<dyn MetadataProvider>,
 }
@@ -189,6 +192,7 @@ impl BufferedImageAssetProvider {
             roles: vec!["data".to_string()],
             config,
             blocks: RwLock::new(HashMap::new()),
+            provided_blocks: RwLock::new(HashSet::new()),
             metadata: Arc::new(EmptyMetadataProvider::default()),
         }
     }
@@ -233,6 +237,20 @@ impl BufferedImageAssetProvider {
         &self.config
     }
 
+    /// Get the set of block coordinates that have been provided via set_block().
+    ///
+    /// This is useful for determining which blocks have data when writing
+    /// masked images with sparse block data.
+    ///
+    /// # Returns
+    /// A HashSet containing (row, col) tuples for all provided blocks.
+    pub fn provided_blocks(&self) -> HashSet<(u32, u32)> {
+        self.provided_blocks
+            .read()
+            .map(|p| p.clone())
+            .unwrap_or_default()
+    }
+
     /// Set block data at the given coordinates.
     ///
     /// # Arguments
@@ -254,7 +272,12 @@ impl BufferedImageAssetProvider {
             CodecError::Decode("Failed to acquire write lock on blocks".to_string())
         })?;
 
+        let mut provided = self.provided_blocks.write().map_err(|_| {
+            CodecError::Decode("Failed to acquire write lock on provided_blocks".to_string())
+        })?;
+
         blocks.insert((block_row, block_col), data.to_vec());
+        provided.insert((block_row, block_col));
         Ok(())
     }
 
@@ -288,10 +311,15 @@ impl BufferedImageAssetProvider {
             CodecError::Decode("Failed to acquire write lock on blocks".to_string())
         })?;
 
+        let mut provided = self.provided_blocks.write().map_err(|_| {
+            CodecError::Decode("Failed to acquire write lock on provided_blocks".to_string())
+        })?;
+
         for block_row in 0..num_blocks_v {
             for block_col in 0..num_blocks_h {
                 let block_data = self.extract_block_bsq(data, block_row, block_col)?;
                 blocks.insert((block_row, block_col), block_data);
+                provided.insert((block_row, block_col));
             }
         }
 
@@ -443,12 +471,12 @@ impl ImageAssetProvider for BufferedImageAssetProvider {
             return false;
         }
 
-        let blocks = match self.blocks.read() {
-            Ok(b) => b,
+        let provided = match self.provided_blocks.read() {
+            Ok(p) => p,
             Err(_) => return false,
         };
 
-        blocks.contains_key(&(block_row, block_col))
+        provided.contains(&(block_row, block_col))
     }
 
     fn get_block(

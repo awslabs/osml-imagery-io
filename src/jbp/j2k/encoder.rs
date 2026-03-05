@@ -249,6 +249,22 @@ impl BlockEncoder for Jpeg2000BlockEncoder {
         Ok(())
     }
 
+    fn skip_block(&mut self, block_row: u32, block_col: u32) -> Result<(), CodecError> {
+        // Validate block coordinates
+        if block_row >= self.block_grid.0 || block_col >= self.block_grid.1 {
+            return Err(CodecError::InvalidBlockCoordinates(
+                block_row,
+                block_col,
+                0,
+            ));
+        }
+
+        // Mark block as handled (skipped for masked images)
+        self.encoded_blocks.insert((block_row, block_col));
+
+        Ok(())
+    }
+
     fn finalize(self: Box<Self>) -> Result<Vec<u8>, CodecError> {
         // Verify all blocks were encoded
         let expected_blocks = self.block_grid.0 * self.block_grid.1;

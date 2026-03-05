@@ -6,11 +6,15 @@ for visual verification of pixel correctness. It uses the existing IO library
 Python bindings to create images with configurable dimensions, tile sizes,
 band configurations, pixel types, and interleave modes.
 
+The script also supports generating masked images where some blocks are empty,
+useful for testing sparse imagery handling.
+
 Usage:
     python scripts/generate_synthetic_image.py output.ntf
     python scripts/generate_synthetic_image.py output.ntf --width 1024 --height 1024
     python scripts/generate_synthetic_image.py output.ntf --bands 3 --pixel-type uint16
     python scripts/generate_synthetic_image.py output.ntf --tile-width 128 --tile-height 128
+    python scripts/generate_synthetic_image.py output.ntf --masked --mask-pattern checkerboard
 
 Examples:
     # Generate a default 512x512 grayscale image
@@ -22,6 +26,15 @@ Examples:
 
     # Generate a 16-bit image with 11-bit actual precision
     python scripts/generate_synthetic_image.py hdr_test.ntf --pixel-type uint16 --abpp 11
+
+    # Generate a masked image with checkerboard pattern
+    python scripts/generate_synthetic_image.py masked_test.ntf --masked --mask-pattern checkerboard
+
+    # Generate a masked image with random pattern (50% blocks masked)
+    python scripts/generate_synthetic_image.py masked_random.ntf --masked --mask-pattern random --mask-ratio 0.5
+
+    # Generate a masked J2K image
+    python scripts/generate_synthetic_image.py masked_j2k.ntf --masked --compression C8
 """
 
 import argparse
@@ -53,6 +66,9 @@ class ImageConfig:
         imode: Interleave mode - "B", "P", "R", or "S"
         compression: Compression type - "NC" (none) or "C8" (JPEG2000)
         comrat: Compression ratio for JPEG2000 (e.g., "N001.0" for lossless, "01.0" for 1.0 bpp)
+        masked: Enable masked output mode (uses NM for uncompressed, M8 for J2K)
+        mask_pattern: Mask pattern type (checkerboard, border, random, single)
+        mask_ratio: Fraction of blocks to mask for random pattern (0.0-1.0)
     """
     output_path: str
     width: int = 512
@@ -65,6 +81,9 @@ class ImageConfig:
     imode: str = "B"
     compression: str = "NC"
     comrat: Optional[str] = None
+    masked: bool = False
+    mask_pattern: str = "checkerboard"
+    mask_ratio: float = 0.5
     
     def __post_init__(self) -> None:
         """Validate configuration and set defaults."""
@@ -99,6 +118,17 @@ class ImageConfig:
         # Validate compression
         if self.compression not in ("NC", "C8"):
             raise ValueError(f"Compression must be 'NC' or 'C8', got '{self.compression}'")
+        
+        # Validate mask pattern
+        if self.mask_pattern not in ("checkerboard", "border", "random", "single"):
+            raise ValueError(
+                f"Mask pattern must be 'checkerboard', 'border', 'random', or 'single', "
+                f"got '{self.mask_pattern}'"
+            )
+        
+        # Validate mask ratio
+        if not 0.0 <= self.mask_ratio <= 1.0:
+            raise ValueError(f"Mask ratio must be between 0.0 and 1.0, got {self.mask_ratio}")
         
         # Set ABPP to full bit depth if not specified
         max_bits = 8 if self.pixel_type == "uint8" else 16
@@ -135,6 +165,64 @@ class ImageConfig:
     def total_tiles(self) -> int:
         """Total number of tiles in the image."""
         return self.num_tiles_x * self.num_tiles_y
+    
+    @property
+    def effective_ic(self) -> str:
+        """Get the effective IC value based on compression and masked settings.
+        
+        When masked is True, returns the masked variant of the compression:
+        - NC -> NM (uncompressed with mask)
+        - C8 -> M8 (JPEG 2000 with mask)
+        
+        When masked is False, returns the original compression value.
+        """
+        if not self.masked:
+            return self.compression
+        
+        # Map non-masked IC to masked IC
+        ic_mapping = {
+            "NC": "NM",
+            "C8": "M8",
+        }
+        return ic_mapping.get(self.compression, self.compression)
+    
+    def get_provided_blocks(self) -> set:
+        """Get the set of block coordinates that should have data based on mask pattern.
+        
+        Returns:
+            Set of (tile_y, tile_x) tuples for blocks that should be provided.
+            When masked is False, returns all blocks.
+        """
+        all_blocks = {(y, x) for y in range(self.num_tiles_y) for x in range(self.num_tiles_x)}
+        
+        if not self.masked:
+            return all_blocks
+        
+        if self.mask_pattern == "checkerboard":
+            # Alternating pattern - keep blocks where (row + col) is even
+            return {(y, x) for y, x in all_blocks if (y + x) % 2 == 0}
+        
+        elif self.mask_pattern == "border":
+            # Only edge blocks present
+            return {(y, x) for y, x in all_blocks 
+                    if y == 0 or y == self.num_tiles_y - 1 or x == 0 or x == self.num_tiles_x - 1}
+        
+        elif self.mask_pattern == "random":
+            # Random subset based on mask_ratio (ratio of blocks to KEEP, not mask)
+            import random
+            # Use a deterministic seed based on image dimensions for reproducibility
+            random.seed(self.width * self.height + self.num_tiles_x * self.num_tiles_y)
+            all_blocks_list = sorted(list(all_blocks))
+            num_to_keep = max(1, int(len(all_blocks_list) * (1.0 - self.mask_ratio)))
+            return set(random.sample(all_blocks_list, num_to_keep))
+        
+        elif self.mask_pattern == "single":
+            # Only one block present (center block)
+            center_y = self.num_tiles_y // 2
+            center_x = self.num_tiles_x // 2
+            return {(center_y, center_x)}
+        
+        return all_blocks
 
 
 class CheckerboardPattern:
@@ -392,7 +480,7 @@ class ImageWriter:
         # Create metadata provider with encoding hints (uppercase field names match .ksy definitions)
         metadata = BufferedMetadataProvider()
         metadata.set("IMODE", config.imode)
-        metadata.set("IC", config.compression)
+        metadata.set("IC", config.effective_ic)
         
         if config.compression == "C8" and config.comrat:
             metadata.set("COMRAT", config.comrat)
@@ -422,11 +510,21 @@ class ImageWriter:
         # Convert to band-sequential format and set on provider
         bsq_image = ImageWriter._to_bsq(full_image, config)
         
+        # Get the set of blocks to provide (all blocks if not masked)
+        provided_blocks = config.get_provided_blocks()
+        
         try:
-            if config.pixel_type == "uint8":
-                image_provider.set_full_image(bsq_image)
+            if config.masked:
+                # For masked images, use selective set_block() calls
+                ImageWriter._set_blocks_selectively(
+                    image_provider, bsq_image, config, provided_blocks
+                )
             else:
-                image_provider.set_full_image_u16(bsq_image)
+                # For non-masked images, set the full image
+                if config.pixel_type == "uint8":
+                    image_provider.set_full_image(bsq_image)
+                else:
+                    image_provider.set_full_image_u16(bsq_image)
         except Exception as e:
             raise RuntimeError(f"Failed to set image data: {e}")
         
@@ -502,6 +600,48 @@ class ImageWriter:
         """
         # Transpose from (height, width, bands) to (bands, height, width)
         return np.ascontiguousarray(np.transpose(image, (2, 0, 1)))
+    
+    @staticmethod
+    def _set_blocks_selectively(
+        image_provider,
+        bsq_image: np.ndarray,
+        config: ImageConfig,
+        provided_blocks: set,
+    ) -> None:
+        """Set only the provided blocks on the image provider.
+        
+        This method extracts individual blocks from the full image and sets
+        them on the provider using set_block(). Blocks not in provided_blocks
+        are skipped, creating a sparse/masked image.
+        
+        Args:
+            image_provider: BufferedImageAssetProvider to set blocks on
+            bsq_image: Full image in BSQ format (bands, rows, cols)
+            config: Image configuration
+            provided_blocks: Set of (tile_y, tile_x) tuples for blocks to set
+        """
+        for tile_y in range(config.num_tiles_y):
+            for tile_x in range(config.num_tiles_x):
+                if (tile_y, tile_x) not in provided_blocks:
+                    continue
+                
+                # Calculate pixel coordinates for this block
+                start_y = tile_y * config.tile_height
+                start_x = tile_x * config.tile_width
+                end_y = min(start_y + config.tile_height, config.height)
+                end_x = min(start_x + config.tile_width, config.width)
+                
+                # Extract block data (bands, rows, cols)
+                block_data = bsq_image[:, start_y:end_y, start_x:end_x]
+                
+                # Ensure contiguous array
+                block_data = np.ascontiguousarray(block_data)
+                
+                # Set block on provider
+                if config.pixel_type == "uint8":
+                    image_provider.set_block(tile_y, tile_x, block_data)
+                else:
+                    image_provider.set_block_u16(tile_y, tile_x, block_data)
 
 
 def parse_args(args: Optional[list] = None) -> ImageConfig:
@@ -617,6 +757,27 @@ Examples:
         help="Compression ratio for JPEG2000: N001.0 (lossless), 01.0 (1.0 bpp), etc."
     )
     
+    # Masking options
+    parser.add_argument(
+        "--masked",
+        action="store_true",
+        help="Enable masked output mode (uses NM for uncompressed, M8 for J2K)"
+    )
+    parser.add_argument(
+        "--mask-pattern",
+        type=str,
+        default="checkerboard",
+        choices=["checkerboard", "border", "random", "single"],
+        help="Mask pattern: checkerboard, border, random, or single (default: checkerboard)"
+    )
+    parser.add_argument(
+        "--mask-ratio",
+        type=float,
+        default=0.5,
+        metavar="RATIO",
+        help="Fraction of blocks to mask for random pattern, 0.0-1.0 (default: 0.5)"
+    )
+    
     parsed = parser.parse_args(args)
     
     return ImageConfig(
@@ -631,6 +792,9 @@ Examples:
         imode=parsed.imode,
         compression=parsed.compression,
         comrat=parsed.comrat,
+        masked=parsed.masked,
+        mask_pattern=parsed.mask_pattern,
+        mask_ratio=parsed.mask_ratio,
     )
 
 
@@ -656,6 +820,11 @@ def main() -> int:
     print(f"  Bands: {config.num_bands}")
     print(f"  Pixel type: {config.pixel_type} (ABPP: {config.abpp})")
     print(f"  IMODE: {config.imode}")
+    print(f"  IC: {config.effective_ic}")
+    if config.masked:
+        provided_blocks = config.get_provided_blocks()
+        print(f"  Masked: yes (pattern: {config.mask_pattern})")
+        print(f"  Provided blocks: {len(provided_blocks)} of {config.total_tiles}")
     
     try:
         ImageWriter.write_image(config)

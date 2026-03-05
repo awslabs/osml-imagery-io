@@ -606,6 +606,53 @@ impl OpenJpegEncodeState {
         // Configure compression
         cparams.numresolution = params.num_decomposition_levels as c_int + 1;
         cparams.tcp_numlayers = params.num_quality_layers as c_int;
+        
+        // For small tiles, we need to reduce the code-block size and precinct size
+        // OpenJPEG default code-block is 64x64, precinct is 2^15 x 2^15
+        // Both must fit within tiles
+        let min_tile_dim = params.tile_width.min(params.tile_height);
+        
+        // Code-block size must be a power of 2 and <= tile size
+        // Use the largest power of 2 that fits, minimum 4
+        let cblock_size = if min_tile_dim >= 64 {
+            64
+        } else if min_tile_dim >= 32 {
+            32
+        } else if min_tile_dim >= 16 {
+            16
+        } else if min_tile_dim >= 8 {
+            8
+        } else {
+            4
+        };
+        cparams.cblockw_init = cblock_size;
+        cparams.cblockh_init = cblock_size;
+        
+        // Set precinct sizes for each resolution level
+        // Precinct size must be >= code-block size and fit within tile
+        // For small tiles, use the tile size as precinct size
+        let precinct_size = if min_tile_dim >= 256 {
+            256
+        } else if min_tile_dim >= 128 {
+            128
+        } else if min_tile_dim >= 64 {
+            64
+        } else if min_tile_dim >= 32 {
+            32
+        } else if min_tile_dim >= 16 {
+            16
+        } else if min_tile_dim >= 8 {
+            8
+        } else {
+            4
+        };
+        
+        // Set precinct sizes for all resolution levels
+        cparams.res_spec = cparams.numresolution;
+        for i in 0..cparams.numresolution as usize {
+            cparams.prcw_init[i] = precinct_size;
+            cparams.prch_init[i] = precinct_size;
+        }
 
         if params.lossless {
             cparams.irreversible = 0; // Reversible (lossless)

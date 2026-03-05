@@ -525,6 +525,73 @@ impl JBPDatasetWriter {
             .map(|p| p as &dyn ImageAssetProvider)
     }
 
+    /// Collect the set of provided block coordinates from an ImageAssetProvider.
+    ///
+    /// This method iterates over the block grid and checks `has_block()` for each
+    /// coordinate to determine which blocks have been provided. This is used for
+    /// masked image writing to generate the block mask table.
+    ///
+    /// # Arguments
+    /// * `provider` - The ImageAssetProvider to check for provided blocks
+    ///
+    /// # Returns
+    /// A HashSet containing (row, col) tuples for all blocks where `has_block()` returns true.
+    ///
+    /// # Requirements
+    /// - 5.1: Tracks which blocks have been provided via set_block()
+    fn collect_provided_blocks(provider: &dyn ImageAssetProvider) -> HashSet<(u32, u32)> {
+        let (grid_rows, grid_cols) = provider.block_grid_size();
+        let mut provided = HashSet::new();
+
+        for row in 0..grid_rows {
+            for col in 0..grid_cols {
+                if provider.has_block(row, col, 0) {
+                    provided.insert((row, col));
+                }
+            }
+        }
+
+        provided
+    }
+
+    /// Validate that block data is consistent with the IC value.
+    ///
+    /// For non-masked IC values (NC, C8, CD, etc.), all blocks must be provided.
+    /// For masked IC values (NM, M8, MD, etc.), sparse data is allowed.
+    ///
+    /// # Arguments
+    /// * `provider` - The ImageAssetProvider to validate
+    /// * `ic` - The IC (Image Compression) value from encoding hints
+    ///
+    /// # Returns
+    /// Ok(provided_blocks) if validation passes, or MissingBlocks error if
+    /// a non-masked IC is used with sparse data.
+    ///
+    /// # Requirements
+    /// - 7.2: Non-masked IC requires all blocks to be provided
+    /// - 7.3: Raise MissingBlocks error with expected/provided counts
+    fn validate_blocks_for_ic(
+        provider: &dyn ImageAssetProvider,
+        ic: &str,
+    ) -> Result<HashSet<(u32, u32)>, CodecError> {
+        use crate::jbp::image::is_masked_ic;
+
+        let provided_blocks = Self::collect_provided_blocks(provider);
+        let (grid_rows, grid_cols) = provider.block_grid_size();
+        let total_blocks = grid_rows * grid_cols;
+
+        // For non-masked IC values, all blocks must be provided
+        if !is_masked_ic(ic) && (provided_blocks.len() as u32) < total_blocks {
+            return Err(CodecError::MissingBlocks {
+                expected: total_blocks,
+                provided: provided_blocks.len() as u32,
+                ic: ic.to_string(),
+            });
+        }
+
+        Ok(provided_blocks)
+    }
+
     /// Extract encoding hints from asset metadata.
     ///
     /// Reads encoding hint fields (IMODE, IC, NPPBH, NPPBV, COMRAT) from the asset's
@@ -594,9 +661,9 @@ impl JBPDatasetWriter {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         
-        // Extract J2K-specific encoding hints for IC=C8 or CD
+        // Extract J2K-specific encoding hints for IC=C8, CD, M8, or MD
         let ic_trimmed = ic.trim();
-        let j2k_hints = if ic_trimmed == "C8" || ic_trimmed == "CD" {
+        let j2k_hints = if ic_trimmed == "C8" || ic_trimmed == "CD" || ic_trimmed == "M8" || ic_trimmed == "MD" {
             // Extract lossless flag
             let lossless = dict.get("J2K_LOSSLESS")
                 .and_then(|v| {
@@ -652,8 +719,8 @@ impl JBPDatasetWriter {
                 })
                 .unwrap_or(1);
             
-            // HTJ2K is determined by IC=CD
-            let htj2k = ic_trimmed == "CD";
+            // HTJ2K is determined by IC=CD or MD
+            let htj2k = ic_trimmed == "CD" || ic_trimmed == "MD";
             
             Some(J2KEncodingHints {
                 compression_ratio: if lossless { None } else { compression_ratio.or(Some(10.0)) },
@@ -960,62 +1027,268 @@ impl JBPDatasetWriter {
     ///
     /// # Errors
     /// Returns an error if encoding fails or if the compression type is unsupported.
+    /// Returns MissingBlocks error if non-masked IC is used with sparse data.
     fn encode_image_with_block_encoder(
         provider: &dyn ImageAssetProvider,
         hints: &EncodingHints,
         props: &ImageProperties,
     ) -> Result<Vec<u8>, CodecError> {
+        use crate::jbp::image::{is_masked_ic, ImageDataMask, unmask_ic};
+
         // Parse IMODE from hints
         let imode = InterleaveMode::from_char(
             hints.imode.chars().next().unwrap_or('B')
         )?;
 
+        // Validate blocks against IC value and get provided blocks
+        let provided_blocks = Self::validate_blocks_for_ic(provider, &hints.ic)?;
+
+        // Determine if this is a masked image
+        let is_masked = is_masked_ic(&hints.ic);
+
+        // For masked images, use the underlying compression type for encoding
+        let encoding_ic = if is_masked {
+            unmask_ic(&hints.ic).to_string()
+        } else {
+            hints.ic.clone()
+        };
+
         // Determine if pixel values are signed
         let is_signed = props.pvtype == "SI";
 
-        // Create the block encoder based on IC code
+        // For masked J2K images (M8, MD), we don't need the initial multi-tile encoder
+        // because we create per-block single-tile encoders later. Skip creating it
+        // to avoid issues with decomposition levels vs image dimensions.
+        let is_masked_j2k = is_masked && (encoding_ic == "C8" || encoding_ic == "CD");
+
+        // Create the block encoder based on IC code (use underlying compression for masked)
+        // Skip for masked J2K - we'll create per-block encoders later
         #[cfg(feature = "openjpeg")]
-        let mut encoder = create_block_encoder(
-            &hints.ic,
-            props.nrows,
-            props.ncols,
-            props.nbands,
-            props.nbpp as u8,
-            is_signed,
-            imode,
-            hints.nppbh,
-            hints.nppbv,
-            hints.j2k_hints.as_ref(),
-        )?;
+        let encoder: Option<Box<dyn crate::jbp::image::encoder::BlockEncoder>> = if is_masked_j2k {
+            None
+        } else {
+            Some(create_block_encoder(
+                &encoding_ic,
+                props.nrows,
+                props.ncols,
+                props.nbands,
+                props.nbpp as u8,
+                is_signed,
+                imode,
+                hints.nppbh,
+                hints.nppbv,
+                hints.j2k_hints.as_ref(),
+            )?)
+        };
 
         #[cfg(not(feature = "openjpeg"))]
-        let mut encoder = create_block_encoder(
-            &hints.ic,
-            props.nrows,
-            props.ncols,
-            props.nbands,
-            props.nbpp as u8,
-            is_signed,
-            imode,
-            hints.nppbh,
-            hints.nppbv,
-            None,
-        )?;
+        let encoder: Option<Box<dyn crate::jbp::image::encoder::BlockEncoder>> = if is_masked_j2k {
+            None
+        } else {
+            Some(create_block_encoder(
+                &encoding_ic,
+                props.nrows,
+                props.ncols,
+                props.nbands,
+                props.nbpp as u8,
+                is_signed,
+                imode,
+                hints.nppbh,
+                hints.nppbv,
+                None,
+            )?)
+        };
 
         // Create tile assembler to read source tiles and produce output tiles
         let assembler = TileAssembler::new(provider, hints.nppbh, hints.nppbv);
         let (grid_rows, grid_cols) = assembler.output_grid_size();
 
-        // Encode all blocks
-        for block_row in 0..grid_rows {
-            for block_col in 0..grid_cols {
-                let (tile_data, shape) = assembler.get_output_tile(block_row, block_col)?;
-                encoder.encode_block(block_row, block_col, &tile_data, shape)?;
-            }
-        }
+        if is_masked {
+            // For masked images, generate mask table and encode only provided blocks
+            // Blocks are stored sequentially (not at calculated positions) and the
+            // mask table contains offsets to each block's data.
+            
+            // Create initial mask with placeholder offsets
+            let mut mask = ImageDataMask::from_provided_blocks(
+                &provided_blocks,
+                grid_cols,  // num_blocks_per_row = grid_cols
+                grid_rows,  // num_blocks_per_col = grid_rows
+                props.nbands,
+                imode,
+            );
 
-        // Finalize and return encoded data
-        Box::new(encoder).finalize()
+            // For uncompressed masked images (NM), we encode blocks sequentially
+            // and track offsets. For compressed masked images (M8, etc.), we use
+            // the encoder which handles its own offset tracking.
+            if encoding_ic == "NC" {
+                // Uncompressed masked image: encode blocks sequentially
+                let mut encoded_data = Vec::new();
+                let bpp = ((props.nbpp as usize) + 7) / 8;
+                
+                for block_row in 0..grid_rows {
+                    for block_col in 0..grid_cols {
+                        let block_index = (block_row * grid_cols + block_col) as usize;
+                        
+                        if provided_blocks.contains(&(block_row, block_col)) {
+                            // Record the offset where this block starts
+                            mask.block_offsets[block_index] = encoded_data.len() as u32;
+                            
+                            // Get the tile data
+                            let (tile_data, shape) = assembler.get_output_tile(block_row, block_col)?;
+                            
+                            // Convert from BSQ to target IMODE and append
+                            let converted = crate::jbp::image::interleave::from_band_sequential(
+                                &tile_data,
+                                imode,
+                                shape[1], // rows
+                                shape[2], // cols
+                                shape[0], // bands
+                                bpp,
+                            )?;
+                            
+                            encoded_data.extend_from_slice(&converted);
+                        }
+                        // Masked blocks already have EMPTY_BLOCK_OFFSET from from_provided_blocks
+                    }
+                }
+                
+                // Serialize mask with updated offsets
+                let mask_bytes = mask.to_bytes();
+
+                // Combine mask table and encoded data
+                let mut result = Vec::with_capacity(mask_bytes.len() + encoded_data.len());
+                result.extend_from_slice(&mask_bytes);
+                result.extend_from_slice(&encoded_data);
+
+                Ok(result)
+            } else {
+                // Compressed masked image (M8, MD, etc.): encode each block as a
+                // separate single-tile J2K codestream. The decoder expects each
+                // block to be a standalone codestream starting with SOC marker.
+                //
+                // We don't use the multi-tile encoder here. Instead, we create
+                // a new single-tile encoder for each block, encode it, and
+                // concatenate the codestreams while tracking offsets.
+                
+                // encoder is None for masked J2K, so nothing to drop
+                drop(encoder);
+                
+                let mut encoded_data = Vec::new();
+                
+                for block_row in 0..grid_rows {
+                    for block_col in 0..grid_cols {
+                        let block_index = (block_row * grid_cols + block_col) as usize;
+                        
+                        if provided_blocks.contains(&(block_row, block_col)) {
+                            // Record the offset where this block's codestream starts
+                            mask.block_offsets[block_index] = encoded_data.len() as u32;
+                            
+                            // Get the tile data
+                            let (tile_data, shape) = assembler.get_output_tile(block_row, block_col)?;
+                            
+                            // Create a single-tile encoder for this block
+                            // The tile dimensions are the actual block dimensions
+                            let block_height = shape[1];
+                            let block_width = shape[2];
+                            
+                            // For masked J2K, we need to calculate safe decomposition levels
+                            // based on the actual block dimensions, not the nominal block size.
+                            // This is especially important for partial blocks at image edges.
+                            //
+                            // OpenJPEG requires: min_dim >= 2^decomposition_levels
+                            // So: decomposition_levels <= floor(log2(min_dim))
+                            #[cfg(feature = "openjpeg")]
+                            let block_hints = {
+                                use crate::jbp::j2k::comrat::J2KEncodingHints;
+                                
+                                let min_dim = block_height.min(block_width);
+                                // Calculate safe decomposition levels based on OpenJPEG's requirement:
+                                // min_dim >= 2^decomposition_levels
+                                // Therefore: decomposition_levels <= floor(log2(min_dim))
+                                let safe_levels = if min_dim <= 1 {
+                                    0  // 1-pixel blocks can only have 0 decomposition levels
+                                } else {
+                                    // floor(log2(min_dim)) gives max safe levels
+                                    // Cap at 5 for reasonable compression
+                                    ((min_dim as f64).log2().floor() as u8).min(5)
+                                };
+                                
+                                // Create hints based on existing hints or defaults, but always
+                                // with safe decomposition levels for this block
+                                let base_hints = hints.j2k_hints.clone().unwrap_or_default();
+                                let final_levels = safe_levels.min(base_hints.decomposition_levels);
+                                
+                                Some(J2KEncodingHints {
+                                    decomposition_levels: final_levels,
+                                    ..base_hints
+                                })
+                            };
+                            
+                            #[cfg(feature = "openjpeg")]
+                            let mut block_encoder = create_block_encoder(
+                                &encoding_ic,
+                                block_height,  // Single tile = block dimensions
+                                block_width,
+                                props.nbands,
+                                props.nbpp as u8,
+                                is_signed,
+                                imode,
+                                block_width,   // Tile size = full block (single tile)
+                                block_height,
+                                block_hints.as_ref(),
+                            )?;
+                            
+                            #[cfg(not(feature = "openjpeg"))]
+                            let mut block_encoder = create_block_encoder(
+                                &encoding_ic,
+                                block_height,
+                                block_width,
+                                props.nbands,
+                                props.nbpp as u8,
+                                is_signed,
+                                imode,
+                                block_width,
+                                block_height,
+                                None,
+                            )?;
+                            
+                            // Encode the single block (tile 0,0 in this single-tile image)
+                            block_encoder.encode_block(0, 0, &tile_data, shape)?;
+                            
+                            // Finalize to get the codestream for this block
+                            let block_codestream = block_encoder.finalize()?;
+                            
+                            // Append the codestream
+                            encoded_data.extend_from_slice(&block_codestream);
+                        }
+                        // Masked blocks already have EMPTY_BLOCK_OFFSET from from_provided_blocks
+                    }
+                }
+
+                // Serialize mask with updated offsets
+                let mask_bytes = mask.to_bytes();
+
+                // Combine mask table and encoded data
+                let mut result = Vec::with_capacity(mask_bytes.len() + encoded_data.len());
+                result.extend_from_slice(&mask_bytes);
+                result.extend_from_slice(&encoded_data);
+
+                Ok(result)
+            }
+        } else {
+            // For non-masked images, encode all blocks
+            // encoder is always Some for non-masked images
+            let mut encoder = encoder.expect("encoder should be Some for non-masked images");
+            for block_row in 0..grid_rows {
+                for block_col in 0..grid_cols {
+                    let (tile_data, shape) = assembler.get_output_tile(block_row, block_col)?;
+                    encoder.encode_block(block_row, block_col, &tile_data, shape)?;
+                }
+            }
+
+            // Finalize and return encoded data
+            encoder.finalize()
+        }
     }
 
     /// Create an image subheader with TRE data.
@@ -2938,6 +3211,163 @@ mod tests {
             assert_eq!(block_data[pixel_idx], 100, "Band 0 value mismatch at pixel {}", pixel_idx);
             assert_eq!(block_data[pixels_per_band + pixel_idx], 150, "Band 1 value mismatch at pixel {}", pixel_idx);
             assert_eq!(block_data[2 * pixels_per_band + pixel_idx], 200, "Band 2 value mismatch at pixel {}", pixel_idx);
+        }
+    }
+
+    /// Test collect_provided_blocks returns correct set of blocks
+    #[test]
+    fn collect_provided_blocks_returns_provided_only() {
+        use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
+        use crate::traits::ImageAssetProvider;
+
+        // Create a 2x2 block grid (32x32 image with 16x16 blocks)
+        let config = MemoryImageConfig::new(32, 32)
+            .with_bands(1)
+            .with_block_size(16, 16);
+        
+        let provider = BufferedImageAssetProvider::new("test", config);
+        
+        // Set only blocks (0,0) and (1,1) - diagonal pattern
+        let block_data = vec![128u8; 16 * 16];
+        provider.set_block(0, 0, &block_data).unwrap();
+        provider.set_block(1, 1, &block_data).unwrap();
+        
+        let provided = JBPDatasetWriter::collect_provided_blocks(&provider);
+        
+        assert_eq!(provided.len(), 2);
+        assert!(provided.contains(&(0, 0)));
+        assert!(provided.contains(&(1, 1)));
+        assert!(!provided.contains(&(0, 1)));
+        assert!(!provided.contains(&(1, 0)));
+    }
+
+    /// Test validate_blocks_for_ic accepts all blocks for non-masked IC
+    #[test]
+    fn validate_blocks_for_ic_accepts_complete_non_masked() {
+        use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
+        use crate::traits::ImageAssetProvider;
+
+        // Create a 2x2 block grid
+        let config = MemoryImageConfig::new(32, 32)
+            .with_bands(1)
+            .with_block_size(16, 16);
+        
+        let provider = BufferedImageAssetProvider::new("test", config);
+        
+        // Set all 4 blocks
+        let block_data = vec![128u8; 16 * 16];
+        provider.set_block(0, 0, &block_data).unwrap();
+        provider.set_block(0, 1, &block_data).unwrap();
+        provider.set_block(1, 0, &block_data).unwrap();
+        provider.set_block(1, 1, &block_data).unwrap();
+        
+        // Non-masked IC with all blocks should succeed
+        let result = JBPDatasetWriter::validate_blocks_for_ic(&provider, "NC");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 4);
+    }
+
+    /// Test validate_blocks_for_ic rejects sparse data for non-masked IC
+    #[test]
+    fn validate_blocks_for_ic_rejects_sparse_non_masked() {
+        use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
+        use crate::traits::ImageAssetProvider;
+
+        // Create a 2x2 block grid
+        let config = MemoryImageConfig::new(32, 32)
+            .with_bands(1)
+            .with_block_size(16, 16);
+        
+        let provider = BufferedImageAssetProvider::new("test", config);
+        
+        // Set only 2 of 4 blocks
+        let block_data = vec![128u8; 16 * 16];
+        provider.set_block(0, 0, &block_data).unwrap();
+        provider.set_block(1, 1, &block_data).unwrap();
+        
+        // Non-masked IC with missing blocks should fail
+        let result = JBPDatasetWriter::validate_blocks_for_ic(&provider, "NC");
+        assert!(result.is_err());
+        
+        match result.unwrap_err() {
+            CodecError::MissingBlocks { expected, provided, ic } => {
+                assert_eq!(expected, 4);
+                assert_eq!(provided, 2);
+                assert_eq!(ic, "NC");
+            }
+            _ => panic!("Expected MissingBlocks error"),
+        }
+    }
+
+    /// Test validate_blocks_for_ic accepts sparse data for masked IC
+    #[test]
+    fn validate_blocks_for_ic_accepts_sparse_masked() {
+        use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
+        use crate::traits::ImageAssetProvider;
+
+        // Create a 2x2 block grid
+        let config = MemoryImageConfig::new(32, 32)
+            .with_bands(1)
+            .with_block_size(16, 16);
+        
+        let provider = BufferedImageAssetProvider::new("test", config);
+        
+        // Set only 2 of 4 blocks
+        let block_data = vec![128u8; 16 * 16];
+        provider.set_block(0, 0, &block_data).unwrap();
+        provider.set_block(1, 1, &block_data).unwrap();
+        
+        // Masked IC with sparse blocks should succeed
+        let result = JBPDatasetWriter::validate_blocks_for_ic(&provider, "NM");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
+    }
+
+    /// Test validate_blocks_for_ic works with various masked IC values
+    #[test]
+    fn validate_blocks_for_ic_accepts_all_masked_ic_values() {
+        use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
+        use crate::traits::ImageAssetProvider;
+
+        let config = MemoryImageConfig::new(32, 32)
+            .with_bands(1)
+            .with_block_size(16, 16);
+        
+        let provider = BufferedImageAssetProvider::new("test", config);
+        
+        // Set only 1 of 4 blocks
+        let block_data = vec![128u8; 16 * 16];
+        provider.set_block(0, 0, &block_data).unwrap();
+        
+        // All masked IC values should accept sparse data
+        let masked_ics = ["NM", "M1", "M3", "M4", "M5", "M7", "M8", "M9", "MA", "MB", "MC", "MD", "ME"];
+        for ic in masked_ics {
+            let result = JBPDatasetWriter::validate_blocks_for_ic(&provider, ic);
+            assert!(result.is_ok(), "Masked IC '{}' should accept sparse data", ic);
+        }
+    }
+
+    /// Test validate_blocks_for_ic rejects sparse data for all non-masked IC values
+    #[test]
+    fn validate_blocks_for_ic_rejects_sparse_for_all_non_masked() {
+        use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
+        use crate::traits::ImageAssetProvider;
+
+        let config = MemoryImageConfig::new(32, 32)
+            .with_bands(1)
+            .with_block_size(16, 16);
+        
+        let provider = BufferedImageAssetProvider::new("test", config);
+        
+        // Set only 1 of 4 blocks
+        let block_data = vec![128u8; 16 * 16];
+        provider.set_block(0, 0, &block_data).unwrap();
+        
+        // All non-masked IC values should reject sparse data
+        let non_masked_ics = ["NC", "C1", "C3", "C4", "C5", "C7", "C8", "C9", "CA", "CB", "CC", "CD", "CE"];
+        for ic in non_masked_ics {
+            let result = JBPDatasetWriter::validate_blocks_for_ic(&provider, ic);
+            assert!(result.is_err(), "Non-masked IC '{}' should reject sparse data", ic);
         }
     }
 }

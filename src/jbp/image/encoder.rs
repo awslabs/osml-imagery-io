@@ -64,6 +64,20 @@ pub trait BlockEncoder: Send + Sync {
         shape: [u32; 3],
     ) -> Result<(), CodecError>;
 
+    /// Mark a block as intentionally skipped (for masked images).
+    ///
+    /// This method is used for masked images where some blocks are intentionally
+    /// not encoded. Calling this method marks the block as "handled" so that
+    /// `finalize()` won't fail due to missing blocks.
+    ///
+    /// # Arguments
+    /// * `block_row` - Row index of the block in the block grid (0-indexed)
+    /// * `block_col` - Column index of the block in the block grid (0-indexed)
+    ///
+    /// # Errors
+    /// Returns `CodecError::InvalidBlockCoordinates` if coordinates are out of bounds.
+    fn skip_block(&mut self, block_row: u32, block_col: u32) -> Result<(), CodecError>;
+
     /// Finalize encoding and return the complete encoded image data.
     ///
     /// This method must be called after all blocks have been encoded.
@@ -750,6 +764,18 @@ impl BlockEncoder for UncompressedBlockEncoder {
 
         // Convert and write to buffer
         self.write_block_to_buffer(block_row, block_col, data, shape)?;
+        self.blocks_encoded[block_row as usize][block_col as usize] = true;
+
+        Ok(())
+    }
+
+    fn skip_block(&mut self, block_row: u32, block_col: u32) -> Result<(), CodecError> {
+        // Validate block coordinates
+        if block_row >= self.nbpc || block_col >= self.nbpr {
+            return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
+        }
+
+        // Mark block as handled (skipped for masked images)
         self.blocks_encoded[block_row as usize][block_col as usize] = true;
 
         Ok(())

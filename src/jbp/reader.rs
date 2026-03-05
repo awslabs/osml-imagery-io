@@ -913,7 +913,7 @@ impl JBPDatasetReader {
                     metadata,
                     self.registry.clone(),
                     self.format,
-                )))
+                )?))
             }
             SegmentType::Text => {
                 let definition = Arc::new(Self::create_text_subheader_definition());
@@ -1290,6 +1290,123 @@ unsafe impl Sync for JBPDatasetReader {}
 mod tests {
     use super::*;
 
+    /// Create a minimal valid NITF 2.1 image subheader for testing.
+    /// Returns a properly formatted image subheader with valid field values.
+    fn create_minimal_image_subheader() -> Vec<u8> {
+        let mut subheader = Vec::new();
+
+        // IM (2) - Image segment marker
+        subheader.extend_from_slice(b"IM");
+        // IID1 (10) - Image identifier 1
+        subheader.extend_from_slice(b"TEST      ");
+        // IDATIM (14) - Image date and time
+        subheader.extend_from_slice(b"20240101120000");
+        // TGTID (17) - Target identifier
+        subheader.extend_from_slice(&[b' '; 17]);
+        // IID2 (80) - Image identifier 2
+        subheader.extend_from_slice(&[b' '; 80]);
+        // ISCLAS (1) - Image security classification
+        subheader.extend_from_slice(b"U");
+        // ISCLSY (2)
+        subheader.extend_from_slice(b"  ");
+        // ISCODE (11)
+        subheader.extend_from_slice(&[b' '; 11]);
+        // ISCTLH (2)
+        subheader.extend_from_slice(b"  ");
+        // ISREL (20)
+        subheader.extend_from_slice(&[b' '; 20]);
+        // ISDCTP (2)
+        subheader.extend_from_slice(b"  ");
+        // ISDCDT (8)
+        subheader.extend_from_slice(&[b' '; 8]);
+        // ISDCXM (4)
+        subheader.extend_from_slice(&[b' '; 4]);
+        // ISDG (1)
+        subheader.extend_from_slice(b" ");
+        // ISDGDT (8)
+        subheader.extend_from_slice(&[b' '; 8]);
+        // ISCLTX (43)
+        subheader.extend_from_slice(&[b' '; 43]);
+        // ISCATP (1)
+        subheader.extend_from_slice(b" ");
+        // ISCAUT (40)
+        subheader.extend_from_slice(&[b' '; 40]);
+        // ISCRSN (1)
+        subheader.extend_from_slice(b" ");
+        // ISSRDT (8)
+        subheader.extend_from_slice(&[b' '; 8]);
+        // ISCTLN (15)
+        subheader.extend_from_slice(&[b' '; 15]);
+        // ENCRYP (1)
+        subheader.extend_from_slice(b"0");
+        // ISORCE (42)
+        subheader.extend_from_slice(&[b' '; 42]);
+        // NROWS (8) - 64 rows
+        subheader.extend_from_slice(b"00000064");
+        // NCOLS (8) - 64 columns
+        subheader.extend_from_slice(b"00000064");
+        // PVTYPE (3) - Integer pixel type
+        subheader.extend_from_slice(b"INT");
+        // IREP (8) - Monochrome
+        subheader.extend_from_slice(b"MONO    ");
+        // ICAT (8) - Visual imagery
+        subheader.extend_from_slice(b"VIS     ");
+        // ABPP (2) - 8 bits per pixel
+        subheader.extend_from_slice(b"08");
+        // PJUST (1) - Right justified
+        subheader.extend_from_slice(b"R");
+        // ICORDS (1) - No coordinates (blank)
+        subheader.extend_from_slice(b" ");
+        // IGEOLO is conditional on ICORDS, skipped when blank
+        // NICOM (1) - No image comments
+        subheader.extend_from_slice(b"0");
+        // IC (2) - No compression
+        subheader.extend_from_slice(b"NC");
+        // COMRAT is conditional on IC, skipped for NC
+        // NBANDS (1) - 1 band
+        subheader.extend_from_slice(b"1");
+        // XBANDS is conditional on NBANDS=0, skipped
+        // Band info for 1 band:
+        // IREPBAND (2)
+        subheader.extend_from_slice(b"M ");
+        // ISUBCAT (6)
+        subheader.extend_from_slice(&[b' '; 6]);
+        // IFC (1)
+        subheader.extend_from_slice(b"N");
+        // IMFLT (3)
+        subheader.extend_from_slice(&[b' '; 3]);
+        // NLUTS (1) - No LUTs
+        subheader.extend_from_slice(b"0");
+        // ISYNC (1)
+        subheader.extend_from_slice(b"0");
+        // IMODE (1) - Block mode
+        subheader.extend_from_slice(b"B");
+        // NBPR (4) - 1 block per row
+        subheader.extend_from_slice(b"0001");
+        // NBPC (4) - 1 block per column
+        subheader.extend_from_slice(b"0001");
+        // NPPBH (4) - 64 pixels per block horizontal
+        subheader.extend_from_slice(b"0064");
+        // NPPBV (4) - 64 pixels per block vertical
+        subheader.extend_from_slice(b"0064");
+        // NBPP (2) - 8 bits per pixel
+        subheader.extend_from_slice(b"08");
+        // IDLVL (3) - Display level 1
+        subheader.extend_from_slice(b"001");
+        // IALVL (3) - Attachment level 0
+        subheader.extend_from_slice(b"000");
+        // ILOC (10) - Location 0,0
+        subheader.extend_from_slice(b"0000000000");
+        // IMAG (4) - Magnification 1.0
+        subheader.extend_from_slice(b"1.0 ");
+        // UDIDL (5) - No user data
+        subheader.extend_from_slice(b"00000");
+        // IXSHDL (5) - No extended subheader
+        subheader.extend_from_slice(b"00000");
+
+        subheader
+    }
+
     /// Create a minimal valid NITF 2.1 file header for testing.
     pub(super) fn create_minimal_nitf_header(
         numi: usize,
@@ -1299,6 +1416,11 @@ mod tests {
         numres: usize,
     ) -> Vec<u8> {
         let mut header = Vec::new();
+
+        // Get the image subheader size
+        let image_subheader = create_minimal_image_subheader();
+        let image_subheader_len = image_subheader.len();
+        let image_data_len = 64 * 64; // 64x64 pixels, 1 band, 8 bits = 4096 bytes
 
         // FHDR (4) + FVER (5) = "NITF02.10"
         header.extend_from_slice(b"NITF02.10");
@@ -1369,10 +1491,10 @@ mod tests {
         header.extend_from_slice(format!("{:03}", numi).as_bytes());
         // Image segment info - all LISH first, then all LI
         for _ in 0..numi {
-            header.extend_from_slice(b"000439"); // LISH (6)
+            header.extend_from_slice(format!("{:06}", image_subheader_len).as_bytes()); // LISH (6)
         }
         for _ in 0..numi {
-            header.extend_from_slice(b"0000001000"); // LI (10)
+            header.extend_from_slice(format!("{:010}", image_data_len).as_bytes()); // LI (10)
         }
 
         // NUMS (3)
@@ -1430,7 +1552,7 @@ mod tests {
 
         // Calculate total file length
         let mut total_len = hl;
-        total_len += numi * (439 + 1000); // Image segments
+        total_len += numi * (image_subheader_len + image_data_len); // Image segments
         total_len += nums * (100 + 500); // Graphic segments
         total_len += numt * (50 + 200); // Text segments
         total_len += numdes * (100 + 1000); // DES segments
@@ -1442,8 +1564,8 @@ mod tests {
 
         // Add segment data
         for _ in 0..numi {
-            header.extend_from_slice(&[b' '; 439]); // Image subheader
-            header.extend_from_slice(&[0u8; 1000]); // Image data
+            header.extend_from_slice(&image_subheader); // Image subheader
+            header.extend_from_slice(&[0u8; 64 * 64]); // Image data (64x64 pixels)
         }
         for _ in 0..nums {
             header.extend_from_slice(&[b' '; 100]); // Graphic subheader

@@ -96,6 +96,39 @@ pub trait BlockDecoder: Send + Sync {
     /// # Returns
     /// The number of resolution levels (minimum 1).
     fn num_resolution_levels(&self) -> u32;
+
+    /// Decode a block at a specific byte offset.
+    ///
+    /// This method is used for masked images where block offsets come from
+    /// the Image Data Mask table rather than being calculated from block
+    /// coordinates. The offset is relative to the start of the image data
+    /// (after the mask table).
+    ///
+    /// # Arguments
+    /// * `offset` - Byte offset from the start of image data to the block
+    /// * `block_row` - Row index of the block (for dimension calculation)
+    /// * `block_col` - Column index of the block (for dimension calculation)
+    /// * `resolution_level` - Resolution level to decode (0 = full resolution)
+    /// * `bands` - Optional slice of band indices to retrieve
+    ///
+    /// # Returns
+    /// A tuple of `(data, shape)` where:
+    /// - `data` is the raw pixel data in band-sequential format
+    /// - `shape` is `[bands, rows, cols]` describing the block dimensions (CHW format)
+    ///
+    /// # Errors
+    /// Returns `CodecError::Decode` if the offset is invalid or decoding fails.
+    ///
+    /// # Requirements
+    /// - 2.4: Masked block decoding using offsets from mask table
+    fn decode_block_at_offset(
+        &self,
+        offset: u64,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+        bands: Option<&[u32]>,
+    ) -> Result<(Vec<u8>, [u32; 3]), CodecError>;
 }
 
 /// Factory function to create the appropriate block decoder based on IC field.
@@ -112,17 +145,26 @@ pub trait BlockDecoder: Send + Sync {
 ///
 /// # Supported Compression Types
 /// - `NC`, `NM`: Uncompressed imagery
-/// - `C8`: JPEG 2000 Part 1 (requires `openjpeg` feature)
-/// - `CD`: JPEG 2000 Part 15 HTJ2K (requires `openjpeg` feature)
+/// - `C8`, `M8`: JPEG 2000 Part 1 (requires `openjpeg` feature)
+/// - `CD`, `MD`: JPEG 2000 Part 15 HTJ2K (requires `openjpeg` feature)
 pub fn create_block_decoder(
     subheader: &ImageSubheaderFacade,
     image_data: Arc<[u8]>,
 ) -> Result<Box<dyn BlockDecoder>, CodecError> {
+    use crate::jbp::image::{is_masked_ic, unmask_ic};
+    
     let ic = subheader.ic()?;
     let ic_trimmed = ic.trim();
+    
+    // For masked IC codes, use the underlying compression type for decoder selection
+    let effective_ic = if is_masked_ic(ic_trimmed) {
+        unmask_ic(ic_trimmed)
+    } else {
+        ic_trimmed
+    };
 
-    match ic_trimmed {
-        "NC" | "NM" => {
+    match effective_ic {
+        "NC" => {
             let decoder = UncompressedBlockDecoder::new(subheader, image_data)?;
             Ok(Box::new(decoder))
         }
@@ -138,7 +180,7 @@ pub fn create_block_decoder(
             ic_trimmed
         ))),
         _ => Err(CodecError::Unsupported(format!(
-            "Unsupported compression type: '{}'. Supported: NC, NM, C8, CD.",
+            "Unsupported compression type: '{}'. Supported: NC, NM, C8, M8, CD, MD.",
             ic_trimmed
         ))),
     }
@@ -574,6 +616,77 @@ impl BlockDecoder for UncompressedBlockDecoder {
         // Uncompressed images have only one resolution level
         1
     }
+
+    fn decode_block_at_offset(
+        &self,
+        offset: u64,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+        bands: Option<&[u32]>,
+    ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        // Uncompressed images only support resolution level 0
+        if resolution_level != 0 {
+            return Err(CodecError::InvalidBlockCoordinates(
+                block_row,
+                block_col,
+                resolution_level,
+            ));
+        }
+
+        // Validate block coordinates for dimension calculation
+        if block_row >= self.nbpc || block_col >= self.nbpr {
+            return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
+        }
+
+        // Calculate actual block dimensions (handle edge blocks)
+        let (actual_rows, actual_cols) = self.actual_block_dimensions(block_row, block_col);
+
+        // Calculate expected block size
+        let bpp = self.bytes_per_pixel();
+        let block_pixels = (actual_rows as usize) * (actual_cols as usize);
+        let block_size = block_pixels * (self.nbands as usize) * bpp;
+
+        // Validate offset is within bounds
+        let offset_usize = offset as usize;
+        if offset_usize + block_size > self.image_data.len() {
+            return Err(CodecError::Decode(format!(
+                "Block offset {} + size {} exceeds image data length {}",
+                offset, block_size, self.image_data.len()
+            )));
+        }
+
+        // Read raw block data at the specified offset
+        let raw_data = self.image_data[offset_usize..offset_usize + block_size].to_vec();
+
+        // Convert to band-sequential format if needed (same as decode_block)
+        let bsq_data = if self.imode == InterleaveMode::S || self.imode == InterleaveMode::B {
+            // Already in band-sequential format (S and B have same layout for single block)
+            raw_data
+        } else {
+            // Convert from P or R to band-sequential
+            to_band_sequential(
+                &raw_data,
+                self.imode,
+                actual_rows,
+                actual_cols,
+                self.nbands,
+                bpp,
+            )?
+        };
+
+        // Apply band selection if specified
+        let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
+        let final_data = match bands {
+            Some(band_indices) if !band_indices.is_empty() => {
+                self.apply_band_selection(&bsq_data, actual_rows, actual_cols, band_indices)?
+            }
+            _ => bsq_data,
+        };
+
+        // Return shape as [bands, rows, cols] (CHW format)
+        Ok((final_data, [num_bands, actual_rows, actual_cols]))
+    }
 }
 
 // Expose internal types for testing
@@ -856,6 +969,121 @@ mod tests {
             let (block_data, shape) = decoder.decode_block(1, 1, 0, None).unwrap();
             assert_eq!(shape, [1, 2, 2]);
             assert_eq!(block_data.len(), 4);
+        }
+    }
+
+    mod decode_block_at_offset_tests {
+        use super::*;
+
+        #[test]
+        fn decode_block_at_offset_single_block() {
+            // 4x4 image, single block, single band
+            let data: Vec<u8> = (0..16).collect();
+            let decoder = create_test_decoder(
+                4, 4,    // nrows, ncols
+                1, 1,    // nbpr, nbpc
+                4, 4,    // nppbh, nppbv
+                1,       // nbands
+                8,       // nbpp
+                InterleaveMode::B,
+                data.clone(),
+            );
+
+            // Decode at offset 0
+            let (block_data, shape) = decoder.decode_block_at_offset(0, 0, 0, 0, None).unwrap();
+            assert_eq!(shape, [1, 4, 4]);
+            assert_eq!(block_data, data);
+        }
+
+        #[test]
+        fn decode_block_at_offset_multi_band() {
+            // 4x4 image, single block, 3 bands
+            let data = create_test_image_data_bsq(4, 4, 3, 1);
+            let decoder = create_test_decoder(
+                4, 4,
+                1, 1,
+                4, 4,
+                3,
+                8,
+                InterleaveMode::B,
+                data.clone(),
+            );
+
+            // Decode at offset 0
+            let (block_data, shape) = decoder.decode_block_at_offset(0, 0, 0, 0, None).unwrap();
+            assert_eq!(shape, [3, 4, 4]);
+            assert_eq!(block_data.len(), 48); // 4x4x3 bands
+        }
+
+        #[test]
+        fn decode_block_at_offset_with_band_selection() {
+            // 4x4 image, single block, 3 bands
+            let data = create_test_image_data_bsq(4, 4, 3, 1);
+            let decoder = create_test_decoder(
+                4, 4,
+                1, 1,
+                4, 4,
+                3,
+                8,
+                InterleaveMode::B,
+                data,
+            );
+
+            // Select only band 1
+            let (block_data, shape) = decoder.decode_block_at_offset(0, 0, 0, 0, Some(&[1])).unwrap();
+            assert_eq!(shape, [1, 4, 4]);
+            assert_eq!(block_data.len(), 16);
+        }
+
+        #[test]
+        fn decode_block_at_offset_invalid_resolution() {
+            let decoder = create_test_decoder(
+                4, 4, 1, 1, 4, 4, 1, 8,
+                InterleaveMode::B,
+                vec![0u8; 16],
+            );
+
+            // Uncompressed images only support resolution level 0
+            let result = decoder.decode_block_at_offset(0, 0, 0, 1, None);
+            assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(0, 0, 1))));
+        }
+
+        #[test]
+        fn decode_block_at_offset_out_of_bounds() {
+            let decoder = create_test_decoder(
+                4, 4, 1, 1, 4, 4, 1, 8,
+                InterleaveMode::B,
+                vec![0u8; 16],
+            );
+
+            // Offset beyond data length
+            let result = decoder.decode_block_at_offset(100, 0, 0, 0, None);
+            assert!(matches!(result, Err(CodecError::Decode(_))));
+        }
+
+        #[test]
+        fn decode_block_at_offset_nonzero_offset() {
+            // Create data with two blocks worth of data
+            // First block: all zeros, Second block: all ones
+            let mut data = vec![0u8; 16]; // First block
+            data.extend(vec![1u8; 16]);   // Second block
+            
+            let decoder = create_test_decoder(
+                4, 8,    // 4 rows, 8 cols
+                2, 1,    // 2 blocks per row, 1 block per col
+                4, 4,    // 4x4 block size
+                1,       // 1 band
+                8,       // 8 bits per pixel
+                InterleaveMode::B,
+                data,
+            );
+
+            // Decode second block at offset 16
+            let (block_data, shape) = decoder.decode_block_at_offset(16, 0, 1, 0, None).unwrap();
+            assert_eq!(shape, [1, 4, 4]);
+            assert_eq!(block_data.len(), 16);
+            // All pixels should be 1
+            assert!(block_data.iter().all(|&b| b == 1));
         }
     }
 
