@@ -271,7 +271,7 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
     /// # Returns
     /// A tuple of `(data, shape)` where:
     /// - `data` is the raw pixel data in band-sequential format
-    /// - `shape` is `[rows, cols, bands]` at the requested resolution
+    /// - `shape` is `[bands, rows, cols]` at the requested resolution (CHW format)
     ///
     /// # Errors
     /// Returns `CodecError::InvalidBlockCoordinates` if block coordinates are out of range,
@@ -363,7 +363,8 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
             _ => (result.data, result.num_components),
         };
 
-        Ok((data, [result.height, result.width, num_bands]))
+        // Return shape as [bands, rows, cols] (CHW format)
+        Ok((data, [num_bands, result.height, result.width]))
     }
 
     /// Check if a block exists at the given coordinates.
@@ -892,7 +893,8 @@ mod tests {
         assert!(result.is_ok());
 
         let (data, shape) = result.unwrap();
-        assert_eq!(shape, [64, 64, 3]);
+        // Shape is [bands, rows, cols] (CHW format)
+        assert_eq!(shape, [3, 64, 64]);
         assert_eq!(data.len(), 64 * 64 * 3); // 3 bands, 1 byte per pixel
     }
 
@@ -923,7 +925,8 @@ mod tests {
                 let result = decoder.decode_block(row, col, 0, None);
                 assert!(result.is_ok(), "Failed to decode tile ({}, {})", row, col);
                 let (data, shape) = result.unwrap();
-                assert_eq!(shape, [64, 64, 3]);
+                // Shape is [bands, rows, cols] (CHW format)
+                assert_eq!(shape, [3, 64, 64]);
                 assert_eq!(data.len(), 64 * 64 * 3);
             }
         }
@@ -957,7 +960,8 @@ mod tests {
         assert!(result.is_ok());
 
         let (data, shape) = result.unwrap();
-        assert_eq!(shape, [64, 64, 1]);
+        // Shape is [bands, rows, cols] (CHW format)
+        assert_eq!(shape, [1, 64, 64]);
         assert_eq!(data.len(), 64 * 64 * 1);
     }
 }

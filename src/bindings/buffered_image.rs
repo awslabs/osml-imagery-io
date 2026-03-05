@@ -329,13 +329,13 @@ impl PyBufferedImageAssetProvider {
         self.inner.pad_pixel_value()
     }
 
-    /// Returns the image dimensions as (rows, columns, bands).
+    /// Returns the image dimensions as (bands, rows, columns) - CHW format.
     #[getter]
     fn image_shape(&self) -> (u32, u32, u32) {
         self.inner.image_shape()
     }
 
-    /// Returns the block dimensions as (rows, columns, bands).
+    /// Returns the block dimensions as (bands, rows, columns) - CHW format.
     #[getter]
     fn block_shape(&self) -> (u32, u32, u32) {
         self.inner.block_shape()

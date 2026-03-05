@@ -238,7 +238,7 @@ impl BufferedImageAssetProvider {
     /// # Arguments
     /// * `block_row` - Row index of the block
     /// * `block_col` - Column index of the block
-    /// * `data` - Raw pixel data in band-interleaved-by-pixel format
+    /// * `data` - Raw pixel data in band-sequential (BSQ) format
     ///
     /// # Returns
     /// Ok(()) on success, or an error if coordinates are invalid.
@@ -280,10 +280,7 @@ impl BufferedImageAssetProvider {
             )));
         }
 
-        // Convert from band-sequential to band-interleaved-by-pixel for storage
-        let bip_data = self.bsq_to_bip(data)?;
-
-        // Split into blocks
+        // Split into blocks (data is already in BSQ format)
         let num_blocks_h = self.config.num_blocks_horizontal();
         let num_blocks_v = self.config.num_blocks_vertical();
 
@@ -293,7 +290,7 @@ impl BufferedImageAssetProvider {
 
         for block_row in 0..num_blocks_v {
             for block_col in 0..num_blocks_h {
-                let block_data = self.extract_block(&bip_data, block_row, block_col)?;
+                let block_data = self.extract_block_bsq(data, block_row, block_col)?;
                 blocks.insert((block_row, block_col), block_data);
             }
         }
@@ -301,51 +298,40 @@ impl BufferedImageAssetProvider {
         Ok(())
     }
 
-    /// Convert band-sequential data to band-interleaved-by-pixel.
-    fn bsq_to_bip(&self, data: &[u8]) -> Result<Vec<u8>, CodecError> {
-        let bytes_per_pixel = self.config.pixel_type.bytes_per_pixel();
-        let num_pixels = (self.config.num_rows as usize) * (self.config.num_columns as usize);
-        let num_bands = self.config.num_bands as usize;
-        let band_size = num_pixels * bytes_per_pixel;
-
-        let mut bip_data = vec![0u8; data.len()];
-
-        for band in 0..num_bands {
-            let band_start = band * band_size;
-            for pixel in 0..num_pixels {
-                let src_offset = band_start + pixel * bytes_per_pixel;
-                let dst_offset = pixel * num_bands * bytes_per_pixel + band * bytes_per_pixel;
-                bip_data[dst_offset..dst_offset + bytes_per_pixel]
-                    .copy_from_slice(&data[src_offset..src_offset + bytes_per_pixel]);
-            }
-        }
-
-        Ok(bip_data)
-    }
-
-    /// Extract a block from the full BIP image data.
-    fn extract_block(&self, bip_data: &[u8], block_row: u32, block_col: u32) -> Result<Vec<u8>, CodecError> {
+    /// Extract a block from the full BSQ image data, returning BSQ block data.
+    fn extract_block_bsq(&self, bsq_data: &[u8], block_row: u32, block_col: u32) -> Result<Vec<u8>, CodecError> {
         let bytes_per_pixel = self.config.pixel_type.bytes_per_pixel();
         let num_bands = self.config.num_bands as usize;
-        let pixel_stride = num_bands * bytes_per_pixel;
-        let row_stride = (self.config.num_columns as usize) * pixel_stride;
+        let num_rows = self.config.num_rows as usize;
+        let num_cols = self.config.num_columns as usize;
+        let band_size = num_rows * num_cols * bytes_per_pixel;
 
         // Calculate block bounds
         let start_row = (block_row * self.config.block_height) as usize;
         let start_col = (block_col * self.config.block_width) as usize;
-        let end_row = (start_row + self.config.block_height as usize).min(self.config.num_rows as usize);
-        let end_col = (start_col + self.config.block_width as usize).min(self.config.num_columns as usize);
+        let end_row = (start_row + self.config.block_height as usize).min(num_rows);
+        let end_col = (start_col + self.config.block_width as usize).min(num_cols);
 
         let block_rows = end_row - start_row;
         let block_cols = end_col - start_col;
-        let block_size = block_rows * block_cols * pixel_stride;
+        let block_band_size = block_rows * block_cols * bytes_per_pixel;
+        let block_size = num_bands * block_band_size;
 
-        let mut block_data = Vec::with_capacity(block_size);
+        let mut block_data = vec![0u8; block_size];
 
-        for row in start_row..end_row {
-            let row_start = row * row_stride + start_col * pixel_stride;
-            let row_end = row_start + (end_col - start_col) * pixel_stride;
-            block_data.extend_from_slice(&bip_data[row_start..row_end]);
+        // Extract each band
+        for band in 0..num_bands {
+            let src_band_start = band * band_size;
+            let dst_band_start = band * block_band_size;
+
+            for (local_row, row) in (start_row..end_row).enumerate() {
+                let src_row_start = src_band_start + row * num_cols * bytes_per_pixel + start_col * bytes_per_pixel;
+                let src_row_end = src_row_start + (end_col - start_col) * bytes_per_pixel;
+                let dst_row_start = dst_band_start + local_row * block_cols * bytes_per_pixel;
+                let dst_row_end = dst_row_start + (end_col - start_col) * bytes_per_pixel;
+
+                block_data[dst_row_start..dst_row_end].copy_from_slice(&bsq_data[src_row_start..src_row_end]);
+            }
         }
 
         Ok(block_data)
@@ -357,12 +343,10 @@ impl BufferedImageAssetProvider {
         let num_bands = self.config.num_bands as usize;
         let num_rows = self.config.num_rows as usize;
         let num_cols = self.config.num_columns as usize;
-        let total_size = num_rows * num_cols * num_bands * bytes_per_pixel;
+        let band_size = num_rows * num_cols * bytes_per_pixel;
+        let total_size = num_bands * band_size;
 
-        // First, assemble the full BIP image
-        let mut bip_data = vec![0u8; total_size];
-        let pixel_stride = num_bands * bytes_per_pixel;
-        let row_stride = num_cols * pixel_stride;
+        let mut bsq_data = vec![0u8; total_size];
 
         let blocks = self.blocks.read().map_err(|_| {
             CodecError::Decode("Failed to acquire read lock on blocks".to_string())
@@ -380,43 +364,27 @@ impl BufferedImageAssetProvider {
                     let end_row = (start_row + self.config.block_height as usize).min(num_rows);
                     let end_col = (start_col + self.config.block_width as usize).min(num_cols);
 
+                    let block_rows = end_row - start_row;
                     let block_cols = end_col - start_col;
-                    let block_row_stride = block_cols * pixel_stride;
+                    let block_band_size = block_rows * block_cols * bytes_per_pixel;
 
-                    for (local_row, row) in (start_row..end_row).enumerate() {
-                        let src_start = local_row * block_row_stride;
-                        let src_end = src_start + block_row_stride;
-                        let dst_start = row * row_stride + start_col * pixel_stride;
-                        let dst_end = dst_start + block_row_stride;
+                    // Copy each band from block to full image
+                    for band in 0..num_bands {
+                        let src_band_start = band * block_band_size;
+                        let dst_band_start = band * band_size;
 
-                        if src_end <= block_data.len() && dst_end <= bip_data.len() {
-                            bip_data[dst_start..dst_end].copy_from_slice(&block_data[src_start..src_end]);
+                        for (local_row, row) in (start_row..end_row).enumerate() {
+                            let src_row_start = src_band_start + local_row * block_cols * bytes_per_pixel;
+                            let src_row_end = src_row_start + block_cols * bytes_per_pixel;
+                            let dst_row_start = dst_band_start + row * num_cols * bytes_per_pixel + start_col * bytes_per_pixel;
+                            let dst_row_end = dst_row_start + block_cols * bytes_per_pixel;
+
+                            if src_row_end <= block_data.len() && dst_row_end <= bsq_data.len() {
+                                bsq_data[dst_row_start..dst_row_end].copy_from_slice(&block_data[src_row_start..src_row_end]);
+                            }
                         }
                     }
                 }
-            }
-        }
-
-        // Convert BIP to BSQ
-        self.bip_to_bsq(&bip_data)
-    }
-
-    /// Convert band-interleaved-by-pixel data to band-sequential.
-    fn bip_to_bsq(&self, data: &[u8]) -> Result<Vec<u8>, CodecError> {
-        let bytes_per_pixel = self.config.pixel_type.bytes_per_pixel();
-        let num_pixels = (self.config.num_rows as usize) * (self.config.num_columns as usize);
-        let num_bands = self.config.num_bands as usize;
-        let band_size = num_pixels * bytes_per_pixel;
-
-        let mut bsq_data = vec![0u8; data.len()];
-
-        for band in 0..num_bands {
-            let band_start = band * band_size;
-            for pixel in 0..num_pixels {
-                let src_offset = pixel * num_bands * bytes_per_pixel + band * bytes_per_pixel;
-                let dst_offset = band_start + pixel * bytes_per_pixel;
-                bsq_data[dst_offset..dst_offset + bytes_per_pixel]
-                    .copy_from_slice(&data[src_offset..src_offset + bytes_per_pixel]);
             }
         }
 
@@ -521,19 +489,17 @@ impl ImageAssetProvider for BufferedImageAssetProvider {
             self.config.num_bands
         };
 
-        // If specific bands requested, extract them
+        // If specific bands requested, extract them from BSQ data
         let output_data = if let Some(band_indices) = bands {
             let bytes_per_pixel = self.config.pixel_type.bytes_per_pixel();
-            let all_bands = self.config.num_bands as usize;
-            let num_pixels = (block_rows * block_cols) as usize;
-            let mut extracted = Vec::with_capacity(num_pixels * band_indices.len() * bytes_per_pixel);
+            let block_band_size = (block_rows * block_cols) as usize * bytes_per_pixel;
+            let mut extracted = Vec::with_capacity(band_indices.len() * block_band_size);
 
-            for pixel in 0..num_pixels {
-                for &band in band_indices {
-                    let src_offset = pixel * all_bands * bytes_per_pixel + (band as usize) * bytes_per_pixel;
-                    if src_offset + bytes_per_pixel <= block_data.len() {
-                        extracted.extend_from_slice(&block_data[src_offset..src_offset + bytes_per_pixel]);
-                    }
+            for &band in band_indices {
+                let src_band_start = (band as usize) * block_band_size;
+                let src_band_end = src_band_start + block_band_size;
+                if src_band_end <= block_data.len() {
+                    extracted.extend_from_slice(&block_data[src_band_start..src_band_end]);
                 }
             }
             extracted
@@ -541,7 +507,8 @@ impl ImageAssetProvider for BufferedImageAssetProvider {
             block_data.clone()
         };
 
-        Ok((output_data, [block_rows, block_cols, num_bands]))
+        // Return shape as [bands, rows, cols] (CHW format)
+        Ok((output_data, [num_bands, block_rows, block_cols]))
     }
 
     fn num_resolution_levels(&self) -> u32 {
@@ -649,14 +616,15 @@ mod tests {
             .with_block_size(256, 256);
         let provider = BufferedImageAssetProvider::new("test", config);
 
-        // Create test data (256x256 pixels, 1 band, 1 byte per pixel)
+        // Create test data (1 band, 256x256 pixels, 1 byte per pixel) in BSQ format
         let block_data = vec![128u8; 256 * 256];
         provider.set_block(0, 0, &block_data).unwrap();
 
         assert!(provider.has_block(0, 0, 0));
         
         let (data, shape) = provider.get_block(0, 0, 0, None).unwrap();
-        assert_eq!(shape, [256, 256, 1]);
+        // Shape is now [bands, rows, cols] (CHW format)
+        assert_eq!(shape, [1, 256, 256]);
         assert_eq!(data.len(), 256 * 256);
     }
 

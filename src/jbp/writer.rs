@@ -2904,19 +2904,19 @@ mod tests {
         // Read back the pixel data (block 0,0) - get all bands
         let (block_data, shape) = image_provider.get_block(0, 0, 0, None).unwrap();
         
-        // Verify shape
-        assert_eq!(shape, [16, 16, 3]);
+        // Verify shape - [bands, rows, cols] (CHW format)
+        assert_eq!(shape, [3, 16, 16]);
         
-        // The block data should be in BIP format (band-interleaved by pixel)
-        // Each pixel has 3 bytes: [R, G, B] = [100, 150, 200]
+        // The block data is in BSQ format (band-sequential)
+        // Band 0: all 100, Band 1: all 150, Band 2: all 200
         assert_eq!(block_data.len(), 16 * 16 * 3);
         
-        // Verify pixel values - check first few pixels
+        let pixels_per_band = 16 * 16;
+        // Verify pixel values - check first few pixels of each band
         for pixel_idx in 0..10 {
-            let offset = pixel_idx * 3;
-            assert_eq!(block_data[offset], 100, "Band 0 value mismatch at pixel {}", pixel_idx);
-            assert_eq!(block_data[offset + 1], 150, "Band 1 value mismatch at pixel {}", pixel_idx);
-            assert_eq!(block_data[offset + 2], 200, "Band 2 value mismatch at pixel {}", pixel_idx);
+            assert_eq!(block_data[pixel_idx], 100, "Band 0 value mismatch at pixel {}", pixel_idx);
+            assert_eq!(block_data[pixels_per_band + pixel_idx], 150, "Band 1 value mismatch at pixel {}", pixel_idx);
+            assert_eq!(block_data[2 * pixels_per_band + pixel_idx], 200, "Band 2 value mismatch at pixel {}", pixel_idx);
         }
     }
 }

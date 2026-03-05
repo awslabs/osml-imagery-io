@@ -152,13 +152,13 @@ impl PyImageAssetProvider {
         self.inner.pad_pixel_value()
     }
 
-    /// Returns the image dimensions as (rows, columns, bands).
+    /// Returns the image dimensions as (bands, rows, columns) - CHW format.
     #[getter]
     fn image_shape(&self) -> (u32, u32, u32) {
         self.inner.image_shape()
     }
 
-    /// Returns the block dimensions as (rows, columns, bands).
+    /// Returns the block dimensions as (bands, rows, columns) - CHW format.
     #[getter]
     fn block_shape(&self) -> (u32, u32, u32) {
         self.inner.block_shape()
@@ -198,7 +198,7 @@ impl PyImageAssetProvider {
     ///
     /// # Returns
     ///
-    /// A numpy ndarray with shape (rows, cols, bands) containing the block data.
+    /// A numpy ndarray with shape (bands, rows, cols) - CHW format - containing the block data.
     ///
     /// # Raises
     ///
@@ -226,26 +226,30 @@ impl PyImageAssetProvider {
 }
 
 /// Creates a numpy array from raw bytes with the appropriate dtype.
+/// 
+/// The shape is expected in CHW format: [bands, rows, cols].
+/// The returned numpy array will also be in CHW format.
 pub fn create_numpy_array(
     py: Python<'_>,
     data: &[u8],
     shape: [u32; 3],
     pixel_type: PixelType,
 ) -> PyResult<PyObject> {
-    let rows = shape[0] as usize;
-    let cols = shape[1] as usize;
-    let bands = shape[2] as usize;
+    // Shape is [bands, rows, cols] (CHW format)
+    let bands = shape[0] as usize;
+    let rows = shape[1] as usize;
+    let cols = shape[2] as usize;
 
     match pixel_type {
         PixelType::UInt8 => {
             let array = numpy::PyArray1::<u8>::from_slice_bound(py, data);
-            let reshaped = array.reshape([rows, cols, bands])?;
+            let reshaped = array.reshape([bands, rows, cols])?;
             Ok(reshaped.into_py(py))
         }
         PixelType::Int8 => {
             let typed_data: Vec<i8> = data.iter().map(|&b| b as i8).collect();
             let array = numpy::PyArray1::<i8>::from_slice_bound(py, &typed_data);
-            let reshaped = array.reshape([rows, cols, bands])?;
+            let reshaped = array.reshape([bands, rows, cols])?;
             Ok(reshaped.into_py(py))
         }
         PixelType::UInt16 => {
@@ -254,7 +258,7 @@ pub fn create_numpy_array(
                 .map(|chunk| u16::from_ne_bytes([chunk[0], chunk[1]]))
                 .collect();
             let array = numpy::PyArray1::<u16>::from_slice_bound(py, &typed_data);
-            let reshaped = array.reshape([rows, cols, bands])?;
+            let reshaped = array.reshape([bands, rows, cols])?;
             Ok(reshaped.into_py(py))
         }
         PixelType::Int16 => {
@@ -263,7 +267,7 @@ pub fn create_numpy_array(
                 .map(|chunk| i16::from_ne_bytes([chunk[0], chunk[1]]))
                 .collect();
             let array = numpy::PyArray1::<i16>::from_slice_bound(py, &typed_data);
-            let reshaped = array.reshape([rows, cols, bands])?;
+            let reshaped = array.reshape([bands, rows, cols])?;
             Ok(reshaped.into_py(py))
         }
         PixelType::UInt32 => {
@@ -272,7 +276,7 @@ pub fn create_numpy_array(
                 .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect();
             let array = numpy::PyArray1::<u32>::from_slice_bound(py, &typed_data);
-            let reshaped = array.reshape([rows, cols, bands])?;
+            let reshaped = array.reshape([bands, rows, cols])?;
             Ok(reshaped.into_py(py))
         }
         PixelType::Int32 => {
@@ -281,7 +285,7 @@ pub fn create_numpy_array(
                 .map(|chunk| i32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect();
             let array = numpy::PyArray1::<i32>::from_slice_bound(py, &typed_data);
-            let reshaped = array.reshape([rows, cols, bands])?;
+            let reshaped = array.reshape([bands, rows, cols])?;
             Ok(reshaped.into_py(py))
         }
         PixelType::Float32 => {
@@ -290,7 +294,7 @@ pub fn create_numpy_array(
                 .map(|chunk| f32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect();
             let array = numpy::PyArray1::<f32>::from_slice_bound(py, &typed_data);
-            let reshaped = array.reshape([rows, cols, bands])?;
+            let reshaped = array.reshape([bands, rows, cols])?;
             Ok(reshaped.into_py(py))
         }
         PixelType::Float64 => {
@@ -304,7 +308,7 @@ pub fn create_numpy_array(
                 })
                 .collect();
             let array = numpy::PyArray1::<f64>::from_slice_bound(py, &typed_data);
-            let reshaped = array.reshape([rows, cols, bands])?;
+            let reshaped = array.reshape([bands, rows, cols])?;
             Ok(reshaped.into_py(py))
         }
     }

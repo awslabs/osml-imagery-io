@@ -48,8 +48,8 @@ pub trait ImageAssetProvider: AssetProvider {
     /// # Returns
     ///
     /// A tuple of `(data, shape)` where:
-    /// - `data` is the raw pixel data as bytes
-    /// - `shape` is `[rows, cols, bands]` describing the block dimensions
+    /// - `data` is the raw pixel data as bytes in band-sequential (BSQ) format
+    /// - `shape` is `[bands, rows, cols]` describing the block dimensions (CHW format)
     ///
     /// # Errors
     ///
@@ -97,23 +97,23 @@ pub trait ImageAssetProvider: AssetProvider {
     /// Returns the value used for padding incomplete edge blocks.
     fn pad_pixel_value(&self) -> f64;
 
-    /// Returns the image dimensions as `(rows, columns, bands)`.
+    /// Returns the image dimensions as `(bands, rows, columns)` (CHW format).
     ///
-    /// This is a convenience method that combines `num_rows()`, `num_columns()`,
-    /// and `num_bands()`.
+    /// This is a convenience method that combines `num_bands()`, `num_rows()`,
+    /// and `num_columns()`.
     fn image_shape(&self) -> (u32, u32, u32) {
-        (self.num_rows(), self.num_columns(), self.num_bands())
+        (self.num_bands(), self.num_rows(), self.num_columns())
     }
 
-    /// Returns the block dimensions as `(rows, columns, bands)`.
+    /// Returns the block dimensions as `(bands, rows, columns)` (CHW format).
     ///
-    /// This is a convenience method that combines `num_pixels_per_block_vertical()`,
-    /// `num_pixels_per_block_horizontal()`, and `num_bands()`.
+    /// This is a convenience method that combines `num_bands()`,
+    /// `num_pixels_per_block_vertical()`, and `num_pixels_per_block_horizontal()`.
     fn block_shape(&self) -> (u32, u32, u32) {
         (
+            self.num_bands(),
             self.num_pixels_per_block_vertical(),
             self.num_pixels_per_block_horizontal(),
-            self.num_bands(),
         )
     }
 
@@ -122,8 +122,8 @@ pub trait ImageAssetProvider: AssetProvider {
     /// This computes the block grid size by dividing the image dimensions by
     /// the block dimensions, rounding up.
     fn block_grid_size(&self) -> (u32, u32) {
-        let (h, w, _) = self.image_shape();
-        let (bh, bw, _) = self.block_shape();
+        let (_, h, w) = self.image_shape();
+        let (_, bh, bw) = self.block_shape();
         ((h + bh - 1) / bh, (w + bw - 1) / bw)
     }
 }

@@ -56,7 +56,7 @@ pub trait BlockDecoder: Send + Sync {
     /// # Returns
     /// A tuple of `(data, shape)` where:
     /// - `data` is the raw pixel data in band-sequential format
-    /// - `shape` is `[rows, cols, bands]` describing the block dimensions at the requested resolution
+    /// - `shape` is `[bands, rows, cols]` describing the block dimensions at the requested resolution (CHW format)
     ///
     /// # Errors
     /// Returns `CodecError::InvalidBlockCoordinates` if the block coordinates or resolution level
@@ -558,7 +558,8 @@ impl BlockDecoder for UncompressedBlockDecoder {
             _ => bsq_data,
         };
 
-        Ok((final_data, [actual_rows, actual_cols, num_bands]))
+        // Return shape as [bands, rows, cols] (CHW format)
+        Ok((final_data, [num_bands, actual_rows, actual_cols]))
     }
 
     fn has_block(&self, block_row: u32, block_col: u32) -> bool {
@@ -723,7 +724,8 @@ mod tests {
             );
 
             let (block_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
-            assert_eq!(shape, [4, 4, 1]);
+            // Shape is [bands, rows, cols] (CHW format)
+            assert_eq!(shape, [1, 4, 4]);
             assert_eq!(block_data, data);
         }
 
@@ -762,12 +764,13 @@ mod tests {
 
             // Select only band 1
             let (block_data, shape) = decoder.decode_block(0, 0, 0, Some(&[1])).unwrap();
-            assert_eq!(shape, [4, 4, 1]);
+            // Shape is [bands, rows, cols] (CHW format)
+            assert_eq!(shape, [1, 4, 4]);
             assert_eq!(block_data.len(), 16); // 4x4x1 band
 
             // Select bands 0 and 2
             let (block_data, shape) = decoder.decode_block(0, 0, 0, Some(&[0, 2])).unwrap();
-            assert_eq!(shape, [4, 4, 2]);
+            assert_eq!(shape, [2, 4, 4]);
             assert_eq!(block_data.len(), 32); // 4x4x2 bands
         }
 
@@ -835,22 +838,23 @@ mod tests {
 
             // Top-left block: full 4x4
             let (block_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
-            assert_eq!(shape, [4, 4, 1]);
+            // Shape is [bands, rows, cols] (CHW format)
+            assert_eq!(shape, [1, 4, 4]);
             assert_eq!(block_data.len(), 16);
 
             // Top-right block: 4 rows x 2 cols (edge)
             let (block_data, shape) = decoder.decode_block(0, 1, 0, None).unwrap();
-            assert_eq!(shape, [4, 2, 1]);
+            assert_eq!(shape, [1, 4, 2]);
             assert_eq!(block_data.len(), 8);
 
             // Bottom-left block: 2 rows x 4 cols (edge)
             let (block_data, shape) = decoder.decode_block(1, 0, 0, None).unwrap();
-            assert_eq!(shape, [2, 4, 1]);
+            assert_eq!(shape, [1, 2, 4]);
             assert_eq!(block_data.len(), 8);
 
             // Bottom-right block: 2 rows x 2 cols (corner)
             let (block_data, shape) = decoder.decode_block(1, 1, 0, None).unwrap();
-            assert_eq!(shape, [2, 2, 1]);
+            assert_eq!(shape, [1, 2, 2]);
             assert_eq!(block_data.len(), 4);
         }
     }
@@ -1080,10 +1084,10 @@ mod property_tests {
 
             let (block_data, shape) = result.unwrap();
             
-            // Verify shape is correct
-            prop_assert_eq!(shape[2], nbands, "Band count should match");
-            prop_assert_eq!(shape[0], nppbv, "Block rows should match nppbv");
-            prop_assert_eq!(shape[1], nppbh, "Block cols should match nppbh");
+            // Verify shape is correct - shape is [bands, rows, cols] (CHW format)
+            prop_assert_eq!(shape[0], nbands, "Band count should match");
+            prop_assert_eq!(shape[1], nppbv, "Block rows should match nppbv");
+            prop_assert_eq!(shape[2], nppbh, "Block cols should match nppbh");
             
             // Verify data size matches shape
             let expected_size = (shape[0] * shape[1] * shape[2]) as usize;
@@ -1177,10 +1181,10 @@ mod property_tests {
 
                     let (block_data, shape) = result.unwrap();
                     
-                    // Verify shape
-                    prop_assert_eq!(shape[0], nppbv, "Block rows should match");
-                    prop_assert_eq!(shape[1], nppbh, "Block cols should match");
-                    prop_assert_eq!(shape[2], nbands, "Band count should match");
+                    // Verify shape - shape is [bands, rows, cols] (CHW format)
+                    prop_assert_eq!(shape[0], nbands, "Band count should match");
+                    prop_assert_eq!(shape[1], nppbv, "Block rows should match");
+                    prop_assert_eq!(shape[2], nppbh, "Block cols should match");
 
                     // Verify data matches expected (output is always BSQ)
                     let expected_block = &expected[block_row as usize][block_col as usize];

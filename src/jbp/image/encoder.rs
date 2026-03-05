@@ -21,7 +21,8 @@
 //! let mut encoder = create_block_encoder(
 //!     "NC", 64, 64, 3, 8, false, InterleaveMode::B, 32, 32, None
 //! )?;
-//! encoder.encode_block(0, 0, &block_data, [32, 32, 3])?;
+//! // Shape is [bands, rows, cols] (CHW format)
+//! encoder.encode_block(0, 0, &block_data, [3, 32, 32])?;
 //! let encoded = Box::new(encoder).finalize()?;
 //! ```
 
@@ -50,7 +51,7 @@ pub trait BlockEncoder: Send + Sync {
     /// * `block_row` - Row index of the block in the block grid (0-indexed)
     /// * `block_col` - Column index of the block in the block grid (0-indexed)
     /// * `data` - Pixel data in band-sequential format
-    /// * `shape` - Shape of the data as [rows, cols, bands]
+    /// * `shape` - Shape of the data as [bands, rows, cols] (CHW format)
     ///
     /// # Errors
     /// Returns `CodecError::InvalidBlockCoordinates` if coordinates are out of bounds.
@@ -258,7 +259,7 @@ impl<'a> TileAssembler<'a> {
     /// # Returns
     /// A tuple of (data, shape) where:
     /// - `data` is the pixel data in band-sequential format
-    /// - `shape` is `[rows, cols, bands]` describing the tile dimensions
+    /// - `shape` is `[bands, rows, cols]` describing the tile dimensions (CHW format)
     ///
     /// # Errors
     /// Returns `CodecError::InvalidBlockCoordinates` if coordinates are out of bounds.
@@ -311,7 +312,7 @@ impl<'a> TileAssembler<'a> {
             }
         }
 
-        Ok((output, [tile_height, tile_width, self.num_bands]))
+        Ok((output, [self.num_bands, tile_height, tile_width]))
     }
 
     /// Copy overlapping region from source tile to output buffer.
@@ -322,7 +323,7 @@ impl<'a> TileAssembler<'a> {
     ///
     /// # Arguments
     /// * `src_data` - Source tile data in BSQ format
-    /// * `src_shape` - Shape of source tile as [rows, cols, bands]
+    /// * `src_shape` - Shape of source tile as [bands, rows, cols] (CHW format)
     /// * `src_row` - Source tile row index
     /// * `src_col` - Source tile column index
     /// * `output` - Output buffer to write to (BSQ format)
@@ -342,8 +343,9 @@ impl<'a> TileAssembler<'a> {
         out_width: u32,
         out_height: u32,
     ) {
-        let src_rows = src_shape[0];
-        let src_cols = src_shape[1];
+        // Shape is now [bands, rows, cols] (CHW format)
+        let src_rows = src_shape[1];
+        let src_cols = src_shape[2];
 
         // Calculate source tile's position in image coordinates
         let src_start_x = src_col * self.source_tile_width;
@@ -534,7 +536,7 @@ impl UncompressedBlockEncoder {
     /// * `block_row` - Row index of the block in the block grid
     /// * `block_col` - Column index of the block in the block grid
     /// * `data` - Pixel data in band-sequential format
-    /// * `shape` - Shape of the data as [rows, cols, bands]
+    /// * `shape` - Shape of the data as [bands, rows, cols] (CHW format)
     fn write_block_to_buffer(
         &mut self,
         block_row: u32,
@@ -543,9 +545,10 @@ impl UncompressedBlockEncoder {
         shape: [u32; 3],
     ) -> Result<(), CodecError> {
         let bpp = self.bytes_per_pixel();
-        let block_rows = shape[0];
-        let block_cols = shape[1];
-        let block_bands = shape[2];
+        // Shape is [bands, rows, cols] (CHW format)
+        let block_bands = shape[0];
+        let block_rows = shape[1];
+        let block_cols = shape[2];
 
         // Convert BSQ input to target IMODE
         let converted_data = from_band_sequential(
@@ -725,11 +728,11 @@ impl BlockEncoder for UncompressedBlockEncoder {
         // Calculate expected block dimensions
         let (expected_rows, expected_cols) = self.actual_block_dimensions(block_row, block_col);
 
-        // Validate shape matches expected dimensions
-        if shape[0] != expected_rows || shape[1] != expected_cols || shape[2] != self.nbands {
+        // Validate shape matches expected dimensions - shape is [bands, rows, cols] (CHW format)
+        if shape[0] != self.nbands || shape[1] != expected_rows || shape[2] != expected_cols {
             return Err(CodecError::Encode(format!(
                 "Block shape mismatch: expected [{}, {}, {}], got [{}, {}, {}]",
-                expected_rows, expected_cols, self.nbands, shape[0], shape[1], shape[2]
+                self.nbands, expected_rows, expected_cols, shape[0], shape[1], shape[2]
             )));
         }
 
@@ -1008,15 +1011,15 @@ mod tests {
             let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32];
 
-            // Valid coordinates
-            assert!(encoder.encode_block(0, 0, &data, [32, 32, 1]).is_ok());
+            // Valid coordinates - shape is [bands, rows, cols] (CHW format)
+            assert!(encoder.encode_block(0, 0, &data, [1, 32, 32]).is_ok());
 
             // Invalid row
-            let result = encoder.encode_block(2, 0, &data, [32, 32, 1]);
+            let result = encoder.encode_block(2, 0, &data, [1, 32, 32]);
             assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(2, 0, 0))));
 
             // Invalid column
-            let result = encoder.encode_block(0, 2, &data, [32, 32, 1]);
+            let result = encoder.encode_block(0, 2, &data, [1, 32, 32]);
             assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(0, 2, 0))));
         }
 
@@ -1026,7 +1029,8 @@ mod tests {
 
             // Wrong data size
             let data = vec![0u8; 100]; // Should be 32*32 = 1024
-            let result = encoder.encode_block(0, 0, &data, [32, 32, 1]);
+            // Shape is [bands, rows, cols] (CHW format)
+            let result = encoder.encode_block(0, 0, &data, [1, 32, 32]);
             assert!(result.is_err());
             match result {
                 Err(CodecError::Encode(msg)) => {
@@ -1041,8 +1045,8 @@ mod tests {
             let mut encoder = UncompressedBlockEncoder::new(64, 64, 3, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32 * 3];
 
-            // Wrong number of bands in shape
-            let result = encoder.encode_block(0, 0, &data, [32, 32, 2]);
+            // Wrong number of bands in shape - shape is [bands, rows, cols] (CHW format)
+            let result = encoder.encode_block(0, 0, &data, [2, 32, 32]);
             assert!(result.is_err());
             match result {
                 Err(CodecError::Encode(msg)) => {
@@ -1057,8 +1061,8 @@ mod tests {
             let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32];
 
-            // Only encode one block
-            encoder.encode_block(0, 0, &data, [32, 32, 1]).unwrap();
+            // Only encode one block - shape is [bands, rows, cols] (CHW format)
+            encoder.encode_block(0, 0, &data, [1, 32, 32]).unwrap();
 
             let result = Box::new(encoder).finalize();
             assert!(result.is_err());
@@ -1076,11 +1080,11 @@ mod tests {
             let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32];
 
-            // Encode all 4 blocks
-            encoder.encode_block(0, 0, &data, [32, 32, 1]).unwrap();
-            encoder.encode_block(0, 1, &data, [32, 32, 1]).unwrap();
-            encoder.encode_block(1, 0, &data, [32, 32, 1]).unwrap();
-            encoder.encode_block(1, 1, &data, [32, 32, 1]).unwrap();
+            // Encode all 4 blocks - shape is [bands, rows, cols] (CHW format)
+            encoder.encode_block(0, 0, &data, [1, 32, 32]).unwrap();
+            encoder.encode_block(0, 1, &data, [1, 32, 32]).unwrap();
+            encoder.encode_block(1, 0, &data, [1, 32, 32]).unwrap();
+            encoder.encode_block(1, 1, &data, [1, 32, 32]).unwrap();
 
             let result = Box::new(encoder).finalize();
             assert!(result.is_ok());
@@ -1128,21 +1132,21 @@ mod tests {
             // NITF stores data in nominal block sizes, so total size is 2*2*4*4 = 64 bytes
             let mut encoder = UncompressedBlockEncoder::new(6, 6, 1, 8, InterleaveMode::B, 4, 4);
 
-            // Full block (0,0): 4x4
+            // Full block (0,0): 4x4 - shape is [bands, rows, cols] (CHW format)
             let data_full = vec![1u8; 4 * 4];
-            encoder.encode_block(0, 0, &data_full, [4, 4, 1]).unwrap();
+            encoder.encode_block(0, 0, &data_full, [1, 4, 4]).unwrap();
 
             // Edge block (0,1): 4x2
             let data_edge_col = vec![2u8; 4 * 2];
-            encoder.encode_block(0, 1, &data_edge_col, [4, 2, 1]).unwrap();
+            encoder.encode_block(0, 1, &data_edge_col, [1, 4, 2]).unwrap();
 
             // Edge block (1,0): 2x4
             let data_edge_row = vec![3u8; 2 * 4];
-            encoder.encode_block(1, 0, &data_edge_row, [2, 4, 1]).unwrap();
+            encoder.encode_block(1, 0, &data_edge_row, [1, 2, 4]).unwrap();
 
             // Corner block (1,1): 2x2
             let data_corner = vec![4u8; 2 * 2];
-            encoder.encode_block(1, 1, &data_corner, [2, 2, 1]).unwrap();
+            encoder.encode_block(1, 1, &data_corner, [1, 2, 2]).unwrap();
 
             let result = Box::new(encoder).finalize();
             assert!(result.is_ok());
@@ -1156,7 +1160,8 @@ mod tests {
             let mut encoder = UncompressedBlockEncoder::new(4, 4, 1, 16, InterleaveMode::B, 4, 4);
             let data = vec![0u8; 4 * 4 * 2]; // 16 pixels * 2 bytes
 
-            encoder.encode_block(0, 0, &data, [4, 4, 1]).unwrap();
+            // Shape is [bands, rows, cols] (CHW format)
+            encoder.encode_block(0, 0, &data, [1, 4, 4]).unwrap();
 
             let result = Box::new(encoder).finalize();
             assert!(result.is_ok());
@@ -1178,7 +1183,8 @@ mod tests {
             let data = vec![0u8; 32 * 32];
 
             // Test row out of bounds (grid is 2x2, so row 5 is invalid)
-            let result = encoder.encode_block(5, 0, &data, [32, 32, 1]);
+            // Shape is [bands, rows, cols] (CHW format)
+            let result = encoder.encode_block(5, 0, &data, [1, 32, 32]);
             assert!(result.is_err());
             match result {
                 Err(CodecError::InvalidBlockCoordinates(row, col, _)) => {
@@ -1189,7 +1195,7 @@ mod tests {
             }
 
             // Test column out of bounds
-            let result = encoder.encode_block(0, 10, &data, [32, 32, 1]);
+            let result = encoder.encode_block(0, 10, &data, [1, 32, 32]);
             assert!(result.is_err());
             match result {
                 Err(CodecError::InvalidBlockCoordinates(row, col, _)) => {
@@ -1200,7 +1206,7 @@ mod tests {
             }
 
             // Test both row and column out of bounds
-            let result = encoder.encode_block(100, 200, &data, [32, 32, 1]);
+            let result = encoder.encode_block(100, 200, &data, [1, 32, 32]);
             assert!(result.is_err());
             match result {
                 Err(CodecError::InvalidBlockCoordinates(row, col, _)) => {
@@ -1223,10 +1229,11 @@ mod tests {
             let data = vec![0u8; 32 * 32];
 
             // Index 0 should be valid with full block size
-            assert!(encoder.encode_block(0, 0, &data, [32, 32, 1]).is_ok());
+            // Shape is [bands, rows, cols] (CHW format)
+            assert!(encoder.encode_block(0, 0, &data, [1, 32, 32]).is_ok());
 
             // Index 3 should be invalid (one past the boundary)
-            let result = encoder.encode_block(3, 0, &data, [32, 32, 1]);
+            let result = encoder.encode_block(3, 0, &data, [1, 32, 32]);
             assert!(result.is_err());
             match result {
                 Err(CodecError::InvalidBlockCoordinates(row, col, _)) => {
@@ -1245,7 +1252,8 @@ mod tests {
 
             // Expected size: 32 * 32 * 1 band * 1 byte = 1024 bytes
             let wrong_data = vec![0u8; 100]; // Too small
-            let result = encoder.encode_block(0, 0, &wrong_data, [32, 32, 1]);
+            // Shape is [bands, rows, cols] (CHW format)
+            let result = encoder.encode_block(0, 0, &wrong_data, [1, 32, 32]);
 
             assert!(result.is_err());
             match result {
@@ -1273,7 +1281,8 @@ mod tests {
 
             // Expected size: 32 * 32 * 3 bands * 1 byte = 3072 bytes
             let wrong_data = vec![0u8; 1024]; // Only enough for 1 band
-            let result = encoder.encode_block(0, 0, &wrong_data, [32, 32, 3]);
+            // Shape is [bands, rows, cols] (CHW format)
+            let result = encoder.encode_block(0, 0, &wrong_data, [3, 32, 32]);
 
             assert!(result.is_err());
             match result {
@@ -1301,7 +1310,8 @@ mod tests {
 
             // Expected size: 32 * 32 * 1 band * 2 bytes = 2048 bytes
             let wrong_data = vec![0u8; 1024]; // Only half the required size
-            let result = encoder.encode_block(0, 0, &wrong_data, [32, 32, 1]);
+            // Shape is [bands, rows, cols] (CHW format)
+            let result = encoder.encode_block(0, 0, &wrong_data, [1, 32, 32]);
 
             assert!(result.is_err());
             match result {
@@ -1329,7 +1339,8 @@ mod tests {
             let data = vec![0u8; 32 * 32];
 
             // Only encode block (0, 0), leaving (0, 1), (1, 0), (1, 1) missing
-            encoder.encode_block(0, 0, &data, [32, 32, 1]).unwrap();
+            // Shape is [bands, rows, cols] (CHW format)
+            encoder.encode_block(0, 0, &data, [1, 32, 32]).unwrap();
 
             let result = Box::new(encoder).finalize();
             assert!(result.is_err());
@@ -1360,9 +1371,10 @@ mod tests {
             let data = vec![0u8; 32 * 32];
 
             // Grid is 3x3, encode only first row
-            encoder.encode_block(0, 0, &data, [32, 32, 1]).unwrap();
-            encoder.encode_block(0, 1, &data, [32, 32, 1]).unwrap();
-            encoder.encode_block(0, 2, &data, [32, 32, 1]).unwrap();
+            // Shape is [bands, rows, cols] (CHW format)
+            encoder.encode_block(0, 0, &data, [1, 32, 32]).unwrap();
+            encoder.encode_block(0, 1, &data, [1, 32, 32]).unwrap();
+            encoder.encode_block(0, 2, &data, [1, 32, 32]).unwrap();
 
             let result = Box::new(encoder).finalize();
             assert!(result.is_err());
@@ -1387,10 +1399,11 @@ mod tests {
             let data = vec![0u8; 32 * 32];
 
             // Encode all 4 blocks in 2x2 grid
-            encoder.encode_block(0, 0, &data, [32, 32, 1]).unwrap();
-            encoder.encode_block(0, 1, &data, [32, 32, 1]).unwrap();
-            encoder.encode_block(1, 0, &data, [32, 32, 1]).unwrap();
-            encoder.encode_block(1, 1, &data, [32, 32, 1]).unwrap();
+            // Shape is [bands, rows, cols] (CHW format)
+            encoder.encode_block(0, 0, &data, [1, 32, 32]).unwrap();
+            encoder.encode_block(0, 1, &data, [1, 32, 32]).unwrap();
+            encoder.encode_block(1, 0, &data, [1, 32, 32]).unwrap();
+            encoder.encode_block(1, 1, &data, [1, 32, 32]).unwrap();
 
             let result = Box::new(encoder).finalize();
             assert!(result.is_ok(), "finalize should succeed when all blocks are encoded");
@@ -1475,8 +1488,8 @@ mod property_tests {
                 nrows, ncols, nbands, nbpp, imode, ncols, nrows
             );
 
-            // Encode the single block
-            encoder.encode_block(0, 0, &original_data, [nrows, ncols, nbands]).unwrap();
+            // Encode the single block - shape is [bands, rows, cols] (CHW format)
+            encoder.encode_block(0, 0, &original_data, [nbands, nrows, ncols]).unwrap();
 
             // Finalize to get encoded data
             let encoded_data = Box::new(encoder).finalize().unwrap();
@@ -1494,8 +1507,8 @@ mod property_tests {
             // Decode the block
             let (decoded_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
 
-            // Verify shape matches
-            prop_assert_eq!(shape, [nrows, ncols, nbands]);
+            // Verify shape matches - shape is [bands, rows, cols] (CHW format)
+            prop_assert_eq!(shape, [nbands, nrows, ncols]);
 
             // Verify pixel data matches original
             prop_assert_eq!(
@@ -1620,7 +1633,8 @@ mod property_tests {
                 )?
             };
 
-            Ok((bsq_data, [actual_rows, actual_cols, self.nbands]))
+            // Return shape as [bands, rows, cols] (CHW format)
+            Ok((bsq_data, [self.nbands, actual_rows, actual_cols]))
         }
 
         fn read_block_mode_s(
@@ -1829,7 +1843,7 @@ mod property_tests {
                 }
             }
 
-            Ok((block_data, [actual_height, actual_width, self.nbands]))
+            Ok((block_data, [self.nbands, actual_height, actual_width]))
         }
 
         fn num_resolution_levels(&self) -> u32 { 1 }
@@ -1909,8 +1923,10 @@ mod property_tests {
             for out_row in 0..grid_rows {
                 for out_col in 0..grid_cols {
                     let (tile_data, shape) = assembler.get_output_tile(out_row, out_col).unwrap();
-                    let tile_height = shape[0];
-                    let tile_width = shape[1];
+                    // Shape is [bands, rows, cols] (CHW format)
+                    let tile_bands = shape[0];
+                    let tile_height = shape[1];
+                    let tile_width = shape[2];
 
                     // Calculate where this tile goes in the full image
                     let start_x = out_col * out_tile_w;
@@ -1918,7 +1934,7 @@ mod property_tests {
 
                     // Copy tile data back to reassembled image (BSQ format)
                     let tile_pixels = (tile_width as usize) * (tile_height as usize);
-                    for band in 0..nbands {
+                    for band in 0..tile_bands {
                         let src_band_offset = (band as usize) * tile_pixels * bytes_per_pixel;
                         let dst_band_offset = (band as usize) * pixels_per_band * bytes_per_pixel;
 
@@ -2055,24 +2071,24 @@ mod round_trip_property_tests {
             for block_row in 0..grid_rows {
                 for block_col in 0..grid_cols {
                     let (block_data, shape) = image_provider.get_block(block_row, block_col, 0, None).unwrap();
-                    let tile_height = shape[0];
-                    let tile_width = shape[1];
-                    let tile_bands = shape[2];
+                    // Shape is [bands, rows, cols] (CHW format)
+                    let tile_bands = shape[0];
+                    let tile_height = shape[1];
+                    let tile_width = shape[2];
 
                     // Calculate where this block goes in the full image
                     let start_x = block_col * block_width;
                     let start_y = block_row * block_height;
 
-                    // The block data is in BIP format (band-interleaved by pixel)
-                    // Convert to BSQ for comparison
-                    let tile_pixels = (tile_width as usize) * (tile_height as usize);
+                    // Block data is in BSQ format (band-sequential)
+                    let tile_pixels_per_band = (tile_width as usize) * (tile_height as usize);
                     
                     for band in 0..tile_bands {
+                        let src_band_offset = (band as usize) * tile_pixels_per_band;
                         let dst_band_offset = (band as usize) * pixels_per_band;
                         for row in 0..tile_height {
                             for col in 0..tile_width {
-                                let src_pixel_idx = (row as usize) * (tile_width as usize) + (col as usize);
-                                let src_offset = src_pixel_idx * (tile_bands as usize) + (band as usize);
+                                let src_offset = src_band_offset + (row as usize) * (tile_width as usize) + (col as usize);
                                 
                                 let dst_row = start_y + row;
                                 let dst_col = start_x + col;
@@ -2188,15 +2204,16 @@ mod round_trip_property_tests {
 
             // Verify edge blocks have correct dimensions
             // Check right edge block (last column)
+            // Shape is [bands, rows, cols] (CHW format)
             if ncols % block_width != 0 {
                 let edge_col = expected_grid_cols - 1;
                 let expected_edge_width = ncols - (edge_col * block_width);
                 
                 let (block_data, shape) = image_provider.get_block(0, edge_col, 0, None).unwrap();
                 prop_assert_eq!(
-                    shape[1], expected_edge_width,
+                    shape[2], expected_edge_width,
                     "Right edge block width should be {}, got {}",
-                    expected_edge_width, shape[1]
+                    expected_edge_width, shape[2]
                 );
             }
 
@@ -2207,9 +2224,9 @@ mod round_trip_property_tests {
                 
                 let (block_data, shape) = image_provider.get_block(edge_row, 0, 0, None).unwrap();
                 prop_assert_eq!(
-                    shape[0], expected_edge_height,
+                    shape[1], expected_edge_height,
                     "Bottom edge block height should be {}, got {}",
-                    expected_edge_height, shape[0]
+                    expected_edge_height, shape[1]
                 );
             }
 
@@ -2220,19 +2237,22 @@ mod round_trip_property_tests {
             for block_row in 0..expected_grid_rows {
                 for block_col in 0..expected_grid_cols {
                     let (block_data, shape) = image_provider.get_block(block_row, block_col, 0, None).unwrap();
-                    let tile_height = shape[0];
-                    let tile_width = shape[1];
-                    let tile_bands = shape[2];
+                    // Shape is [bands, rows, cols] (CHW format)
+                    let tile_bands = shape[0];
+                    let tile_height = shape[1];
+                    let tile_width = shape[2];
 
                     let start_x = block_col * block_width;
                     let start_y = block_row * block_height;
 
+                    // Block data is in BSQ format (band-sequential)
+                    let tile_pixels_per_band = (tile_height as usize) * (tile_width as usize);
                     for band in 0..tile_bands {
+                        let src_band_offset = (band as usize) * tile_pixels_per_band;
                         let dst_band_offset = (band as usize) * pixels_per_band;
                         for row in 0..tile_height {
                             for col in 0..tile_width {
-                                let src_pixel_idx = (row as usize) * (tile_width as usize) + (col as usize);
-                                let src_offset = src_pixel_idx * (tile_bands as usize) + (band as usize);
+                                let src_offset = src_band_offset + (row as usize) * (tile_width as usize) + (col as usize);
                                 
                                 let dst_row = start_y + row;
                                 let dst_col = start_x + col;
@@ -2331,19 +2351,22 @@ mod round_trip_property_tests {
             for block_row in 0..grid_rows {
                 for block_col in 0..grid_cols {
                     let (block_data, shape) = image_provider.get_block(block_row, block_col, 0, None).unwrap();
-                    let tile_height = shape[0];
-                    let tile_width = shape[1];
-                    let tile_bands = shape[2];
+                    // Shape is [bands, rows, cols] (CHW format)
+                    let tile_bands = shape[0];
+                    let tile_height = shape[1];
+                    let tile_width = shape[2];
 
                     let start_x = block_col * read_block_width;
                     let start_y = block_row * read_block_height;
 
+                    // Block data is in BSQ format
+                    let tile_pixels_per_band = (tile_height as usize) * (tile_width as usize);
                     for band in 0..tile_bands {
+                        let src_band_offset = (band as usize) * tile_pixels_per_band;
                         let dst_band_offset = (band as usize) * pixels_per_band;
                         for row in 0..tile_height {
                             for col in 0..tile_width {
-                                let src_pixel_idx = (row as usize) * (tile_width as usize) + (col as usize);
-                                let src_offset = src_pixel_idx * (tile_bands as usize) + (band as usize);
+                                let src_offset = src_band_offset + (row as usize) * (tile_width as usize) + (col as usize);
                                 
                                 let dst_row = start_y + row;
                                 let dst_col = start_x + col;

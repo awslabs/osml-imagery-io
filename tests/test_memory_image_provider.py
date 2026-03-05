@@ -207,9 +207,9 @@ class TestBufferedImageAssetProviderSetImage:
         image_data = np.full((1, 64, 64), 200, dtype=np.uint8)
         provider.set_full_image(image_data)
 
-        # Get block and verify data
+        # Get block and verify data - shape is CHW (bands, rows, cols)
         block = provider.get_block(0, 0, 0)
-        assert block.shape == (64, 64, 1)
+        assert block.shape == (1, 64, 64)
         # All values should be 200
         assert np.all(block == 200)
 
@@ -248,17 +248,17 @@ class TestBufferedImageAssetProviderProperties:
         assert provider.irep == "MULTI"
 
     def test_image_shape(self):
-        """Test image_shape property."""
+        """Test image_shape property - returns CHW format (bands, rows, cols)."""
         provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=512,
             num_rows=256,
             num_bands=3,
         )
-        assert provider.image_shape == (256, 512, 3)
+        assert provider.image_shape == (3, 256, 512)
 
     def test_block_shape(self):
-        """Test block_shape property."""
+        """Test block_shape property - returns CHW format (bands, rows, cols)."""
         provider = BufferedImageAssetProvider.create(
             key="test_image",
             num_columns=512,
@@ -267,7 +267,7 @@ class TestBufferedImageAssetProviderProperties:
             block_width=128,
             block_height=128,
         )
-        assert provider.block_shape == (128, 128, 3)
+        assert provider.block_shape == (3, 128, 128)
 
     def test_block_grid_size(self):
         """Test block_grid_size property."""
