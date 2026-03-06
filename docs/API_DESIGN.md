@@ -119,6 +119,7 @@ direction TB
 
     class GraphicsAssetProvider {
         <<abstract>>
+        +raw_asset BytesIO
     }
 
     AssetProvider <|-- ImageAssetProvider
@@ -330,6 +331,171 @@ provider = BufferedImageAssetProvider.create(
 )
 provider.set_full_image(image_chw)
 ```
+
+## GraphicsAssetProvider
+
+The `GraphicsAssetProvider` interface provides access to vector graphics data within geospatial datasets. In NITF files, graphic segments contain CGM (Computer Graphics Metafile) data representing annotations, overlays, and vector graphics that can be rendered on top of imagery.
+
+### Interface Design
+
+The `GraphicsAssetProvider` trait extends `AssetProvider` without adding additional methods. This minimal design reflects that:
+
+1. Raw CGM data is accessed through the inherited `raw_asset()` method
+2. Graphic-specific metadata (display level, attachment level, location, bounds) is accessed via `metadata().as_dict()`
+3. The library extracts raw CGM bytes but does not parse CGM content—users provide their own CGM parsing libraries
+
+```mermaid
+classDiagram
+direction TB
+    class AssetProvider {
+        <<abstract>>
+        +key str
+        +title str
+        +description str
+        +media_type str
+        +roles List[str]
+        +asset_type AssetType
+        +raw_asset BytesIO
+        +metadata MetadataProvider
+    }
+
+    class GraphicsAssetProvider {
+        <<abstract>>
+    }
+
+    class JBPGraphicsAssetProvider {
+        -key: String
+        -title: String
+        -description: String
+        -roles: Vec~String~
+        -location: SegmentLocation
+        -data: Arc~[u8]~
+        -metadata: Arc~MetadataProvider~
+    }
+
+    AssetProvider <|-- GraphicsAssetProvider
+    GraphicsAssetProvider <|.. JBPGraphicsAssetProvider
+```
+
+### Accessing Graphic Segments
+
+```python
+from aws.osml.io import IO
+
+with IO.open(["file_with_graphics.ntf"], "r") as reader:
+    # Discover graphic assets
+    graphic_keys = reader.get_asset_keys(asset_type="graphics")
+    print(f"Found {len(graphic_keys)} graphic segments")
+    
+    for key in graphic_keys:
+        graphic = reader.get_asset(key)
+        
+        # Basic asset properties
+        print(f"Key: {graphic.key}")
+        print(f"Title: {graphic.title}")
+        print(f"Media Type: {graphic.media_type}")  # "image/cgm"
+        print(f"Asset Type: {graphic.asset_type}")  # AssetType.Graphics
+```
+
+### Accessing Graphic Metadata
+
+Graphic segments contain metadata for display layering and positioning. Access these through the `metadata()` provider:
+
+```python
+from aws.osml.io import IO
+
+with IO.open(["file_with_graphics.ntf"], "r") as reader:
+    graphic = reader.get_asset("graphic_segment_0")
+    metadata = graphic.metadata.as_dict()
+    
+    # Display and attachment levels
+    sdlvl = int(metadata["SDLVL"])  # Display level (001-999), higher renders on top
+    salvl = int(metadata["SALVL"])  # Attachment level (0 = unattached to image)
+    
+    # Location relative to attached segment (RRRRRCCCCC format)
+    sloc = metadata["SLOC"]
+    sloc_row = int(sloc[0:5])   # Row offset
+    sloc_col = int(sloc[5:10])  # Column offset
+    
+    # Bounding box coordinates
+    sbnd1 = metadata["SBND1"]  # Upper-left corner
+    sbnd2 = metadata["SBND2"]  # Lower-right corner
+    
+    # Parse bounding box
+    bbox_row1 = int(sbnd1[0:5])
+    bbox_col1 = int(sbnd1[5:10])
+    bbox_row2 = int(sbnd2[0:5])
+    bbox_col2 = int(sbnd2[5:10])
+    
+    # Color capability
+    scolor = metadata["SCOLOR"]  # "C" for color, "M" for monochrome
+    
+    print(f"Display Level: {sdlvl}")
+    print(f"Attachment Level: {salvl}")
+    print(f"Location: row={sloc_row}, col={sloc_col}")
+    print(f"Bounding Box: ({bbox_row1},{bbox_col1}) to ({bbox_row2},{bbox_col2})")
+```
+
+### Accessing Raw CGM Data
+
+The raw CGM (Computer Graphics Metafile) data can be retrieved for processing by external CGM libraries:
+
+```python
+from aws.osml.io import IO
+
+with IO.open(["file_with_graphics.ntf"], "r") as reader:
+    graphic = reader.get_asset("graphic_segment_0")
+    
+    # Get raw CGM bytes
+    cgm_data = graphic.raw_asset.read()
+    
+    # Save to file for external processing
+    with open("extracted_graphic.cgm", "wb") as f:
+        f.write(cgm_data)
+    
+    # Or pass to a CGM parsing library
+    # cgm_parser.parse(cgm_data)
+```
+
+### Display Level Ordering
+
+When rendering multiple graphic segments, use SDLVL to determine z-order:
+
+```python
+from aws.osml.io import IO
+
+with IO.open(["multi_graphic.ntf"], "r") as reader:
+    graphic_keys = reader.get_asset_keys(asset_type="graphics")
+    
+    # Collect graphics with their display levels
+    graphics_with_levels = []
+    for key in graphic_keys:
+        graphic = reader.get_asset(key)
+        metadata = graphic.metadata.as_dict()
+        sdlvl = int(metadata["SDLVL"])
+        graphics_with_levels.append((sdlvl, graphic))
+    
+    # Sort by display level for correct rendering order
+    graphics_with_levels.sort(key=lambda x: x[0])
+    
+    # Render in order (lower SDLVL first, higher on top)
+    for sdlvl, graphic in graphics_with_levels:
+        cgm_data = graphic.raw_asset.read()
+        # render_cgm(cgm_data, z_order=sdlvl)
+```
+
+### Key Metadata Fields
+
+| Field | Description | Format |
+|-------|-------------|--------|
+| SDLVL | Display Level (z-order) | 3-digit integer (001-999) |
+| SALVL | Attachment Level | 3-digit integer (000 = unattached) |
+| SLOC | Location offset | RRRRRCCCCC (row, column) |
+| SBND1 | Bounding box upper-left | RRRRRCCCCC |
+| SBND2 | Bounding box lower-right | RRRRRCCCCC |
+| SCOLOR | Color capability | "C" (color) or "M" (monochrome) |
+| SID | Graphic identifier | 10-character string |
+| SNAME | Graphic name | 20-character string |
 
 ## Working with In-Memory (Buffered) Imagery
 

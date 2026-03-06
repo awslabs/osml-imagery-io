@@ -28,6 +28,7 @@ pub mod asset;
 pub mod datetime;
 mod error;
 pub mod format;
+pub mod graphics;
 pub mod image;
 pub mod io;
 pub mod j2k;
@@ -48,6 +49,7 @@ pub use asset::{
 pub use datetime::{parse_nitf_datetime, DateTimeParseError, NitfDateTime};
 pub use error::{JBPError, ValidationCode, ValidationWarning};
 pub use format::{is_nitf_extension, validate_nitf_magic};
+pub use graphics::GraphicSubheaderFacade;
 pub use io::IO;
 pub use metadata::{JBPFileMetadataProvider, JBPSegmentMetadataProvider};
 pub use overflow::{create_overflow_des, OverflowSource};

@@ -19,7 +19,7 @@ use crate::traits::{
 use crate::types::AssetType;
 
 // Import JBP asset providers for downcasting
-use crate::jbp::JBPImageAssetProvider;
+use crate::jbp::{JBPGraphicsAssetProvider, JBPImageAssetProvider};
 
 /// Python wrapper for DatasetReader trait objects.
 ///
@@ -227,12 +227,31 @@ fn try_as_data_provider(
 }
 
 /// Attempts to convert an AssetProvider to a GraphicsAssetProvider.
-/// 
-/// Note: JBPGraphicsAssetProvider does not implement GraphicsAssetProvider trait yet,
-/// so this always returns None. Graphics assets are returned as generic AssetProvider.
+///
+/// This function checks if the underlying implementation supports the
+/// GraphicsAssetProvider trait by attempting to downcast to known concrete types.
 fn try_as_graphics_provider(
-    _asset: &Arc<dyn AssetProvider>,
+    asset: &Arc<dyn AssetProvider>,
 ) -> Option<Arc<dyn GraphicsAssetProvider>> {
-    // JBPGraphicsAssetProvider doesn't implement GraphicsAssetProvider yet
-    None
+    // Try to downcast to JBPGraphicsAssetProvider using as_any
+    if asset.asset_type() == AssetType::Graphics {
+        if asset.as_any().downcast_ref::<JBPGraphicsAssetProvider>().is_some() {
+            // We need to clone the Arc and return it as GraphicsAssetProvider
+            // Since we can't directly convert Arc<dyn AssetProvider> to Arc<dyn GraphicsAssetProvider>,
+            // we need to create a new Arc from the concrete type
+            // This is safe because we've verified the concrete type
+            let ptr = Arc::as_ptr(asset);
+            // SAFETY: We've verified the concrete type is JBPGraphicsAssetProvider
+            // which implements GraphicsAssetProvider. We increment the ref count.
+            unsafe {
+                Arc::increment_strong_count(ptr);
+                let concrete_ptr = ptr as *const JBPGraphicsAssetProvider;
+                Some(Arc::from_raw(concrete_ptr as *const dyn GraphicsAssetProvider))
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    }
 }

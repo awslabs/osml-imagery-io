@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 7a6fc018c552f7dc7e52a16639d5b155f96bea815b872f0a2a156fda7425979c # shrinks to numi = 2, nums = 0, numt = 0, numdes = 0
 cc 8725457195302629093994be5185a08611fefd32deb6465a5084ca2cf6c89817 # shrinks to numi = 0, nums = 0, numt = 0, numdes = 2
+cc 51e3782524bb50a636b5d93ba6dd55ebfecfc0d55280bdf1fd09c7239db874c4 # shrinks to numi = 1, nums = 1, numt = 0

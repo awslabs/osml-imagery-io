@@ -16,6 +16,7 @@ use crate::jbp::asset::{
 };
 use crate::jbp::error::{JBPError, ValidationCode, ValidationWarning};
 use crate::jbp::format::validate_nitf_magic;
+use crate::jbp::graphics::GraphicSubheaderFacade;
 use crate::jbp::metadata::{JBPFileMetadataProvider, JBPSegmentMetadataProvider};
 use crate::jbp::overflow;
 use crate::jbp::tre::TreEnvelope;
@@ -825,18 +826,225 @@ impl JBPDatasetReader {
             )
     }
 
-    /// Create a minimal graphic subheader structure definition.
+    /// Create a full graphic subheader structure definition per JBP Table 5.15-1.
+    ///
+    /// This definition includes all fields from the JBP specification:
+    /// - SY, SID, SNAME: Identification fields
+    /// - Security fields (SSCLAS through SSCTLN): 167 bytes total
+    /// - ENCRYP, SFMT, SSTRUCT: Format fields
+    /// - SDLVL, SALVL: Display and attachment levels
+    /// - SLOC, SBND1, SCOLOR, SBND2: Location and bounding box
+    /// - SRES2: Reserved field
+    /// - SXSHDL, SXSOFL, SXSHD: Extended subheader data (TRE support)
     fn create_graphic_subheader_definition() -> StructureDefinition {
+        use crate::parser::ExpressionEvaluator;
+
+        // Condition for SXSOFL: present when SXSHDL > 0
+        let sxsofl_condition = ExpressionEvaluator::parse("SXSHDL.to_i > 0").unwrap();
+
+        // Condition for SXSHD: present when SXSHDL > 3 (SXSHDL includes 3 bytes for SXSOFL)
+        let sxshd_condition = ExpressionEvaluator::parse("SXSHDL.to_i > 3").unwrap();
+
         StructureDefinition::new("NITF_GraphicSubheader")
+            // File Part Type - always "SY"
             .with_field(
                 FieldDefinition::new("SY", FieldType::String)
                     .with_size(SizeSpec::Fixed(2))
                     .with_doc("File Part Type"),
             )
+            // Graphic Identifier
             .with_field(
                 FieldDefinition::new("SID", FieldType::String)
                     .with_size(SizeSpec::Fixed(10))
                     .with_doc("Graphic Identifier"),
+            )
+            // Graphic Name
+            .with_field(
+                FieldDefinition::new("SNAME", FieldType::String)
+                    .with_size(SizeSpec::Fixed(20))
+                    .with_doc("Graphic Name"),
+            )
+            // Security Fields (167 bytes total) - using "S" prefix for graphic segments
+            // Security Classification
+            .with_field(
+                FieldDefinition::new("SSCLAS", FieldType::String)
+                    .with_size(SizeSpec::Fixed(1))
+                    .with_doc("Graphic Security Classification"),
+            )
+            // Security Classification System
+            .with_field(
+                FieldDefinition::new("SSCLSY", FieldType::String)
+                    .with_size(SizeSpec::Fixed(2))
+                    .with_doc("Graphic Security Classification System"),
+            )
+            // Codewords
+            .with_field(
+                FieldDefinition::new("SSCODE", FieldType::String)
+                    .with_size(SizeSpec::Fixed(11))
+                    .with_doc("Graphic Codewords"),
+            )
+            // Control and Handling
+            .with_field(
+                FieldDefinition::new("SSCTLH", FieldType::String)
+                    .with_size(SizeSpec::Fixed(2))
+                    .with_doc("Graphic Control and Handling"),
+            )
+            // Releasing Instructions
+            .with_field(
+                FieldDefinition::new("SSREL", FieldType::String)
+                    .with_size(SizeSpec::Fixed(20))
+                    .with_doc("Graphic Releasing Instructions"),
+            )
+            // Declassification Type
+            .with_field(
+                FieldDefinition::new("SSDCTP", FieldType::String)
+                    .with_size(SizeSpec::Fixed(2))
+                    .with_doc("Graphic Declassification Type"),
+            )
+            // Declassification Date
+            .with_field(
+                FieldDefinition::new("SSDCDT", FieldType::String)
+                    .with_size(SizeSpec::Fixed(8))
+                    .with_doc("Graphic Declassification Date"),
+            )
+            // Declassification Exemption
+            .with_field(
+                FieldDefinition::new("SSDCXM", FieldType::String)
+                    .with_size(SizeSpec::Fixed(4))
+                    .with_doc("Graphic Declassification Exemption"),
+            )
+            // Downgrade
+            .with_field(
+                FieldDefinition::new("SSDG", FieldType::String)
+                    .with_size(SizeSpec::Fixed(1))
+                    .with_doc("Graphic Downgrade"),
+            )
+            // Downgrade Date
+            .with_field(
+                FieldDefinition::new("SSDGDT", FieldType::String)
+                    .with_size(SizeSpec::Fixed(8))
+                    .with_doc("Graphic Downgrade Date"),
+            )
+            // Classification Text
+            .with_field(
+                FieldDefinition::new("SSCLTX", FieldType::String)
+                    .with_size(SizeSpec::Fixed(43))
+                    .with_doc("Graphic Classification Text"),
+            )
+            // Classification Authority Type
+            .with_field(
+                FieldDefinition::new("SSCATP", FieldType::String)
+                    .with_size(SizeSpec::Fixed(1))
+                    .with_doc("Graphic Classification Authority Type"),
+            )
+            // Classification Authority
+            .with_field(
+                FieldDefinition::new("SSCAUT", FieldType::String)
+                    .with_size(SizeSpec::Fixed(40))
+                    .with_doc("Graphic Classification Authority"),
+            )
+            // Classification Reason
+            .with_field(
+                FieldDefinition::new("SSCRSN", FieldType::String)
+                    .with_size(SizeSpec::Fixed(1))
+                    .with_doc("Graphic Classification Reason"),
+            )
+            // Security Source Date
+            .with_field(
+                FieldDefinition::new("SSSRDT", FieldType::String)
+                    .with_size(SizeSpec::Fixed(8))
+                    .with_doc("Graphic Security Source Date"),
+            )
+            // Security Control Number
+            .with_field(
+                FieldDefinition::new("SSCTLN", FieldType::String)
+                    .with_size(SizeSpec::Fixed(15))
+                    .with_doc("Graphic Security Control Number"),
+            )
+            // Encryption - must be "0" (not encrypted)
+            .with_field(
+                FieldDefinition::new("ENCRYP", FieldType::String)
+                    .with_size(SizeSpec::Fixed(1))
+                    .with_doc("Encryption"),
+            )
+            // Graphic Type - must be "C" for CGM
+            .with_field(
+                FieldDefinition::new("SFMT", FieldType::String)
+                    .with_size(SizeSpec::Fixed(1))
+                    .with_doc("Graphic Type"),
+            )
+            // Reserved for Future Use
+            .with_field(
+                FieldDefinition::new("SSTRUCT", FieldType::String)
+                    .with_size(SizeSpec::Fixed(13))
+                    .with_doc("Reserved for Future Use"),
+            )
+            // Graphic Display Level (001-999)
+            .with_field(
+                FieldDefinition::new("SDLVL", FieldType::String)
+                    .with_size(SizeSpec::Fixed(3))
+                    .with_doc("Graphic Display Level"),
+            )
+            // Graphic Attachment Level (000-998)
+            .with_field(
+                FieldDefinition::new("SALVL", FieldType::String)
+                    .with_size(SizeSpec::Fixed(3))
+                    .with_doc("Graphic Attachment Level"),
+            )
+            // Graphic Location (RRRRRCCCCC format)
+            .with_field(
+                FieldDefinition::new("SLOC", FieldType::String)
+                    .with_size(SizeSpec::Fixed(10))
+                    .with_doc("Graphic Location"),
+            )
+            // First Graphic Bound Location (upper-left corner, RRRRRCCCCC format)
+            .with_field(
+                FieldDefinition::new("SBND1", FieldType::String)
+                    .with_size(SizeSpec::Fixed(10))
+                    .with_doc("First Graphic Bound Location"),
+            )
+            // Graphic Color ("C" for color, "M" for monochrome)
+            .with_field(
+                FieldDefinition::new("SCOLOR", FieldType::String)
+                    .with_size(SizeSpec::Fixed(1))
+                    .with_doc("Graphic Color"),
+            )
+            // Second Graphic Bound Location (lower-right corner, RRRRRCCCCC format)
+            .with_field(
+                FieldDefinition::new("SBND2", FieldType::String)
+                    .with_size(SizeSpec::Fixed(10))
+                    .with_doc("Second Graphic Bound Location"),
+            )
+            // Reserved for Future Use
+            .with_field(
+                FieldDefinition::new("SRES2", FieldType::String)
+                    .with_size(SizeSpec::Fixed(2))
+                    .with_doc("Reserved for Future Use"),
+            )
+            // Graphic Extended Subheader Data Length
+            // Value 00000 = no TREs, 00003-99999 = length of SXSOFL + SXSHD
+            .with_field(
+                FieldDefinition::new("SXSHDL", FieldType::String)
+                    .with_size(SizeSpec::Fixed(5))
+                    .with_doc("Graphic Extended Subheader Data Length"),
+            )
+            // Graphic Extended Subheader Overflow (conditional: present when SXSHDL > 0)
+            // Value 000 = no overflow, 001-999 = DES sequence number for overflow
+            .with_field(
+                FieldDefinition::new("SXSOFL", FieldType::String)
+                    .with_size(SizeSpec::Fixed(3))
+                    .with_condition(sxsofl_condition)
+                    .with_doc("Graphic Extended Subheader Overflow"),
+            )
+            // Graphic Extended Subheader Data (conditional: present when SXSHDL > 3)
+            // Contains TRE data, length = SXSHDL - 3
+            .with_field(
+                FieldDefinition::new("SXSHD", FieldType::Bytes)
+                    .with_size(SizeSpec::Expression(
+                        ExpressionEvaluator::parse("SXSHDL.to_i - 3").unwrap(),
+                    ))
+                    .with_condition(sxshd_condition)
+                    .with_doc("Graphic Extended Subheader Data"),
             )
     }
 
@@ -939,7 +1147,37 @@ impl JBPDatasetReader {
                 )))
             }
             SegmentType::Graphic => {
-                let definition = Arc::new(Self::create_graphic_subheader_definition());
+                // Use the full .ksy-driven definition from registry if available,
+                // falling back to minimal definition for backwards compatibility.
+                // This ensures all graphic subheader fields are exposed through metadata.
+                let definition = self
+                    .registry
+                    .get("nitf_02.10_graphic_subheader")
+                    .unwrap_or_else(|| Arc::new(Self::create_graphic_subheader_definition()));
+                
+                // Use GraphicSubheaderFacade for validation (SY, SFMT, ENCRYP)
+                // and to extract title/description from SNAME/SID fields
+                let facade = GraphicSubheaderFacade::from_bytes(
+                    &subheader_bytes,
+                    &self.registry,
+                    self.format,
+                )?;
+                
+                // Extract title from SNAME field, falling back to generic title
+                let title = facade
+                    .sname()
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| format!("Graphic Segment {}", index));
+                
+                // Extract description from SID field, falling back to generic description
+                let description = facade
+                    .sid()
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| format!("NITF graphic segment at index {}", index));
                 
                 // Extract TREs from graphic subheader
                 let tre_envelopes = self.extract_graphic_tres(&subheader_bytes)?;
@@ -953,8 +1191,8 @@ impl JBPDatasetReader {
                 
                 Ok(Arc::new(JBPGraphicsAssetProvider::new(
                     key,
-                    format!("Graphic Segment {}", index),
-                    format!("NITF graphic segment at index {}", index),
+                    title,
+                    description,
                     vec!["annotation".to_string()],
                     *location,
                     self.data.clone(),
@@ -1407,6 +1645,75 @@ mod tests {
         subheader
     }
 
+    /// Create a minimal valid NITF 2.1 graphic subheader for testing.
+    /// Returns a properly formatted graphic subheader with valid field values.
+    fn create_minimal_graphic_subheader() -> Vec<u8> {
+        let mut subheader = Vec::new();
+
+        // SY (2) - Graphic segment marker
+        subheader.extend_from_slice(b"SY");
+        // SID (10) - Graphic identifier
+        subheader.extend_from_slice(b"TEST      ");
+        // SNAME (20) - Graphic name
+        subheader.extend_from_slice(b"Test Graphic        ");
+        // SSCLAS (1) - Security classification
+        subheader.extend_from_slice(b"U");
+        // SSCLSY (2)
+        subheader.extend_from_slice(b"  ");
+        // SSCODE (11)
+        subheader.extend_from_slice(&[b' '; 11]);
+        // SSCTLH (2)
+        subheader.extend_from_slice(b"  ");
+        // SSREL (20)
+        subheader.extend_from_slice(&[b' '; 20]);
+        // SSDCTP (2)
+        subheader.extend_from_slice(b"  ");
+        // SSDCDT (8)
+        subheader.extend_from_slice(&[b' '; 8]);
+        // SSDCXM (4)
+        subheader.extend_from_slice(&[b' '; 4]);
+        // SSDG (1)
+        subheader.extend_from_slice(b" ");
+        // SSDGDT (8)
+        subheader.extend_from_slice(&[b' '; 8]);
+        // SSCLTX (43)
+        subheader.extend_from_slice(&[b' '; 43]);
+        // SSCATP (1)
+        subheader.extend_from_slice(b" ");
+        // SSCAUT (40)
+        subheader.extend_from_slice(&[b' '; 40]);
+        // SSCRSN (1)
+        subheader.extend_from_slice(b" ");
+        // SSSRDT (8)
+        subheader.extend_from_slice(&[b' '; 8]);
+        // SSCTLN (15)
+        subheader.extend_from_slice(&[b' '; 15]);
+        // ENCRYP (1) - Not encrypted
+        subheader.extend_from_slice(b"0");
+        // SFMT (1) - CGM format
+        subheader.extend_from_slice(b"C");
+        // SSTRUCT (13) - Reserved
+        subheader.extend_from_slice(&[b' '; 13]);
+        // SDLVL (3) - Display level 001
+        subheader.extend_from_slice(b"001");
+        // SALVL (3) - Attachment level 000
+        subheader.extend_from_slice(b"000");
+        // SLOC (10) - Location 0,0
+        subheader.extend_from_slice(b"0000000000");
+        // SBND1 (10) - First bound 0,0
+        subheader.extend_from_slice(b"0000000000");
+        // SCOLOR (1) - Color
+        subheader.extend_from_slice(b"C");
+        // SBND2 (10) - Second bound 100,100
+        subheader.extend_from_slice(b"0010000100");
+        // SRES2 (2) - Reserved
+        subheader.extend_from_slice(b"  ");
+        // SXSHDL (5) - No extended subheader
+        subheader.extend_from_slice(b"00000");
+
+        subheader
+    }
+
     /// Create a minimal valid NITF 2.1 file header for testing.
     pub(super) fn create_minimal_nitf_header(
         numi: usize,
@@ -1420,6 +1727,10 @@ mod tests {
         // Get the image subheader size
         let image_subheader = create_minimal_image_subheader();
         let image_subheader_len = image_subheader.len();
+        
+        // Get the graphic subheader size
+        let graphic_subheader = create_minimal_graphic_subheader();
+        let graphic_subheader_len = graphic_subheader.len();
         let image_data_len = 64 * 64; // 64x64 pixels, 1 band, 8 bits = 4096 bytes
 
         // FHDR (4) + FVER (5) = "NITF02.10"
@@ -1500,11 +1811,12 @@ mod tests {
         // NUMS (3)
         header.extend_from_slice(format!("{:03}", nums).as_bytes());
         // Graphic segment info - all LSSH first, then all LS
+        let graphic_data_len = 500usize;
         for _ in 0..nums {
-            header.extend_from_slice(b"0100"); // LSSH (4)
+            header.extend_from_slice(format!("{:04}", graphic_subheader_len).as_bytes()); // LSSH (4)
         }
         for _ in 0..nums {
-            header.extend_from_slice(b"000500"); // LS (6)
+            header.extend_from_slice(format!("{:06}", graphic_data_len).as_bytes()); // LS (6)
         }
 
         // NUMX (3) - reserved
@@ -1553,7 +1865,7 @@ mod tests {
         // Calculate total file length
         let mut total_len = hl;
         total_len += numi * (image_subheader_len + image_data_len); // Image segments
-        total_len += nums * (100 + 500); // Graphic segments
+        total_len += nums * (graphic_subheader_len + graphic_data_len); // Graphic segments
         total_len += numt * (50 + 200); // Text segments
         total_len += numdes * (100 + 1000); // DES segments
         total_len += numres * (50 + 500); // RES segments
@@ -1568,8 +1880,8 @@ mod tests {
             header.extend_from_slice(&[0u8; 64 * 64]); // Image data (64x64 pixels)
         }
         for _ in 0..nums {
-            header.extend_from_slice(&[b' '; 100]); // Graphic subheader
-            header.extend_from_slice(&[0u8; 500]); // Graphic data
+            header.extend_from_slice(&graphic_subheader); // Graphic subheader
+            header.extend_from_slice(&[0u8; 500]); // Graphic data (CGM placeholder)
         }
         for _ in 0..numt {
             header.extend_from_slice(&[b' '; 50]); // Text subheader

@@ -32,7 +32,7 @@ use crate::jbp::image::is_masked_ic;
 use crate::jbp::metadata::JBPSegmentMetadataProvider;
 use crate::jbp::types::{NitfFormat, SegmentLocation, SegmentType};
 use crate::parser::StructureRegistry;
-use crate::traits::{AssetProvider, ImageAssetProvider, MetadataProvider};
+use crate::traits::{AssetProvider, GraphicsAssetProvider, ImageAssetProvider, MetadataProvider};
 use crate::types::{AssetType, PixelType};
 
 /// Generate an asset key from segment type and index.
@@ -711,6 +711,8 @@ impl AssetProvider for JBPGraphicsAssetProvider {
         self
     }
 }
+
+impl GraphicsAssetProvider for JBPGraphicsAssetProvider {}
 
 /// Asset provider for NITF Data Extension Segments (DES).
 ///
@@ -2370,6 +2372,140 @@ mod property_tests {
                     "nbpp mismatch: expected {}, got {}", expected.nbpp, provider.num_bits_per_pixel());
                 prop_assert_eq!(provider.actual_bits_per_pixel(), expected.abpp,
                     "abpp mismatch: expected {}, got {}", expected.abpp, provider.actual_bits_per_pixel());
+            }
+        }
+    }
+
+    /// Property 7: Bounds Validation Error
+    /// For any graphic segment where the data portion extends beyond file bounds,
+    /// raw_asset() SHALL return a CodecError.
+    /// **Feature: jbp-graphic-segments, Property 7: Bounds Validation Error**
+    /// **Validates: Requirements 5.3**
+    mod prop_7_graphics_bounds_validation {
+        use super::*;
+        use crate::jbp::metadata::JBPSegmentMetadataProvider;
+        use crate::parser::{FieldDefinition, FieldType, SizeSpec, StructureDefinition};
+
+        /// Create a minimal test structure definition for metadata
+        fn create_test_definition() -> Arc<StructureDefinition> {
+            Arc::new(
+                StructureDefinition::new("TestSubheader")
+                    .with_field(
+                        FieldDefinition::new("ID", FieldType::String)
+                            .with_size(SizeSpec::Fixed(10))
+                            .with_doc("Segment identifier"),
+                    )
+                    .with_field(
+                        FieldDefinition::new("TITLE", FieldType::String)
+                            .with_size(SizeSpec::Fixed(20))
+                            .with_doc("Segment title"),
+                    ),
+            )
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(100))]
+
+            /// raw_asset() returns error when data extends beyond file bounds
+            /// **Feature: jbp-graphic-segments, Property 7: Bounds Validation Error**
+            /// **Validates: Requirements 5.3**
+            #[test]
+            fn raw_asset_returns_error_when_beyond_bounds(
+                file_size in 100usize..1000,
+                data_length_excess in 1usize..500,
+            ) {
+                // Create file data smaller than the claimed segment data length
+                let file_data: Arc<[u8]> = Arc::from(vec![0u8; file_size]);
+                
+                // Create metadata with minimal subheader bytes
+                let subheader_bytes: Arc<[u8]> = Arc::from(vec![b' '; 30]);
+                let definition = create_test_definition();
+                let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
+                    definition,
+                    subheader_bytes,
+                ));
+                
+                // Create a location where data_offset + data_length > file_size
+                // This simulates a corrupted or truncated file
+                // Use file_size directly to ensure we always exceed bounds
+                let data_offset = file_size as u64 / 2;
+                let data_length = (file_size as u64 - data_offset) + data_length_excess as u64;
+                
+                let location = SegmentLocation::new(
+                    0,                    // subheader_offset
+                    30,                   // subheader_length
+                    data_offset,          // data_offset
+                    data_length,          // data_length (extends beyond file)
+                );
+                
+                let provider = JBPGraphicsAssetProvider::new(
+                    "graphic_segment_0".to_string(),
+                    "Test Graphic".to_string(),
+                    "Test graphic segment".to_string(),
+                    vec!["annotation".to_string()],
+                    location,
+                    file_data,
+                    metadata,
+                );
+                
+                // raw_asset() should return an error
+                let result = provider.raw_asset();
+                prop_assert!(result.is_err(),
+                    "Expected error when data extends beyond file bounds, got Ok");
+                
+                // Verify the error message mentions bounds
+                let err_msg = result.err().unwrap().to_string();
+                prop_assert!(err_msg.contains("extends beyond file"),
+                    "Error message should mention 'extends beyond file', got: {}", err_msg);
+            }
+
+            /// raw_asset() succeeds when data is within bounds
+            /// **Feature: jbp-graphic-segments, Property 7: Bounds Validation Error**
+            /// **Validates: Requirements 5.1**
+            #[test]
+            fn raw_asset_succeeds_when_within_bounds(
+                data_size in 1usize..500,
+                padding in 0usize..100,
+            ) {
+                // Create file data with enough space for the segment data
+                let total_size = 30 + data_size + padding; // subheader + data + padding
+                let file_data: Arc<[u8]> = Arc::from(vec![0u8; total_size]);
+                
+                // Create metadata with minimal subheader bytes
+                let subheader_bytes: Arc<[u8]> = Arc::from(vec![b' '; 30]);
+                let definition = create_test_definition();
+                let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
+                    definition,
+                    subheader_bytes,
+                ));
+                
+                // Create a location where data is within bounds
+                let location = SegmentLocation::new(
+                    0,                    // subheader_offset
+                    30,                   // subheader_length
+                    30,                   // data_offset (after subheader)
+                    data_size as u64,     // data_length (within bounds)
+                );
+                
+                let provider = JBPGraphicsAssetProvider::new(
+                    "graphic_segment_0".to_string(),
+                    "Test Graphic".to_string(),
+                    "Test graphic segment".to_string(),
+                    vec!["annotation".to_string()],
+                    location,
+                    file_data,
+                    metadata,
+                );
+                
+                // raw_asset() should succeed
+                let result = provider.raw_asset();
+                prop_assert!(result.is_ok(),
+                    "Expected Ok when data is within bounds, got Err: {:?}", result.err());
+                
+                // Verify the returned data has the correct length
+                let data = result.unwrap();
+                prop_assert_eq!(data.len(), data_size,
+                    "Expected data length {}, got {}", data_size, data.len());
             }
         }
     }
