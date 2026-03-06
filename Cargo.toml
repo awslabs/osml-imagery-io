@@ -1,11 +1,11 @@
 [package]
-name = "aws-osml-io"
+name = "osml-imagery-io"
 version = "0.1.0"
 edition = "2021"
 description = "Geospatial image format codecs (NITF, GeoTIFF) for the OversightML ecosystem"
 license = "Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/aws-solutions-library-samples/osml-io"
+repository = "https://github.com/awslabs/osml-imagery-io"
 keywords = ["geospatial", "nitf", "geotiff", "imagery", "remote-sensing"]
 categories = ["multimedia::images", "science::geo"]
 

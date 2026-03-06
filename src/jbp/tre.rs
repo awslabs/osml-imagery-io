@@ -9,7 +9,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use aws_osml_io::jbp::TreEnvelope;
+//! use osml_imagery_io::jbp::TreEnvelope;
 //!
 //! // Parse a single TRE envelope
 //! let (envelope, consumed) = TreEnvelope::parse(data)?;
@@ -208,7 +208,7 @@ impl TreEnvelope {
 /// # Example
 ///
 /// ```ignore
-/// use aws_osml_io::jbp::{TreEnvelope, write_tre_envelopes};
+/// use osml_imagery_io::jbp::{TreEnvelope, write_tre_envelopes};
 ///
 /// let envelopes = vec![
 ///     TreEnvelope::new("GEOLOB", vec![1, 2, 3]).unwrap(),
@@ -290,7 +290,7 @@ impl TreFieldGroup {
 /// # Example
 ///
 /// ```ignore
-/// use aws_osml_io::jbp::tre::parse_tre_fields_from_metadata;
+/// use osml_imagery_io::jbp::tre::parse_tre_fields_from_metadata;
 /// use std::collections::HashMap;
 /// use serde_json::json;
 ///
@@ -357,7 +357,7 @@ pub fn parse_tre_fields_from_metadata(
 /// # Example
 ///
 /// ```ignore
-/// use aws_osml_io::jbp::tre::extract_tre_fields_from_provider;
+/// use osml_imagery_io::jbp::tre::extract_tre_fields_from_provider;
 ///
 /// let groups = extract_tre_fields_from_provider(&metadata_provider);
 /// for (cetag, group) in groups {

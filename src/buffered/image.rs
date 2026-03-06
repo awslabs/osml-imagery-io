@@ -141,8 +141,8 @@ impl MetadataProvider for EmptyMetadataProvider {
 /// # Example
 ///
 /// ```ignore
-/// use aws_osml_io::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
-/// use aws_osml_io::types::PixelType;
+/// use osml_imagery_io::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
+/// use osml_imagery_io::types::PixelType;
 ///
 /// let config = MemoryImageConfig::new(512, 512)
 ///     .with_bands(3)
@@ -216,8 +216,8 @@ impl BufferedImageAssetProvider {
     /// # Example
     ///
     /// ```ignore
-    /// use aws_osml_io::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
-    /// use aws_osml_io::BufferedMetadataProvider;
+    /// use osml_imagery_io::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
+    /// use osml_imagery_io::BufferedMetadataProvider;
     ///
     /// let metadata = BufferedMetadataProvider::new();
     /// metadata.set("imode", "P");

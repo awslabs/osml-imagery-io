@@ -37,8 +37,8 @@ use super::types::{PixelJustification, PixelValueType};
 ///
 /// # Examples
 /// ```ignore
-/// use aws_osml_io::jbp::image::pixel::bytes_per_pixel;
-/// use aws_osml_io::jbp::image::types::PixelValueType;
+/// use osml_imagery_io::jbp::image::pixel::bytes_per_pixel;
+/// use osml_imagery_io::jbp::image::types::PixelValueType;
 ///
 /// assert_eq!(bytes_per_pixel(PixelValueType::UnsignedInt, 8), 1);
 /// assert_eq!(bytes_per_pixel(PixelValueType::UnsignedInt, 16), 2);

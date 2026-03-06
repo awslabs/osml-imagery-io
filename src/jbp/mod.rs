@@ -14,7 +14,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use aws_osml_io::jbp::{JBPDatasetReader, NitfFormat};
+//! use osml_imagery_io::jbp::{JBPDatasetReader, NitfFormat};
 //!
 //! let reader = JBPDatasetReader::open("image.ntf")?;
 //! let keys = reader.get_asset_keys(None, None);

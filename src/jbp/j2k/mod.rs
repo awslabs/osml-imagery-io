@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use aws_osml_io::jbp::j2k::{OpenJpegCodec, J2KCodec, J2KDecodeParams};
+//! use osml_imagery_io::jbp::j2k::{OpenJpegCodec, J2KCodec, J2KDecodeParams};
 //!
 //! let codec = OpenJpegCodec::new();
 //! let params = J2KDecodeParams::default();

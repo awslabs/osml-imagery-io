@@ -8,8 +8,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use aws_osml_io::jbp::tre_fields;
-//! use aws_osml_io::parser::StructureRegistry;
+//! use osml_imagery_io::jbp::tre_fields;
+//! use osml_imagery_io::parser::StructureRegistry;
 //!
 //! let registry = StructureRegistry::new();
 //! let cedata = &[/* TRE CEDATA bytes */];

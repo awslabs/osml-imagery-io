@@ -1,4 +1,4 @@
-//! Error types for the aws-osml-io crate.
+//! Error types for the osml-imagery-io crate.
 
 use pyo3::exceptions::{PyIOError, PyIndexError, PyKeyError, PyValueError};
 use pyo3::prelude::*;

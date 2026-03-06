@@ -1,10 +1,10 @@
-# AWS OSML IO
+# OSML Imagery IO
 
 Geospatial image format codecs for the OversightML ecosystem.
 
 ## Overview
 
-AWS OSML IO provides high-performance Rust implementations of image format decoders and encoders for geospatial imagery formats. It is designed to be compatible with the [osml-imagery-toolkit](https://github.com/aws-solutions-library-samples/osml-imagery-toolkit) library.
+OSML Imagery IO provides high-performance Rust implementations of image format decoders and encoders for geospatial imagery formats. It is designed to be compatible with the [osml-imagery-toolkit](https://github.com/aws-solutions-library-samples/osml-imagery-toolkit) library.
 
 ### Supported Formats
 
@@ -14,7 +14,7 @@ AWS OSML IO provides high-performance Rust implementations of image format decod
 ## Installation
 
 ```bash
-pip install aws-osml-io
+pip install osml-imagery-io
 ```
 
 ## Usage

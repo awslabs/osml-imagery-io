@@ -47,7 +47,7 @@ pub use validation::{ImageValidationCode, ImageValidationResult, ImageValidator,
 ///
 /// # Examples
 /// ```ignore
-/// use aws_osml_io::jbp::image::is_masked_ic;
+/// use osml_imagery_io::jbp::image::is_masked_ic;
 ///
 /// assert!(is_masked_ic("NM"));  // Uncompressed with mask
 /// assert!(is_masked_ic("M8"));  // JPEG 2000 with mask
@@ -74,7 +74,7 @@ pub fn is_masked_ic(ic: &str) -> bool {
 ///
 /// # Examples
 /// ```ignore
-/// use aws_osml_io::jbp::image::unmask_ic;
+/// use osml_imagery_io::jbp::image::unmask_ic;
 ///
 /// assert_eq!(unmask_ic("NM"), "NC");  // Uncompressed
 /// assert_eq!(unmask_ic("M8"), "C8");  // JPEG 2000
@@ -113,7 +113,7 @@ pub fn unmask_ic(ic: &str) -> &str {
 ///
 /// # Examples
 /// ```ignore
-/// use aws_osml_io::jbp::image::mask_ic;
+/// use osml_imagery_io::jbp::image::mask_ic;
 ///
 /// assert_eq!(mask_ic("NC"), "NM");  // Uncompressed
 /// assert_eq!(mask_ic("C8"), "M8");  // JPEG 2000

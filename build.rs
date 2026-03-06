@@ -1,4 +1,4 @@
-//! Build script for aws-osml-io.
+//! Build script for osml-imagery-io.
 //!
 //! This script handles finding and linking to native libraries like OpenJPEG.
 

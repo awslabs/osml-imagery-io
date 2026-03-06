@@ -8,8 +8,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use aws_osml_io::jbp::overflow;
-//! use aws_osml_io::parser::StructureAccessor;
+//! use osml_imagery_io::jbp::overflow;
+//! use osml_imagery_io::parser::StructureAccessor;
 //!
 //! // Get overflow indices from an image subheader
 //! let (udofl, ixsofl) = overflow::get_image_overflow_indices(&accessor)?;
@@ -70,7 +70,7 @@ impl OverflowSource {
     /// # Example
     ///
     /// ```ignore
-    /// use aws_osml_io::jbp::overflow::OverflowSource;
+    /// use osml_imagery_io::jbp::overflow::OverflowSource;
     ///
     /// assert_eq!(OverflowSource::FileHeaderUdhd.to_desoflw(), "UDHD  ");
     /// assert_eq!(OverflowSource::ImageIxshd.to_desoflw(), "IXSHD ");
@@ -158,8 +158,8 @@ impl DefaultSecurityFields {
 /// # Example
 ///
 /// ```ignore
-/// use aws_osml_io::jbp::overflow::{create_overflow_des, OverflowSource};
-/// use aws_osml_io::jbp::TreEnvelope;
+/// use osml_imagery_io::jbp::overflow::{create_overflow_des, OverflowSource};
+/// use osml_imagery_io::jbp::TreEnvelope;
 ///
 /// let tres = vec![TreEnvelope::new("GEOLOB", vec![1, 2, 3]).unwrap()];
 /// let (subheader, data) = create_overflow_des(

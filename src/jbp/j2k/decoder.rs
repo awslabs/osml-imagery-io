@@ -13,8 +13,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use aws_osml_io::jbp::j2k::{Jpeg2000BlockDecoder, OpenJpegCodec};
-//! use aws_osml_io::jbp::image::BlockDecoder;
+//! use osml_imagery_io::jbp::j2k::{Jpeg2000BlockDecoder, OpenJpegCodec};
+//! use osml_imagery_io::jbp::image::BlockDecoder;
 //!
 //! let codec = Arc::new(OpenJpegCodec::new());
 //! let decoder = Jpeg2000BlockDecoder::new(&subheader, codestream, codec)?;

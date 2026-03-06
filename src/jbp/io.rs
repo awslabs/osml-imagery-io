@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use aws_osml_io::jbp::IO;
+//! use osml_imagery_io::jbp::IO;
 //!
 //! // Open a NITF file for reading (format auto-detected from extension)
 //! let reader = IO::open("image.ntf")?;
@@ -76,7 +76,7 @@ impl IO {
     /// # Example
     ///
     /// ```ignore
-    /// use aws_osml_io::jbp::IO;
+    /// use osml_imagery_io::jbp::IO;
     ///
     /// let reader = IO::open("image.ntf")?;
     /// let keys = reader.get_asset_keys(None, None);
@@ -125,7 +125,7 @@ impl IO {
     /// # Example
     ///
     /// ```ignore
-    /// use aws_osml_io::jbp::IO;
+    /// use osml_imagery_io::jbp::IO;
     ///
     /// // Open a file with non-standard extension
     /// let reader = IO::open_as("image.dat", "nitf")?;
@@ -167,7 +167,7 @@ impl IO {
     /// # Example
     ///
     /// ```ignore
-    /// use aws_osml_io::jbp::IO;
+    /// use osml_imagery_io::jbp::IO;
     ///
     /// let mut writer = IO::create("output.ntf", "nitf")?;
     /// // Add assets...

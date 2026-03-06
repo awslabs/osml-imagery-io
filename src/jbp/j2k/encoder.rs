@@ -6,9 +6,9 @@
 //! # Example
 //!
 //! ```ignore
-//! use aws_osml_io::jbp::j2k::encoder::Jpeg2000BlockEncoder;
-//! use aws_osml_io::jbp::j2k::comrat::J2KEncodingHints;
-//! use aws_osml_io::jbp::image::encoder::BlockEncoder;
+//! use osml_imagery_io::jbp::j2k::encoder::Jpeg2000BlockEncoder;
+//! use osml_imagery_io::jbp::j2k::comrat::J2KEncodingHints;
+//! use osml_imagery_io::jbp::image::encoder::BlockEncoder;
 //!
 //! let hints = J2KEncodingHints::lossless();
 //! let mut encoder = Jpeg2000BlockEncoder::new(

@@ -1,4 +1,4 @@
-//! AWS OSML IO - Geospatial image format codecs
+//! OSML Imagery IO - Geospatial image format codecs
 //!
 //! This crate provides Rust implementations of image format decoders and encoders
 //! for geospatial imagery formats including NITF and GeoTIFF.

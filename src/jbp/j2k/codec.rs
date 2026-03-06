@@ -157,7 +157,7 @@ pub trait J2KEncodeState: Send {
 /// # Example
 ///
 /// ```ignore
-/// use aws_osml_io::jbp::j2k::{J2KCodec, J2KDecodeParams, OpenJpegCodec};
+/// use osml_imagery_io::jbp::j2k::{J2KCodec, J2KDecodeParams, OpenJpegCodec};
 ///
 /// let codec = OpenJpegCodec::new();
 /// let params = J2KDecodeParams::default();

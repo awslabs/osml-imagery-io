@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use aws_osml_io::jbp::{JBPDatasetWriter, NitfFormat};
+//! use osml_imagery_io::jbp::{JBPDatasetWriter, NitfFormat};
 //!
 //! let mut writer = JBPDatasetWriter::new("output.ntf", NitfFormat::Nitf21)?;
 //! writer.add_asset("image_segment_0", image_provider, "Main Image", "", &[])?;

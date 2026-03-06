@@ -3,7 +3,7 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "aws-osml-io"
+name = "osml-imagery-io"
 version = "0.1.0"
 description = "Geospatial image format codecs (NITF, GeoTIFF) for the OversightML ecosystem"
 readme = "README.md"

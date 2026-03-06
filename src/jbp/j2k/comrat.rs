@@ -19,7 +19,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use aws_osml_io::jbp::j2k::comrat::{J2KComrat, J2KEncodingHints, generate_comrat};
+//! use osml_imagery_io::jbp::j2k::comrat::{J2KComrat, J2KEncodingHints, generate_comrat};
 //!
 //! // Parse a COMRAT value
 //! let comrat = J2KComrat::parse("N1.0").unwrap();
@@ -81,7 +81,7 @@ impl J2KComrat {
     /// # Examples
     ///
     /// ```ignore
-    /// use aws_osml_io::jbp::j2k::comrat::J2KComrat;
+    /// use osml_imagery_io::jbp::j2k::comrat::J2KComrat;
     ///
     /// // Numerically lossless
     /// let comrat = J2KComrat::parse("N1.0").unwrap();
@@ -149,7 +149,7 @@ impl J2KComrat {
     /// # Examples
     ///
     /// ```ignore
-    /// use aws_osml_io::jbp::j2k::comrat::J2KComrat;
+    /// use osml_imagery_io::jbp::j2k::comrat::J2KComrat;
     ///
     /// assert_eq!(J2KComrat::NumericallyLossless.to_comrat_string(), "N1.0");
     /// assert_eq!(J2KComrat::VisuallyLossless(1.5).to_comrat_string(), "V1.5");
@@ -323,7 +323,7 @@ impl J2KEncodingHints {
 /// # Examples
 ///
 /// ```ignore
-/// use aws_osml_io::jbp::j2k::comrat::{J2KEncodingHints, generate_comrat};
+/// use osml_imagery_io::jbp::j2k::comrat::{J2KEncodingHints, generate_comrat};
 ///
 /// // Lossless encoding
 /// let hints = J2KEncodingHints::lossless();
