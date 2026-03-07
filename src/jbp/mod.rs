@@ -37,6 +37,7 @@ pub mod overflow;
 mod reader;
 #[cfg(test)]
 pub mod test_data_generator;
+pub mod text;
 pub mod tre;
 pub mod tre_fields;
 mod types;
@@ -53,6 +54,7 @@ pub use graphics::GraphicSubheaderFacade;
 pub use io::IO;
 pub use metadata::{JBPFileMetadataProvider, JBPSegmentMetadataProvider};
 pub use overflow::{create_overflow_des, OverflowSource};
+pub use text::{create_text_subheader_definition, TextSubheaderFacade};
 pub use tre::{
     extract_tre_fields_from_provider, parse_tre_fields_from_metadata, write_tre_envelopes,
     TreEnvelope, TreFieldGroup,

@@ -371,7 +371,7 @@ pub fn get_graphic_overflow_index(accessor: &StructureAccessor) -> Result<u16, J
 ///
 /// _Requirements: 6.6_
 pub fn get_text_overflow_index(accessor: &StructureAccessor) -> Result<u16, JBPError> {
-    get_overflow_field(accessor, "txsofl")
+    get_overflow_field(accessor, "TXSOFL")
 }
 
 /// Get overflow DES indices from a file header.

@@ -5,6 +5,7 @@
 pub mod asset;
 pub mod buffered_image;
 pub mod buffered_metadata;
+pub mod buffered_text;
 pub mod data;
 pub mod graphics;
 pub mod image;
@@ -18,6 +19,7 @@ pub mod writer;
 pub use asset::PyAssetProvider;
 pub use buffered_image::PyBufferedImageAssetProvider;
 pub use buffered_metadata::PyBufferedMetadataProvider;
+pub use buffered_text::PyBufferedTextAssetProvider;
 pub use data::PyDataAssetProvider;
 pub use graphics::PyGraphicsAssetProvider;
 pub use image::PyImageAssetProvider;

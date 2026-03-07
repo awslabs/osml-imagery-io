@@ -16,11 +16,11 @@ mod types;
 pub use bindings::{
     PyAssetProvider, PyDataAssetProvider, PyDatasetReader, PyDatasetWriter,
     PyGraphicsAssetProvider, PyImageAssetProvider, PyBufferedImageAssetProvider,
-    PyMetadataProvider, PyBufferedMetadataProvider, PyTextAssetProvider,
-    PyStructureAccessor, PyStructureDefinition, PyStructureRegistry, PyStructureWriter, PyValue,
-    IO,
+    PyBufferedTextAssetProvider, PyMetadataProvider, PyBufferedMetadataProvider,
+    PyTextAssetProvider, PyStructureAccessor, PyStructureDefinition, PyStructureRegistry,
+    PyStructureWriter, PyValue, IO,
 };
-pub use buffered::{BufferedImageAssetProvider, BufferedMetadataProvider, MemoryImageConfig};
+pub use buffered::{BufferedImageAssetProvider, BufferedMetadataProvider, BufferedTextAssetProvider, MemoryImageConfig};
 pub use traits::{
     AssetProvider, DataAssetProvider, DatasetReader, DatasetWriter, GraphicsAssetProvider,
     ImageAssetProvider, MetadataProvider, TextAssetProvider,
@@ -39,6 +39,7 @@ fn _io(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyImageAssetProvider>()?;
     m.add_class::<PyBufferedImageAssetProvider>()?;
     m.add_class::<PyTextAssetProvider>()?;
+    m.add_class::<PyBufferedTextAssetProvider>()?;
     m.add_class::<PyDataAssetProvider>()?;
     m.add_class::<PyGraphicsAssetProvider>()?;
     m.add_class::<PyDatasetReader>()?;

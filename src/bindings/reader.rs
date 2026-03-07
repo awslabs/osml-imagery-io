@@ -19,7 +19,7 @@ use crate::traits::{
 use crate::types::AssetType;
 
 // Import JBP asset providers for downcasting
-use crate::jbp::{JBPGraphicsAssetProvider, JBPImageAssetProvider};
+use crate::jbp::{JBPGraphicsAssetProvider, JBPImageAssetProvider, JBPTextAssetProvider};
 
 /// Python wrapper for DatasetReader trait objects.
 ///
@@ -205,14 +205,33 @@ fn try_as_image_provider(
 }
 
 /// Attempts to convert an AssetProvider to a TextAssetProvider.
-/// 
-/// Note: JBPTextAssetProvider does not implement TextAssetProvider trait yet,
-/// so this always returns None. Text assets are returned as generic AssetProvider.
+///
+/// This function checks if the underlying implementation supports the
+/// TextAssetProvider trait by attempting to downcast to known concrete types.
 fn try_as_text_provider(
-    _asset: &Arc<dyn AssetProvider>,
+    asset: &Arc<dyn AssetProvider>,
 ) -> Option<Arc<dyn TextAssetProvider>> {
-    // JBPTextAssetProvider doesn't implement TextAssetProvider yet
-    None
+    // Try to downcast to JBPTextAssetProvider using as_any
+    if asset.asset_type() == AssetType::Text {
+        if asset.as_any().downcast_ref::<JBPTextAssetProvider>().is_some() {
+            // We need to clone the Arc and return it as TextAssetProvider
+            // Since we can't directly convert Arc<dyn AssetProvider> to Arc<dyn TextAssetProvider>,
+            // we need to create a new Arc from the concrete type
+            // This is safe because we've verified the concrete type
+            let ptr = Arc::as_ptr(asset);
+            // SAFETY: We've verified the concrete type is JBPTextAssetProvider
+            // which implements TextAssetProvider. We increment the ref count.
+            unsafe {
+                Arc::increment_strong_count(ptr);
+                let concrete_ptr = ptr as *const JBPTextAssetProvider;
+                Some(Arc::from_raw(concrete_ptr as *const dyn TextAssetProvider))
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    }
 }
 
 /// Attempts to convert an AssetProvider to a DataAssetProvider.

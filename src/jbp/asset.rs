@@ -30,9 +30,10 @@ use crate::jbp::image::facade::ImageSubheaderFacade;
 use crate::jbp::image::mask::ImageDataMask;
 use crate::jbp::image::is_masked_ic;
 use crate::jbp::metadata::JBPSegmentMetadataProvider;
+use crate::jbp::text::decode_and_normalize;
 use crate::jbp::types::{NitfFormat, SegmentLocation, SegmentType};
 use crate::parser::StructureRegistry;
-use crate::traits::{AssetProvider, GraphicsAssetProvider, ImageAssetProvider, MetadataProvider};
+use crate::traits::{AssetProvider, GraphicsAssetProvider, ImageAssetProvider, MetadataProvider, TextAssetProvider};
 use crate::types::{AssetType, PixelType};
 
 /// Generate an asset key from segment type and index.
@@ -513,6 +514,8 @@ pub struct JBPTextAssetProvider {
     data: Arc<[u8]>,
     /// Segment metadata provider
     metadata: Arc<JBPSegmentMetadataProvider>,
+    /// Text format code (STA, MTF, UT1, U8S)
+    txtfmt: String,
 }
 
 impl JBPTextAssetProvider {
@@ -526,6 +529,7 @@ impl JBPTextAssetProvider {
     /// * `location` - Segment location in the file
     /// * `data` - Reference to the file data
     /// * `metadata` - Segment metadata provider
+    /// * `txtfmt` - Text format code (STA, MTF, UT1, U8S)
     pub fn new(
         key: String,
         title: String,
@@ -534,6 +538,7 @@ impl JBPTextAssetProvider {
         location: SegmentLocation,
         data: Arc<[u8]>,
         metadata: Arc<JBPSegmentMetadataProvider>,
+        txtfmt: String,
     ) -> Self {
         Self {
             key,
@@ -543,6 +548,7 @@ impl JBPTextAssetProvider {
             location,
             data,
             metadata,
+            txtfmt,
         }
     }
 }
@@ -561,7 +567,13 @@ impl AssetProvider for JBPTextAssetProvider {
     }
 
     fn media_type(&self) -> &str {
-        "text/plain"
+        match self.txtfmt.as_str() {
+            "STA" => "text/plain; charset=us-ascii",
+            "U8S" => "text/plain; charset=utf-8",
+            "UT1" => "text/plain; charset=iso-8859-1",
+            "MTF" => "text/plain",
+            _ => "text/plain",
+        }
     }
 
     fn roles(&self) -> &[String] {
@@ -594,6 +606,27 @@ impl AssetProvider for JBPTextAssetProvider {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+impl TextAssetProvider for JBPTextAssetProvider {
+    fn text(&self) -> Result<String, CodecError> {
+        let raw_bytes = self.raw_asset()?;
+        decode_and_normalize(&raw_bytes, &self.txtfmt)
+    }
+
+    fn encoding(&self) -> &str {
+        match self.txtfmt.as_str() {
+            "STA" => "ASCII",
+            "U8S" => "UTF-8",
+            "UT1" => "ECS",
+            "MTF" => "MTF",
+            _ => "UNKNOWN",
+        }
+    }
+
+    fn format(&self) -> &str {
+        &self.txtfmt
     }
 }
 
@@ -1378,9 +1411,10 @@ mod tests {
             location,
             file_data,
             metadata,
+            "STA".to_string(),
         );
 
-        assert_eq!(provider.media_type(), "text/plain");
+        assert_eq!(provider.media_type(), "text/plain; charset=us-ascii");
     }
 
     #[test]
@@ -1399,6 +1433,7 @@ mod tests {
             location,
             file_data,
             metadata,
+            "STA".to_string(),
         );
 
         assert_eq!(provider.asset_type(), AssetType::Text);
@@ -1420,10 +1455,305 @@ mod tests {
             location,
             file_data,
             metadata,
+            "STA".to_string(),
         );
 
         let raw = provider.raw_asset().unwrap();
         assert_eq!(raw, segment_data);
+    }
+
+    #[test]
+    fn text_provider_media_type_u8s() {
+        let definition = create_test_definition();
+        let segment_data = "Hello UTF-8 world! 你好".as_bytes();
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "U8S".to_string(),
+        );
+
+        assert_eq!(provider.media_type(), "text/plain; charset=utf-8");
+    }
+
+    #[test]
+    fn text_provider_media_type_ut1() {
+        let definition = create_test_definition();
+        let segment_data = b"Hello ECS world";
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "UT1".to_string(),
+        );
+
+        assert_eq!(provider.media_type(), "text/plain; charset=iso-8859-1");
+    }
+
+    #[test]
+    fn text_provider_media_type_mtf() {
+        let definition = create_test_definition();
+        let segment_data = b"MTF message text";
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "MTF".to_string(),
+        );
+
+        assert_eq!(provider.media_type(), "text/plain");
+    }
+
+    #[test]
+    fn text_provider_media_type_unknown() {
+        let definition = create_test_definition();
+        let segment_data = b"Unknown format text";
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "XYZ".to_string(),
+        );
+
+        assert_eq!(provider.media_type(), "text/plain");
+    }
+
+    #[test]
+    fn text_provider_encoding_sta() {
+        let definition = create_test_definition();
+        let segment_data = b"ASCII text";
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "STA".to_string(),
+        );
+
+        assert_eq!(provider.encoding(), "ASCII");
+    }
+
+    #[test]
+    fn text_provider_encoding_u8s() {
+        let definition = create_test_definition();
+        let segment_data = b"UTF-8 text";
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "U8S".to_string(),
+        );
+
+        assert_eq!(provider.encoding(), "UTF-8");
+    }
+
+    #[test]
+    fn text_provider_encoding_ut1() {
+        let definition = create_test_definition();
+        let segment_data = b"ECS text";
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "UT1".to_string(),
+        );
+
+        assert_eq!(provider.encoding(), "ECS");
+    }
+
+    #[test]
+    fn text_provider_encoding_mtf() {
+        let definition = create_test_definition();
+        let segment_data = b"MTF text";
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "MTF".to_string(),
+        );
+
+        assert_eq!(provider.encoding(), "MTF");
+    }
+
+    #[test]
+    fn text_provider_encoding_unknown() {
+        let definition = create_test_definition();
+        let segment_data = b"Unknown text";
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "XYZ".to_string(),
+        );
+
+        assert_eq!(provider.encoding(), "UNKNOWN");
+    }
+
+    #[test]
+    fn text_provider_format() {
+        let definition = create_test_definition();
+        let segment_data = b"Some text";
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "U8S".to_string(),
+        );
+
+        assert_eq!(provider.format(), "U8S");
+    }
+
+    #[test]
+    fn text_provider_text_decodes_ascii() {
+        let definition = create_test_definition();
+        let segment_data = b"Hello World";
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "STA".to_string(),
+        );
+
+        let text = provider.text().unwrap();
+        assert_eq!(text, "Hello World");
+    }
+
+    #[test]
+    fn text_provider_text_decodes_utf8() {
+        let definition = create_test_definition();
+        let segment_data = "Hello 世界".as_bytes();
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "U8S".to_string(),
+        );
+
+        let text = provider.text().unwrap();
+        assert_eq!(text, "Hello 世界");
+    }
+
+    #[test]
+    fn text_provider_text_normalizes_crlf() {
+        let definition = create_test_definition();
+        let segment_data = b"Line1\r\nLine2\r\nLine3";
+        let file_data = create_test_file_data(segment_data);
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text_segment_0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            file_data,
+            metadata,
+            "STA".to_string(),
+        );
+
+        let text = provider.text().unwrap();
+        // On Unix, CR/LF should be normalized to LF
+        #[cfg(not(windows))]
+        assert_eq!(text, "Line1\nLine2\nLine3");
+        // On Windows, CR/LF should be preserved
+        #[cfg(windows)]
+        assert_eq!(text, "Line1\r\nLine2\r\nLine3");
     }
 
     // JBPGraphicsAssetProvider tests

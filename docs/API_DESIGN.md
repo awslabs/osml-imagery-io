@@ -497,6 +497,231 @@ with IO.open(["multi_graphic.ntf"], "r") as reader:
 | SID | Graphic identifier | 10-character string |
 | SNAME | Graphic name | 20-character string |
 
+## TextAssetProvider
+
+The `TextAssetProvider` interface provides access to text content within geospatial datasets. In NITF files, text segments contain textual data with associated metadata for character encoding and display properties. The interface handles encoding-aware text retrieval and line delimiter normalization.
+
+### Interface Design
+
+The `TextAssetProvider` trait extends `AssetProvider` with text-specific methods for accessing decoded content and encoding information:
+
+```mermaid
+classDiagram
+direction TB
+    class AssetProvider {
+        <<abstract>>
+        +key str
+        +title str
+        +description str
+        +media_type str
+        +roles List[str]
+        +asset_type AssetType
+        +raw_asset BytesIO
+        +metadata MetadataProvider
+    }
+
+    class TextAssetProvider {
+        <<abstract>>
+        +text str
+        +encoding str
+        +format str
+    }
+
+    class JBPTextAssetProvider {
+        -key: String
+        -title: String
+        -description: String
+        -roles: Vec~String~
+        -location: SegmentLocation
+        -data: Arc~[u8]~
+        -metadata: Arc~MetadataProvider~
+        -txtfmt: String
+    }
+
+    class BufferedTextAssetProvider {
+        -key: String
+        -title: String
+        -description: String
+        -roles: Vec~String~
+        -text_content: String
+        -encoding: String
+        -metadata: Arc~MetadataProvider~
+    }
+
+    AssetProvider <|-- TextAssetProvider
+    TextAssetProvider <|.. JBPTextAssetProvider
+    TextAssetProvider <|.. BufferedTextAssetProvider
+```
+
+### TextAssetProvider Methods
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `text` | str | Decoded text content with normalized line endings |
+| `encoding` | str | Character encoding name (ASCII, UTF-8, ECS, MTF) |
+| `format` | str | Raw format code from file (STA, U8S, UT1, MTF) |
+
+### Accessing Text Segments
+
+```python
+from aws.osml.io import IO
+
+with IO.open(["file_with_text.ntf"], "r") as reader:
+    # Discover text assets
+    text_keys = reader.get_asset_keys(asset_type="text")
+    print(f"Found {len(text_keys)} text segments")
+    
+    for key in text_keys:
+        text_asset = reader.get_asset(key)
+        
+        # Basic asset properties
+        print(f"Key: {text_asset.key}")
+        print(f"Title: {text_asset.title}")
+        print(f"Media Type: {text_asset.media_type}")  # e.g., "text/plain; charset=utf-8"
+        print(f"Asset Type: {text_asset.asset_type}")  # AssetType.Text
+        
+        # Text-specific properties
+        content = text_asset.text           # Decoded text with normalized line endings
+        encoding = text_asset.encoding      # e.g., "UTF-8"
+        format_code = text_asset.format     # e.g., "U8S"
+        
+        print(f"Encoding: {encoding}")
+        print(f"Content: {content[:100]}...")  # First 100 chars
+```
+
+### Text Format Codes and Encodings
+
+NITF text segments use format codes (TXTFMT) to indicate character encoding:
+
+| Format Code | Encoding Name | Description | Media Type |
+|-------------|---------------|-------------|------------|
+| STA | ASCII | Standard 7-bit ASCII | `text/plain; charset=us-ascii` |
+| U8S | UTF-8 | Unicode UTF-8 encoding | `text/plain; charset=utf-8` |
+| UT1 | ECS | Extended Character Set (ISO-8859-1) | `text/plain; charset=iso-8859-1` |
+| MTF | MTF | Message Text Format (STANAG 5500) | `text/plain` |
+
+### Line Ending Normalization
+
+Text segments in NITF files use CR/LF (carriage return + line feed) as line delimiters per the JBP specification. The `text` property automatically normalizes these to platform-native line endings:
+
+- On Unix/macOS: CR/LF → LF
+- On Windows: CR/LF preserved
+
+```python
+from aws.osml.io import IO
+
+with IO.open(["text_file.ntf"], "r") as reader:
+    text_asset = reader.get_asset("text_segment_0")
+    
+    # text property returns normalized line endings
+    normalized_text = text_asset.text
+    
+    # raw_asset returns original bytes with CR/LF preserved
+    raw_bytes = text_asset.raw_asset.read()
+```
+
+### Accessing Text Metadata
+
+Text segments contain metadata for attachment and display properties:
+
+```python
+from aws.osml.io import IO
+
+with IO.open(["file_with_text.ntf"], "r") as reader:
+    text_asset = reader.get_asset("text_segment_0")
+    metadata = text_asset.metadata.as_dict()
+    
+    # Text identification
+    textid = metadata.get("TEXTID")   # 7-character identifier
+    txtitl = metadata.get("TXTITL")   # 80-character title
+    txtdt = metadata.get("TXTDT")     # Date/time (CCYYMMDDhhmmss)
+    
+    # Attachment level
+    txtalvl = metadata.get("TXTALVL")  # "000" = unattached, "001"-"998" = attached
+    
+    # Format information
+    txtfmt = metadata.get("TXTFMT")    # Raw format code: STA, U8S, UT1, MTF
+    
+    print(f"Text ID: {textid}")
+    print(f"Title: {txtitl}")
+    print(f"Attachment Level: {txtalvl}")
+    print(f"Format: {txtfmt}")
+```
+
+### Key Metadata Fields
+
+| Field | Description | Format |
+|-------|-------------|--------|
+| TEXTID | Text Identifier | 7-character string |
+| TXTALVL | Attachment Level | 3-digit integer (000 = unattached) |
+| TXTDT | Date and Time | CCYYMMDDhhmmss |
+| TXTITL | Text Title | 80-character string |
+| TXTFMT | Text Format Code | STA, U8S, UT1, or MTF |
+| ENCRYP | Encryption Flag | "0" (not encrypted) |
+
+### BufferedTextAssetProvider
+
+For creating text segments programmatically, use `BufferedTextAssetProvider`:
+
+```python
+from aws.osml.io import BufferedTextAssetProvider
+
+# Create a text asset with UTF-8 encoding
+text_asset = BufferedTextAssetProvider(
+    key="annotation_001",
+    text_content="This is sample text content.\nWith multiple lines.",
+    encoding="UTF-8"
+)
+
+# Optional: customize title and description
+text_asset = BufferedTextAssetProvider(
+    key="annotation_001",
+    text_content="Sample annotation text",
+    encoding="ASCII"
+).with_title("Image Annotation").with_description("Annotation for image segment 0")
+
+# Access properties
+print(text_asset.text)       # "Sample annotation text"
+print(text_asset.encoding)   # "ASCII"
+print(text_asset.format)     # "STA"
+print(text_asset.media_type) # "text/plain; charset=us-ascii"
+
+# raw_asset converts line endings to CR/LF for NITF compliance
+raw_bytes = text_asset.raw_asset.read()
+```
+
+### Writing Text Segments
+
+```python
+from aws.osml.io import IO, BufferedTextAssetProvider
+
+# Create text content
+text_asset = BufferedTextAssetProvider(
+    key="text_segment_0",
+    text_content="Mission report: Target acquired at coordinates...",
+    encoding="UTF-8"
+).with_title("Mission Report")
+
+# Write to NITF file
+with IO.open(["output.ntf"], "w", "nitf") as writer:
+    writer.add_asset(
+        key="text_segment_0",
+        provider=text_asset,
+        title="Mission Report",
+        description="Operational text segment",
+        roles=["data", "annotation"]
+    )
+```
+
+### Supported Encodings for BufferedTextAssetProvider
+
+| Encoding | Format Code | Notes |
+|----------|-------------|-------|
+| ASCII | STA | 7-bit ASCII only; error on non-ASCII characters |
+| UTF-8 | U8S | Full Unicode support |
+| ECS | UT1 | ISO-8859-1; characters must be in 0-255 range |
+| MTF | MTF | Message Text Format; ASCII-based |
+
 ## Working with In-Memory (Buffered) Imagery
 
 Buffered implementations allow creating and manipulating imagery entirely in memory. These classes support synthetic image generation, testing workflows, and scenarios where you need to create or modify images programmatically before writing them to disk.

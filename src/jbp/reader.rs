@@ -19,6 +19,7 @@ use crate::jbp::format::validate_nitf_magic;
 use crate::jbp::graphics::GraphicSubheaderFacade;
 use crate::jbp::metadata::{JBPFileMetadataProvider, JBPSegmentMetadataProvider};
 use crate::jbp::overflow;
+use crate::jbp::text::{create_text_subheader_definition, TextSubheaderFacade};
 use crate::jbp::tre::TreEnvelope;
 use crate::jbp::types::{JBPReaderOptions, NitfFormat, SegmentLocation, SegmentOffsets, SegmentType};
 use crate::parser::{FieldDefinition, FieldType, SizeSpec, StructureAccessor, StructureDefinition, StructureRegistry};
@@ -191,8 +192,16 @@ impl JBPDatasetReader {
             Self::validate_file_length(&accessor, &segment_offsets, data.len(), &mut warnings);
         }
         
-        // Create structure registry for TRE definitions
-        let registry = Arc::new(StructureRegistry::new());
+        // Create structure registry for TRE definitions and segment subheaders
+        let mut registry = StructureRegistry::new();
+        
+        // Register the full text subheader definition for TRE extraction
+        registry.register(
+            "nitf_02.10_text_subheader",
+            Self::create_text_subheader_definition_internal(),
+        );
+        
+        let registry = Arc::new(registry);
         
         Ok(Self {
             data,
@@ -812,18 +821,20 @@ impl JBPDatasetReader {
     }
 
     /// Create a minimal text subheader structure definition.
-    fn create_text_subheader_definition() -> StructureDefinition {
-        StructureDefinition::new("NITF_TextSubheader")
-            .with_field(
-                FieldDefinition::new("TE", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("File Part Type"),
-            )
-            .with_field(
-                FieldDefinition::new("TEXTID", FieldType::String)
-                    .with_size(SizeSpec::Fixed(7))
-                    .with_doc("Text Identifier"),
-            )
+    /// Create a text subheader structure definition per JBP Table 5.17-1.
+    ///
+    /// This method delegates to the full definition in the text module,
+    /// which includes all fields from the JBP specification:
+    /// - TE, TEXTID: Identification fields
+    /// - TXTALVL: Text attachment level (000-998)
+    /// - TXTDT: Text date and time (CCYYMMDDhhmmss)
+    /// - TXTITL: Text title (80 characters)
+    /// - Security fields (TSCLAS through TSCTLN): 167 bytes total
+    /// - ENCRYP: Encryption (must be "0")
+    /// - TXTFMT: Text format (STA, MTF, UT1, U8S)
+    /// - TXSHDL, TXSOFL, TXSHD: Extended subheader data (TRE support)
+    fn create_text_subheader_definition_internal() -> StructureDefinition {
+        create_text_subheader_definition()
     }
 
     /// Create a full graphic subheader structure definition per JBP Table 5.15-1.
@@ -1124,7 +1135,30 @@ impl JBPDatasetReader {
                 )?))
             }
             SegmentType::Text => {
-                let definition = Arc::new(Self::create_text_subheader_definition());
+                // Use the full text subheader definition from registry
+                let definition = self
+                    .registry
+                    .get("nitf_02.10_text_subheader")
+                    .unwrap_or_else(|| Arc::new(Self::create_text_subheader_definition_internal()));
+                
+                // Use TextSubheaderFacade for validation and to extract TXTFMT
+                let facade = TextSubheaderFacade::from_bytes(
+                    &subheader_bytes,
+                    &self.registry,
+                    self.format,
+                )?;
+                
+                // Extract TXTFMT for encoding-aware text handling
+                let txtfmt = facade.txtfmt()
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|_| "STA".to_string());
+                
+                // Extract title from TXTITL field, falling back to generic title
+                let title = facade.txtitl()
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| format!("Text Segment {}", index));
                 
                 // Extract TREs from text subheader
                 let tre_envelopes = self.extract_text_tres(&subheader_bytes)?;
@@ -1138,12 +1172,13 @@ impl JBPDatasetReader {
                 
                 Ok(Arc::new(JBPTextAssetProvider::new(
                     key,
-                    format!("Text Segment {}", index),
+                    title,
                     format!("NITF text segment at index {}", index),
                     vec!["metadata".to_string()],
                     *location,
                     self.data.clone(),
                     metadata,
+                    txtfmt,
                 )))
             }
             SegmentType::Graphic => {
@@ -1714,6 +1749,66 @@ mod tests {
         subheader
     }
 
+    /// Create a minimal valid text subheader for testing.
+    /// Size: 282 bytes (TE(2) + TEXTID(7) + TXTALVL(3) + TXTDT(14) + TXTITL(80) + Security(167) + ENCRYP(1) + TXTFMT(3) + TXSHDL(5))
+    fn create_minimal_text_subheader() -> Vec<u8> {
+        let mut subheader = Vec::new();
+
+        // TE (2) - File Part Type
+        subheader.extend_from_slice(b"TE");
+        // TEXTID (7) - Text Identifier
+        subheader.extend_from_slice(b"TEXT001");
+        // TXTALVL (3) - Text Attachment Level
+        subheader.extend_from_slice(b"000");
+        // TXTDT (14) - Text Date and Time
+        subheader.extend_from_slice(b"20240101120000");
+        // TXTITL (80) - Text Title
+        subheader.extend_from_slice(&[b' '; 80]);
+
+        // Security fields (167 bytes total)
+        // TSCLAS (1)
+        subheader.extend_from_slice(b"U");
+        // TSCLSY (2)
+        subheader.extend_from_slice(b"  ");
+        // TSCODE (11)
+        subheader.extend_from_slice(&[b' '; 11]);
+        // TSCTLH (2)
+        subheader.extend_from_slice(b"  ");
+        // TSREL (20)
+        subheader.extend_from_slice(&[b' '; 20]);
+        // TSDCTP (2)
+        subheader.extend_from_slice(b"  ");
+        // TSDCDT (8)
+        subheader.extend_from_slice(&[b' '; 8]);
+        // TSDCXM (4)
+        subheader.extend_from_slice(&[b' '; 4]);
+        // TSDG (1)
+        subheader.extend_from_slice(b" ");
+        // TSDGDT (8)
+        subheader.extend_from_slice(&[b' '; 8]);
+        // TSCLTX (43)
+        subheader.extend_from_slice(&[b' '; 43]);
+        // TSCATP (1)
+        subheader.extend_from_slice(b" ");
+        // TSCAUT (40)
+        subheader.extend_from_slice(&[b' '; 40]);
+        // TSCRSN (1)
+        subheader.extend_from_slice(b" ");
+        // TSSRDT (8)
+        subheader.extend_from_slice(&[b' '; 8]);
+        // TSCTLN (15)
+        subheader.extend_from_slice(&[b' '; 15]);
+
+        // ENCRYP (1) - Not encrypted
+        subheader.extend_from_slice(b"0");
+        // TXTFMT (3) - Text Format (STA = Standard ASCII)
+        subheader.extend_from_slice(b"STA");
+        // TXSHDL (5) - No extended subheader
+        subheader.extend_from_slice(b"00000");
+
+        subheader
+    }
+
     /// Create a minimal valid NITF 2.1 file header for testing.
     pub(super) fn create_minimal_nitf_header(
         numi: usize,
@@ -1731,6 +1826,11 @@ mod tests {
         // Get the graphic subheader size
         let graphic_subheader = create_minimal_graphic_subheader();
         let graphic_subheader_len = graphic_subheader.len();
+        
+        // Get the text subheader size
+        let text_subheader = create_minimal_text_subheader();
+        let text_subheader_len = text_subheader.len();
+        
         let image_data_len = 64 * 64; // 64x64 pixels, 1 band, 8 bits = 4096 bytes
 
         // FHDR (4) + FVER (5) = "NITF02.10"
@@ -1825,11 +1925,12 @@ mod tests {
         // NUMT (3)
         header.extend_from_slice(format!("{:03}", numt).as_bytes());
         // Text segment info - all LTSH first, then all LT
+        let text_data_len = 200usize;
         for _ in 0..numt {
-            header.extend_from_slice(b"0050"); // LTSH (4)
+            header.extend_from_slice(format!("{:04}", text_subheader_len).as_bytes()); // LTSH (4)
         }
         for _ in 0..numt {
-            header.extend_from_slice(b"00200"); // LT (5)
+            header.extend_from_slice(format!("{:05}", text_data_len).as_bytes()); // LT (5)
         }
 
         // NUMDES (3)
@@ -1866,7 +1967,7 @@ mod tests {
         let mut total_len = hl;
         total_len += numi * (image_subheader_len + image_data_len); // Image segments
         total_len += nums * (graphic_subheader_len + graphic_data_len); // Graphic segments
-        total_len += numt * (50 + 200); // Text segments
+        total_len += numt * (text_subheader_len + text_data_len); // Text segments
         total_len += numdes * (100 + 1000); // DES segments
         total_len += numres * (50 + 500); // RES segments
 
@@ -1884,7 +1985,7 @@ mod tests {
             header.extend_from_slice(&[0u8; 500]); // Graphic data (CGM placeholder)
         }
         for _ in 0..numt {
-            header.extend_from_slice(&[b' '; 50]); // Text subheader
+            header.extend_from_slice(&text_subheader); // Text subheader
             header.extend_from_slice(&[b' '; 200]); // Text data
         }
         for _ in 0..numdes {
@@ -2243,9 +2344,10 @@ mod property_tests {
                     i
                 );
 
+                // Text segments with TXTFMT=STA return charset-aware media type
                 prop_assert_eq!(
                     asset.media_type(),
-                    "text/plain",
+                    "text/plain; charset=us-ascii",
                     "Text segment {} has wrong media type",
                     i
                 );
