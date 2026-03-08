@@ -319,7 +319,6 @@ impl<'a> TextSubheaderFacade<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::jbp::text::create_text_subheader_definition;
 
     /// Calculate the expected size of a text subheader without TRE data.
     const TEXT_SUBHEADER_BASE_SIZE: usize = 282;
@@ -376,10 +375,9 @@ mod tests {
         bytes
     }
 
+    /// Create a registry that loads definitions from KSY files.
     fn create_test_registry() -> StructureRegistry {
-        let mut registry = StructureRegistry::new();
-        registry.register("nitf_02.10_text_subheader", create_text_subheader_definition());
-        registry
+        StructureRegistry::new()
     }
 
     #[test]

@@ -7,7 +7,6 @@
 //! # Key Components
 //!
 //! - [`TextSubheaderFacade`] - Typed access to text subheader fields
-//! - [`create_text_subheader_definition`] - Creates the full text subheader structure definition
 //!
 //! # Text Format Codes
 //!
@@ -33,198 +32,6 @@ mod facade;
 
 pub use encoding::{decode_and_normalize, encode_with_crlf, normalize_line_endings};
 pub use facade::TextSubheaderFacade;
-
-use crate::parser::{ExpressionEvaluator, FieldDefinition, FieldType, SizeSpec, StructureDefinition};
-
-/// Create a full text subheader structure definition per JBP Table 5.17-1.
-///
-/// This definition includes all fields from the JBP specification:
-/// - TE, TEXTID: Identification fields
-/// - TXTALVL: Text attachment level (000-998)
-/// - TXTDT: Text date and time (CCYYMMDDhhmmss)
-/// - TXTITL: Text title (80 characters)
-/// - Security fields (TSCLAS through TSCTLN): 167 bytes total
-/// - ENCRYP: Encryption (must be "0")
-/// - TXTFMT: Text format (STA, MTF, UT1, U8S)
-/// - TXSHDL, TXSOFL, TXSHD: Extended subheader data (TRE support)
-///
-/// # Conditional Fields
-///
-/// - TXSOFL: Present when TXSHDL > 0
-/// - TXSHD: Present when TXSHDL > 3 (TXSHDL includes 3 bytes for TXSOFL)
-pub fn create_text_subheader_definition() -> StructureDefinition {
-    // Condition for TXSOFL: present when TXSHDL > 0
-    let txsofl_condition = ExpressionEvaluator::parse("TXSHDL.to_i > 0").unwrap();
-
-    // Condition for TXSHD: present when TXSHDL > 3 (TXSHDL includes 3 bytes for TXSOFL)
-    let txshd_condition = ExpressionEvaluator::parse("TXSHDL.to_i > 3").unwrap();
-
-    StructureDefinition::new("nitf_02.10_text_subheader")
-        // File Part Type - always "TE"
-        .with_field(
-            FieldDefinition::new("TE", FieldType::String)
-                .with_size(SizeSpec::Fixed(2))
-                .with_doc("File Part Type"),
-        )
-        // Text Identifier
-        .with_field(
-            FieldDefinition::new("TEXTID", FieldType::String)
-                .with_size(SizeSpec::Fixed(7))
-                .with_doc("Text Identifier"),
-        )
-        // Text Attachment Level (000-998)
-        .with_field(
-            FieldDefinition::new("TXTALVL", FieldType::String)
-                .with_size(SizeSpec::Fixed(3))
-                .with_doc("Text Attachment Level"),
-        )
-        // Text Date and Time (CCYYMMDDhhmmss)
-        .with_field(
-            FieldDefinition::new("TXTDT", FieldType::String)
-                .with_size(SizeSpec::Fixed(14))
-                .with_doc("Text Date and Time"),
-        )
-        // Text Title
-        .with_field(
-            FieldDefinition::new("TXTITL", FieldType::String)
-                .with_size(SizeSpec::Fixed(80))
-                .with_doc("Text Title"),
-        )
-        // Security Fields (167 bytes total) - using "TS" prefix for text segments
-        // Security Classification
-        .with_field(
-            FieldDefinition::new("TSCLAS", FieldType::String)
-                .with_size(SizeSpec::Fixed(1))
-                .with_doc("Text Security Classification"),
-        )
-        // Security Classification System
-        .with_field(
-            FieldDefinition::new("TSCLSY", FieldType::String)
-                .with_size(SizeSpec::Fixed(2))
-                .with_doc("Text Security Classification System"),
-        )
-        // Codewords
-        .with_field(
-            FieldDefinition::new("TSCODE", FieldType::String)
-                .with_size(SizeSpec::Fixed(11))
-                .with_doc("Text Codewords"),
-        )
-        // Control and Handling
-        .with_field(
-            FieldDefinition::new("TSCTLH", FieldType::String)
-                .with_size(SizeSpec::Fixed(2))
-                .with_doc("Text Control and Handling"),
-        )
-        // Releasing Instructions
-        .with_field(
-            FieldDefinition::new("TSREL", FieldType::String)
-                .with_size(SizeSpec::Fixed(20))
-                .with_doc("Text Releasing Instructions"),
-        )
-        // Declassification Type
-        .with_field(
-            FieldDefinition::new("TSDCTP", FieldType::String)
-                .with_size(SizeSpec::Fixed(2))
-                .with_doc("Text Declassification Type"),
-        )
-        // Declassification Date
-        .with_field(
-            FieldDefinition::new("TSDCDT", FieldType::String)
-                .with_size(SizeSpec::Fixed(8))
-                .with_doc("Text Declassification Date"),
-        )
-        // Declassification Exemption
-        .with_field(
-            FieldDefinition::new("TSDCXM", FieldType::String)
-                .with_size(SizeSpec::Fixed(4))
-                .with_doc("Text Declassification Exemption"),
-        )
-        // Downgrade
-        .with_field(
-            FieldDefinition::new("TSDG", FieldType::String)
-                .with_size(SizeSpec::Fixed(1))
-                .with_doc("Text Downgrade"),
-        )
-        // Downgrade Date
-        .with_field(
-            FieldDefinition::new("TSDGDT", FieldType::String)
-                .with_size(SizeSpec::Fixed(8))
-                .with_doc("Text Downgrade Date"),
-        )
-        // Classification Text
-        .with_field(
-            FieldDefinition::new("TSCLTX", FieldType::String)
-                .with_size(SizeSpec::Fixed(43))
-                .with_doc("Text Classification Text"),
-        )
-        // Classification Authority Type
-        .with_field(
-            FieldDefinition::new("TSCATP", FieldType::String)
-                .with_size(SizeSpec::Fixed(1))
-                .with_doc("Text Classification Authority Type"),
-        )
-        // Classification Authority
-        .with_field(
-            FieldDefinition::new("TSCAUT", FieldType::String)
-                .with_size(SizeSpec::Fixed(40))
-                .with_doc("Text Classification Authority"),
-        )
-        // Classification Reason
-        .with_field(
-            FieldDefinition::new("TSCRSN", FieldType::String)
-                .with_size(SizeSpec::Fixed(1))
-                .with_doc("Text Classification Reason"),
-        )
-        // Security Source Date
-        .with_field(
-            FieldDefinition::new("TSSRDT", FieldType::String)
-                .with_size(SizeSpec::Fixed(8))
-                .with_doc("Text Security Source Date"),
-        )
-        // Security Control Number
-        .with_field(
-            FieldDefinition::new("TSCTLN", FieldType::String)
-                .with_size(SizeSpec::Fixed(15))
-                .with_doc("Text Security Control Number"),
-        )
-        // Encryption - must be "0" (not encrypted)
-        .with_field(
-            FieldDefinition::new("ENCRYP", FieldType::String)
-                .with_size(SizeSpec::Fixed(1))
-                .with_doc("Encryption"),
-        )
-        // Text Format (STA, MTF, UT1, U8S)
-        .with_field(
-            FieldDefinition::new("TXTFMT", FieldType::String)
-                .with_size(SizeSpec::Fixed(3))
-                .with_doc("Text Format"),
-        )
-        // Text Extended Subheader Data Length
-        // Value 00000 = no TREs, 00003-99999 = length of TXSOFL + TXSHD
-        .with_field(
-            FieldDefinition::new("TXSHDL", FieldType::String)
-                .with_size(SizeSpec::Fixed(5))
-                .with_doc("Text Extended Subheader Data Length"),
-        )
-        // Text Extended Subheader Overflow (conditional: present when TXSHDL > 0)
-        // Value 000 = no overflow, 001-999 = DES sequence number for overflow
-        .with_field(
-            FieldDefinition::new("TXSOFL", FieldType::String)
-                .with_size(SizeSpec::Fixed(3))
-                .with_condition(txsofl_condition)
-                .with_doc("Text Extended Subheader Overflow"),
-        )
-        // Text Extended Subheader Data (conditional: present when TXSHDL > 3)
-        // Contains TRE data, length = TXSHDL - 3
-        .with_field(
-            FieldDefinition::new("TXSHD", FieldType::Bytes)
-                .with_size(SizeSpec::Expression(
-                    ExpressionEvaluator::parse("TXSHDL.to_i - 3").unwrap(),
-                ))
-                .with_condition(txshd_condition)
-                .with_doc("Text Extended Subheader Data"),
-        )
-}
 
 #[cfg(test)]
 mod tests {
@@ -287,10 +94,9 @@ mod tests {
         bytes
     }
 
+    /// Create a registry that loads definitions from KSY files.
     fn create_test_registry() -> StructureRegistry {
-        let mut registry = StructureRegistry::new();
-        registry.register("nitf_02.10_text_subheader", create_text_subheader_definition());
-        registry
+        StructureRegistry::new()
     }
 
     #[test]

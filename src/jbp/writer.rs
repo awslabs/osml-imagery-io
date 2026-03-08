@@ -2042,13 +2042,10 @@ impl JBPDatasetWriter {
         // NUMI (3)
         writer.write_all(format!("{:03}", image_info.len()).as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
-        // Image segment info - LISH values
-        for (lish, _) in image_info {
+        // Image segment info - interleaved as nested type (LISH, LI) per segment
+        for (lish, li) in image_info {
             writer.write_all(format!("{:06}", lish).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
-        }
-        // Image segment info - LI values
-        for (_, li) in image_info {
             writer.write_all(format!("{:010}", li).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
         }
@@ -2056,13 +2053,10 @@ impl JBPDatasetWriter {
         // NUMS (3)
         writer.write_all(format!("{:03}", graphic_info.len()).as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
-        // Graphic segment info - LSSH values
-        for (lssh, _) in graphic_info {
+        // Graphic segment info - interleaved as nested type (LSSH, LS) per segment
+        for (lssh, ls) in graphic_info {
             writer.write_all(format!("{:04}", lssh).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
-        }
-        // Graphic segment info - LS values
-        for (_, ls) in graphic_info {
             writer.write_all(format!("{:06}", ls).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
         }
@@ -2074,13 +2068,10 @@ impl JBPDatasetWriter {
         // NUMT (3)
         writer.write_all(format!("{:03}", text_info.len()).as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
-        // Text segment info - LTSH values
-        for (ltsh, _) in text_info {
+        // Text segment info - interleaved as nested type (LTSH, LT) per segment
+        for (ltsh, lt) in text_info {
             writer.write_all(format!("{:04}", ltsh).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
-        }
-        // Text segment info - LT values
-        for (_, lt) in text_info {
             writer.write_all(format!("{:05}", lt).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
         }
@@ -2088,13 +2079,10 @@ impl JBPDatasetWriter {
         // NUMDES (3)
         writer.write_all(format!("{:03}", des_info.len()).as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
-        // DES segment info - LDSH values
-        for (ldsh, _) in des_info {
+        // DES segment info - interleaved as nested type (LDSH, LD) per segment
+        for (ldsh, ld) in des_info {
             writer.write_all(format!("{:04}", ldsh).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
-        }
-        // DES segment info - LD values
-        for (_, ld) in des_info {
             writer.write_all(format!("{:09}", ld).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
         }

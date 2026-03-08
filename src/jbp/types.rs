@@ -213,11 +213,11 @@ impl SegmentOffsets {
     /// - `NUMT` - Number of Text Segments
     /// - `NUMDES` - Number of Data Extension Segments
     /// - `NUMRES` - Number of Reserved Extension Segments
-    /// - `LISH_{i}` / `LI_{i}` - Image segment subheader/data lengths
-    /// - `LSSH_{i}` / `LS_{i}` - Graphic segment subheader/data lengths
-    /// - `LTSH_{i}` / `LT_{i}` - Text segment subheader/data lengths
-    /// - `LDSH_{i}` / `LD_{i}` - DES subheader/data lengths
-    /// - `LRESH_{i}` / `LRE_{i}` - RES subheader/data lengths
+    /// - `IMAGE_INFO_{i}.LISH` / `IMAGE_INFO_{i}.LI` - Image segment subheader/data lengths
+    /// - `GRAPHIC_INFO_{i}.LSSH` / `GRAPHIC_INFO_{i}.LS` - Graphic segment subheader/data lengths
+    /// - `TEXT_INFO_{i}.LTSH` / `TEXT_INFO_{i}.LT` - Text segment subheader/data lengths
+    /// - `DES_INFO_{i}.LDSH` / `DES_INFO_{i}.LD` - DES subheader/data lengths
+    /// - `RES_INFO_{i}.LRESH` / `RES_INFO_{i}.LRE` - RES subheader/data lengths
     pub fn from_header(header: &StructureAccessor) -> Result<Self, JBPError> {
         // Get header length (HL field)
         let hl = Self::get_u64_field(header, "HL")?;
@@ -236,10 +236,10 @@ impl SegmentOffsets {
         let mut des = Vec::with_capacity(numdes);
         let mut res = Vec::with_capacity(numres);
 
-        // Calculate image segment offsets
+        // Calculate image segment offsets using nested type access (KSY file format)
         for i in 0..numi {
-            let lish = Self::get_u64_field(header, &format!("LISH_{}", i))?;
-            let li = Self::get_u64_field(header, &format!("LI_{}", i))?;
+            let lish = Self::get_u64_field(header, &format!("IMAGE_INFO_{}.LISH", i))?;
+            let li = Self::get_u64_field(header, &format!("IMAGE_INFO_{}.LI", i))?;
 
             images.push(SegmentLocation {
                 subheader_offset: current_offset,
@@ -250,10 +250,10 @@ impl SegmentOffsets {
             current_offset += lish + li;
         }
 
-        // Calculate graphic segment offsets
+        // Calculate graphic segment offsets using nested type access
         for i in 0..nums {
-            let lssh = Self::get_u64_field(header, &format!("LSSH_{}", i))?;
-            let ls = Self::get_u64_field(header, &format!("LS_{}", i))?;
+            let lssh = Self::get_u64_field(header, &format!("GRAPHIC_INFO_{}.LSSH", i))?;
+            let ls = Self::get_u64_field(header, &format!("GRAPHIC_INFO_{}.LS", i))?;
 
             graphics.push(SegmentLocation {
                 subheader_offset: current_offset,
@@ -264,10 +264,10 @@ impl SegmentOffsets {
             current_offset += lssh + ls;
         }
 
-        // Calculate text segment offsets
+        // Calculate text segment offsets using nested type access
         for i in 0..numt {
-            let ltsh = Self::get_u64_field(header, &format!("LTSH_{}", i))?;
-            let lt = Self::get_u64_field(header, &format!("LT_{}", i))?;
+            let ltsh = Self::get_u64_field(header, &format!("TEXT_INFO_{}.LTSH", i))?;
+            let lt = Self::get_u64_field(header, &format!("TEXT_INFO_{}.LT", i))?;
 
             text.push(SegmentLocation {
                 subheader_offset: current_offset,
@@ -278,10 +278,10 @@ impl SegmentOffsets {
             current_offset += ltsh + lt;
         }
 
-        // Calculate DES segment offsets
+        // Calculate DES segment offsets using nested type access
         for i in 0..numdes {
-            let ldsh = Self::get_u64_field(header, &format!("LDSH_{}", i))?;
-            let ld = Self::get_u64_field(header, &format!("LD_{}", i))?;
+            let ldsh = Self::get_u64_field(header, &format!("DES_INFO_{}.LDSH", i))?;
+            let ld = Self::get_u64_field(header, &format!("DES_INFO_{}.LD", i))?;
 
             des.push(SegmentLocation {
                 subheader_offset: current_offset,
@@ -292,10 +292,10 @@ impl SegmentOffsets {
             current_offset += ldsh + ld;
         }
 
-        // Calculate RES segment offsets
+        // Calculate RES segment offsets using nested type access
         for i in 0..numres {
-            let lresh = Self::get_u64_field(header, &format!("LRESH_{}", i))?;
-            let lre = Self::get_u64_field(header, &format!("LRE_{}", i))?;
+            let lresh = Self::get_u64_field(header, &format!("RES_INFO_{}.LRESH", i))?;
+            let lre = Self::get_u64_field(header, &format!("RES_INFO_{}.LRE", i))?;
 
             res.push(SegmentLocation {
                 subheader_offset: current_offset,

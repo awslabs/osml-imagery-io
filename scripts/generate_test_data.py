@@ -29,7 +29,7 @@ def generate_sample_nitf21(output_path: Path) -> None:
     print(f"Generating {output_path}...")
     
     # Create writer for NITF 2.1 format
-    writer = IO.open(str(output_path), "w", "nitf")
+    writer = IO.open([str(output_path)], "w", "nitf")
     
     # Create a simple 8x8 grayscale image (64 bytes)
     image_data = bytes([(x + y) % 256 for y in range(8) for x in range(8)])
@@ -67,7 +67,7 @@ def generate_sample_nsif10(output_path: Path) -> None:
     print(f"Generating {output_path}...")
     
     # Create writer for NSIF 1.0 format
-    writer = IO.open(str(output_path), "w", "nsif")
+    writer = IO.open([str(output_path)], "w", "nsif")
     
     # Create a simple 8x8 grayscale image (64 bytes)
     image_data = bytes([(x + y) % 256 for y in range(8) for x in range(8)])
@@ -110,7 +110,7 @@ def generate_multi_segment_nitf(output_path: Path) -> None:
     print(f"Generating {output_path}...")
     
     # Create writer for NITF 2.1 format
-    writer = IO.open(str(output_path), "w", "nitf")
+    writer = IO.open([str(output_path)], "w", "nitf")
     
     # Add 2 image segments
     image1_data = bytes([(x + y) % 256 for y in range(16) for x in range(16)])
@@ -197,7 +197,7 @@ def verify_file(file_path: Path) -> bool:
     print(f"  Verifying {file_path}...")
     
     try:
-        reader = IO.open(str(file_path), "r")
+        reader = IO.open([str(file_path)], "r")
         keys = reader.get_asset_keys()
         
         print(f"    Found {len(keys)} asset(s): {keys}")

@@ -19,10 +19,10 @@ use crate::jbp::format::validate_nitf_magic;
 use crate::jbp::graphics::GraphicSubheaderFacade;
 use crate::jbp::metadata::{JBPFileMetadataProvider, JBPSegmentMetadataProvider};
 use crate::jbp::overflow;
-use crate::jbp::text::{create_text_subheader_definition, TextSubheaderFacade};
+use crate::jbp::text::TextSubheaderFacade;
 use crate::jbp::tre::TreEnvelope;
 use crate::jbp::types::{JBPReaderOptions, NitfFormat, SegmentLocation, SegmentOffsets, SegmentType};
-use crate::parser::{FieldDefinition, FieldType, SizeSpec, StructureAccessor, StructureDefinition, StructureRegistry};
+use crate::parser::{StructureAccessor, StructureDefinition, StructureRegistry};
 use crate::traits::{AssetProvider, DatasetReader, MetadataProvider};
 use crate::types::AssetType;
 
@@ -148,8 +148,16 @@ impl JBPDatasetReader {
         // Validate magic number and detect format
         let format = validate_nitf_magic(data)?;
         
-        // Create file header structure definition
-        let file_header_definition = Arc::new(Self::create_file_header_definition());
+        // Create structure registry for all NITF structure definitions
+        // All definitions are loaded from KSY files in data/structures/
+        let registry = Arc::new(StructureRegistry::new());
+        
+        // Load file header structure definition from registry (KSY file)
+        let file_header_definition = registry
+            .get(format.file_header_definition())
+            .ok_or_else(|| CodecError::InvalidFormat(
+                format!("Structure definition not found: {}", format.file_header_definition())
+            ))?;
         
         // Parse file header to get segment offsets
         let accessor = StructureAccessor::new(file_header_definition.clone(), data)
@@ -191,17 +199,6 @@ impl JBPDatasetReader {
         if options.validate_file_length {
             Self::validate_file_length(&accessor, &segment_offsets, data.len(), &mut warnings);
         }
-        
-        // Create structure registry for TRE definitions and segment subheaders
-        let mut registry = StructureRegistry::new();
-        
-        // Register the full text subheader definition for TRE extraction
-        registry.register(
-            "nitf_02.10_text_subheader",
-            Self::create_text_subheader_definition_internal(),
-        );
-        
-        let registry = Arc::new(registry);
         
         Ok(Self {
             data,
@@ -452,628 +449,6 @@ impl JBPDatasetReader {
         max_end
     }
 
-    /// Create a minimal file header structure definition.
-    ///
-    /// This creates a structure definition for the NITF 2.1 file header
-    /// with the essential fields needed for segment offset calculation.
-    fn create_file_header_definition() -> StructureDefinition {
-        use crate::parser::{Expression, RepeatSpec};
-
-        StructureDefinition::new("NITF_FileHeader")
-            // File Profile and Version
-            .with_field(
-                FieldDefinition::new("FHDR", FieldType::String)
-                    .with_size(SizeSpec::Fixed(4))
-                    .with_doc("File Profile Name"),
-            )
-            .with_field(
-                FieldDefinition::new("FVER", FieldType::String)
-                    .with_size(SizeSpec::Fixed(5))
-                    .with_doc("File Version"),
-            )
-            // Complexity Level
-            .with_field(
-                FieldDefinition::new("CLEVEL", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("Complexity Level"),
-            )
-            // Standard Type
-            .with_field(
-                FieldDefinition::new("STYPE", FieldType::String)
-                    .with_size(SizeSpec::Fixed(4))
-                    .with_doc("Standard Type"),
-            )
-            // Originating Station ID
-            .with_field(
-                FieldDefinition::new("OSTAID", FieldType::String)
-                    .with_size(SizeSpec::Fixed(10))
-                    .with_doc("Originating Station ID"),
-            )
-            // File Date and Time
-            .with_field(
-                FieldDefinition::new("FDT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(14))
-                    .with_doc("File Date and Time"),
-            )
-            // File Title
-            .with_field(
-                FieldDefinition::new("FTITLE", FieldType::String)
-                    .with_size(SizeSpec::Fixed(80))
-                    .with_doc("File Title"),
-            )
-            // File Security Classification
-            .with_field(
-                FieldDefinition::new("FSCLAS", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("File Security Classification"),
-            )
-            // File Security Classification System
-            .with_field(
-                FieldDefinition::new("FSCLSY", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("File Security Classification System"),
-            )
-            // File Codewords
-            .with_field(
-                FieldDefinition::new("FSCODE", FieldType::String)
-                    .with_size(SizeSpec::Fixed(11))
-                    .with_doc("File Codewords"),
-            )
-            // File Control and Handling
-            .with_field(
-                FieldDefinition::new("FSCTLH", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("File Control and Handling"),
-            )
-            // File Releasing Instructions
-            .with_field(
-                FieldDefinition::new("FSREL", FieldType::String)
-                    .with_size(SizeSpec::Fixed(20))
-                    .with_doc("File Releasing Instructions"),
-            )
-            // File Declassification Type
-            .with_field(
-                FieldDefinition::new("FSDCTP", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("File Declassification Type"),
-            )
-            // File Declassification Date
-            .with_field(
-                FieldDefinition::new("FSDCDT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(8))
-                    .with_doc("File Declassification Date"),
-            )
-            // File Declassification Exemption
-            .with_field(
-                FieldDefinition::new("FSDCXM", FieldType::String)
-                    .with_size(SizeSpec::Fixed(4))
-                    .with_doc("File Declassification Exemption"),
-            )
-            // File Downgrade
-            .with_field(
-                FieldDefinition::new("FSDG", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("File Downgrade"),
-            )
-            // File Downgrade Date
-            .with_field(
-                FieldDefinition::new("FSDGDT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(8))
-                    .with_doc("File Downgrade Date"),
-            )
-            // File Classification Text
-            .with_field(
-                FieldDefinition::new("FSCLTX", FieldType::String)
-                    .with_size(SizeSpec::Fixed(43))
-                    .with_doc("File Classification Text"),
-            )
-            // File Classification Authority Type
-            .with_field(
-                FieldDefinition::new("FSCATP", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("File Classification Authority Type"),
-            )
-            // File Classification Authority
-            .with_field(
-                FieldDefinition::new("FSCAUT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(40))
-                    .with_doc("File Classification Authority"),
-            )
-            // File Classification Reason
-            .with_field(
-                FieldDefinition::new("FSCRSN", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("File Classification Reason"),
-            )
-            // File Security Source Date
-            .with_field(
-                FieldDefinition::new("FSSRDT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(8))
-                    .with_doc("File Security Source Date"),
-            )
-            // File Security Control Number
-            .with_field(
-                FieldDefinition::new("FSCTLN", FieldType::String)
-                    .with_size(SizeSpec::Fixed(15))
-                    .with_doc("File Security Control Number"),
-            )
-            // File Copy Number
-            .with_field(
-                FieldDefinition::new("FSCOP", FieldType::String)
-                    .with_size(SizeSpec::Fixed(5))
-                    .with_doc("File Copy Number"),
-            )
-            // File Number of Copies
-            .with_field(
-                FieldDefinition::new("FSCPYS", FieldType::String)
-                    .with_size(SizeSpec::Fixed(5))
-                    .with_doc("File Number of Copies"),
-            )
-            // Encryption
-            .with_field(
-                FieldDefinition::new("ENCRYP", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("Encryption"),
-            )
-            // File Background Color (3 bytes)
-            .with_field(
-                FieldDefinition::new("FBKGC", FieldType::Bytes)
-                    .with_size(SizeSpec::Fixed(3))
-                    .with_doc("File Background Color"),
-            )
-            // Originator's Name
-            .with_field(
-                FieldDefinition::new("ONAME", FieldType::String)
-                    .with_size(SizeSpec::Fixed(24))
-                    .with_doc("Originator's Name"),
-            )
-            // Originator's Phone Number
-            .with_field(
-                FieldDefinition::new("OPHONE", FieldType::String)
-                    .with_size(SizeSpec::Fixed(18))
-                    .with_doc("Originator's Phone Number"),
-            )
-            // File Length
-            .with_field(
-                FieldDefinition::new("FL", FieldType::String)
-                    .with_size(SizeSpec::Fixed(12))
-                    .with_doc("File Length"),
-            )
-            // NITF File Header Length
-            .with_field(
-                FieldDefinition::new("HL", FieldType::String)
-                    .with_size(SizeSpec::Fixed(6))
-                    .with_doc("NITF File Header Length"),
-            )
-            // Number of Image Segments
-            .with_field(
-                FieldDefinition::new("NUMI", FieldType::String)
-                    .with_size(SizeSpec::Fixed(3))
-                    .with_doc("Number of Image Segments"),
-            )
-            // Image Segment Info (repeated NUMI times)
-            .with_field(
-                FieldDefinition::new("LISH", FieldType::String)
-                    .with_size(SizeSpec::Fixed(6))
-                    .with_doc("Length of Image Subheader")
-                    .with_repeat(RepeatSpec::Expression(Expression::MethodCall {
-                        target: Box::new(Expression::FieldRef("NUMI".to_string())),
-                        method: "to_i".to_string(),
-                    })),
-            )
-            .with_field(
-                FieldDefinition::new("LI", FieldType::String)
-                    .with_size(SizeSpec::Fixed(10))
-                    .with_doc("Length of Image Data")
-                    .with_repeat(RepeatSpec::Expression(Expression::MethodCall {
-                        target: Box::new(Expression::FieldRef("NUMI".to_string())),
-                        method: "to_i".to_string(),
-                    })),
-            )
-            // Number of Graphic Segments
-            .with_field(
-                FieldDefinition::new("NUMS", FieldType::String)
-                    .with_size(SizeSpec::Fixed(3))
-                    .with_doc("Number of Graphic Segments"),
-            )
-            // Graphic Segment Info (repeated NUMS times)
-            .with_field(
-                FieldDefinition::new("LSSH", FieldType::String)
-                    .with_size(SizeSpec::Fixed(4))
-                    .with_doc("Length of Graphic Subheader")
-                    .with_repeat(RepeatSpec::Expression(Expression::MethodCall {
-                        target: Box::new(Expression::FieldRef("NUMS".to_string())),
-                        method: "to_i".to_string(),
-                    })),
-            )
-            .with_field(
-                FieldDefinition::new("LS", FieldType::String)
-                    .with_size(SizeSpec::Fixed(6))
-                    .with_doc("Length of Graphic Data")
-                    .with_repeat(RepeatSpec::Expression(Expression::MethodCall {
-                        target: Box::new(Expression::FieldRef("NUMS".to_string())),
-                        method: "to_i".to_string(),
-                    })),
-            )
-            // Reserved for Future Use
-            .with_field(
-                FieldDefinition::new("NUMX", FieldType::String)
-                    .with_size(SizeSpec::Fixed(3))
-                    .with_doc("Reserved for Future Use"),
-            )
-            // Number of Text Segments
-            .with_field(
-                FieldDefinition::new("NUMT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(3))
-                    .with_doc("Number of Text Segments"),
-            )
-            // Text Segment Info (repeated NUMT times)
-            .with_field(
-                FieldDefinition::new("LTSH", FieldType::String)
-                    .with_size(SizeSpec::Fixed(4))
-                    .with_doc("Length of Text Subheader")
-                    .with_repeat(RepeatSpec::Expression(Expression::MethodCall {
-                        target: Box::new(Expression::FieldRef("NUMT".to_string())),
-                        method: "to_i".to_string(),
-                    })),
-            )
-            .with_field(
-                FieldDefinition::new("LT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(5))
-                    .with_doc("Length of Text Data")
-                    .with_repeat(RepeatSpec::Expression(Expression::MethodCall {
-                        target: Box::new(Expression::FieldRef("NUMT".to_string())),
-                        method: "to_i".to_string(),
-                    })),
-            )
-            // Number of Data Extension Segments
-            .with_field(
-                FieldDefinition::new("NUMDES", FieldType::String)
-                    .with_size(SizeSpec::Fixed(3))
-                    .with_doc("Number of Data Extension Segments"),
-            )
-            // DES Segment Info (repeated NUMDES times)
-            .with_field(
-                FieldDefinition::new("LDSH", FieldType::String)
-                    .with_size(SizeSpec::Fixed(4))
-                    .with_doc("Length of DES Subheader")
-                    .with_repeat(RepeatSpec::Expression(Expression::MethodCall {
-                        target: Box::new(Expression::FieldRef("NUMDES".to_string())),
-                        method: "to_i".to_string(),
-                    })),
-            )
-            .with_field(
-                FieldDefinition::new("LD", FieldType::String)
-                    .with_size(SizeSpec::Fixed(9))
-                    .with_doc("Length of DES Data")
-                    .with_repeat(RepeatSpec::Expression(Expression::MethodCall {
-                        target: Box::new(Expression::FieldRef("NUMDES".to_string())),
-                        method: "to_i".to_string(),
-                    })),
-            )
-            // Number of Reserved Extension Segments
-            .with_field(
-                FieldDefinition::new("NUMRES", FieldType::String)
-                    .with_size(SizeSpec::Fixed(3))
-                    .with_doc("Number of Reserved Extension Segments"),
-            )
-            // RES Segment Info (repeated NUMRES times)
-            .with_field(
-                FieldDefinition::new("LRESH", FieldType::String)
-                    .with_size(SizeSpec::Fixed(4))
-                    .with_doc("Length of RES Subheader")
-                    .with_repeat(RepeatSpec::Expression(Expression::MethodCall {
-                        target: Box::new(Expression::FieldRef("NUMRES".to_string())),
-                        method: "to_i".to_string(),
-                    })),
-            )
-            .with_field(
-                FieldDefinition::new("LRE", FieldType::String)
-                    .with_size(SizeSpec::Fixed(7))
-                    .with_doc("Length of RES Data")
-                    .with_repeat(RepeatSpec::Expression(Expression::MethodCall {
-                        target: Box::new(Expression::FieldRef("NUMRES".to_string())),
-                        method: "to_i".to_string(),
-                    })),
-            )
-            // User Defined Header Data Length
-            .with_field(
-                FieldDefinition::new("UDHDL", FieldType::String)
-                    .with_size(SizeSpec::Fixed(5))
-                    .with_doc("User Defined Header Data Length"),
-            )
-            // Extended Header Data Length
-            .with_field(
-                FieldDefinition::new("XHDL", FieldType::String)
-                    .with_size(SizeSpec::Fixed(5))
-                    .with_doc("Extended Header Data Length"),
-            )
-    }
-
-    /// Create a minimal image subheader structure definition.
-    fn create_image_subheader_definition() -> StructureDefinition {
-        StructureDefinition::new("NITF_ImageSubheader")
-            .with_field(
-                FieldDefinition::new("IM", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("File Part Type"),
-            )
-            .with_field(
-                FieldDefinition::new("IID1", FieldType::String)
-                    .with_size(SizeSpec::Fixed(10))
-                    .with_doc("Image Identifier 1"),
-            )
-            .with_field(
-                FieldDefinition::new("IDATIM", FieldType::String)
-                    .with_size(SizeSpec::Fixed(14))
-                    .with_doc("Image Date and Time"),
-            )
-            .with_field(
-                FieldDefinition::new("TGTID", FieldType::String)
-                    .with_size(SizeSpec::Fixed(17))
-                    .with_doc("Target Identifier"),
-            )
-            .with_field(
-                FieldDefinition::new("IID2", FieldType::String)
-                    .with_size(SizeSpec::Fixed(80))
-                    .with_doc("Image Identifier 2"),
-            )
-    }
-
-    /// Create a minimal text subheader structure definition.
-    /// Create a text subheader structure definition per JBP Table 5.17-1.
-    ///
-    /// This method delegates to the full definition in the text module,
-    /// which includes all fields from the JBP specification:
-    /// - TE, TEXTID: Identification fields
-    /// - TXTALVL: Text attachment level (000-998)
-    /// - TXTDT: Text date and time (CCYYMMDDhhmmss)
-    /// - TXTITL: Text title (80 characters)
-    /// - Security fields (TSCLAS through TSCTLN): 167 bytes total
-    /// - ENCRYP: Encryption (must be "0")
-    /// - TXTFMT: Text format (STA, MTF, UT1, U8S)
-    /// - TXSHDL, TXSOFL, TXSHD: Extended subheader data (TRE support)
-    fn create_text_subheader_definition_internal() -> StructureDefinition {
-        create_text_subheader_definition()
-    }
-
-    /// Create a full graphic subheader structure definition per JBP Table 5.15-1.
-    ///
-    /// This definition includes all fields from the JBP specification:
-    /// - SY, SID, SNAME: Identification fields
-    /// - Security fields (SSCLAS through SSCTLN): 167 bytes total
-    /// - ENCRYP, SFMT, SSTRUCT: Format fields
-    /// - SDLVL, SALVL: Display and attachment levels
-    /// - SLOC, SBND1, SCOLOR, SBND2: Location and bounding box
-    /// - SRES2: Reserved field
-    /// - SXSHDL, SXSOFL, SXSHD: Extended subheader data (TRE support)
-    fn create_graphic_subheader_definition() -> StructureDefinition {
-        use crate::parser::ExpressionEvaluator;
-
-        // Condition for SXSOFL: present when SXSHDL > 0
-        let sxsofl_condition = ExpressionEvaluator::parse("SXSHDL.to_i > 0").unwrap();
-
-        // Condition for SXSHD: present when SXSHDL > 3 (SXSHDL includes 3 bytes for SXSOFL)
-        let sxshd_condition = ExpressionEvaluator::parse("SXSHDL.to_i > 3").unwrap();
-
-        StructureDefinition::new("NITF_GraphicSubheader")
-            // File Part Type - always "SY"
-            .with_field(
-                FieldDefinition::new("SY", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("File Part Type"),
-            )
-            // Graphic Identifier
-            .with_field(
-                FieldDefinition::new("SID", FieldType::String)
-                    .with_size(SizeSpec::Fixed(10))
-                    .with_doc("Graphic Identifier"),
-            )
-            // Graphic Name
-            .with_field(
-                FieldDefinition::new("SNAME", FieldType::String)
-                    .with_size(SizeSpec::Fixed(20))
-                    .with_doc("Graphic Name"),
-            )
-            // Security Fields (167 bytes total) - using "S" prefix for graphic segments
-            // Security Classification
-            .with_field(
-                FieldDefinition::new("SSCLAS", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("Graphic Security Classification"),
-            )
-            // Security Classification System
-            .with_field(
-                FieldDefinition::new("SSCLSY", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("Graphic Security Classification System"),
-            )
-            // Codewords
-            .with_field(
-                FieldDefinition::new("SSCODE", FieldType::String)
-                    .with_size(SizeSpec::Fixed(11))
-                    .with_doc("Graphic Codewords"),
-            )
-            // Control and Handling
-            .with_field(
-                FieldDefinition::new("SSCTLH", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("Graphic Control and Handling"),
-            )
-            // Releasing Instructions
-            .with_field(
-                FieldDefinition::new("SSREL", FieldType::String)
-                    .with_size(SizeSpec::Fixed(20))
-                    .with_doc("Graphic Releasing Instructions"),
-            )
-            // Declassification Type
-            .with_field(
-                FieldDefinition::new("SSDCTP", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("Graphic Declassification Type"),
-            )
-            // Declassification Date
-            .with_field(
-                FieldDefinition::new("SSDCDT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(8))
-                    .with_doc("Graphic Declassification Date"),
-            )
-            // Declassification Exemption
-            .with_field(
-                FieldDefinition::new("SSDCXM", FieldType::String)
-                    .with_size(SizeSpec::Fixed(4))
-                    .with_doc("Graphic Declassification Exemption"),
-            )
-            // Downgrade
-            .with_field(
-                FieldDefinition::new("SSDG", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("Graphic Downgrade"),
-            )
-            // Downgrade Date
-            .with_field(
-                FieldDefinition::new("SSDGDT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(8))
-                    .with_doc("Graphic Downgrade Date"),
-            )
-            // Classification Text
-            .with_field(
-                FieldDefinition::new("SSCLTX", FieldType::String)
-                    .with_size(SizeSpec::Fixed(43))
-                    .with_doc("Graphic Classification Text"),
-            )
-            // Classification Authority Type
-            .with_field(
-                FieldDefinition::new("SSCATP", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("Graphic Classification Authority Type"),
-            )
-            // Classification Authority
-            .with_field(
-                FieldDefinition::new("SSCAUT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(40))
-                    .with_doc("Graphic Classification Authority"),
-            )
-            // Classification Reason
-            .with_field(
-                FieldDefinition::new("SSCRSN", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("Graphic Classification Reason"),
-            )
-            // Security Source Date
-            .with_field(
-                FieldDefinition::new("SSSRDT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(8))
-                    .with_doc("Graphic Security Source Date"),
-            )
-            // Security Control Number
-            .with_field(
-                FieldDefinition::new("SSCTLN", FieldType::String)
-                    .with_size(SizeSpec::Fixed(15))
-                    .with_doc("Graphic Security Control Number"),
-            )
-            // Encryption - must be "0" (not encrypted)
-            .with_field(
-                FieldDefinition::new("ENCRYP", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("Encryption"),
-            )
-            // Graphic Type - must be "C" for CGM
-            .with_field(
-                FieldDefinition::new("SFMT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("Graphic Type"),
-            )
-            // Reserved for Future Use
-            .with_field(
-                FieldDefinition::new("SSTRUCT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(13))
-                    .with_doc("Reserved for Future Use"),
-            )
-            // Graphic Display Level (001-999)
-            .with_field(
-                FieldDefinition::new("SDLVL", FieldType::String)
-                    .with_size(SizeSpec::Fixed(3))
-                    .with_doc("Graphic Display Level"),
-            )
-            // Graphic Attachment Level (000-998)
-            .with_field(
-                FieldDefinition::new("SALVL", FieldType::String)
-                    .with_size(SizeSpec::Fixed(3))
-                    .with_doc("Graphic Attachment Level"),
-            )
-            // Graphic Location (RRRRRCCCCC format)
-            .with_field(
-                FieldDefinition::new("SLOC", FieldType::String)
-                    .with_size(SizeSpec::Fixed(10))
-                    .with_doc("Graphic Location"),
-            )
-            // First Graphic Bound Location (upper-left corner, RRRRRCCCCC format)
-            .with_field(
-                FieldDefinition::new("SBND1", FieldType::String)
-                    .with_size(SizeSpec::Fixed(10))
-                    .with_doc("First Graphic Bound Location"),
-            )
-            // Graphic Color ("C" for color, "M" for monochrome)
-            .with_field(
-                FieldDefinition::new("SCOLOR", FieldType::String)
-                    .with_size(SizeSpec::Fixed(1))
-                    .with_doc("Graphic Color"),
-            )
-            // Second Graphic Bound Location (lower-right corner, RRRRRCCCCC format)
-            .with_field(
-                FieldDefinition::new("SBND2", FieldType::String)
-                    .with_size(SizeSpec::Fixed(10))
-                    .with_doc("Second Graphic Bound Location"),
-            )
-            // Reserved for Future Use
-            .with_field(
-                FieldDefinition::new("SRES2", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("Reserved for Future Use"),
-            )
-            // Graphic Extended Subheader Data Length
-            // Value 00000 = no TREs, 00003-99999 = length of SXSOFL + SXSHD
-            .with_field(
-                FieldDefinition::new("SXSHDL", FieldType::String)
-                    .with_size(SizeSpec::Fixed(5))
-                    .with_doc("Graphic Extended Subheader Data Length"),
-            )
-            // Graphic Extended Subheader Overflow (conditional: present when SXSHDL > 0)
-            // Value 000 = no overflow, 001-999 = DES sequence number for overflow
-            .with_field(
-                FieldDefinition::new("SXSOFL", FieldType::String)
-                    .with_size(SizeSpec::Fixed(3))
-                    .with_condition(sxsofl_condition)
-                    .with_doc("Graphic Extended Subheader Overflow"),
-            )
-            // Graphic Extended Subheader Data (conditional: present when SXSHDL > 3)
-            // Contains TRE data, length = SXSHDL - 3
-            .with_field(
-                FieldDefinition::new("SXSHD", FieldType::Bytes)
-                    .with_size(SizeSpec::Expression(
-                        ExpressionEvaluator::parse("SXSHDL.to_i - 3").unwrap(),
-                    ))
-                    .with_condition(sxshd_condition)
-                    .with_doc("Graphic Extended Subheader Data"),
-            )
-    }
-
-    /// Create a minimal DES subheader structure definition.
-    fn create_des_subheader_definition() -> StructureDefinition {
-        StructureDefinition::new("NITF_DESSubheader")
-            .with_field(
-                FieldDefinition::new("DE", FieldType::String)
-                    .with_size(SizeSpec::Fixed(2))
-                    .with_doc("File Part Type"),
-            )
-            .with_field(
-                FieldDefinition::new("DESID", FieldType::String)
-                    .with_size(SizeSpec::Fixed(25))
-                    .with_doc("DES Identifier"),
-            )
-    }
-
     /// Parse a segment subheader and create an asset provider.
     ///
     /// This method extracts TRE bytes from segment subheaders (UDID, IXSHD for images,
@@ -1104,13 +479,13 @@ impl JBPDatasetReader {
         // Create appropriate definition and provider based on segment type
         match segment_type {
             SegmentType::Image => {
-                // Use the full .ksy-driven definition from registry if available,
-                // falling back to minimal definition for backwards compatibility.
-                // This ensures all image subheader fields are exposed through metadata.
+                // Load the image subheader definition from the registry (KSY file)
                 let definition = self
                     .registry
                     .get("nitf_02.10_image_subheader")
-                    .unwrap_or_else(|| Arc::new(Self::create_image_subheader_definition()));
+                    .ok_or_else(|| CodecError::InvalidFormat(
+                        "Structure definition not found: nitf_02.10_image_subheader".to_string()
+                    ))?;
                 
                 // Extract TREs from image subheader
                 let tre_envelopes = self.extract_image_tres(&subheader_bytes)?;
@@ -1135,11 +510,13 @@ impl JBPDatasetReader {
                 )?))
             }
             SegmentType::Text => {
-                // Use the full text subheader definition from registry
+                // Load the text subheader definition from the registry (KSY file)
                 let definition = self
                     .registry
                     .get("nitf_02.10_text_subheader")
-                    .unwrap_or_else(|| Arc::new(Self::create_text_subheader_definition_internal()));
+                    .ok_or_else(|| CodecError::InvalidFormat(
+                        "Structure definition not found: nitf_02.10_text_subheader".to_string()
+                    ))?;
                 
                 // Use TextSubheaderFacade for validation and to extract TXTFMT
                 let facade = TextSubheaderFacade::from_bytes(
@@ -1182,13 +559,13 @@ impl JBPDatasetReader {
                 )))
             }
             SegmentType::Graphic => {
-                // Use the full .ksy-driven definition from registry if available,
-                // falling back to minimal definition for backwards compatibility.
-                // This ensures all graphic subheader fields are exposed through metadata.
+                // Load the graphic subheader definition from the registry (KSY file)
                 let definition = self
                     .registry
                     .get("nitf_02.10_graphic_subheader")
-                    .unwrap_or_else(|| Arc::new(Self::create_graphic_subheader_definition()));
+                    .ok_or_else(|| CodecError::InvalidFormat(
+                        "Structure definition not found: nitf_02.10_graphic_subheader".to_string()
+                    ))?;
                 
                 // Use GraphicSubheaderFacade for validation (SY, SFMT, ENCRYP)
                 // and to extract title/description from SNAME/SID fields
@@ -1235,7 +612,13 @@ impl JBPDatasetReader {
                 )))
             }
             SegmentType::DataExtension => {
-                let definition = Arc::new(Self::create_des_subheader_definition());
+                // Load the DES subheader definition from the registry (KSY file)
+                let definition = self
+                    .registry
+                    .get("nitf_02.10_des_subheader")
+                    .ok_or_else(|| CodecError::InvalidFormat(
+                        "Structure definition not found: nitf_02.10_des_subheader".to_string()
+                    ))?;
                 let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
                     definition,
                     subheader_bytes,
@@ -1252,8 +635,13 @@ impl JBPDatasetReader {
                 )))
             }
             SegmentType::ReservedExtension => {
-                // RES segments use the same structure as DES for now
-                let definition = Arc::new(Self::create_des_subheader_definition());
+                // RES segments use the DES subheader definition
+                let definition = self
+                    .registry
+                    .get("nitf_02.10_des_subheader")
+                    .ok_or_else(|| CodecError::InvalidFormat(
+                        "Structure definition not found: nitf_02.10_des_subheader".to_string()
+                    ))?;
                 let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
                     definition,
                     subheader_bytes,
@@ -1900,22 +1288,18 @@ mod tests {
 
         // NUMI (3)
         header.extend_from_slice(format!("{:03}", numi).as_bytes());
-        // Image segment info - all LISH first, then all LI
+        // Image segment info - interleaved as nested type (LISH, LI) per segment
         for _ in 0..numi {
             header.extend_from_slice(format!("{:06}", image_subheader_len).as_bytes()); // LISH (6)
-        }
-        for _ in 0..numi {
             header.extend_from_slice(format!("{:010}", image_data_len).as_bytes()); // LI (10)
         }
 
         // NUMS (3)
         header.extend_from_slice(format!("{:03}", nums).as_bytes());
-        // Graphic segment info - all LSSH first, then all LS
+        // Graphic segment info - interleaved as nested type (LSSH, LS) per segment
         let graphic_data_len = 500usize;
         for _ in 0..nums {
             header.extend_from_slice(format!("{:04}", graphic_subheader_len).as_bytes()); // LSSH (4)
-        }
-        for _ in 0..nums {
             header.extend_from_slice(format!("{:06}", graphic_data_len).as_bytes()); // LS (6)
         }
 
@@ -1924,32 +1308,26 @@ mod tests {
 
         // NUMT (3)
         header.extend_from_slice(format!("{:03}", numt).as_bytes());
-        // Text segment info - all LTSH first, then all LT
+        // Text segment info - interleaved as nested type (LTSH, LT) per segment
         let text_data_len = 200usize;
         for _ in 0..numt {
             header.extend_from_slice(format!("{:04}", text_subheader_len).as_bytes()); // LTSH (4)
-        }
-        for _ in 0..numt {
             header.extend_from_slice(format!("{:05}", text_data_len).as_bytes()); // LT (5)
         }
 
         // NUMDES (3)
         header.extend_from_slice(format!("{:03}", numdes).as_bytes());
-        // DES segment info - all LDSH first, then all LD
+        // DES segment info - interleaved as nested type (LDSH, LD) per segment
         for _ in 0..numdes {
             header.extend_from_slice(b"0100"); // LDSH (4)
-        }
-        for _ in 0..numdes {
             header.extend_from_slice(b"000001000"); // LD (9) = 1000
         }
 
         // NUMRES (3)
         header.extend_from_slice(format!("{:03}", numres).as_bytes());
-        // RES segment info - all LRESH first, then all LRE
+        // RES segment info - interleaved as nested type (LRESH, LRE) per segment
         for _ in 0..numres {
             header.extend_from_slice(b"0050"); // LRESH (4)
-        }
-        for _ in 0..numres {
             header.extend_from_slice(b"0000500"); // LRE (7)
         }
 
