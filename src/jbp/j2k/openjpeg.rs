@@ -665,6 +665,11 @@ impl OpenJpegEncodeState {
 
         codec.setup_encoder(&mut cparams, &image)?;
 
+        // Enable TLM (Tile-part Length Marker) segments for optimized random access
+        // This is supported in OpenJPEG 2.4.0+ and allows decoders to efficiently
+        // seek to specific tiles without parsing the entire codestream
+        codec.set_extra_options(&["TLM=YES"])?;
+
         // Create output stream
         let stream = OjpStream::new_memory_write()?;
 
@@ -919,5 +924,111 @@ mod tests {
         if let Err(CodecError::Encode(msg)) = result {
             assert!(msg.contains("Incomplete"));
         }
+    }
+
+    #[test]
+    fn test_encode_with_tlm_markers() {
+        // Test that TLM markers are generated in the codestream
+        let codec = OpenJpegCodec::new();
+        let params = J2KEncodeParams {
+            width: 64,
+            height: 64,
+            num_components: 1,
+            bits_per_component: 8,
+            tile_width: 64,
+            tile_height: 64,
+            lossless: true,
+            ..Default::default()
+        };
+
+        let mut state = codec.start_encode(&params).unwrap();
+
+        // Encode a single tile with test data
+        let data = vec![128u8; 64 * 64];
+        state.encode_tile(0, &data).unwrap();
+
+        // Finalize and get the codestream
+        let codestream = Box::new(state).finalize().unwrap();
+
+        // Verify the codestream starts with SOC marker (0xFF4F)
+        assert!(codestream.len() >= 2);
+        assert_eq!(codestream[0], 0xFF);
+        assert_eq!(codestream[1], 0x4F);
+
+        // Search for TLM marker (0xFF55) in the codestream
+        // TLM markers should appear in the main header (before SOT marker 0xFF90)
+        let mut found_tlm = false;
+        let mut i = 2;
+        while i + 1 < codestream.len() {
+            if codestream[i] == 0xFF {
+                let marker = codestream[i + 1];
+                if marker == 0x55 {
+                    // Found TLM marker
+                    found_tlm = true;
+                    break;
+                }
+                if marker == 0x90 {
+                    // Reached SOT marker, stop searching
+                    break;
+                }
+                // Skip marker segment (marker + length + data)
+                if i + 3 < codestream.len() && marker != 0x4F && marker != 0xD9 {
+                    let len = u16::from_be_bytes([codestream[i + 2], codestream[i + 3]]) as usize;
+                    i += 2 + len;
+                } else {
+                    i += 2;
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        assert!(found_tlm, "TLM marker (0xFF55) not found in codestream header");
+    }
+
+    #[test]
+    fn test_roundtrip_with_tlm() {
+        // Test that encoding with TLM produces a decodable codestream
+        let codec = OpenJpegCodec::new();
+        let width = 64u32;
+        let height = 64u32;
+        
+        // Create test image data (gradient pattern)
+        let mut data = Vec::with_capacity((width * height) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                data.push(((x + y) % 256) as u8);
+            }
+        }
+
+        // Encode
+        let params = J2KEncodeParams {
+            width,
+            height,
+            num_components: 1,
+            bits_per_component: 8,
+            tile_width: width,
+            tile_height: height,
+            lossless: true,
+            ..Default::default()
+        };
+
+        let mut state = codec.start_encode(&params).unwrap();
+        state.encode_tile(0, &data).unwrap();
+        let codestream = Box::new(state).finalize().unwrap();
+
+        // Decode
+        let decode_params = J2KDecodeParams::default();
+        let result = codec.decode(&codestream, &decode_params).unwrap();
+
+        // Verify dimensions
+        assert_eq!(result.width, width);
+        assert_eq!(result.height, height);
+        assert_eq!(result.num_components, 1);
+        assert_eq!(result.bits_per_component, 8);
+
+        // Verify data matches (lossless)
+        assert_eq!(result.data.len(), data.len());
+        assert_eq!(result.data, data);
     }
 }

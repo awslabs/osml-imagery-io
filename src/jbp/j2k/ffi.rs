@@ -316,6 +316,42 @@ impl OjpCodec {
         Ok(())
     }
 
+    /// Set extra encoder options.
+    ///
+    /// This must be called after `setup_encoder()` and before `start_compress()`.
+    /// Supported options (OpenJPEG 2.4.0+):
+    /// - `TLM=YES` - Write TLM (Tile-part Length Marker) segments
+    /// - `PLT=YES` - Write PLT (Packet Length) marker segments
+    ///
+    /// # Arguments
+    /// * `options` - Slice of option strings in "KEY=VALUE" format
+    pub fn set_extra_options(&self, options: &[&str]) -> Result<(), CodecError> {
+        use std::ffi::CString;
+        
+        // Convert options to CStrings
+        let c_options: Vec<CString> = options
+            .iter()
+            .map(|s| CString::new(*s).expect("Option string contains null byte"))
+            .collect();
+        
+        // Create array of pointers (null-terminated)
+        let mut option_ptrs: Vec<*const c_char> = c_options
+            .iter()
+            .map(|s| s.as_ptr())
+            .collect();
+        option_ptrs.push(ptr::null()); // Null terminator
+        
+        let result = unsafe {
+            sys::opj_encoder_set_extra_options(self.ptr, option_ptrs.as_ptr())
+        };
+        
+        if result == OPJ_FALSE {
+            let msg = take_last_error().unwrap_or_else(|| "Unknown error".into());
+            return Err(CodecError::Encode(format!("Failed to set extra options: {}", msg)));
+        }
+        Ok(())
+    }
+
     /// Read header from stream.
     pub fn read_header(&self, stream: &OjpStream) -> Result<OjpImage, CodecError> {
         let mut image_ptr: *mut opj_image_t = ptr::null_mut();

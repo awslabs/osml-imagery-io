@@ -825,4 +825,23 @@ extern "C" {
     /// # Returns
     /// OPJ_TRUE on success, OPJ_FALSE on failure
     pub fn opj_codec_set_threads(p_codec: *mut opj_codec_t, num_threads: c_int) -> c_int;
+
+    /// Set extra encoder options
+    ///
+    /// This may be called after opj_setup_encoder() and before opj_start_compress().
+    /// Supported options (since OpenJPEG 2.4.0):
+    /// - PLT=YES/NO - Write PLT marker segments (packet length in tile-part header)
+    /// - TLM=YES/NO - Write TLM marker segments (tile-part lengths)
+    /// - GUARD_BITS=value - Number of guard bits in [0,7] range (since 2.5.0)
+    ///
+    /// # Arguments
+    /// * `p_codec` - Compression codec handle
+    /// * `p_options` - NULL-terminated array of "KEY=VALUE" strings
+    ///
+    /// # Returns
+    /// OPJ_TRUE on success, OPJ_FALSE on failure
+    pub fn opj_encoder_set_extra_options(
+        p_codec: *mut opj_codec_t,
+        p_options: *const *const c_char,
+    ) -> c_int;
 }
