@@ -458,6 +458,15 @@ J2K_PIXEL_TYPES = [
     PixelType.Int16,
 ]
 
+# Pixel types suitable for JPEG DCT compression (8-bit only)
+# 12-bit JPEG is not supported due to libjpeg-turbo limitations
+JPEG_PIXEL_TYPES = [
+    PixelType.UInt8,
+]
+
+# JPEG IC codes
+JPEG_IC_CODES = ["C3", "M3", "I1"]
+
 
 @st.composite
 def mask_patterns(
@@ -745,3 +754,309 @@ def realistic_image_for_compression(
     array = np.stack(bands, axis=0)
     
     return (array, pixel_type, num_bands, num_rows, num_cols)
+
+
+# =============================================================================
+# JPEG DCT Compression Strategies
+# =============================================================================
+
+def jpeg_pixel_types() -> st.SearchStrategy[PixelType]:
+    """Strategy for pixel types supported by JPEG DCT compression.
+    
+    JPEG DCT only supports 8-bit samples. 12-bit JPEG is not supported
+    due to libjpeg-turbo architectural constraints.
+    
+    Returns:
+        Strategy producing UInt8 pixel type only.
+    
+    Requirements: 7.1
+    
+    **Feature: jpeg-dct-compression, JPEG Pixel Types**
+    """
+    return st.sampled_from(JPEG_PIXEL_TYPES)
+
+
+def jpeg_ic_codes() -> st.SearchStrategy[str]:
+    """Strategy for JPEG DCT IC codes.
+    
+    Returns a strategy that samples from:
+    - C3: JPEG DCT compressed imagery
+    - M3: JPEG DCT compressed imagery with block mask
+    - I1: Downsampled JPEG (single block ≤2048×2048)
+    
+    Returns:
+        Strategy producing JPEG IC code strings.
+    
+    Requirements: 7.1
+    
+    **Feature: jpeg-dct-compression, JPEG IC Codes**
+    """
+    return st.sampled_from(JPEG_IC_CODES)
+
+
+def jpeg_quality() -> st.SearchStrategy[int]:
+    """Strategy for JPEG quality values.
+    
+    JPEG quality ranges from 1 (worst) to 100 (best).
+    For property testing, we use values that provide good quality
+    to ensure PSNR/SSIM thresholds are met.
+    
+    Returns:
+        Strategy producing quality values 50-95.
+    
+    Requirements: 7.1
+    
+    **Feature: jpeg-dct-compression, JPEG Quality**
+    """
+    return st.integers(min_value=50, max_value=95)
+
+
+def jpeg_comrat() -> st.SearchStrategy[str]:
+    """Strategy for JPEG COMRAT values.
+    
+    COMRAT for JPEG uses format "nn.n" representing quality 00.0 to 99.9.
+    Higher values = higher quality.
+    
+    Returns:
+        Strategy producing valid JPEG COMRAT strings.
+    
+    Requirements: 7.1
+    
+    **Feature: jpeg-dct-compression, JPEG COMRAT**
+    """
+    # Generate quality values that map to good compression quality
+    return st.integers(min_value=50, max_value=95).map(
+        lambda q: f"{q:02d}.0"
+    )
+
+
+def i1_image_dimensions() -> st.SearchStrategy[Tuple[int, int]]:
+    """Strategy for IC=I1 (downsampled JPEG) image dimensions.
+    
+    I1 images are constrained to ≤2048×2048 pixels and are encoded
+    as a single JPEG block.
+    
+    Returns:
+        Strategy producing (num_rows, num_cols) tuples within I1 constraints.
+    
+    Requirements: 7.2
+    
+    **Feature: jpeg-dct-compression, I1 Dimension Constraints**
+    """
+    return st.tuples(
+        st.integers(min_value=32, max_value=512),  # Use smaller sizes for faster tests
+        st.integers(min_value=32, max_value=512)
+    )
+
+
+@st.composite
+def jpeg_image_for_compression(
+    draw,
+    min_size: int = 32,
+    max_size: int = 128,
+    min_bands: int = 1,
+    max_bands: int = 3,
+) -> Tuple[np.ndarray, PixelType, int, int, int]:
+    """Composite strategy for images suitable for JPEG DCT compression testing.
+    
+    Generates 8-bit images with realistic value distributions that work well
+    with lossy JPEG compression quality metrics. Creates gradient-like images
+    with guaranteed variance for meaningful PSNR and SSIM calculations.
+    
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        min_size: Minimum dimension size (default 32)
+        max_size: Maximum dimension size (default 128)
+        min_bands: Minimum band count (default 1)
+        max_bands: Maximum band count (default 3)
+    
+    Returns:
+        Tuple of (array, pixel_type, num_bands, num_rows, num_cols)
+    
+    Requirements: 7.1, 7.2
+    
+    **Feature: jpeg-dct-compression, JPEG Image Generation**
+    """
+    # JPEG only supports 8-bit
+    pixel_type = PixelType.UInt8
+    num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
+    num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
+    
+    dtype = np.uint8
+    
+    # Generate a gradient-based image with noise overlay for realistic compression
+    # Pick a value range that spans meaningful values for 8-bit
+    value_range = draw(st.integers(min_value=100, max_value=200))
+    base_value = draw(st.integers(min_value=20, max_value=55))
+    
+    # Create gradient pattern
+    pattern_type = draw(st.sampled_from(["horizontal", "vertical", "diagonal"]))
+    
+    if pattern_type == "horizontal":
+        gradient = np.linspace(0, 1, num_cols)
+        base_pattern = np.tile(gradient, (num_rows, 1))
+    elif pattern_type == "vertical":
+        gradient = np.linspace(0, 1, num_rows)
+        base_pattern = np.tile(gradient.reshape(-1, 1), (1, num_cols))
+    else:  # diagonal
+        x = np.linspace(0, 1, num_cols)
+        y = np.linspace(0, 1, num_rows)
+        xx, yy = np.meshgrid(x, y)
+        base_pattern = (xx + yy) / 2
+    
+    # Scale to value range and add base
+    scaled_pattern = base_pattern * value_range + base_value
+    
+    # Add small random noise (up to 5% of range) for more realistic texture
+    noise_scale = value_range * 0.05
+    
+    # Create the multi-band image
+    bands = []
+    for _ in range(num_bands):
+        noise = draw(arrays(
+            dtype=np.float64,
+            shape=(num_rows, num_cols),
+            elements=st.floats(min_value=-noise_scale, max_value=noise_scale, 
+                             allow_nan=False, allow_infinity=False)
+        ))
+        band = np.clip(scaled_pattern + noise, 0, 255)
+        bands.append(band.astype(dtype))
+    
+    array = np.stack(bands, axis=0)
+    
+    return (array, pixel_type, num_bands, num_rows, num_cols)
+
+
+@st.composite
+def jpeg_i1_image(
+    draw,
+    min_size: int = 32,
+    max_size: int = 256,
+) -> Tuple[np.ndarray, PixelType, int, int, int]:
+    """Composite strategy for IC=I1 (downsampled JPEG) images.
+    
+    Generates images suitable for I1 encoding, which is constrained to
+    ≤2048×2048 pixels and encoded as a single JPEG block.
+    
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        min_size: Minimum dimension size (default 32)
+        max_size: Maximum dimension size (default 256, kept small for tests)
+    
+    Returns:
+        Tuple of (array, pixel_type, num_bands, num_rows, num_cols)
+    
+    Requirements: 7.2
+    
+    **Feature: jpeg-dct-compression, I1 Image Generation**
+    """
+    # I1 supports 1 or 3 bands (grayscale or RGB)
+    num_bands = draw(st.sampled_from([1, 3]))
+    
+    # Use the JPEG image generator with I1 dimension constraints
+    array, pixel_type, _, num_rows, num_cols = draw(
+        jpeg_image_for_compression(
+            min_size=min_size,
+            max_size=max_size,
+            min_bands=num_bands,
+            max_bands=num_bands,
+        )
+    )
+    
+    return (array, pixel_type, num_bands, num_rows, num_cols)
+
+
+@st.composite
+def masked_jpeg_image(
+    draw,
+    min_size: int = 64,
+    max_size: int = 128,
+    min_bands: int = 1,
+    max_bands: int = 3,
+) -> Tuple[np.ndarray, PixelType, int, int, int, int, int, Set[Tuple[int, int]]]:
+    """Composite strategy for generating masked JPEG (IC=M3) images.
+    
+    Generates a random 8-bit image with a mask pattern indicating which
+    blocks are present. Used for testing masked JPEG roundtrip operations.
+    
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        min_size: Minimum dimension size (default 64)
+        max_size: Maximum dimension size (default 128)
+        min_bands: Minimum band count (default 1)
+        max_bands: Maximum band count (default 3)
+    
+    Returns:
+        Tuple of (array, pixel_type, num_bands, num_rows, num_cols, 
+                  block_height, block_width, provided_blocks)
+    
+    Requirements: 7.1
+    
+    **Feature: jpeg-dct-compression, Masked JPEG Image Generation**
+    """
+    # JPEG only supports 8-bit
+    pixel_type = PixelType.UInt8
+    num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
+    block_height, block_width = draw(block_sizes())
+    
+    # Ensure image dimensions are multiples of block size for cleaner testing
+    min_blocks = max(2, min_size // block_height)
+    max_blocks = max(min_blocks, max_size // block_height)
+    num_block_rows = draw(st.integers(min_value=min_blocks, max_value=max_blocks))
+    num_rows = num_block_rows * block_height
+    
+    min_blocks = max(2, min_size // block_width)
+    max_blocks = max(min_blocks, max_size // block_width)
+    num_block_cols = draw(st.integers(min_value=min_blocks, max_value=max_blocks))
+    num_cols = num_block_cols * block_width
+    
+    # Generate mask pattern (exclude all_masked to ensure we have data)
+    pattern_type = draw(st.sampled_from([
+        "all_present",
+        "checkerboard",
+        "border_only",
+        "random",
+        "single_block",
+    ]))
+    
+    all_blocks = {(r, c) for r in range(num_block_rows) for c in range(num_block_cols)}
+    
+    if pattern_type == "all_present":
+        provided_blocks = all_blocks
+    elif pattern_type == "checkerboard":
+        provided_blocks = {(r, c) for r, c in all_blocks if (r + c) % 2 == 0}
+    elif pattern_type == "border_only":
+        provided_blocks = {(r, c) for r, c in all_blocks 
+                if r == 0 or r == num_block_rows - 1 or c == 0 or c == num_block_cols - 1}
+    elif pattern_type == "single_block":
+        provided_blocks = {draw(st.sampled_from(sorted(list(all_blocks))))}
+    else:  # random - ensure at least one block
+        selected = draw(st.lists(st.sampled_from(sorted(list(all_blocks))), 
+                                min_size=1, unique=True))
+        provided_blocks = set(selected)
+    
+    # Generate image data using JPEG-friendly values
+    dtype = np.uint8
+    value_range = draw(st.integers(min_value=100, max_value=200))
+    base_value = draw(st.integers(min_value=20, max_value=55))
+    
+    # Create gradient pattern
+    gradient = np.linspace(0, 1, num_cols)
+    base_pattern = np.tile(gradient, (num_rows, 1))
+    scaled_pattern = base_pattern * value_range + base_value
+    
+    bands = []
+    for _ in range(num_bands):
+        noise = draw(arrays(
+            dtype=np.float64,
+            shape=(num_rows, num_cols),
+            elements=st.floats(min_value=-5, max_value=5, 
+                             allow_nan=False, allow_infinity=False)
+        ))
+        band = np.clip(scaled_pattern + noise, 0, 255)
+        bands.append(band.astype(dtype))
+    
+    array = np.stack(bands, axis=0)
+    
+    return (array, pixel_type, num_bands, num_rows, num_cols, 
+            block_height, block_width, provided_blocks)

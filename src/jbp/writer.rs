@@ -962,6 +962,40 @@ impl JBPDatasetWriter {
             }
         }
         
+        // JPEG DCT specific validation (IC=C3, M3, I1)
+        let is_jpeg = ic_trimmed == "C3" || ic_trimmed == "M3" || ic_trimmed == "I1";
+        if is_jpeg {
+            // JPEG only supports 8-bit pixels (12-bit is not supported due to libjpeg-turbo limitations)
+            if image_props.nbpp != 8 {
+                return Err(CodecError::InvalidFormat(format!(
+                    "JPEG DCT images (IC={}) only support 8-bit pixels, got {} bits. \
+                     Consider using JPEG 2000 (IC=C8) or uncompressed format (IC=NC) for other bit depths.",
+                    ic_trimmed, image_props.nbpp
+                )));
+            }
+            
+            // I1 (Downsampled JPEG) has dimension constraints
+            if ic_trimmed == "I1" {
+                if image_props.nrows > 2048 || image_props.ncols > 2048 {
+                    return Err(CodecError::InvalidFormat(format!(
+                        "IC=I1 (Downsampled JPEG) requires dimensions ≤2048×2048, got {}×{}",
+                        image_props.ncols, image_props.nrows
+                    )));
+                }
+            }
+            
+            // JPEG supports IMODE=B, P, or S (not R for row interleaved)
+            // For RGB/YCbCr, IMODE=P is typical
+            // For multiband, IMODE=B or S is used
+            if hints.imode == "R" {
+                return Err(CodecError::InvalidFormat(format!(
+                    "JPEG DCT images (IC={}) do not support IMODE=R (row interleaved). \
+                     Use IMODE=B (block), IMODE=P (pixel), or IMODE=S (sequential).",
+                    ic_trimmed
+                )));
+            }
+        }
+        
         // Validate NPPBH range
         if hints.nppbh < 1 || hints.nppbh > 8192 {
             return Err(CodecError::InvalidFormat(format!(
@@ -996,6 +1030,12 @@ impl JBPDatasetWriter {
         // For JPEG 2000, force IMODE to "B" if not already set
         if is_j2k {
             adjusted.imode = "B".to_string();
+        }
+        
+        // For JPEG DCT, set default COMRAT if not specified
+        if is_jpeg && adjusted.comrat.is_none() {
+            // Default JPEG quality is 75, which maps to COMRAT "75.0"
+            adjusted.comrat = Some("75.0".to_string());
         }
         
         Ok(adjusted)
@@ -1056,15 +1096,15 @@ impl JBPDatasetWriter {
         // Determine if pixel values are signed
         let is_signed = props.pvtype == "SI";
 
-        // For masked J2K images (M8, MD), we don't need the initial multi-tile encoder
+        // For masked compressed images (M8, MD, M3), we don't need the initial multi-tile encoder
         // because we create per-block single-tile encoders later. Skip creating it
         // to avoid issues with decomposition levels vs image dimensions.
-        let is_masked_j2k = is_masked && (encoding_ic == "C8" || encoding_ic == "CD");
+        let is_masked_compressed = is_masked && (encoding_ic == "C8" || encoding_ic == "CD" || encoding_ic == "C3");
 
         // Create the block encoder based on IC code (use underlying compression for masked)
-        // Skip for masked J2K - we'll create per-block encoders later
+        // Skip for masked compressed images - we'll create per-block encoders later
         #[cfg(feature = "openjpeg")]
-        let encoder: Option<Box<dyn crate::jbp::image::encoder::BlockEncoder>> = if is_masked_j2k {
+        let encoder: Option<Box<dyn crate::jbp::image::encoder::BlockEncoder>> = if is_masked_compressed {
             None
         } else {
             Some(create_block_encoder(
@@ -1078,11 +1118,12 @@ impl JBPDatasetWriter {
                 hints.nppbh,
                 hints.nppbv,
                 hints.j2k_hints.as_ref(),
+                hints.comrat.as_deref(),
             )?)
         };
 
         #[cfg(not(feature = "openjpeg"))]
-        let encoder: Option<Box<dyn crate::jbp::image::encoder::BlockEncoder>> = if is_masked_j2k {
+        let encoder: Option<Box<dyn crate::jbp::image::encoder::BlockEncoder>> = if is_masked_compressed {
             None
         } else {
             Some(create_block_encoder(
@@ -1096,6 +1137,7 @@ impl JBPDatasetWriter {
                 hints.nppbh,
                 hints.nppbv,
                 None,
+                hints.comrat.as_deref(),
             )?)
         };
 
@@ -1118,7 +1160,7 @@ impl JBPDatasetWriter {
             );
 
             // For uncompressed masked images (NM), we encode blocks sequentially
-            // and track offsets. For compressed masked images (M8, etc.), we use
+            // and track offsets. For compressed masked images (M8, M3, etc.), we use
             // the encoder which handles its own offset tracking.
             if encoding_ic == "NC" {
                 // Uncompressed masked image: encode blocks sequentially
@@ -1152,6 +1194,78 @@ impl JBPDatasetWriter {
                     }
                 }
                 
+                // Serialize mask with updated offsets
+                let mask_bytes = mask.to_bytes();
+
+                // Combine mask table and encoded data
+                let mut result = Vec::with_capacity(mask_bytes.len() + encoded_data.len());
+                result.extend_from_slice(&mask_bytes);
+                result.extend_from_slice(&encoded_data);
+
+                Ok(result)
+            } else if encoding_ic == "C3" {
+                // Masked JPEG DCT image (M3): encode each block as a separate JPEG stream.
+                // The decoder expects each block to be a standalone JPEG stream.
+                //
+                // We create a new single-block encoder for each block, encode it, and
+                // concatenate the streams while tracking offsets.
+                
+                // Drop the encoder if it exists (it shouldn't for masked images)
+                drop(encoder);
+                
+                let mut encoded_data = Vec::new();
+                
+                for block_row in 0..grid_rows {
+                    for block_col in 0..grid_cols {
+                        let block_index = (block_row * grid_cols + block_col) as usize;
+                        
+                        if provided_blocks.contains(&(block_row, block_col)) {
+                            // Record the offset where this block's JPEG stream starts
+                            mask.block_offsets[block_index] = encoded_data.len() as u32;
+                            
+                            // Get the tile data
+                            let (tile_data, shape) = assembler.get_output_tile(block_row, block_col)?;
+                            
+                            // Create a single-block JPEG encoder for this block
+                            let block_height = shape[1];
+                            let block_width = shape[2];
+                            
+                            #[cfg(feature = "libjpeg-turbo")]
+                            let mut block_encoder = create_block_encoder(
+                                &encoding_ic,
+                                block_height,  // Single block = block dimensions
+                                block_width,
+                                props.nbands,
+                                props.nbpp as u8,
+                                is_signed,
+                                imode,
+                                block_width,   // Tile size = full block (single tile)
+                                block_height,
+                                None,  // No J2K hints for JPEG
+                                hints.comrat.as_deref(),
+                            )?;
+                            
+                            #[cfg(not(feature = "libjpeg-turbo"))]
+                            return Err(CodecError::Unsupported(
+                                "JPEG DCT compression (IC=M3) requires the 'libjpeg-turbo' feature to be enabled.".into()
+                            ));
+                            
+                            #[cfg(feature = "libjpeg-turbo")]
+                            {
+                                // Encode the single block (tile 0,0 in this single-tile image)
+                                block_encoder.encode_block(0, 0, &tile_data, shape)?;
+                                
+                                // Finalize to get the JPEG stream for this block
+                                let block_jpeg = block_encoder.finalize()?;
+                                
+                                // Append the JPEG stream
+                                encoded_data.extend_from_slice(&block_jpeg);
+                            }
+                        }
+                        // Masked blocks already have EMPTY_BLOCK_OFFSET from from_provided_blocks
+                    }
+                }
+
                 // Serialize mask with updated offsets
                 let mask_bytes = mask.to_bytes();
 
@@ -1236,6 +1350,7 @@ impl JBPDatasetWriter {
                                 block_width,   // Tile size = full block (single tile)
                                 block_height,
                                 block_hints.as_ref(),
+                                hints.comrat.as_deref(),
                             )?;
                             
                             #[cfg(not(feature = "openjpeg"))]
@@ -1250,6 +1365,7 @@ impl JBPDatasetWriter {
                                 block_width,
                                 block_height,
                                 None,
+                                hints.comrat.as_deref(),
                             )?;
                             
                             // Encode the single block (tile 0,0 in this single-tile image)

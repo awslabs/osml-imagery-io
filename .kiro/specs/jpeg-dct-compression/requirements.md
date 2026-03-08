@@ -29,7 +29,7 @@ JPEG DCT compression is required for full CLEVEL conformance across all complexi
 
 1. WHEN a NITF file with IC=C3 is opened, THE JBP_Image_Reader SHALL decode JPEG DCT compressed blocks and return raw pixel data.
 2. WHEN decoding 8-bit monochrome JPEG blocks, THE JPEG_Block_Decoder SHALL produce UInt8 pixel arrays with correct dimensions.
-3. WHEN decoding 12-bit monochrome JPEG blocks, THE JPEG_Block_Decoder SHALL produce UInt16 pixel arrays with values in the 12-bit range (0-4095).
+3. WHEN decoding 12-bit monochrome JPEG blocks, THE JPEG_Block_Decoder SHALL return a clear error message explaining that 12-bit JPEG is not supported and suggesting alternatives.
 4. WHEN decoding RGB 24-bit JPEG blocks (IMODE=P), THE JPEG_Block_Decoder SHALL produce 3-band UInt8 pixel arrays in BSQ format (bands, rows, cols).
 5. WHEN decoding YCbCr601 24-bit JPEG blocks (IMODE=P), THE JPEG_Block_Decoder SHALL convert to RGB color space and produce 3-band UInt8 pixel arrays.
 6. WHEN decoding multiband JPEG (IMODE=B or S), THE JPEG_Block_Decoder SHALL decode each band independently and combine into a multi-band array.
@@ -42,7 +42,7 @@ JPEG DCT compression is required for full CLEVEL conformance across all complexi
 
 1. WHEN writing an image with IC=C3 metadata hint, THE JBP_Image_Writer SHALL encode blocks using JPEG DCT compression.
 2. WHEN encoding 8-bit monochrome images, THE JPEG_Block_Encoder SHALL produce valid JPEG bitstreams.
-3. WHEN encoding 12-bit monochrome images, THE JPEG_Block_Encoder SHALL produce valid 12-bit JPEG bitstreams.
+3. WHEN encoding 12-bit monochrome images, THE JPEG_Block_Encoder SHALL return a clear error message explaining that 12-bit JPEG is not supported and suggesting alternatives.
 4. WHEN encoding 3-band RGB images (IMODE=P), THE JPEG_Block_Encoder SHALL produce pixel-interleaved JPEG bitstreams.
 5. WHEN encoding 3-band images with YCbCr601 color space hint, THE JPEG_Block_Encoder SHALL convert from RGB to YCbCr601 before compression.
 6. WHEN encoding multiband images (IMODE=B or S), THE JPEG_Block_Encoder SHALL encode each band as a separate JPEG bitstream.
@@ -90,7 +90,9 @@ JPEG DCT compression is required for full CLEVEL conformance across all complexi
 1. THE JPEG_DCT_Codec SHALL use a Rust library licensed under MIT, Apache 2.0, or BSD.
 2. THE JPEG_DCT_Codec SHALL NOT use any GPL or LGPL licensed dependencies.
 3. THE JPEG_DCT_Codec SHALL support 8-bit baseline JPEG encoding and decoding.
-4. THE JPEG_DCT_Codec SHALL support 12-bit extended JPEG encoding and decoding.
+4. THE JPEG_DCT_Codec SHALL return a clear error message when 12-bit JPEG is requested, explaining the limitation and suggesting alternatives (JPEG 2000 or uncompressed).
+
+**Note**: 12-bit JPEG support is not implemented due to architectural constraints in libjpeg-turbo. The TurboJPEG API only supports 8-bit samples, and 12-bit support would require linking against a separately compiled libjpeg12 library with different symbol names.
 
 ### Requirement 7: Lossy Roundtrip Quality
 

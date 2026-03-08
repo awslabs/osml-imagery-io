@@ -10,9 +10,12 @@
 //! |---------|-------------|----------------|
 //! | NC | No compression | [`UncompressedBlockDecoder`] |
 //! | NM | No compression with mask | [`UncompressedBlockDecoder`] |
+//! | C3 | JPEG DCT | [`JpegNitfBlockDecoder`] |
+//! | M3 | JPEG DCT with mask | [`JpegNitfBlockDecoder`] |
+//! | I1 | Downsampled JPEG | [`JpegNitfBlockDecoder`] |
 //! | C8 | JPEG 2000 Part 1 | [`Jpeg2000BlockDecoder`] |
 //! | CD | JPEG 2000 Part 15 (HTJ2K) | [`Jpeg2000BlockDecoder`] |
-//! | M8 | JPEG 2000 with mask | Future |
+//! | M8 | JPEG 2000 with mask | [`Jpeg2000BlockDecoder`] |
 //!
 //! # Example
 //!
@@ -33,6 +36,9 @@ use crate::jbp::image::types::{InterleaveMode, PixelJustification, PixelValueTyp
 
 #[cfg(feature = "openjpeg")]
 use crate::jbp::j2k::{get_j2k_codec, Jpeg2000BlockDecoder};
+
+#[cfg(feature = "libjpeg-turbo")]
+use crate::jbp::jpeg::{JpegBlockDecoder, JpegColorSpace};
 
 /// Trait for decoding image blocks from various compression formats.
 ///
@@ -145,6 +151,8 @@ pub trait BlockDecoder: Send + Sync {
 ///
 /// # Supported Compression Types
 /// - `NC`, `NM`: Uncompressed imagery
+/// - `C3`, `M3`: JPEG DCT (requires `libjpeg-turbo` feature)
+/// - `I1`: Downsampled JPEG (requires `libjpeg-turbo` feature)
 /// - `C8`, `M8`: JPEG 2000 Part 1 (requires `openjpeg` feature)
 /// - `CD`, `MD`: JPEG 2000 Part 15 HTJ2K (requires `openjpeg` feature)
 pub fn create_block_decoder(
@@ -168,6 +176,16 @@ pub fn create_block_decoder(
             let decoder = UncompressedBlockDecoder::new(subheader, image_data)?;
             Ok(Box::new(decoder))
         }
+        #[cfg(feature = "libjpeg-turbo")]
+        "C3" | "I1" => {
+            let decoder = JpegNitfBlockDecoder::new(subheader, image_data)?;
+            Ok(Box::new(decoder))
+        }
+        #[cfg(not(feature = "libjpeg-turbo"))]
+        "C3" | "I1" => Err(CodecError::Unsupported(format!(
+            "JPEG DCT compression (IC='{}') requires the 'libjpeg-turbo' feature to be enabled.",
+            ic_trimmed
+        ))),
         #[cfg(feature = "openjpeg")]
         "C8" | "CD" => {
             let codec = get_j2k_codec();
@@ -180,7 +198,7 @@ pub fn create_block_decoder(
             ic_trimmed
         ))),
         _ => Err(CodecError::Unsupported(format!(
-            "Unsupported compression type: '{}'. Supported: NC, NM, C8, M8, CD, MD.",
+            "Unsupported compression type: '{}'. Supported: NC, NM, C3, M3, I1, C8, M8, CD, MD.",
             ic_trimmed
         ))),
     }
@@ -692,6 +710,412 @@ impl BlockDecoder for UncompressedBlockDecoder {
 // Expose internal types for testing
 #[cfg(test)]
 pub(crate) use self::UncompressedBlockDecoder as TestUncompressedBlockDecoder;
+
+// =============================================================================
+// JpegNitfBlockDecoder - JPEG DCT decoder for NITF (IC=C3, M3, I1)
+// =============================================================================
+
+/// Block decoder for JPEG DCT compressed NITF imagery (IC=C3, M3, I1).
+///
+/// This decoder wraps the [`JpegBlockDecoder`] and implements the [`BlockDecoder`]
+/// trait for integration with the JBP image reader infrastructure.
+///
+/// # Supported IC Codes
+/// - `C3`: JPEG DCT compressed imagery
+/// - `M3`: JPEG DCT compressed imagery with block mask
+/// - `I1`: Downsampled JPEG (single block ≤2048×2048)
+///
+/// # Requirements
+/// - 1.1: Decode JPEG DCT compressed blocks
+/// - 1.2: Decode 8-bit monochrome JPEG blocks
+/// - 1.3: Return clear error for 12-bit JPEG (not supported)
+/// - 1.4: Decode RGB 24-bit JPEG blocks
+/// - 1.5: Decode YCbCr601 24-bit JPEG blocks with color space conversion
+/// - 1.6: Decode multiband JPEG (IMODE=B or S)
+#[cfg(feature = "libjpeg-turbo")]
+pub struct JpegNitfBlockDecoder {
+    /// The raw image data (JPEG compressed blocks)
+    image_data: Arc<[u8]>,
+    /// The underlying JPEG decoder
+    jpeg_decoder: JpegBlockDecoder,
+    /// Number of rows in the image
+    nrows: u32,
+    /// Number of columns in the image
+    ncols: u32,
+    /// Number of blocks per row
+    nbpr: u32,
+    /// Number of blocks per column
+    nbpc: u32,
+    /// Number of pixels per block horizontal
+    nppbh: u32,
+    /// Number of pixels per block vertical
+    nppbv: u32,
+    /// Number of bands
+    nbands: u32,
+    /// Bits per pixel
+    nbpp: u8,
+    /// Interleave mode
+    imode: InterleaveMode,
+    /// Compression type (C3, M3, or I1)
+    ic: String,
+    /// Block offsets (lazily computed for multi-block images)
+    /// Each entry is (start_offset, end_offset) for the JPEG stream
+    block_offsets: std::sync::OnceLock<Vec<(usize, usize)>>,
+}
+
+#[cfg(feature = "libjpeg-turbo")]
+impl JpegNitfBlockDecoder {
+    /// Create a new JPEG NITF block decoder from image subheader.
+    ///
+    /// # Arguments
+    /// * `subheader` - The image subheader facade
+    /// * `image_data` - The raw JPEG compressed image data
+    ///
+    /// # Returns
+    /// A new `JpegNitfBlockDecoder` or an error if parameters are invalid.
+    ///
+    /// # Requirements
+    /// - 1.1: JPEG DCT decoding support
+    /// - 4.2: I1 dimension constraint validation (≤2048×2048)
+    pub fn new(
+        subheader: &ImageSubheaderFacade,
+        image_data: Arc<[u8]>,
+    ) -> Result<Self, CodecError> {
+        let ic = subheader.ic()?.trim().to_string();
+        let nrows = subheader.nrows()?;
+        let ncols = subheader.ncols()?;
+        let nbpr = subheader.nbpr()?;
+        let nbpc = subheader.nbpc()?;
+        let nppbh = subheader.nppbh()?;
+        let nppbv = subheader.nppbv()?;
+        let nbands = subheader.band_count()? as u32;
+        let nbpp = subheader.nbpp()?;
+        let imode = subheader.imode()?;
+        let irep = subheader.irep()?;
+
+        // Validate I1 dimension constraint (Requirement 4.2)
+        if ic == "I1" && (nrows > 2048 || ncols > 2048) {
+            return Err(CodecError::InvalidFormat(format!(
+                "IC=I1 (Downsampled JPEG) requires dimensions ≤2048×2048, got {}×{}",
+                ncols, nrows
+            )));
+        }
+
+        // Determine color space from IREP
+        let color_space = JpegColorSpace::from_irep(irep, nbands as usize);
+
+        // Create the underlying JPEG decoder
+        let jpeg_decoder = JpegBlockDecoder::new(
+            nbpp,
+            nbands as usize,
+            nppbh as usize,
+            nppbv as usize,
+            imode,
+            color_space,
+        )?;
+
+        Ok(Self {
+            image_data,
+            jpeg_decoder,
+            nrows,
+            ncols,
+            nbpr,
+            nbpc,
+            nppbh,
+            nppbv,
+            nbands,
+            nbpp,
+            imode,
+            ic,
+            block_offsets: std::sync::OnceLock::new(),
+        })
+    }
+
+    /// Calculate the actual dimensions of a block, handling edge blocks.
+    fn actual_block_dimensions(&self, block_row: u32, block_col: u32) -> (u32, u32) {
+        let start_row = block_row * self.nppbv;
+        let start_col = block_col * self.nppbh;
+
+        let actual_rows = if start_row + self.nppbv > self.nrows {
+            self.nrows - start_row
+        } else {
+            self.nppbv
+        };
+
+        let actual_cols = if start_col + self.nppbh > self.ncols {
+            self.ncols - start_col
+        } else {
+            self.nppbh
+        };
+
+        (actual_rows, actual_cols)
+    }
+
+    /// Calculate bytes per pixel.
+    fn bytes_per_pixel(&self) -> usize {
+        ((self.nbpp as usize) + 7) / 8
+    }
+
+    /// Compute block offsets by scanning through the image data for JPEG EOI markers.
+    /// 
+    /// For multi-block JPEG images (IC=C3), each block is stored as a separate JPEG
+    /// stream concatenated together. This method scans through the data to find the
+    /// start and end of each JPEG stream.
+    /// 
+    /// Returns a vector of (start_offset, end_offset) tuples for each block in
+    /// row-major order.
+    fn compute_block_offsets(&self) -> Vec<(usize, usize)> {
+        let total_blocks = (self.nbpc * self.nbpr) as usize;
+        let mut offsets = Vec::with_capacity(total_blocks);
+        
+        // For single-block images, the entire data is one JPEG stream
+        if total_blocks == 1 {
+            offsets.push((0, self.image_data.len()));
+            return offsets;
+        }
+        
+        // Scan through the data to find JPEG stream boundaries
+        let mut current_offset = 0;
+        
+        for _ in 0..total_blocks {
+            if current_offset >= self.image_data.len() {
+                // No more data - remaining blocks will have invalid offsets
+                offsets.push((current_offset, current_offset));
+                continue;
+            }
+            
+            let remaining_data = &self.image_data[current_offset..];
+            
+            // Find the end of this JPEG stream (EOI marker)
+            if let Some(jpeg_len) = find_jpeg_end(remaining_data) {
+                let end_offset = current_offset + jpeg_len;
+                offsets.push((current_offset, end_offset));
+                current_offset = end_offset;
+            } else {
+                // No EOI found - use remaining data as the last block
+                offsets.push((current_offset, self.image_data.len()));
+                current_offset = self.image_data.len();
+            }
+        }
+        
+        offsets
+    }
+    
+    /// Get block offsets, computing them lazily if needed.
+    fn get_block_offsets(&self) -> &[(usize, usize)] {
+        self.block_offsets.get_or_init(|| self.compute_block_offsets())
+    }
+
+    /// Apply band selection to decoded data.
+    fn apply_band_selection(
+        &self,
+        data: &[u8],
+        actual_rows: u32,
+        actual_cols: u32,
+        bands: &[u32],
+    ) -> Result<Vec<u8>, CodecError> {
+        let bpp = self.bytes_per_pixel();
+        let pixels_per_band = (actual_rows as usize) * (actual_cols as usize);
+        let band_size = pixels_per_band * bpp;
+
+        let mut output = Vec::with_capacity(bands.len() * band_size);
+
+        for &band_idx in bands {
+            if band_idx >= self.nbands {
+                return Err(CodecError::Decode(format!(
+                    "Band index {} out of range (image has {} bands)",
+                    band_idx, self.nbands
+                )));
+            }
+
+            let band_offset = (band_idx as usize) * band_size;
+            let band_end = band_offset + band_size;
+
+            if band_end > data.len() {
+                return Err(CodecError::Decode(format!(
+                    "Band data out of bounds: band {} offset {} + {} > {}",
+                    band_idx, band_offset, band_size, data.len()
+                )));
+            }
+
+            output.extend_from_slice(&data[band_offset..band_end]);
+        }
+
+        Ok(output)
+    }
+}
+
+#[cfg(feature = "libjpeg-turbo")]
+impl BlockDecoder for JpegNitfBlockDecoder {
+    fn decode_block(
+        &self,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+        bands: Option<&[u32]>,
+    ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        // JPEG only supports resolution level 0
+        if resolution_level != 0 {
+            return Err(CodecError::InvalidBlockCoordinates(
+                block_row,
+                block_col,
+                resolution_level,
+            ));
+        }
+
+        // Validate block coordinates
+        if block_row >= self.nbpc || block_col >= self.nbpr {
+            return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
+        }
+
+        let (actual_rows, actual_cols) = self.actual_block_dimensions(block_row, block_col);
+
+        // Get the block offsets and find the JPEG data for this block
+        let block_offsets = self.get_block_offsets();
+        let block_index = (block_row * self.nbpr + block_col) as usize;
+        
+        if block_index >= block_offsets.len() {
+            return Err(CodecError::Decode(format!(
+                "Block index {} out of range (have {} blocks)",
+                block_index, block_offsets.len()
+            )));
+        }
+        
+        let (start_offset, end_offset) = block_offsets[block_index];
+        
+        if start_offset >= end_offset || end_offset > self.image_data.len() {
+            return Err(CodecError::Decode(format!(
+                "Invalid block offsets: start={}, end={}, data_len={}",
+                start_offset, end_offset, self.image_data.len()
+            )));
+        }
+        
+        let block_jpeg_data = &self.image_data[start_offset..end_offset];
+
+        // Decode the JPEG data
+        // For single-band or RGB/YCbCr with IMODE=P, use decode_block
+        // For multiband with IMODE=B or S, use decode_multiband_block
+        let decoded = if self.nbands == 1 
+            || (self.nbands == 3 && self.imode == InterleaveMode::P) 
+        {
+            self.jpeg_decoder.decode_block(block_jpeg_data)?
+        } else {
+            self.jpeg_decoder.decode_multiband_block(block_jpeg_data)?
+        };
+
+        // Apply band selection if specified
+        let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
+        let final_data = match bands {
+            Some(band_indices) if !band_indices.is_empty() => {
+                self.apply_band_selection(&decoded, actual_rows, actual_cols, band_indices)?
+            }
+            _ => decoded,
+        };
+
+        // Return shape as [bands, rows, cols] (CHW format)
+        Ok((final_data, [num_bands, actual_rows, actual_cols]))
+    }
+
+    fn has_block(&self, block_row: u32, block_col: u32) -> bool {
+        block_row < self.nbpc && block_col < self.nbpr
+    }
+
+    fn compression_type(&self) -> &str {
+        &self.ic
+    }
+
+    fn num_resolution_levels(&self) -> u32 {
+        // JPEG DCT only supports a single resolution level
+        1
+    }
+
+    fn decode_block_at_offset(
+        &self,
+        offset: u64,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+        bands: Option<&[u32]>,
+    ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        // JPEG only supports resolution level 0
+        if resolution_level != 0 {
+            return Err(CodecError::InvalidBlockCoordinates(
+                block_row,
+                block_col,
+                resolution_level,
+            ));
+        }
+
+        // Validate block coordinates
+        if block_row >= self.nbpc || block_col >= self.nbpr {
+            return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
+        }
+
+        let (actual_rows, actual_cols) = self.actual_block_dimensions(block_row, block_col);
+
+        // For masked JPEG (M3), the offset points to the start of the JPEG stream
+        // We need to find the end of the JPEG stream (look for EOI marker 0xFFD9)
+        let offset_usize = offset as usize;
+        if offset_usize >= self.image_data.len() {
+            return Err(CodecError::Decode(format!(
+                "Block offset {} exceeds image data length {}",
+                offset, self.image_data.len()
+            )));
+        }
+
+        // Find the end of the JPEG stream by looking for EOI marker
+        let jpeg_data = &self.image_data[offset_usize..];
+        let jpeg_end = find_jpeg_end(jpeg_data).ok_or_else(|| {
+            CodecError::Decode("Could not find JPEG EOI marker in block data".into())
+        })?;
+
+        let block_jpeg = &jpeg_data[..jpeg_end];
+
+        // Decode the JPEG data
+        let decoded = if self.nbands == 1 
+            || (self.nbands == 3 && self.imode == InterleaveMode::P) 
+        {
+            self.jpeg_decoder.decode_block(block_jpeg)?
+        } else {
+            self.jpeg_decoder.decode_multiband_block(block_jpeg)?
+        };
+
+        // Apply band selection if specified
+        let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
+        let final_data = match bands {
+            Some(band_indices) if !band_indices.is_empty() => {
+                self.apply_band_selection(&decoded, actual_rows, actual_cols, band_indices)?
+            }
+            _ => decoded,
+        };
+
+        // Return shape as [bands, rows, cols] (CHW format)
+        Ok((final_data, [num_bands, actual_rows, actual_cols]))
+    }
+}
+
+// Safety: JpegNitfBlockDecoder is thread-safe
+// - image_data is Arc<[u8]> (immutable, shared)
+// - jpeg_decoder contains only primitive types and JpegCodec (which is Send+Sync)
+// - All other fields are primitive types
+#[cfg(feature = "libjpeg-turbo")]
+unsafe impl Send for JpegNitfBlockDecoder {}
+#[cfg(feature = "libjpeg-turbo")]
+unsafe impl Sync for JpegNitfBlockDecoder {}
+
+/// Find the end of a JPEG stream by looking for the EOI marker (0xFFD9).
+///
+/// Returns the byte offset just after the EOI marker, or None if not found.
+#[cfg(feature = "libjpeg-turbo")]
+fn find_jpeg_end(data: &[u8]) -> Option<usize> {
+    // Look for EOI marker (0xFF 0xD9)
+    for i in 0..data.len().saturating_sub(1) {
+        if data[i] == 0xFF && data[i + 1] == 0xD9 {
+            return Some(i + 2);
+        }
+    }
+    None
+}
 
 
 #[cfg(test)]

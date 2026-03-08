@@ -920,7 +920,7 @@ The writer looks for specific field names that match the output format's native 
 
 | Field | Description | Example Values |
 |-------|-------------|----------------|
-| `IC` | Image compression | `NC` (none), `C8` (JPEG 2000), `CD` (HTJ2K) |
+| `IC` | Image compression | `NC` (none), `C8` (JPEG 2000), `CD` (HTJ2K), `C3` (JPEG DCT), `I1` (Downsampled JPEG) |
 | `IMODE` | Band interleave mode | `B` (block), `P` (pixel), `R` (row), `S` (sequential) |
 | `NPPBH` | Block width in pixels | `256`, `512`, `1024` |
 | `NPPBV` | Block height in pixels | `256`, `512`, `1024` |
@@ -934,10 +934,16 @@ For JPEG 2000 compression, COMRAT controls lossless/lossy mode and compression r
 | `J2K_DECOMPOSITION_LEVELS` | Resolution pyramid depth | `5` (default), `3`, `6` |
 | `J2K_QUALITY_LAYERS` | Progressive quality layers | `1` (default) |
 
-**COMRAT Format:**
+**COMRAT Format for JPEG 2000:**
 - `Nnnn.n` - Numerically lossless (e.g., "N001.0")
 - `Vnnn.n` - Visually lossless with quality factor
 - `nn.n` - Target bits per pixel (e.g., "01.0" = 1.0 bpp, "00.5" = 0.5 bpp)
+
+**COMRAT Format for JPEG DCT (IC=C3/M3/I1):**
+- `nn.n` - Quality factor from 00.0 to 99.9 (e.g., "75.0" = quality 75)
+- Higher values = higher quality, larger files
+- Default: 75.0 if not specified
+- Maps directly to JPEG quality parameter (1-100)
 
 ### Chipping Workflow
 
@@ -1035,6 +1041,63 @@ metadata.set("COMRAT", "N001.0")               # Numerically lossless
 metadata.set("J2K_DECOMPOSITION_LEVELS", "6")  # More resolution levels for large images
 ```
 
+### JPEG DCT Compression (IC=C3)
+
+For legacy compatibility or when JPEG DCT compression is required:
+
+```python
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
+import numpy as np
+
+# Create metadata with JPEG DCT encoding hints
+metadata = BufferedMetadataProvider()
+metadata.set("IC", "C3")           # JPEG DCT compression
+metadata.set("COMRAT", "75.0")     # Quality 75 (range 00.0-99.9)
+metadata.set("IMODE", "P")         # Pixel interleave for RGB
+metadata.set("NPPBH", "256")       # Block width
+metadata.set("NPPBV", "256")       # Block height
+
+# Create RGB image
+image_data = np.random.randint(0, 255, (3, 512, 512), dtype=np.uint8)
+
+provider = BufferedImageAssetProvider.create(
+    key="jpeg_image",
+    num_columns=512,
+    num_rows=512,
+    num_bands=3,
+    block_width=256,
+    block_height=256,
+    pixel_type=PixelType.UInt8,
+    metadata=metadata,
+)
+provider.set_full_image(image_data)
+
+with IO.open(["jpeg_output.ntf"], "w", "nitf") as writer:
+    writer.add_asset("image_segment_0", provider)
+```
+
+### Downsampled JPEG (IC=I1) for Thumbnails
+
+For thumbnail imagery with single-block constraint (≤2048×2048):
+
+```python
+metadata = BufferedMetadataProvider()
+metadata.set("IC", "I1")           # Downsampled JPEG
+metadata.set("COMRAT", "80.0")     # Quality 80
+
+# I1 images must be single-block and ≤2048×2048
+provider = BufferedImageAssetProvider.create(
+    key="thumbnail",
+    num_columns=1024,
+    num_rows=1024,
+    num_bands=1,
+    block_width=1024,              # Single block
+    block_height=1024,
+    pixel_type=PixelType.UInt8,
+    metadata=metadata,
+)
+```
+
 ### Working with Masked (Sparse) Images
 
 Masked images allow efficient storage of sparse imagery where some blocks are empty. This is useful for:
@@ -1049,6 +1112,7 @@ NITF supports masked variants of compression types. The IC (Image Compression) f
 | NC | NM | Uncompressed with mask |
 | C8 | M8 | JPEG 2000 with mask |
 | CD | MD | HTJ2K with mask |
+| C3 | M3 | JPEG DCT with mask |
 
 When using a masked IC value, you only need to provide blocks that contain actual data. Missing blocks are automatically marked as empty (masked) in the output file.
 

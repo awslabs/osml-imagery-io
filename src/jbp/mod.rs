@@ -32,6 +32,8 @@ pub mod graphics;
 pub mod image;
 pub mod io;
 pub mod j2k;
+#[cfg(feature = "libjpeg-turbo")]
+pub mod jpeg;
 mod metadata;
 pub mod overflow;
 mod reader;

@@ -42,7 +42,7 @@ Repository = "https://github.com/awslabs/osml-imagery-io"
 [tool.maturin]
 python-source = "python"
 module-name = "aws.osml.io._io"
-features = ["extension-module"]
+features = ["extension-module", "openjpeg", "libjpeg-turbo"]
 
 [tool.ruff]
 line-length = 100

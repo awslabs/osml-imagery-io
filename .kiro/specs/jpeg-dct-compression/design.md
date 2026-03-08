@@ -157,11 +157,11 @@ pub enum ColorSpace {
 | Configuration | IC Code | Pixel Type | Bands | IMODE | Read | Write | Notes |
 |--------------|---------|------------|-------|-------|------|-------|-------|
 | Mono 8-bit | C3/M3/I1 | UInt8 | 1 | B/S | ✅ | ✅ | Standard grayscale |
-| Mono 12-bit | C3/M3 | UInt16 | 1 | B/S | ✅ | ✅ | Extended JPEG |
+| Mono 12-bit | C3/M3 | UInt16 | 1 | B/S | ❌ | ❌ | Not supported (see limitation) |
 | RGB 24-bit | C3/M3/I1 | UInt8 | 3 | P | ✅ | ✅ | Pixel interleaved |
 | YCbCr601 24-bit | C3/M3/I1 | UInt8 | 3 | P | ✅ | ✅ | Color space conversion |
 | Multiband 8-bit | C3/M3 | UInt8 | 2-999 | B/S | ✅ | ✅ | Each band separate JPEG |
-| Multiband 12-bit | C3/M3 | UInt16 | 2-999 | B/S | ✅ | ✅ | Each band separate 12-bit JPEG |
+| Multiband 12-bit | C3/M3 | UInt16 | 2-999 | B/S | ❌ | ❌ | Not supported (see limitation) |
 
 ### COMRAT Format for JPEG
 
@@ -222,10 +222,17 @@ The build will use `pkg-config` to locate the library, with fallback to standard
 
 ### 12-bit Support
 
-libjpeg-turbo supports 12-bit JPEG through the standard libjpeg API (not turbojpeg). For 12-bit images, we will:
-1. Use the lower-level `jpeg_compress_struct`/`jpeg_decompress_struct` API
-2. Set `data_precision = 12` in the compression parameters
-3. Handle 16-bit sample buffers (12-bit values stored in 16-bit containers)
+**12-bit JPEG is not supported** due to architectural constraints in libjpeg-turbo:
+
+1. The TurboJPEG API only supports 8-bit samples
+2. 12-bit JPEG requires a separately compiled libjpeg library with `BITS_IN_JSAMPLE=12`
+3. This produces a different library (`libjpeg12`) with renamed symbols
+4. The TurboJPEG API is disabled when building with 12-bit support
+5. Supporting both 8-bit and 12-bit requires linking against two separate libraries
+
+For 12-bit imagery, users should use JPEG 2000 (IC=C8) which fully supports 12-bit samples, or uncompressed format (IC=NC).
+
+The decoder and encoder will return a clear `CodecError::Unsupported` error when 12-bit JPEG is requested, explaining the limitation and suggesting alternatives.
 
 
 
