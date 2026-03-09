@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Fast checks — runs on every push/PR, current arch only
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Install native deps
+        run: sudo apt-get update && sudo apt-get install -y libopenjp2-7-dev libjpeg-turbo8-dev
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native deps
+        run: sudo apt-get update && sudo apt-get install -y libopenjp2-7-dev libjpeg-turbo8-dev
+      - run: cargo test
+
+  test-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install native deps
+        run: sudo apt-get update && sudo apt-get install -y libopenjp2-7-dev libjpeg-turbo8-dev
+      - name: Build and test
+        run: |
+          pip install maturin pytest hypothesis numpy
+          maturin develop --features extension-module,openjpeg,libjpeg-turbo
+          pytest -m "not integration and not benchmark"
