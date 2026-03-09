@@ -33,7 +33,7 @@ use crate::jbp::metadata::JBPSegmentMetadataProvider;
 use crate::jbp::text::decode_and_normalize;
 use crate::jbp::types::{NitfFormat, SegmentLocation, SegmentType};
 use crate::parser::StructureRegistry;
-use crate::traits::{AssetProvider, GraphicsAssetProvider, ImageAssetProvider, MetadataProvider, TextAssetProvider};
+use crate::traits::{AssetProvider, DataAssetProvider, GraphicsAssetProvider, ImageAssetProvider, MetadataProvider, TextAssetProvider};
 use crate::types::{AssetType, PixelType};
 
 /// Generate an asset key from segment type and index.
@@ -859,6 +859,34 @@ impl AssetProvider for JBPDataAssetProvider {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+impl DataAssetProvider for JBPDataAssetProvider {
+    fn mime_type(&self) -> &str {
+        "application/octet-stream"
+    }
+
+    fn parse_as_xml(&self) -> Result<String, CodecError> {
+        let raw = self.raw_asset()?;
+        let text = std::str::from_utf8(&raw).map_err(|e| {
+            CodecError::Parse(format!("DES data is not valid UTF-8: {e}"))
+        })?;
+        // Validate that it parses as XML by checking for an opening tag
+        let trimmed = text.trim();
+        if !trimmed.starts_with('<') {
+            return Err(CodecError::Parse(
+                "DES data does not appear to be XML".to_string(),
+            ));
+        }
+        Ok(trimmed.to_string())
+    }
+
+    fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
+        let raw = self.raw_asset()?;
+        serde_json::from_slice(&raw).map_err(|e| {
+            CodecError::Parse(format!("DES data is not valid JSON: {e}"))
+        })
     }
 }
 

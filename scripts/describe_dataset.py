@@ -12,6 +12,7 @@ Usage:
 import argparse
 import json
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 # Add the project root to the path
@@ -67,17 +68,68 @@ def describe_text_asset(asset, show_metadata: bool) -> None:
         print(format_metadata(meta_dict, indent=6))
 
 
+def format_xml(element: ET.Element, indent: int = 6) -> str:
+    """Pretty-print an XML Element with indentation."""
+    ET.indent(element)
+    xml_str = ET.tostring(element, encoding="unicode")
+    prefix = " " * indent
+    return "\n".join(prefix + line for line in xml_str.splitlines())
+
+
+def is_sicd_sidd_segment(asset) -> bool:
+    """Check if a data asset is a SICD or SIDD XML metadata segment.
+
+    SICD/SIDD imagery stores XML metadata in DES segments whose DESID
+    field contains an identifier like ``XML_DATA_CONTENT``,
+    ``SICD_XML``, ``SIDD_XML``, or a ``urn:SICD``/``urn:SIDD`` URN.
+    """
+    try:
+        meta = asset.get_metadata()
+        meta_dict = meta.as_dict()
+        desid = meta_dict.get("DESID", "").strip()
+        sicd_sidd_ids = {"XML_DATA_CONTENT", "SICD_XML", "SIDD_XML"}
+        if desid in sicd_sidd_ids or "SICD" in desid or "SIDD" in desid:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def describe_data_asset(asset, show_metadata: bool) -> None:
-    """Print details for a data asset."""
+    """Print details for a data asset.
+
+    For SICD/SIDD data segments the XML metadata is parsed and
+    pretty-printed when ``--metadata`` is requested.
+    """
     # Check if this is a typed DataAssetProvider
     if hasattr(asset, 'mime_type'):
         print(f"    MIME type: {asset.mime_type}")
-    
+
+    sicd_sidd = is_sicd_sidd_segment(asset)
+    if sicd_sidd:
+        print("    Content: SICD/SIDD XML metadata")
+
     if show_metadata:
         print("    Metadata:")
         meta = asset.get_metadata()
         meta_dict = meta.as_dict()
         print(format_metadata(meta_dict, indent=6))
+
+        # Display the XML content for SICD/SIDD segments
+        if sicd_sidd:
+            try:
+                if hasattr(asset, 'parse_as_xml'):
+                    xml_element = asset.parse_as_xml()
+                else:
+                    # Fall back to parsing raw bytes when the asset is
+                    # returned as a generic AssetProvider without the
+                    # DataAssetProvider interface.
+                    raw_io = asset.get_raw_asset()
+                    xml_element = ET.fromstring(raw_io.read())
+                print("    XML Content:")
+                print(format_xml(xml_element))
+            except Exception as e:
+                print(f"    XML Content: (error parsing: {e})")
 
 
 def describe_generic_asset(asset, show_metadata: bool) -> None:

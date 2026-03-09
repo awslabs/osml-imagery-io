@@ -19,7 +19,7 @@ use crate::traits::{
 use crate::types::AssetType;
 
 // Import JBP asset providers for downcasting
-use crate::jbp::{JBPGraphicsAssetProvider, JBPImageAssetProvider, JBPTextAssetProvider};
+use crate::jbp::{JBPDataAssetProvider, JBPGraphicsAssetProvider, JBPImageAssetProvider, JBPTextAssetProvider};
 
 /// Python wrapper for DatasetReader trait objects.
 ///
@@ -235,14 +235,28 @@ fn try_as_text_provider(
 }
 
 /// Attempts to convert an AssetProvider to a DataAssetProvider.
-/// 
-/// Note: JBPDataAssetProvider does not implement DataAssetProvider trait yet,
-/// so this always returns None. Data assets are returned as generic AssetProvider.
+///
+/// This function checks if the underlying implementation supports the
+/// DataAssetProvider trait by attempting to downcast to known concrete types.
 fn try_as_data_provider(
-    _asset: &Arc<dyn AssetProvider>,
+    asset: &Arc<dyn AssetProvider>,
 ) -> Option<Arc<dyn DataAssetProvider>> {
-    // JBPDataAssetProvider doesn't implement DataAssetProvider yet
-    None
+    if asset.asset_type() == AssetType::Data {
+        if asset.as_any().downcast_ref::<JBPDataAssetProvider>().is_some() {
+            let ptr = Arc::as_ptr(asset);
+            // SAFETY: We've verified the concrete type is JBPDataAssetProvider
+            // which implements DataAssetProvider. We increment the ref count.
+            unsafe {
+                Arc::increment_strong_count(ptr);
+                let concrete_ptr = ptr as *const JBPDataAssetProvider;
+                Some(Arc::from_raw(concrete_ptr as *const dyn DataAssetProvider))
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    }
 }
 
 /// Attempts to convert an AssetProvider to a GraphicsAssetProvider.
