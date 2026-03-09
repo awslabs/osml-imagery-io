@@ -120,10 +120,15 @@ pub trait ImageAssetProvider: AssetProvider {
     /// Returns the number of blocks in each dimension as `(rows, cols)`.
     ///
     /// This computes the block grid size by dividing the image dimensions by
-    /// the block dimensions, rounding up.
+    /// the block dimensions, rounding up. If block dimensions are 0 (meaning
+    /// the entire image is a single block, as in some JPEG 2000 NITF files),
+    /// returns `(1, 1)`.
     fn block_grid_size(&self) -> (u32, u32) {
         let (_, h, w) = self.image_shape();
         let (_, bh, bw) = self.block_shape();
-        ((h + bh - 1) / bh, (w + bw - 1) / bw)
+        // Block size of 0 means entire image is one block
+        let rows = if bh == 0 { 1 } else { (h + bh - 1) / bh };
+        let cols = if bw == 0 { 1 } else { (w + bw - 1) / bw };
+        (rows, cols)
     }
 }
