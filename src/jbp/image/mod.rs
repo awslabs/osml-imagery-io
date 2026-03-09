@@ -29,7 +29,7 @@ pub use builder::{BandInfoBuilder, ImageSubheaderBuilder};
 pub use decoder::{create_block_decoder, BlockDecoder, UncompressedBlockDecoder};
 #[cfg(feature = "libjpeg-turbo")]
 pub use decoder::JpegNitfBlockDecoder;
-pub use encoder::{create_block_encoder, BlockEncoder, TileAssembler};
+pub use encoder::{create_block_encoder, swap_ne_to_be, BlockEncoder, TileAssembler};
 #[cfg(feature = "libjpeg-turbo")]
 pub use encoder::JpegNitfBlockEncoder;
 pub use facade::{BandInfoFacade, ImageSubheaderFacade};

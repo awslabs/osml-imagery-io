@@ -41,6 +41,38 @@ use crate::jbp::j2k::{J2KEncodingHints, Jpeg2000BlockEncoder};
 #[cfg(feature = "libjpeg-turbo")]
 use crate::jbp::jpeg::{JpegBlockEncoder, JpegColorSpace, JpegComrat};
 
+/// Convert a byte buffer from native-endian to big-endian.
+///
+/// NITF mandates big-endian for uncompressed multi-byte pixel data
+/// (JBP Section 4.6.2, requirement JBP-2021.2-013). The internal `Vec<u8>`
+/// contract uses native-endian, so this converts at the write boundary.
+///
+/// For single-byte data (`bytes_per_pixel == 1`) this is a no-op.
+#[inline]
+pub fn swap_ne_to_be(data: &[u8], bytes_per_pixel: usize) -> Vec<u8> {
+    if cfg!(target_endian = "big") || bytes_per_pixel <= 1 {
+        return data.to_vec();
+    }
+    match bytes_per_pixel {
+        2 => data
+            .chunks_exact(2)
+            .flat_map(|c| u16::from_ne_bytes([c[0], c[1]]).to_be_bytes())
+            .collect(),
+        4 => data
+            .chunks_exact(4)
+            .flat_map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]).to_be_bytes())
+            .collect(),
+        8 => data
+            .chunks_exact(8)
+            .flat_map(|c| {
+                u64::from_ne_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])
+                    .to_be_bytes()
+            })
+            .collect(),
+        _ => data.to_vec(),
+    }
+}
+
 /// Trait for encoding image blocks to various compression formats.
 ///
 /// This trait is symmetric to `BlockDecoder` and defines the interface for
@@ -614,9 +646,14 @@ impl UncompressedBlockEncoder {
         let block_rows = shape[1];
         let block_cols = shape[2];
 
+        // NITF mandates big-endian for uncompressed multi-byte pixel data
+        // (JBP Section 4.6.2, requirement JBP-2021.2-013). Convert from
+        // native-endian (internal contract) to big-endian before writing.
+        let be_data = swap_ne_to_be(data, bpp);
+
         // Convert BSQ input to target IMODE
         let converted_data = from_band_sequential(
-            data,
+            &be_data,
             self.imode,
             block_rows,
             block_cols,
@@ -1923,6 +1960,24 @@ mod property_tests {
     use proptest::prelude::*;
     use std::sync::Arc;
 
+    /// Convert big-endian bytes to native-endian (mirrors decoder's swap_be_to_ne)
+    fn swap_be_to_ne(data: &[u8], bytes_per_pixel: usize) -> Vec<u8> {
+        if cfg!(target_endian = "big") || bytes_per_pixel <= 1 {
+            return data.to_vec();
+        }
+        match bytes_per_pixel {
+            2 => data
+                .chunks_exact(2)
+                .flat_map(|c| u16::from_be_bytes([c[0], c[1]]).to_ne_bytes())
+                .collect(),
+            4 => data
+                .chunks_exact(4)
+                .flat_map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]).to_ne_bytes())
+                .collect(),
+            _ => data.to_vec(),
+        }
+    }
+
     /// Generate a valid InterleaveMode
     fn interleave_mode_strategy() -> impl Strategy<Value = InterleaveMode> {
         prop_oneof![
@@ -2113,8 +2168,11 @@ mod property_tests {
                 )?
             };
 
+            // Convert from big-endian (NITF on-disk) to native-endian (internal contract)
+            let final_data = swap_be_to_ne(&bsq_data, bpp);
+
             // Return shape as [bands, rows, cols] (CHW format)
-            Ok((bsq_data, [self.nbands, actual_rows, actual_cols]))
+            Ok((final_data, [self.nbands, actual_rows, actual_cols]))
         }
 
         fn read_block_mode_s(

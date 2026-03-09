@@ -175,23 +175,21 @@ impl J2KCodec for OpenJpegCodec {
                         output.push(value as u8);
                     }
                     2 => {
-                        // Use native byte order for internal representation
-                        // The Python bindings expect native-endian data
+                        // OpenJPEG returns native integers; serialize as native-endian
+                        // to match the internal Vec<u8> contract.
                         output.extend_from_slice(&(value as u16).to_ne_bytes());
                     }
                     3 => {
-                        // 3 bytes: use big-endian for NITF compatibility
-                        let bytes = (value as u32).to_be_bytes();
-                        output.extend_from_slice(&bytes[1..4]);
+                        let bytes = (value as u32).to_ne_bytes();
+                        output.extend_from_slice(&bytes[..3]);
                     }
                     4 => {
-                        // Use native byte order for internal representation
+                        // OpenJPEG returns native integers; serialize as native-endian.
                         output.extend_from_slice(&(value as u32).to_ne_bytes());
                     }
                     5 => {
-                        // 5 bytes: use big-endian for NITF compatibility
-                        let bytes = (value as i64 as u64).to_be_bytes();
-                        output.extend_from_slice(&bytes[3..8]);
+                        let bytes = (value as i64 as u64).to_ne_bytes();
+                        output.extend_from_slice(&bytes[..5]);
                     }
                     _ => {
                         return Err(CodecError::Decode(format!(
@@ -511,22 +509,21 @@ impl J2KCodec for OpenJpegCodec {
                         output.push(value as u8);
                     }
                     2 => {
-                        // Use native byte order for internal representation
+                        // OpenJPEG returns native integers; serialize as native-endian
+                        // to match the internal Vec<u8> contract.
                         output.extend_from_slice(&(value as u16).to_ne_bytes());
                     }
                     3 => {
-                        // 3 bytes: use big-endian for NITF compatibility
-                        let bytes = (value as u32).to_be_bytes();
-                        output.extend_from_slice(&bytes[1..4]);
+                        let bytes = (value as u32).to_ne_bytes();
+                        output.extend_from_slice(&bytes[..3]);
                     }
                     4 => {
-                        // Use native byte order for internal representation
+                        // OpenJPEG returns native integers; serialize as native-endian.
                         output.extend_from_slice(&(value as u32).to_ne_bytes());
                     }
                     5 => {
-                        // 5 bytes: use big-endian for NITF compatibility
-                        let bytes = (value as i64 as u64).to_be_bytes();
-                        output.extend_from_slice(&bytes[3..8]);
+                        let bytes = (value as i64 as u64).to_ne_bytes();
+                        output.extend_from_slice(&bytes[..5]);
                     }
                     _ => {
                         return Err(CodecError::Decode(format!(

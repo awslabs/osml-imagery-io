@@ -240,7 +240,8 @@ impl BlockEncoder for Jpeg2000BlockEncoder {
         // Calculate tile index (row-major order)
         let tile_index = block_row * self.block_grid.1 + block_col;
 
-        // Encode the tile
+        // Internal representation is native-endian, which is what OpenJPEG
+        // expects. Pass data through directly.
         self.encode_state.encode_tile(tile_index, data)?;
 
         // Track encoded block

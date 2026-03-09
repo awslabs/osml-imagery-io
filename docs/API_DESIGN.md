@@ -266,7 +266,7 @@ The number of available resolution levels depends on the image format and how it
 
 ### Image Data Format: Band-Sequential (Channels First)
 
-This library uses band-sequential (BSQ) ordering for image data, where NumPy arrays have shape `(bands, rows, cols)`. This is also known as "channels first" or CHW format.
+This library uses band-sequential (BSQ) ordering for image data, where NumPy arrays have shape `(bands, rows, cols)`. This is also known as "channels first" or CHW format. Pixel values in the returned ndarray are always in the native byte order of the host platform, regardless of the on-disk format (e.g., NITF mandates big-endian storage). The library handles byte-order conversion transparently at the format boundary.
 
 | Library | Format | Shape |
 |---------|--------|-------|

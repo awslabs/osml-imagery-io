@@ -40,6 +40,39 @@ use crate::jbp::j2k::{get_j2k_codec, Jpeg2000BlockDecoder};
 #[cfg(feature = "libjpeg-turbo")]
 use crate::jbp::jpeg::{JpegBlockDecoder, JpegColorSpace};
 
+/// Convert a byte buffer from big-endian to native-endian in place.
+///
+/// NITF mandates big-endian for uncompressed multi-byte pixel data
+/// (JBP Section 4.6.2, requirement JBP-2021.2-013). This function converts
+/// the raw on-disk bytes to native-endian so the internal `Vec<u8>` contract
+/// is native throughout, consistent with 3rd-party codec output.
+///
+/// For single-byte data (`bytes_per_pixel == 1`) this is a no-op.
+#[inline]
+fn swap_be_to_ne(data: &[u8], bytes_per_pixel: usize) -> Vec<u8> {
+    if cfg!(target_endian = "big") || bytes_per_pixel <= 1 {
+        return data.to_vec();
+    }
+    match bytes_per_pixel {
+        2 => data
+            .chunks_exact(2)
+            .flat_map(|c| u16::from_be_bytes([c[0], c[1]]).to_ne_bytes())
+            .collect(),
+        4 => data
+            .chunks_exact(4)
+            .flat_map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]).to_ne_bytes())
+            .collect(),
+        8 => data
+            .chunks_exact(8)
+            .flat_map(|c| {
+                u64::from_be_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])
+                    .to_ne_bytes()
+            })
+            .collect(),
+        _ => data.to_vec(),
+    }
+}
+
 /// Trait for decoding image blocks from various compression formats.
 ///
 /// This trait defines the interface for block-based image decoding. Different
@@ -612,12 +645,17 @@ impl BlockDecoder for UncompressedBlockDecoder {
 
         // Apply band selection if specified
         let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
-        let final_data = match bands {
+        let selected_data = match bands {
             Some(band_indices) if !band_indices.is_empty() => {
                 self.apply_band_selection(&bsq_data, actual_rows, actual_cols, band_indices)?
             }
             _ => bsq_data,
         };
+
+        // NITF mandates big-endian for uncompressed multi-byte pixel data (JBP-2021.2-013).
+        // Convert to native-endian so the internal Vec<u8> contract is native throughout,
+        // consistent with what 3rd-party codecs (OpenJPEG, libjpeg-turbo) produce.
+        let final_data = swap_be_to_ne(&selected_data, self.bytes_per_pixel());
 
         // Return shape as [bands, rows, cols] (CHW format)
         Ok((final_data, [num_bands, actual_rows, actual_cols]))
@@ -696,12 +734,15 @@ impl BlockDecoder for UncompressedBlockDecoder {
 
         // Apply band selection if specified
         let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
-        let final_data = match bands {
+        let selected_data = match bands {
             Some(band_indices) if !band_indices.is_empty() => {
                 self.apply_band_selection(&bsq_data, actual_rows, actual_cols, band_indices)?
             }
             _ => bsq_data,
         };
+
+        // Convert from big-endian (NITF on-disk) to native-endian (internal contract)
+        let final_data = swap_be_to_ne(&selected_data, bpp);
 
         // Return shape as [bands, rows, cols] (CHW format)
         Ok((final_data, [num_bands, actual_rows, actual_cols]))

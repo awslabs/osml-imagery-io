@@ -1073,7 +1073,7 @@ impl JBPDatasetWriter {
         hints: &EncodingHints,
         props: &ImageProperties,
     ) -> Result<Vec<u8>, CodecError> {
-        use crate::jbp::image::{is_masked_ic, ImageDataMask, unmask_ic};
+        use crate::jbp::image::{is_masked_ic, swap_ne_to_be, ImageDataMask, unmask_ic};
 
         // Parse IMODE from hints
         let imode = InterleaveMode::from_char(
@@ -1178,9 +1178,14 @@ impl JBPDatasetWriter {
                             // Get the tile data
                             let (tile_data, shape) = assembler.get_output_tile(block_row, block_col)?;
                             
+                            // NITF mandates big-endian for uncompressed multi-byte pixel data
+                            // (JBP Section 4.6.2, requirement JBP-2021.2-013). Convert from
+                            // native-endian (internal contract) to big-endian before writing.
+                            let be_data = swap_ne_to_be(&tile_data, bpp);
+                            
                             // Convert from BSQ to target IMODE and append
                             let converted = crate::jbp::image::interleave::from_band_sequential(
-                                &tile_data,
+                                &be_data,
                                 imode,
                                 shape[1], // rows
                                 shape[2], // cols

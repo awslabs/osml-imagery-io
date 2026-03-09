@@ -49,7 +49,7 @@ fn extract_array_bytes(py: Python<'_>, data: &PyObject) -> PyResult<Vec<u8>> {
             let slice = array.as_slice().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
-            // Use native byte order for internal representation
+            // Native byte order for internal representation
             Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
         }
         "int16" => {
@@ -57,7 +57,6 @@ fn extract_array_bytes(py: Python<'_>, data: &PyObject) -> PyResult<Vec<u8>> {
             let slice = array.as_slice().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
-            // Use native byte order for internal representation
             Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
         }
         "uint32" => {
@@ -65,7 +64,6 @@ fn extract_array_bytes(py: Python<'_>, data: &PyObject) -> PyResult<Vec<u8>> {
             let slice = array.as_slice().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
-            // Use native byte order for internal representation
             Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
         }
         "int32" => {
@@ -73,7 +71,6 @@ fn extract_array_bytes(py: Python<'_>, data: &PyObject) -> PyResult<Vec<u8>> {
             let slice = array.as_slice().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
-            // Use native byte order for internal representation
             Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
         }
         "float32" => {
@@ -81,7 +78,6 @@ fn extract_array_bytes(py: Python<'_>, data: &PyObject) -> PyResult<Vec<u8>> {
             let slice = array.as_slice().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
-            // Use native byte order for internal representation
             Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
         }
         "float64" => {
@@ -89,7 +85,6 @@ fn extract_array_bytes(py: Python<'_>, data: &PyObject) -> PyResult<Vec<u8>> {
             let slice = array.as_slice().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
-            // Use native byte order for internal representation
             Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
         }
         _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
