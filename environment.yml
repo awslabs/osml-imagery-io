@@ -24,6 +24,13 @@ dependencies:
   - ruff>=0.1
   - hypothesis>=6.0
 
+  # Documentation
+  - sphinx>=7.0
+  - myst-parser>=2.0
+  - sphinx-autodoc-typehints
+  - sphinxcontrib-mermaid
+  - furo
+
   # Build tools (maturin from conda-forge)
   - maturin>=1.7
 

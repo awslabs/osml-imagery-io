@@ -36,6 +36,14 @@ dev = [
     "hypothesis>=6.0",
 ]
 
+docs = [
+    "sphinx>=7.0",
+    "myst-parser>=2.0",
+    "sphinx-autodoc-typehints",
+    "sphinxcontrib-mermaid",
+    "furo",
+]
+
 [project.urls]
 Repository = "https://github.com/awslabs/osml-imagery-io"
 
