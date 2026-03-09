@@ -597,7 +597,7 @@ impl<'a> StructureAccessor<'a> {
                 }
             }
             
-            // Get field size
+            // Get field size (single element)
             let field_size = self.get_nested_field_size(field, &nested_ctx, offset + total_size)?;
             
             // Read field value and add to context for subsequent fields
@@ -608,10 +608,61 @@ impl<'a> StructureAccessor<'a> {
                 }
             }
             
-            total_size += field_size;
+            // Calculate total field size including repetitions
+            let total_field_size = self.get_nested_total_field_size(field, &nested_ctx, field_size, offset + total_size)?;
+            
+            total_size += total_field_size;
         }
 
         Ok(total_size)
+    }
+    
+    /// Get the total size of a field within a nested type, including repetitions.
+    fn get_nested_total_field_size(
+        &self,
+        field: &FieldDefinition,
+        ctx: &EvalContext,
+        element_size: usize,
+        base_offset: usize,
+    ) -> Result<usize, AccessError> {
+        match &field.repeat {
+            None => Ok(element_size),
+            Some(RepeatSpec::Count(n)) => Ok(element_size * n),
+            Some(RepeatSpec::Expression(expr)) => {
+                let result = self.evaluator.evaluate(expr, ctx).map_err(|e| {
+                    AccessError::ExpressionError {
+                        path: field.id.clone(),
+                        message: e.to_string(),
+                    }
+                })?;
+
+                match result {
+                    EvalResult::Integer(n) if n >= 0 => {
+                        // For TypeRef fields with variable-length elements, calculate each element's size
+                        if let FieldType::TypeRef(type_name) = &field.field_type {
+                            let mut total = 0;
+                            let mut current_offset = base_offset;
+                            for _ in 0..(n as usize) {
+                                let elem_size = self.get_type_size(type_name, current_offset)?;
+                                total += elem_size;
+                                current_offset += elem_size;
+                            }
+                            Ok(total)
+                        } else {
+                            Ok(element_size * n as usize)
+                        }
+                    }
+                    _ => Err(AccessError::ExpressionError {
+                        path: field.id.clone(),
+                        message: "Repeat expression did not evaluate to positive integer".to_string(),
+                    }),
+                }
+            }
+            Some(RepeatSpec::Until(_)) | Some(RepeatSpec::Eos) => {
+                // For until/eos, return element size as approximation
+                Ok(element_size)
+            }
+        }
     }
     
     /// Get the size of a field within a nested type, using the nested context.

@@ -282,13 +282,13 @@ def test_image_block_reading(path: str, entry: Optional[TestFileEntry]):
             # Verify block is a numpy array
             assert isinstance(block, np.ndarray), "Block should be numpy array"
             
-            # Verify block shape is (rows, cols, bands)
+            # Verify block shape is (bands, rows, cols) - channels first per API design
             assert len(block.shape) == 3, "Block should have 3 dimensions"
-            assert block.shape[2] == asset.num_bands, "Band count mismatch"
+            assert block.shape[0] == asset.num_bands, "Band count mismatch"
             
             # Verify block dimensions don't exceed block size
-            assert block.shape[0] <= asset.num_pixels_per_block_vertical
-            assert block.shape[1] <= asset.num_pixels_per_block_horizontal
+            assert block.shape[1] <= asset.num_pixels_per_block_vertical
+            assert block.shape[2] <= asset.num_pixels_per_block_horizontal
             
             # Verify pixel values are reasonable (not all zeros unless expected)
             # This is a sanity check, not a strict requirement
@@ -394,18 +394,18 @@ def test_multiband_image_handling(path: str, entry: Optional[TestFileEntry]):
             # Test reading all bands
             if asset.has_block(0, 0, 0):
                 block_all = asset.get_block(0, 0, 0)
-                assert block_all.shape[2] == num_bands
+                assert block_all.shape[0] == num_bands
                 
                 # Test band selection for multi-band images
                 if num_bands > 1:
                     # Select first band only
                     block_single = asset.get_block(0, 0, 0, bands=[0])
-                    assert block_single.shape[2] == 1
+                    assert block_single.shape[0] == 1
                     
                     # Select subset of bands
                     if num_bands >= 2:
                         block_subset = asset.get_block(0, 0, 0, bands=[0, 1])
-                        assert block_subset.shape[2] == 2
+                        assert block_subset.shape[0] == 2
             
     except Exception as e:
         exception_raised = True

@@ -1332,3 +1332,127 @@ fn integration_image_subheader_field_iterator_no_tre() {
     assert!(!fields.contains(&"IXSOFL".to_string()), "fields() should NOT include IXSOFL when IXSHDL = 0");
     assert!(!fields.contains(&"IXSHD".to_string()), "fields() should NOT include IXSHD when IXSHDL = 0");
 }
+
+
+/// Create a definition with a nested type containing expression-based sizes.
+/// This tests the case where a field's size depends on a previous field's value
+/// within the same nested type (like LUT_DATA depending on NELUT).
+fn create_expression_size_nested_type_definition() -> StructureDefinition {
+    use crate::parser::expression::ExpressionEvaluator;
+
+    // Nested type with expression-based size (like band_info_type with LUT)
+    let nluts_condition = ExpressionEvaluator::parse("nluts > 0").unwrap();
+    let nelut_size_expr = ExpressionEvaluator::parse("nelut").unwrap();
+    let nluts_repeat_expr = ExpressionEvaluator::parse("nluts").unwrap();
+
+    let nested_type = StructureDefinition::new("band_type")
+        .with_field(
+            FieldDefinition::new("band_id", FieldType::String).with_size(SizeSpec::Fixed(2)),
+        )
+        .with_field(
+            FieldDefinition::new("nluts", FieldType::UnsignedInt(1)).with_size(SizeSpec::Fixed(1)),
+        )
+        .with_field(
+            FieldDefinition::new("nelut", FieldType::UnsignedInt(2))
+                .with_size(SizeSpec::Fixed(2))
+                .with_condition(nluts_condition.clone()),
+        )
+        .with_field(
+            FieldDefinition::new("lut_data", FieldType::Bytes)
+                .with_size(SizeSpec::Expression(nelut_size_expr))
+                .with_repeat(RepeatSpec::Expression(nluts_repeat_expr))
+                .with_condition(nluts_condition),
+        );
+
+    StructureDefinition::new("test_struct")
+        .with_type("band_type", nested_type)
+        .with_field(
+            FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)),
+        )
+        .with_field(
+            FieldDefinition::new("band", FieldType::TypeRef("band_type".to_string()))
+                .with_size(SizeSpec::Fixed(0)),
+        )
+        .with_field(
+            FieldDefinition::new("trailer", FieldType::String).with_size(SizeSpec::Fixed(4)),
+        )
+}
+
+#[test]
+fn accessor_typeref_with_expression_size_lut_present() {
+    let def = Arc::new(create_expression_size_nested_type_definition());
+    
+    // Create test data:
+    // header="HEAD" (4 bytes)
+    // band.band_id="AB" (2 bytes)
+    // band.nluts=2 (1 byte)
+    // band.nelut=4 (2 bytes, big-endian)
+    // band.lut_data=4 bytes × 2 LUTs = 8 bytes
+    // trailer="DONE" (4 bytes)
+    let mut data = Vec::new();
+    data.extend_from_slice(b"HEAD");           // header
+    data.extend_from_slice(b"AB");             // band_id
+    data.push(2);                              // nluts = 2
+    data.extend_from_slice(&4u16.to_be_bytes()); // nelut = 4
+    data.extend_from_slice(b"LUT1");           // lut_data[0] = 4 bytes
+    data.extend_from_slice(b"LUT2");           // lut_data[1] = 4 bytes
+    data.extend_from_slice(b"DONE");           // trailer
+    
+    let accessor = StructureAccessor::new(def, &data).unwrap();
+
+    // Access header
+    let header = accessor.get("header").unwrap();
+    assert_eq!(header.as_str().unwrap(), "HEAD");
+
+    // Access trailer - this verifies the nested type size was calculated correctly
+    // including the expression-based LUT_DATA size
+    let trailer = accessor.get("trailer").unwrap();
+    assert_eq!(trailer.as_str().unwrap(), "DONE");
+
+    // Verify band offset and size
+    // band_id(2) + nluts(1) + nelut(2) + lut_data(4*2=8) = 13 bytes
+    let (offset, size) = accessor.field_byte_range("band").unwrap();
+    assert_eq!(offset, 4);
+    assert_eq!(size, 13);
+
+    // Verify trailer offset
+    let (offset, _) = accessor.field_byte_range("trailer").unwrap();
+    assert_eq!(offset, 17); // 4 (header) + 13 (band) = 17
+}
+
+#[test]
+fn accessor_typeref_with_expression_size_no_lut() {
+    let def = Arc::new(create_expression_size_nested_type_definition());
+    
+    // Create test data with nluts=0 (no LUT data):
+    // header="HEAD" (4 bytes)
+    // band.band_id="AB" (2 bytes)
+    // band.nluts=0 (1 byte)
+    // (no nelut or lut_data since nluts=0)
+    // trailer="DONE" (4 bytes)
+    let mut data = Vec::new();
+    data.extend_from_slice(b"HEAD");           // header
+    data.extend_from_slice(b"AB");             // band_id
+    data.push(0);                              // nluts = 0
+    data.extend_from_slice(b"DONE");           // trailer
+    
+    let accessor = StructureAccessor::new(def, &data).unwrap();
+
+    // Access header
+    let header = accessor.get("header").unwrap();
+    assert_eq!(header.as_str().unwrap(), "HEAD");
+
+    // Access trailer - verifies conditional fields were skipped correctly
+    let trailer = accessor.get("trailer").unwrap();
+    assert_eq!(trailer.as_str().unwrap(), "DONE");
+
+    // Verify band offset and size
+    // band_id(2) + nluts(1) = 3 bytes (no nelut or lut_data)
+    let (offset, size) = accessor.field_byte_range("band").unwrap();
+    assert_eq!(offset, 4);
+    assert_eq!(size, 3);
+
+    // Verify trailer offset
+    let (offset, _) = accessor.field_byte_range("trailer").unwrap();
+    assert_eq!(offset, 7); // 4 (header) + 3 (band) = 7
+}
