@@ -439,11 +439,11 @@ impl ImageAssetProvider for JBPImageAssetProvider {
     }
 
     fn num_pixels_per_block_horizontal(&self) -> u32 {
-        self.subheader().and_then(|s| s.nppbh()).unwrap_or(0)
+        self.subheader().and_then(|s| s.effective_nppbh()).unwrap_or(0)
     }
 
     fn num_pixels_per_block_vertical(&self) -> u32 {
-        self.subheader().and_then(|s| s.nppbv()).unwrap_or(0)
+        self.subheader().and_then(|s| s.effective_nppbv()).unwrap_or(0)
     }
 
     fn num_bits_per_pixel(&self) -> u32 {

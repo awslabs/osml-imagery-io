@@ -187,14 +187,58 @@ impl<'a> ImageSubheaderFacade<'a> {
         self.get_u32_field("NBPC")
     }
 
-    /// Get the number of pixels per block horizontal (NPPBH).
+    /// Get the raw number of pixels per block horizontal (NPPBH).
+    ///
+    /// Note: Per JBP spec section 5.13.2.35, when NBPR=1 and NPPBH=0, the actual
+    /// block width is NCOLS. Use `effective_nppbh()` to get the interpreted value.
     pub fn nppbh(&self) -> Result<u32, CodecError> {
         self.get_u32_field("NPPBH")
     }
 
-    /// Get the number of pixels per block vertical (NPPBV).
+    /// Get the raw number of pixels per block vertical (NPPBV).
+    ///
+    /// Note: Per JBP spec section 5.13.2.36, when NBPC=1 and NPPBV=0, the actual
+    /// block height is NROWS. Use `effective_nppbv()` to get the interpreted value.
     pub fn nppbv(&self) -> Result<u32, CodecError> {
         self.get_u32_field("NPPBV")
+    }
+
+    /// Get the effective number of pixels per block horizontal.
+    ///
+    /// Per JBP spec section 5.13.2.35: "When NBPR=0001, setting the NPPBH value
+    /// 0000 designates that the number of pixels horizontally is specified by
+    /// the value in NCOLS."
+    ///
+    /// This method returns NCOLS when NBPR=1 and NPPBH=0, otherwise returns NPPBH.
+    pub fn effective_nppbh(&self) -> Result<u32, CodecError> {
+        let nppbh = self.nppbh()?;
+        if nppbh == 0 {
+            let nbpr = self.nbpr()?;
+            if nbpr == 1 {
+                // Single block row with NPPBH=0 means block width = image width
+                return self.ncols();
+            }
+        }
+        Ok(nppbh)
+    }
+
+    /// Get the effective number of pixels per block vertical.
+    ///
+    /// Per JBP spec section 5.13.2.36: "When NBPC=0001, setting the NPPBV value
+    /// 0000 designates that the number of pixels vertically is specified by
+    /// the value in NROWS."
+    ///
+    /// This method returns NROWS when NBPC=1 and NPPBV=0, otherwise returns NPPBV.
+    pub fn effective_nppbv(&self) -> Result<u32, CodecError> {
+        let nppbv = self.nppbv()?;
+        if nppbv == 0 {
+            let nbpc = self.nbpc()?;
+            if nbpc == 1 {
+                // Single block column with NPPBV=0 means block height = image height
+                return self.nrows();
+            }
+        }
+        Ok(nppbv)
     }
 
     /// Get the image interleave mode (IMODE).
@@ -294,9 +338,10 @@ impl<'a> ImageSubheaderFacade<'a> {
     /// Calculate the size of a single block in bytes.
     ///
     /// This accounts for block dimensions, band count, and bytes per pixel.
+    /// Uses effective block dimensions (handles NPPBH=0/NPPBV=0 case).
     pub fn block_size_bytes(&self) -> Result<usize, CodecError> {
-        let nppbh = self.nppbh()? as usize;
-        let nppbv = self.nppbv()? as usize;
+        let nppbh = self.effective_nppbh()? as usize;
+        let nppbv = self.effective_nppbv()? as usize;
         let band_count = self.band_count()?;
         let bytes_per_pixel = self.bytes_per_pixel()?;
 

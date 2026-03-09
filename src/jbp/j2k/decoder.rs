@@ -180,8 +180,9 @@ impl Jpeg2000BlockDecoder {
         let pvtype = subheader.pvtype()?;
         let nrows = subheader.nrows()?;
         let ncols = subheader.ncols()?;
-        let nppbh = subheader.nppbh()?;
-        let nppbv = subheader.nppbv()?;
+        // Use effective values to handle NPPBH=0/NPPBV=0 (single block = full image)
+        let nppbh = subheader.effective_nppbh()?;
+        let nppbv = subheader.effective_nppbv()?;
         let nbands = subheader.band_count()? as u32;
         let comrat = subheader.comrat()?;
 

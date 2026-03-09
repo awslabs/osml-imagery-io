@@ -256,8 +256,9 @@ impl UncompressedBlockDecoder {
         let ncols = subheader.ncols()?;
         let nbpr = subheader.nbpr()?;
         let nbpc = subheader.nbpc()?;
-        let nppbh = subheader.nppbh()?;
-        let nppbv = subheader.nppbv()?;
+        // Use effective values to handle NPPBH=0/NPPBV=0 (single block = full image)
+        let nppbh = subheader.effective_nppbh()?;
+        let nppbv = subheader.effective_nppbv()?;
         let nbands = subheader.band_count()? as u32;
         let nbpp = subheader.nbpp()?;
         let abpp = subheader.abpp()?;
@@ -786,8 +787,9 @@ impl JpegNitfBlockDecoder {
         let ncols = subheader.ncols()?;
         let nbpr = subheader.nbpr()?;
         let nbpc = subheader.nbpc()?;
-        let nppbh = subheader.nppbh()?;
-        let nppbv = subheader.nppbv()?;
+        // Use effective values to handle NPPBH=0/NPPBV=0 (single block = full image)
+        let nppbh = subheader.effective_nppbh()?;
+        let nppbv = subheader.effective_nppbv()?;
         let nbands = subheader.band_count()? as u32;
         let nbpp = subheader.nbpp()?;
         let imode = subheader.imode()?;
