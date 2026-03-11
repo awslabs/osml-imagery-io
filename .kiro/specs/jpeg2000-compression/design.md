@@ -1544,3 +1544,10 @@ pub(crate) fn get_j2k_codec() -> Arc<dyn J2KCodec> {
     }
 }
 ```
+
+## Metadata Derivation Principle
+
+Synthetic `J2K_` prefixed metadata fields should only exist when no standard NITF field carries the same information. This avoids redundancy and conflicting sources of truth.
+
+- `COMRAT` encodes lossless mode and compression ratio. Therefore `J2K_LOSSLESS` and `J2K_COMPRESSION_RATIO` violate this rule and have been removed — the writer derives these values by parsing the user-supplied `COMRAT` string via `J2KComrat::parse()`.
+- `J2K_DECOMPOSITION_LEVELS` and `J2K_QUALITY_LAYERS` are acceptable because no standard NITF subheader field carries wavelet decomposition level or quality layer count information.

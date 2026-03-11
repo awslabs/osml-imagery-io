@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Write bug condition exploration test
+- [x] 1. Write bug condition exploration test
   - **Property 1: Fault Condition** — COMRAT Ignored in extract_encoding_hints
   - **CRITICAL**: This test MUST FAIL on unfixed code — failure confirms the bug exists
   - **DO NOT attempt to fix the test or the code when it fails**
@@ -19,7 +19,7 @@
   - Mark task complete when test is written, run, and failure is documented
   - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 2.3_
 
-- [ ] 2. Write preservation property tests (BEFORE implementing fix)
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
   - **Property 2: Preservation** — Non-COMRAT Encoding Parameters and Non-J2K IC Codes Unchanged
   - **IMPORTANT**: Follow observation-first methodology
   - **Observe on UNFIXED code**:
@@ -36,9 +36,9 @@
   - Mark task complete when tests are written, run, and passing on unfixed code
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7_
 
-- [ ] 3. Fix COMRAT as single source of truth for J2K encoding parameters
+- [x] 3. Fix COMRAT as single source of truth for J2K encoding parameters
 
-  - [ ] 3.1 Modify `extract_encoding_hints()` in `src/jbp/writer.rs`
+  - [x] 3.1 Modify `extract_encoding_hints()` in `src/jbp/writer.rs`
     - Remove the `J2K_LOSSLESS` read block (~lines 668–681) that parses the boolean from metadata
     - Remove the `J2K_COMPRESSION_RATIO` read block (~lines 683–693) that parses the f64 from metadata
     - After extracting the `comrat` string, parse it via `J2KComrat::parse()` to derive `lossless` and `compression_ratio`:
@@ -53,7 +53,7 @@
     - _Preservation: J2K_DECOMPOSITION_LEVELS, J2K_QUALITY_LAYERS, htj2k, non-J2K IC codes unchanged_
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 3.1, 3.2, 3.3, 3.4, 3.5_
 
-  - [ ] 3.2 Modify subheader generation in `src/jbp/writer.rs` (~line 1524)
+  - [x] 3.2 Modify subheader generation in `src/jbp/writer.rs` (~line 1524)
     - Use user-supplied `hints.comrat` string directly in the image subheader instead of calling `generate_comrat(j2k_hints)`
     - Fall back to `generate_comrat(j2k_hints)` only when no COMRAT was provided by the user
     - Priority: user-supplied COMRAT → generated default
@@ -62,12 +62,12 @@
     - _Preservation: when no COMRAT provided, generate_comrat() still produces a valid default_
     - _Requirements: 2.1, 3.6_
 
-  - [ ] 3.3 Add fallback doc comment to `generate_comrat()` in `src/jbp/j2k/comrat.rs`
+  - [x] 3.3 Add fallback doc comment to `generate_comrat()` in `src/jbp/j2k/comrat.rs`
     - Add `/// Used as fallback when no COMRAT is provided by the user.` doc comment
     - No functional changes to `generate_comrat()` itself
     - _Requirements: 2.4_
 
-  - [ ] 3.4 Update documentation in `docs/user-guide/image-assets-writing.md`
+  - [x] 3.4 Update documentation in `docs/user-guide/image-assets-writing.md`
     - Remove `J2K_LOSSLESS` row from the encoder parameters table
     - Remove `J2K_COMPRESSION_RATIO` row from the encoder parameters table
     - Remove `J2K_LOSSLESS` and `J2K_COMPRESSION_RATIO` from all Python code examples
@@ -75,13 +75,13 @@
     - Ensure only `COMRAT`, `J2K_DECOMPOSITION_LEVELS`, and `J2K_QUALITY_LAYERS` remain as J2K encoder parameters
     - _Requirements: 2.5_
 
-  - [ ] 3.5 Codify metadata derivation principle in `.kiro/specs/jpeg2000-compression/design.md`
+  - [x] 3.5 Codify metadata derivation principle in `.kiro/specs/jpeg2000-compression/design.md`
     - Add a section stating that synthetic `J2K_` prefixed metadata fields should only exist when no standard NITF field carries the same information
     - State that `COMRAT` encodes lossless mode and compression ratio, so `J2K_LOSSLESS` and `J2K_COMPRESSION_RATIO` violate this rule
     - State that `J2K_DECOMPOSITION_LEVELS` and `J2K_QUALITY_LAYERS` are acceptable because no standard NITF field carries that information
     - _Requirements: 2.4, 2.5_
 
-  - [ ] 3.6 Verify bug condition exploration test now passes
+  - [x] 3.6 Verify bug condition exploration test now passes
     - **Property 1: Expected Behavior** — COMRAT-Derived Encoding Parameters
     - **IMPORTANT**: Re-run the SAME test from task 1 — do NOT write a new test
     - The test from task 1 encodes the expected behavior (COMRAT parsed via `J2KComrat::parse()`)
@@ -90,7 +90,7 @@
     - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
     - _Requirements: 2.1, 2.2, 2.3_
 
-  - [ ] 3.7 Verify preservation tests still pass
+  - [x] 3.7 Verify preservation tests still pass
     - **Property 2: Preservation** — Non-COMRAT Encoding Parameters and Non-J2K IC Codes Unchanged
     - **IMPORTANT**: Re-run the SAME tests from task 2 — do NOT write new tests
     - Run preservation property tests from step 2
@@ -98,7 +98,7 @@
     - Confirm decomposition_levels, quality_layers, htj2k, and non-J2K IC codes are unaffected
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7_
 
-- [ ] 4. Checkpoint — Ensure all tests pass
+- [x] 4. Checkpoint — Ensure all tests pass
   - Run `cargo test` to verify all Rust tests pass (including bugfix property tests and existing tests)
   - Run `pytest` to verify all Python tests pass
   - Ensure no regressions in existing property tests

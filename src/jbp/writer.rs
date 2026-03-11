@@ -604,7 +604,7 @@ impl JBPDatasetWriter {
     /// # Returns
     /// EncodingHints with values from metadata or defaults.
     fn extract_encoding_hints(asset: &QueuedAsset, image_props: &ImageProperties) -> EncodingHints {
-        use crate::jbp::j2k::comrat::J2KEncodingHints;
+        use crate::jbp::j2k::comrat::{J2KComrat, J2KEncodingHints};
         
         let metadata = asset.provider.metadata();
         let dict = metadata.as_dict(None);
@@ -664,34 +664,19 @@ impl JBPDatasetWriter {
         // Extract J2K-specific encoding hints for IC=C8, CD, M8, or MD
         let ic_trimmed = ic.trim();
         let j2k_hints = if ic_trimmed == "C8" || ic_trimmed == "CD" || ic_trimmed == "M8" || ic_trimmed == "MD" {
-            // Extract lossless flag
-            let lossless = dict.get("J2K_LOSSLESS")
-                .and_then(|v| {
-                    if let Some(b) = v.as_bool() {
-                        Some(b)
-                    } else if let Some(s) = v.as_str() {
-                        match s.trim().to_lowercase().as_str() {
-                            "true" | "1" | "yes" => Some(true),
-                            "false" | "0" | "no" => Some(false),
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(false);
-            
-            // Extract compression ratio
-            let compression_ratio = dict.get("J2K_COMPRESSION_RATIO")
-                .and_then(|v| {
-                    if let Some(n) = v.as_f64() {
-                        Some(n)
-                    } else if let Some(s) = v.as_str() {
-                        s.trim().parse::<f64>().ok()
-                    } else {
-                        None
-                    }
-                });
+            // Derive lossless and compression_ratio from COMRAT (single source of truth).
+            // J2K_LOSSLESS and J2K_COMPRESSION_RATIO are intentionally ignored.
+            let (lossless, compression_ratio) = if let Some(ref comrat_str) = comrat {
+                match J2KComrat::parse(comrat_str) {
+                    Ok(J2KComrat::NumericallyLossless) => (true, None),
+                    Ok(J2KComrat::VisuallyLossless(bpp)) => (false, Some(8.0 / bpp as f64)),
+                    Ok(J2KComrat::TargetBpp(bpp)) => (false, Some(8.0 / bpp as f64)),
+                    Ok(J2KComrat::Unknown) | Err(_) => (true, None),
+                }
+            } else {
+                // No COMRAT provided — default to numerically lossless
+                (true, None)
+            };
             
             // Extract decomposition levels
             let decomposition_levels = dict.get("J2K_DECOMPOSITION_LEVELS")
@@ -723,7 +708,7 @@ impl JBPDatasetWriter {
             let htj2k = ic_trimmed == "CD" || ic_trimmed == "MD";
             
             Some(J2KEncodingHints {
-                compression_ratio: if lossless { None } else { compression_ratio.or(Some(10.0)) },
+                compression_ratio,
                 lossless,
                 decomposition_levels,
                 quality_layers,
@@ -1525,12 +1510,12 @@ impl JBPDatasetWriter {
         // Present when IC is not NC or NM
         let ic_trimmed = hints.ic.trim();
         if ic_trimmed != "NC" && ic_trimmed != "NM" {
-            // Generate COMRAT from J2K hints if available, otherwise use provided comrat or default
-            let comrat = if let Some(ref j2k_hints) = hints.j2k_hints {
-                crate::jbp::j2k::comrat::generate_comrat(j2k_hints)
-            } else if let Some(ref comrat_str) = hints.comrat {
-                // Use provided COMRAT, ensure it's 4 characters
+            // Priority: user-supplied COMRAT → generated from J2K hints → default
+            let comrat = if let Some(ref comrat_str) = hints.comrat {
+                // Use user-supplied COMRAT directly, ensure it's 4 characters
                 format!("{:4}", comrat_str)
+            } else if let Some(ref j2k_hints) = hints.j2k_hints {
+                crate::jbp::j2k::comrat::generate_comrat(j2k_hints)
             } else {
                 // Default to numerically lossless for J2K
                 if ic_trimmed == "C8" || ic_trimmed == "CD" {
@@ -3995,6 +3980,311 @@ mod property_tests {
                 
                 prop_assert_eq!(cetag_str, &tag, "CETAG should match input tag");
             }
+        }
+    }
+}
+
+
+/// Bug condition exploration tests for COMRAT-ignored bug.
+///
+/// These tests encode the EXPECTED (correct) behavior where `extract_encoding_hints()`
+/// derives `lossless` and `compression_ratio` from the user-supplied COMRAT string
+/// via `J2KComrat::parse()`. On UNFIXED code, these tests MUST FAIL because the
+/// current implementation reads `J2K_LOSSLESS` (defaults to `false`) and
+/// `J2K_COMPRESSION_RATIO` (defaults to `10.0`) instead of parsing COMRAT.
+///
+/// **Validates: Requirements 1.1, 1.2, 1.3, 2.1, 2.2, 2.3**
+#[cfg(test)]
+mod bugfix_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::collections::HashMap;
+
+    // --- Test helpers (reuse pattern from existing tests) ---
+
+    struct BugfixMetadataProvider {
+        data: HashMap<String, serde_json::Value>,
+    }
+
+    impl BugfixMetadataProvider {
+        fn new() -> Self {
+            Self {
+                data: HashMap::new(),
+            }
+        }
+
+        fn with_field(mut self, key: &str, value: serde_json::Value) -> Self {
+            self.data.insert(key.to_string(), value);
+            self
+        }
+    }
+
+    impl MetadataProvider for BugfixMetadataProvider {
+        fn raw(&self) -> &[u8] {
+            &[]
+        }
+
+        fn as_dict(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
+            self.data.clone()
+        }
+    }
+
+    struct BugfixAssetProvider {
+        key: String,
+        metadata: Arc<dyn MetadataProvider>,
+    }
+
+    impl BugfixAssetProvider {
+        fn new(key: &str, metadata: Arc<dyn MetadataProvider>) -> Self {
+            Self {
+                key: key.to_string(),
+                metadata,
+            }
+        }
+    }
+
+    impl AssetProvider for BugfixAssetProvider {
+        fn key(&self) -> &str { &self.key }
+        fn title(&self) -> &str { "Bugfix Test" }
+        fn description(&self) -> &str { "Bugfix test asset" }
+        fn media_type(&self) -> &str { "image/nitf" }
+        fn roles(&self) -> &[String] { &[] }
+        fn asset_type(&self) -> AssetType { AssetType::Image }
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(vec![0u8; 64]) }
+        fn metadata(&self) -> Arc<dyn MetadataProvider> { self.metadata.clone() }
+        fn as_any(&self) -> &dyn std::any::Any { self }
+    }
+
+    fn make_queued_asset(metadata: BugfixMetadataProvider) -> QueuedAsset {
+        let provider = BugfixAssetProvider::new("test", Arc::new(metadata));
+        QueuedAsset {
+            key: "test".to_string(),
+            title: "Test".to_string(),
+            description: "Test".to_string(),
+            roles: vec![],
+            segment_type: SegmentType::Image,
+            provider: Arc::new(provider),
+        }
+    }
+
+    fn default_image_props() -> ImageProperties {
+        ImageProperties {
+            nrows: 256,
+            ncols: 256,
+            nbands: 1,
+            nbpp: 8,
+            abpp: 8,
+            pvtype: "INT".to_string(),
+            irep: "MONO".to_string(),
+            nppbh: 256,
+            nppbv: 256,
+        }
+    }
+
+    // --- Bug condition exploration property tests ---
+
+    proptest! {
+        /// Test 1: Lossless COMRAT ignored — COMRAT=N1.0 without J2K_LOSSLESS set.
+        ///
+        /// Bug: J2K_LOSSLESS defaults to false, so extract_encoding_hints() returns
+        /// lossless=false even though COMRAT=N1.0 is numerically lossless.
+        ///
+        /// Expected (correct): lossless == true, compression_ratio == None
+        ///
+        /// **Validates: Requirements 1.1, 1.3, 2.1, 2.2**
+        #[test]
+        fn comrat_lossless_should_derive_from_comrat(_dummy in 0..1u8) {
+            let metadata = BugfixMetadataProvider::new()
+                .with_field("IC", serde_json::json!("C8"))
+                .with_field("COMRAT", serde_json::json!("N1.0"));
+            // Note: J2K_LOSSLESS is NOT set — the bug causes it to default to false
+
+            let asset = make_queued_asset(metadata);
+            let props = default_image_props();
+            let hints = JBPDatasetWriter::extract_encoding_hints(&asset, &props);
+
+            let j2k = hints.j2k_hints.expect("J2K hints should be present for IC=C8");
+
+            // COMRAT=N1.0 is numerically lossless → lossless must be true
+            prop_assert!(
+                j2k.lossless,
+                "COMRAT=N1.0 (numerically lossless) should produce lossless=true, got false"
+            );
+            // Lossless encoding should have no compression ratio
+            prop_assert_eq!(
+                j2k.compression_ratio, None,
+                "Lossless encoding should have compression_ratio=None, got {:?}",
+                j2k.compression_ratio
+            );
+        }
+
+        /// Test 2: Lossy BPP COMRAT ignored — COMRAT=00.5 without J2K_COMPRESSION_RATIO set.
+        ///
+        /// Bug: J2K_COMPRESSION_RATIO defaults to 10.0, so extract_encoding_hints()
+        /// returns compression_ratio=Some(10.0) instead of deriving from 0.5 bpp.
+        ///
+        /// Expected (correct): lossless == false, compression_ratio == Some(8.0 / 0.5) == Some(16.0)
+        ///
+        /// **Validates: Requirements 1.1, 2.1, 2.3**
+        #[test]
+        fn comrat_lossy_bpp_should_derive_ratio_from_comrat(_dummy in 0..1u8) {
+            let metadata = BugfixMetadataProvider::new()
+                .with_field("IC", serde_json::json!("C8"))
+                .with_field("COMRAT", serde_json::json!("00.5"));
+            // Note: J2K_COMPRESSION_RATIO is NOT set — the bug causes it to default to 10.0
+
+            let asset = make_queued_asset(metadata);
+            let props = default_image_props();
+            let hints = JBPDatasetWriter::extract_encoding_hints(&asset, &props);
+
+            let j2k = hints.j2k_hints.expect("J2K hints should be present for IC=C8");
+
+            // COMRAT=00.5 is 0.5 bpp target → lossy
+            prop_assert!(
+                !j2k.lossless,
+                "COMRAT=00.5 (target bpp) should produce lossless=false, got true"
+            );
+            // Compression ratio should be 8.0 / 0.5 = 16.0
+            let expected_ratio = 8.0 / 0.5; // 16.0
+            let actual_ratio = j2k.compression_ratio.expect(
+                "COMRAT=00.5 should produce a compression_ratio, got None"
+            );
+            prop_assert!(
+                (actual_ratio - expected_ratio).abs() < 0.01,
+                "COMRAT=00.5 should produce compression_ratio={}, got {}",
+                expected_ratio,
+                actual_ratio
+            );
+        }
+
+        /// Test 3: Contradictory values — COMRAT=N1.0 with J2K_LOSSLESS=false, J2K_COMPRESSION_RATIO=10.0.
+        ///
+        /// Bug: J2K_LOSSLESS=false and J2K_COMPRESSION_RATIO=10.0 override COMRAT=N1.0,
+        /// producing lossy encoding at 10:1 ratio despite the lossless COMRAT.
+        ///
+        /// Expected (correct): COMRAT wins → lossless == true, compression_ratio == None
+        ///
+        /// **Validates: Requirements 1.2, 2.1, 2.4**
+        #[test]
+        fn comrat_should_win_over_contradictory_j2k_fields(_dummy in 0..1u8) {
+            let metadata = BugfixMetadataProvider::new()
+                .with_field("IC", serde_json::json!("C8"))
+                .with_field("COMRAT", serde_json::json!("N1.0"))
+                .with_field("J2K_LOSSLESS", serde_json::json!("false"))
+                .with_field("J2K_COMPRESSION_RATIO", serde_json::json!("10.0"));
+
+            let asset = make_queued_asset(metadata);
+            let props = default_image_props();
+            let hints = JBPDatasetWriter::extract_encoding_hints(&asset, &props);
+
+            let j2k = hints.j2k_hints.expect("J2K hints should be present for IC=C8");
+
+            // COMRAT=N1.0 is numerically lossless — COMRAT should be the source of truth
+            prop_assert!(
+                j2k.lossless,
+                "COMRAT=N1.0 should override J2K_LOSSLESS=false → lossless=true, got false"
+            );
+            prop_assert_eq!(
+                j2k.compression_ratio, None,
+                "COMRAT=N1.0 (lossless) should override J2K_COMPRESSION_RATIO=10.0 → None, got {:?}",
+                j2k.compression_ratio
+            );
+        }
+
+        // --- Preservation property tests (Property 2) ---
+
+        /// Property 2a: Non-J2K IC codes produce no j2k_hints.
+        ///
+        /// For any non-J2K IC code (NC, NM, C3, M3), extract_encoding_hints()
+        /// must return j2k_hints=None and pass through comrat, imode, nppbh, nppbv unchanged.
+        ///
+        /// **Validates: Requirements 3.5, 3.6, 3.7**
+        #[test]
+        fn non_j2k_ic_produces_no_j2k_hints(
+            ic in proptest::sample::select(vec!["NC", "NM", "C3", "M3"]),
+            comrat in proptest::option::of("[A-Z0-9.]{4}"),
+            imode in proptest::sample::select(vec!["B", "P", "R", "S"]),
+            nppbh in 1u32..=8192,
+            nppbv in 1u32..=8192,
+        ) {
+            let mut metadata = BugfixMetadataProvider::new()
+                .with_field("IC", serde_json::json!(ic))
+                .with_field("IMODE", serde_json::json!(imode))
+                .with_field("NPPBH", serde_json::json!(nppbh))
+                .with_field("NPPBV", serde_json::json!(nppbv));
+            if let Some(ref c) = comrat {
+                metadata = metadata.with_field("COMRAT", serde_json::json!(c));
+            }
+
+            let asset = make_queued_asset(metadata);
+            let props = default_image_props();
+            let hints = JBPDatasetWriter::extract_encoding_hints(&asset, &props);
+
+            // j2k_hints must be None for non-J2K IC codes
+            prop_assert!(
+                hints.j2k_hints.is_none(),
+                "IC={} should produce j2k_hints=None, got {:?}",
+                ic, hints.j2k_hints
+            );
+            // IC, imode, comrat, nppbh, nppbv pass through unchanged
+            prop_assert_eq!(&hints.ic, ic, "IC should pass through unchanged");
+            prop_assert_eq!(&hints.imode, imode, "IMODE should pass through unchanged");
+            prop_assert_eq!(hints.comrat.as_deref(), comrat.as_deref(), "COMRAT should pass through unchanged");
+            prop_assert_eq!(hints.nppbh, nppbh, "NPPBH should pass through unchanged");
+            prop_assert_eq!(hints.nppbv, nppbv, "NPPBV should pass through unchanged");
+        }
+
+        /// Property 2b: J2K IC codes preserve decomposition_levels, quality_layers, and htj2k.
+        ///
+        /// For any J2K IC code, decomposition_levels equals J2K_DECOMPOSITION_LEVELS (or default 5),
+        /// quality_layers equals J2K_QUALITY_LAYERS (or default 1), and htj2k matches IC=CD/MD.
+        ///
+        /// **Validates: Requirements 3.1, 3.2, 3.3, 3.4**
+        #[test]
+        fn j2k_ic_preserves_non_comrat_params(
+            ic in proptest::sample::select(vec!["C8", "CD", "M8", "MD"]),
+            decomp_levels in proptest::option::of(1u8..=32),
+            quality_layers in proptest::option::of(1u8..=255u8),
+        ) {
+            let mut metadata = BugfixMetadataProvider::new()
+                .with_field("IC", serde_json::json!(ic))
+                .with_field("COMRAT", serde_json::json!("N1.0"));
+            if let Some(dl) = decomp_levels {
+                metadata = metadata.with_field("J2K_DECOMPOSITION_LEVELS", serde_json::json!(dl));
+            }
+            if let Some(ql) = quality_layers {
+                metadata = metadata.with_field("J2K_QUALITY_LAYERS", serde_json::json!(ql));
+            }
+
+            let asset = make_queued_asset(metadata);
+            let props = default_image_props();
+            let hints = JBPDatasetWriter::extract_encoding_hints(&asset, &props);
+
+            let j2k = hints.j2k_hints.expect("J2K hints should be present for J2K IC code");
+
+            // decomposition_levels: user value or default 5
+            let expected_dl = decomp_levels.unwrap_or(5);
+            prop_assert_eq!(
+                j2k.decomposition_levels, expected_dl,
+                "decomposition_levels should be {} (user={:?}, default=5), got {}",
+                expected_dl, decomp_levels, j2k.decomposition_levels
+            );
+
+            // quality_layers: user value or default 1
+            let expected_ql = quality_layers.unwrap_or(1);
+            prop_assert_eq!(
+                j2k.quality_layers, expected_ql,
+                "quality_layers should be {} (user={:?}, default=1), got {}",
+                expected_ql, quality_layers, j2k.quality_layers
+            );
+
+            // htj2k: true for CD/MD, false for C8/M8
+            let expected_htj2k = ic == "CD" || ic == "MD";
+            prop_assert_eq!(
+                j2k.htj2k, expected_htj2k,
+                "IC={} should produce htj2k={}, got {}",
+                ic, expected_htj2k, j2k.htj2k
+            );
         }
     }
 }

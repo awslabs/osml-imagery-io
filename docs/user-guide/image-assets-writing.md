@@ -65,7 +65,6 @@ metadata.set("IC", "NC")
 copied = BufferedMetadataProvider(source=existing_provider)
 copied.set("IC", "C8")         # Switch to JPEG 2000
 copied.set("COMRAT", "N001.0") # Lossless
-copied.remove("J2K_LOSSLESS")  # Remove if not needed
 
 # Query
 value = metadata.get("IMODE")       # "B" or None
@@ -257,14 +256,13 @@ afterward.
 
 | Field | Values | Default | Description |
 |-------|--------|---------|-------------|
-| J2K_LOSSLESS | `true`, `false` | `false` | Force numerically lossless encoding |
-| J2K_COMPRESSION_RATIO | float (e.g. `10.0`) | `10.0` | Target compression ratio for lossy (10.0 = 10:1) |
 | J2K_DECOMPOSITION_LEVELS | 1–32 | `5` | Wavelet decomposition levels (resolution levels) |
 | J2K_QUALITY_LAYERS | 1–255 | `1` | Quality layers for progressive refinement |
 
-When `J2K_LOSSLESS` is `true`, the compression ratio is ignored and the encoder produces
-a mathematically exact reconstruction. HTJ2K mode (`IC=CD` or `MD`) is determined by the
-IC code — you do not set it separately.
+HTJ2K mode (`IC=CD` or `MD`) is determined by the IC code — you do not set it
+separately. Lossless vs lossy encoding and the compression ratio are derived from the
+`COMRAT` field: `Nnnn.n` selects numerically lossless, `Vnnn.n` selects visually
+lossless at the given bpp, and `nn.n` selects lossy at the target bpp.
 
 ```python
 # Lossless JPEG 2000
@@ -272,17 +270,15 @@ metadata = BufferedMetadataProvider()
 metadata.set("IC", "C8")
 metadata.set("IMODE", "B")
 metadata.set("COMRAT", "N001.0")
-metadata.set("J2K_LOSSLESS", "true")
 metadata.set("J2K_DECOMPOSITION_LEVELS", "5")
 metadata.set("NPPBH", "1024")
 metadata.set("NPPBV", "1024")
 
-# Lossy JPEG 2000 at 10:1 compression
+# Lossy JPEG 2000 at ~1.0 bpp (approximately 8:1 compression)
 metadata = BufferedMetadataProvider()
 metadata.set("IC", "C8")
 metadata.set("IMODE", "B")
 metadata.set("COMRAT", "01.0")
-metadata.set("J2K_COMPRESSION_RATIO", "10.0")
 metadata.set("J2K_DECOMPOSITION_LEVELS", "5")
 metadata.set("J2K_QUALITY_LAYERS", "1")
 metadata.set("NPPBH", "1024")
@@ -293,7 +289,6 @@ metadata = BufferedMetadataProvider()
 metadata.set("IC", "CD")
 metadata.set("IMODE", "B")
 metadata.set("COMRAT", "01.0")
-metadata.set("J2K_COMPRESSION_RATIO", "10.0")
 metadata.set("NPPBH", "1024")
 metadata.set("NPPBV", "1024")
 ```

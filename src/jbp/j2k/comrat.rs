@@ -304,6 +304,8 @@ impl J2KEncodingHints {
 
 /// Generate a COMRAT string from encoding hints.
 ///
+/// Used as fallback when no COMRAT is provided by the user.
+///
 /// This function converts encoding hints into the appropriate 4-character
 /// COMRAT field value for the NITF image subheader.
 ///
