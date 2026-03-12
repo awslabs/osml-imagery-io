@@ -8,10 +8,15 @@ PDF reference materials are located in `reference-materials/`:
 
 - `JBP/` - Joint BIIF Profile (NITF format):
   - `Joint-BIIF-Profile-V2024.1_2024-01-18.pdf` - Main JBP format specification (201 pages)
+  - `MIL-STD-188-199.pdf` - Vector Quantization (VQ) decompression standard (35 pages)
   - `STDI-0002-2024.1_2023-10-26/` - TRE and DES definitions:
     - `Vol-1-App {X} - {NAME}.pdf` - TRE specifications
     - `Vol-2-App {X} - {NAME}.pdf` - DES specifications
     - `STDI-0002-Volume-{N}-*.pdf` - Main reference documents
+- `GeoTIFF/` - TIFF and GeoTIFF specifications:
+  - `TIFF6.pdf` - TIFF Revision 6.0 base format specification (121 pages)
+  - `OGCGeoTIFFStandard.pdf` - OGC GeoTIFF standard (112 pages)
+  - `OGCCloudOptimizedGeoTIFFStandard.pdf` - OGC Cloud Optimized GeoTIFF standard (34 pages)
 - `SICD/` - Sensor Independent Complex Data (SAR complex imagery):
   - `NGA.STND.0024-1_1.3.0_SICD_DIDD_FINAL.pdf` - Design & Implementation
   - `NGA.STND.0024-2_1.3.0_SICD_FFDD_FINAL.pdf` - File Format
@@ -62,6 +67,25 @@ The main format specification (201 pages). Key sections:
 | Text Subheader | 5.17 | 95-98 |
 | DES Structure | 5.18 | 98-103 |
 | TRE Placement | 5.9 | 31-34 |
+
+### MIL-STD-188-199 (VQ Decompression)
+
+Vector Quantization decompression standard (35 pages). Defines the IC=C4/M4 compression format.
+
+| Topic | Approx Pages |
+|-------|--------------|
+| Title, Scope | 1-3 |
+| Applicable Documents | 4-5 |
+| Definitions & Acronyms | 6-10 |
+| Decompression Requirements | 10-25 |
+| Codebook Structure | 15-25 |
+| Appendices | 25-35 |
+
+Key concepts:
+- Codebook-based lossy compression using 4×4 pixel blocks
+- Up to 4 lookup tables embedded in the image data
+- COMRAT expressed as bits-per-pixel (e.g., "1.00")
+- Decompression is table lookup only (no complex math)
 
 ### STDI-0002 TRE Appendices
 
@@ -152,3 +176,17 @@ The SIPS specification defines image processing algorithms. Key topics include:
 2. Use Volume 2 (FFDD) for NITF file structure and DES/TRE requirements
 3. Reference Volume 3 for projection/geolocation (SICD) or GeoTIFF (SIDD)
 4. Cross-reference with JBP for underlying NITF structure
+
+## GeoTIFF Standards
+
+### TIFF 6.0
+
+The base TIFF format specification (121 pages). Defines the fundamental file structure, IFD (Image File Directory) layout, tag definitions, and compression schemes.
+
+### OGC GeoTIFF Standard
+
+The OGC GeoTIFF standard (112 pages). Extends TIFF with geospatial metadata via GeoKeys stored in TIFF tags. Defines coordinate reference systems, model transformations, and projection parameters.
+
+### OGC Cloud Optimized GeoTIFF (COG)
+
+Cloud Optimized GeoTIFF standard (34 pages). Defines conventions for organizing GeoTIFF files for efficient HTTP range-request access. Covers internal tiling, overview levels, and IFD ordering requirements.

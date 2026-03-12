@@ -16,7 +16,12 @@ This directory contains reference materials and specifications for the image for
 reference-materials/
 ├── JBP/                                        # Joint BIIF Profile (NITF)
 │   ├── Joint-BIIF-Profile-V2024.1_2024-01-18.pdf
+│   ├── MIL-STD-188-199.pdf                    # VQ decompression standard
 │   └── STDI-0002-2024.1_2023-10-26/           # TRE and DES definitions
+├── GeoTIFF/                                    # TIFF and GeoTIFF specifications
+│   ├── TIFF6.pdf                               # TIFF Revision 6.0 base format
+│   ├── OGCGeoTIFFStandard.pdf                  # OGC GeoTIFF standard
+│   └── OGCCloudOptimizedGeoTIFFStandard.pdf    # OGC Cloud Optimized GeoTIFF
 ├── SICD/                                       # Sensor Independent Complex Data
 ├── SIDD/                                       # Sensor Independent Derived Data
 └── SIPS/                                       # SAR Image Processing Standard
@@ -75,6 +80,17 @@ Files in `SIPS/`:
 - `SIPS_v24_21Aug2019.pdf` - Main SIPS specification
 - `SAND2015-2309.pdf` - Supporting Sandia report
 - `SAND2019-2371.pdf` - Supporting Sandia report
+
+### GeoTIFF Standards
+
+- [TIFF Revision 6.0](https://www.itu.int/itudoc/itu-t/com16/tiff-fx/docs/tiff6.pdf) - Base TIFF format specification
+- [OGC GeoTIFF Standard](https://www.ogc.org/standard/geotiff/) - GeoTIFF geospatial extensions
+- [OGC Cloud Optimized GeoTIFF](https://www.ogc.org/standard/cogtiff/) - COG standard for cloud-native access
+
+Files in `GeoTIFF/`:
+- `TIFF6.pdf` - TIFF Revision 6.0 base format specification
+- `OGCGeoTIFFStandard.pdf` - OGC GeoTIFF standard
+- `OGCCloudOptimizedGeoTIFFStandard.pdf` - OGC Cloud Optimized GeoTIFF standard
 
 ## Usage
 
