@@ -1,10 +1,7 @@
-# User Guide
-
-Practical guides for working with geospatial imagery using osml-imagery-io.
-
 ```{toctree}
 :maxdepth: 2
 
+introduction
 datasets-and-io
 metadata
 image-assets
