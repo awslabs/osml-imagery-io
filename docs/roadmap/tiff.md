@@ -5,7 +5,7 @@ This roadmap describes the plan for adding GeoTIFF and Cloud Optimized GeoTIFF (
 ## Design Principles
 
 - **Same API, different format.** Users interact with `DatasetReader`, `DatasetWriter`, `ImageAssetProvider`, and `MetadataProvider` exactly as they do for NITF. The only place TIFF-specific details surface is in metadata dictionaries.
-- **Single image per file.** Unlike NITF, TIFF files model a single image segment. There are no text, graphic, or data segments. The `TIFFDatasetReader` exposes one `ImageAssetProvider` keyed as `"image_segment_0"` and one dataset-level `MetadataProvider`.
+- **Multiple images per file.** A TIFF file can contain multiple IFDs, each defining a separate image (subfile) with its own tags. The `TIFFDatasetReader` enumerates all full-resolution IFDs (those where `NewSubfileType` bit 0 is 0) as separate `ImageAssetProvider`s keyed as `"image_segment_0"`, `"image_segment_1"`, etc. Reduced-resolution overview IFDs (bit 0 = 1) are associated with their parent full-resolution image and handled as resolution levels within the same provider (Phase 4). Each `ImageAssetProvider` exposes per-image metadata through its `metadata()` method, since TIFF tags are per-IFD. There are no text, graphic, or data segments — only image segments and a dataset-level `MetadataProvider`.
 - **libtiff via custom FFI.** We write our own `sys.rs` / `ffi.rs` bindings to libtiff (BSD-licensed), dynamically linked, following the same pattern as OpenJPEG and libjpeg-turbo. No third-party `-sys` crates.
 - **GeoTIFF tags parsed in Rust.** GeoTIFF metadata (GeoKeys, ModelTiepoint, ModelPixelScale, ModelTransformation) is parsed directly from libtiff's tag interface rather than linking libgeotiff as a second dependency. The GeoKey directory spec is straightforward enough to implement in Rust.
 - **Format implementation operates on `&[u8]`, not files.** The TIFF format implementation never touches the filesystem. Like JBP, the core constructor is `from_bytes(&[u8])` and all parsing operates on a byte slice. The IO layer is solely responsible for deciding how to produce those bytes (file read, mmap, future S3-backed mmap, etc.). libtiff is accessed via `TIFFClientOpen` with memory read/seek callbacks over the byte slice — the same pattern used for OpenJPEG's memory stream adapters.
@@ -68,14 +68,15 @@ src/tiff/
   - `get_block()` maps to `TIFFReadEncodedTile()` with conversion to band-sequential (CHW) format
   - `has_block()` always returns `true` (TIFF tiles are not sparse like NITF masked images)
   - `num_resolution_levels` returns 1 for basic TIFF (no overviews)
-  - Handles stripped TIFFs by treating each strip as a single-column tile grid
+  - Handles stripped TIFFs by treating strips as full-width blocks stacked vertically (each strip spans ImageWidth pixels across, RowsPerStrip pixels tall)
 - `reader.rs` — `TIFFDatasetReader` implementing `DatasetReader`:
   - Core constructor: `from_bytes(&[u8])` — opens via `TIFFClientOpen` with memory callbacks on the byte slice
   - Convenience method: `open(path)` — reads file into `Vec<u8>` then delegates to `from_bytes()` (same pattern as `JBPDatasetReader`)
-  - Reads IFD 0 as the primary image
-  - Exposes single `ImageAssetProvider` with key `"image_segment_0"`
-  - Exposes dataset-level `MetadataProvider` with TIFF tags as key-value pairs
-- `metadata.rs` — Maps TIFF tags to a flat `MetadataProvider` dictionary. Tag names follow libtiff conventions (e.g., `"ImageWidth"`, `"BitsPerSample"`, `"Compression"`)
+  - Enumerates all IFDs, classifying each by `NewSubfileType`: full-resolution images (bit 0 = 0) become `ImageAssetProvider`s, overview IFDs (bit 0 = 1) are skipped in Phase 1 (handled in Phase 4)
+  - Exposes one `ImageAssetProvider` per full-resolution IFD, keyed as `"image_segment_0"`, `"image_segment_1"`, etc.
+  - Each `ImageAssetProvider` exposes per-IFD metadata through its `metadata()` method (TIFF tags are per-IFD)
+  - Exposes dataset-level `MetadataProvider` with file-level information only (byte order, number of directories, number of image segments) — IFD-specific tags live on the per-asset `MetadataProvider`
+- `metadata.rs` — Maps TIFF tags to a flat `MetadataProvider` dictionary. Used at the per-image-segment level (IFD-specific tags like `"ImageWidth"`, `"BitsPerSample"`, `"Compression"`) and at the dataset level (file-level info like byte order and directory count). Tag names follow libtiff conventions.
 - `build.rs` — Add `configure_libtiff()` with pkg-config + conda + system library fallback (same pattern as OpenJPEG)
 - `Cargo.toml` — Add `libtiff` feature flag, enabled by default
 
