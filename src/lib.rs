@@ -10,6 +10,8 @@ pub mod buffered;
 mod error;
 pub mod jbp;
 pub mod parser;
+#[cfg(feature = "libtiff")]
+pub mod tiff;
 mod traits;
 mod types;
 

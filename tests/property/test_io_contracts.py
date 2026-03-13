@@ -3,10 +3,11 @@
 This module contains property tests that validate IO factory behavior including:
 - Format auto-detection (Property 23)
 - Dataset round-trip consistency (Property 20)
+- TIFF format detection and routing (Requirements 8.1, 8.2)
 
 Tests are migrated from tests/test_jbp_io.py.
 
-**Validates: Requirements 9.1, 9.5, 17.1, 17.2, 17.3, 19.3**
+**Validates: Requirements 8.1, 8.2, 9.1, 9.5, 17.1, 17.2, 17.3, 19.3**
 """
 
 from pathlib import Path
@@ -22,6 +23,7 @@ from aws.osml.io import IO
 
 UNIT_DATA_DIR = Path("data/unit")
 SMALL_NTF = UNIT_DATA_DIR / "small.ntf"
+SMALL_TIF = UNIT_DATA_DIR / "small.tif"
 SAMPLE_NITF21 = UNIT_DATA_DIR / "sample_nitf21.ntf"
 SAMPLE_NSIF10 = UNIT_DATA_DIR / "sample_nsif10.nsif"
 MULTI_SEGMENT = UNIT_DATA_DIR / "multi_segment.ntf"
@@ -543,3 +545,109 @@ class TestDatasetRoundTripConsistency:
             data = asset.get_raw_asset().read()
             expected = bytes([i] * 10)
             assert data == expected, f"Data mismatch for image_segment_{i}"
+
+
+# =============================================================================
+# TIFF Format Detection Tests
+# =============================================================================
+
+
+@pytest.mark.property
+class TestTiffFormatDetection:
+    """TIFF format auto-detection and explicit format routing.
+
+    Verifies that the IO factory correctly routes .tif/.tiff extensions
+    and explicit "tiff"/"tif" format strings to the TIFF reader.
+
+    **Feature: libtiff-ffi-tiff-reading, TIFF Format Detection**
+    **Validates: Requirements 8.1, 8.2**
+    """
+
+    def test_tif_extension_auto_detected(self):
+        """IO.open() auto-detects .tif extension and returns a reader."""
+        if not SMALL_TIF.exists():
+            pytest.skip("Test data file not available")
+
+        reader = IO.open([str(SMALL_TIF)], "r")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert len(keys) > 0
+        assert "image_segment_0" in keys
+
+    def test_tiff_extension_auto_detected(self, tmp_path):
+        """IO.open() auto-detects .tiff extension."""
+        if not SMALL_TIF.exists():
+            pytest.skip("Test data file not available")
+
+        # Copy small.tif to a .tiff extension
+        tiff_path = tmp_path / "test.tiff"
+        tiff_path.write_bytes(SMALL_TIF.read_bytes())
+
+        reader = IO.open([str(tiff_path)], "r")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert len(keys) > 0
+
+    def test_explicit_tiff_format(self):
+        """IO.open() with explicit 'tiff' format routes to TIFF reader."""
+        if not SMALL_TIF.exists():
+            pytest.skip("Test data file not available")
+
+        reader = IO.open([str(SMALL_TIF)], "r", "tiff")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert "image_segment_0" in keys
+
+    def test_explicit_tif_format(self):
+        """IO.open() with explicit 'tif' format routes to TIFF reader."""
+        if not SMALL_TIF.exists():
+            pytest.skip("Test data file not available")
+
+        reader = IO.open([str(SMALL_TIF)], "r", "tif")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert "image_segment_0" in keys
+
+    def test_tiff_write_mode_unsupported(self):
+        """TIFF write mode returns Unsupported error."""
+        with pytest.raises(Exception) as exc_info:
+            IO.open(["output.tif"], "w", "tiff")
+
+        err_msg = str(exc_info.value).lower()
+        assert "not yet implemented" in err_msg or "unsupported" in err_msg
+
+    def test_tiff_has_asset_consistency(self):
+        """has_asset() is consistent with get_asset_keys() for TIFF files."""
+        if not SMALL_TIF.exists():
+            pytest.skip("Test data file not available")
+
+        reader = IO.open([str(SMALL_TIF)], "r")
+        keys = reader.get_asset_keys()
+
+        for key in keys:
+            assert reader.has_asset(key), (
+                f"has_asset('{key}') should be True for key from get_asset_keys()"
+            )
+
+        assert not reader.has_asset("nonexistent_key")
+        assert not reader.has_asset("image_segment_999")
+
+    def test_tiff_asset_has_expected_properties(self):
+        """TIFF asset provider exposes expected properties."""
+        if not SMALL_TIF.exists():
+            pytest.skip("Test data file not available")
+
+        reader = IO.open([str(SMALL_TIF)], "r")
+        asset = reader.get_asset("image_segment_0")
+
+        assert asset is not None
+        assert hasattr(asset, "key")
+        assert hasattr(asset, "num_columns")
+        assert hasattr(asset, "num_rows")
+        assert hasattr(asset, "num_bands")
+        assert hasattr(asset, "pixel_value_type")
+        assert asset.key == "image_segment_0"

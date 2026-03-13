@@ -9,6 +9,8 @@ use pyo3::prelude::*;
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
 use crate::error::CodecError;
 use crate::jbp;
+#[cfg(feature = "libtiff")]
+use crate::tiff;
 
 /// Represents a parsed URI with its scheme and path components.
 #[derive(Debug, Clone)]
@@ -172,6 +174,11 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
                 let reader = jbp::IO::open_as(&parsed.path, fmt)?;
                 return Ok(PyDatasetReader::new(reader));
             }
+            #[cfg(feature = "libtiff")]
+            "tiff" | "tif" => {
+                let reader = tiff::TIFFDatasetReader::open(&parsed.path)?;
+                return Ok(PyDatasetReader::new(Box::new(reader)));
+            }
             _ => {
                 return Err(CodecError::InvalidFormat(format!(
                     "Unsupported format: '{}'",
@@ -192,12 +199,19 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
             Ok(PyDatasetReader::new(reader))
         }
         Some("tif") | Some("tiff") | Some("gtif") | Some("gtiff") => {
-            // GeoTIFF format - not yet implemented
-            Err(CodecError::Unsupported(format!(
-                "GeoTIFF format reader not yet implemented for: {}",
-                parsed.path
-            ))
-            .into())
+            #[cfg(feature = "libtiff")]
+            {
+                let reader = tiff::TIFFDatasetReader::open(&parsed.path)?;
+                return Ok(PyDatasetReader::new(Box::new(reader)));
+            }
+            #[cfg(not(feature = "libtiff"))]
+            {
+                return Err(CodecError::Unsupported(format!(
+                    "TIFF support not enabled (libtiff feature disabled) for: {}",
+                    parsed.path
+                ))
+                .into());
+            }
         }
         Some("jp2") | Some("j2k") | Some("jpx") => {
             // JPEG2000 format - not yet implemented
@@ -255,11 +269,10 @@ fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> 
             Ok(PyDatasetWriter::new(writer))
         }
         "tif" | "tiff" | "gtif" | "gtiff" | "geotiff" => {
-            // GeoTIFF format - not yet implemented
-            Err(CodecError::Unsupported(format!(
-                "GeoTIFF format writer not yet implemented for: {}",
-                parsed.path
-            ))
+            // TIFF writing is Phase 2 scope
+            Err(CodecError::Unsupported(
+                "TIFF format writing is not yet implemented (Phase 2 scope)".to_string(),
+            )
             .into())
         }
         "jp2" | "j2k" | "jpx" | "jpeg2000" => {
@@ -405,5 +418,88 @@ mod tests {
         assert!(result.is_err());
         let err_str = format!("{:?}", result.err());
         assert!(err_str.contains("S3"));
+    }
+
+    #[test]
+    #[cfg(feature = "libtiff")]
+    fn test_create_reader_tif_extension() {
+        // Should get past format detection and attempt to open the file
+        let parsed = ParsedUri::parse("nonexistent.tif");
+        let result = create_reader(&parsed, None);
+        assert!(result.is_err());
+        let err_str = format!("{:?}", result.err());
+        assert!(
+            !err_str.contains("Unsupported file format"),
+            "Expected file not found error, got: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "libtiff")]
+    fn test_create_reader_tiff_extension() {
+        let parsed = ParsedUri::parse("nonexistent.tiff");
+        let result = create_reader(&parsed, None);
+        assert!(result.is_err());
+        let err_str = format!("{:?}", result.err());
+        assert!(
+            !err_str.contains("Unsupported file format"),
+            "Expected file not found error, got: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "libtiff")]
+    fn test_create_reader_explicit_tiff_format() {
+        let parsed = ParsedUri::parse("nonexistent.dat");
+        let result = create_reader(&parsed, Some("tiff"));
+        assert!(result.is_err());
+        let err_str = format!("{:?}", result.err());
+        assert!(
+            !err_str.contains("Unsupported format"),
+            "Expected file not found error, got: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "libtiff")]
+    fn test_create_reader_explicit_tif_format() {
+        let parsed = ParsedUri::parse("nonexistent.dat");
+        let result = create_reader(&parsed, Some("tif"));
+        assert!(result.is_err());
+        let err_str = format!("{:?}", result.err());
+        assert!(
+            !err_str.contains("Unsupported format"),
+            "Expected file not found error, got: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_create_writer_tiff_unsupported() {
+        let parsed = ParsedUri::parse("/tmp/test_output.tif");
+        let result = create_writer(&parsed, "tiff");
+        assert!(result.is_err());
+        let err_str = format!("{:?}", result.err());
+        assert!(
+            err_str.contains("Phase 2"),
+            "Expected Phase 2 message, got: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_create_writer_tif_format_unsupported() {
+        let parsed = ParsedUri::parse("/tmp/test_output.tif");
+        let result = create_writer(&parsed, "tif");
+        assert!(result.is_err());
+        let err_str = format!("{:?}", result.err());
+        assert!(
+            err_str.contains("Phase 2"),
+            "Expected Phase 2 message, got: {}",
+            err_str
+        );
     }
 }

@@ -14,7 +14,7 @@ name = "_io"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["openjpeg", "libjpeg-turbo"]
+default = ["openjpeg", "libjpeg-turbo", "libtiff"]
 # extension-module is required for building as a Python extension
 # but must be disabled for running Rust tests
 extension-module = ["pyo3/extension-module"]
@@ -22,6 +22,8 @@ extension-module = ["pyo3/extension-module"]
 openjpeg = []
 # Enable libjpeg-turbo-based JPEG DCT codec (requires libjpeg-turbo)
 libjpeg-turbo = []
+# Enable libtiff-based TIFF codec (requires libtiff)
+libtiff = []
 
 [dependencies]
 pyo3 = { version = "0.22", features = ["auto-initialize"] }

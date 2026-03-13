@@ -1060,3 +1060,147 @@ def masked_jpeg_image(
     
     return (array, pixel_type, num_bands, num_rows, num_cols, 
             block_height, block_width, provided_blocks)
+
+
+# =============================================================================
+# TIFF Format Strategies
+# =============================================================================
+
+# Pixel types that PIL can write to TIFF (used for property test generation).
+# PIL writes int16 as int32 and doesn't support int8/uint32/float64,
+# so we limit to what PIL can actually produce correctly.
+TIFF_PIL_PIXEL_TYPES = [
+    PixelType.UInt8,
+    PixelType.UInt16,
+    PixelType.Int32,
+    PixelType.Float32,
+]
+
+# Compression names mapped to PIL compression strings
+TIFF_COMPRESSION_MAP = {
+    "None": "raw",
+    "LZW": "tiff_lzw",
+    "Deflate": "tiff_adobe_deflate",
+    "PackBits": "packbits",
+}
+
+
+def tiff_compression() -> st.SearchStrategy[str]:
+    """Strategy for TIFF compression types.
+
+    Returns a strategy that samples from supported lossless compressions.
+
+    **Feature: libtiff-ffi-tiff-reading, TIFF Compression Types**
+    """
+    return st.sampled_from(["None", "LZW", "Deflate", "PackBits"])
+
+
+def tiff_planar_config() -> st.SearchStrategy[int]:
+    """Strategy for TIFF planar configuration.
+
+    Returns 1 (chunky/RGBRGB) or 2 (planar/RRR...GGG...BBB...).
+    Note: PIL only writes chunky (1). Planar tests deferred to Phase 2.
+
+    **Feature: libtiff-ffi-tiff-reading, TIFF Planar Configuration**
+    """
+    return st.sampled_from([1, 2])
+
+
+def tiff_layout() -> st.SearchStrategy[str]:
+    """Strategy for TIFF data layout.
+
+    Returns 'tiled' or 'stripped'.
+    Note: PIL only writes stripped. Tiled tests use the existing small.tif fixture.
+
+    **Feature: libtiff-ffi-tiff-reading, TIFF Layout**
+    """
+    return st.sampled_from(["tiled", "stripped"])
+
+
+def tiff_pil_pixel_types() -> st.SearchStrategy[PixelType]:
+    """Strategy for pixel types that PIL can write to TIFF.
+
+    Limited to types PIL produces with correct TIFF tags:
+    UInt8, UInt16, Int32, Float32.
+
+    **Feature: libtiff-ffi-tiff-reading, TIFF PIL Pixel Types**
+    """
+    return st.sampled_from(TIFF_PIL_PIXEL_TYPES)
+
+
+def tiff_rows_per_strip(
+    image_height: int,
+    min_rps: int = 8,
+) -> st.SearchStrategy[int]:
+    """Strategy for RowsPerStrip values.
+
+    Generates strip heights that divide the image into multiple strips
+    when possible, or a single strip for small images.
+
+    Args:
+        image_height: Total image height in pixels
+        min_rps: Minimum rows per strip (default 8)
+
+    **Feature: libtiff-ffi-tiff-reading, TIFF RowsPerStrip**
+    """
+    # Pick from powers of 2 and the full height
+    candidates = [v for v in [8, 16, 32, 64, 128] if min_rps <= v <= image_height]
+    if not candidates or image_height not in candidates:
+        candidates.append(image_height)
+    return st.sampled_from(sorted(set(candidates)))
+
+
+@st.composite
+def tiff_image_config(
+    draw,
+    min_size: int = 16,
+    max_size: int = 128,
+    min_bands: int = 1,
+    max_bands: int = 3,
+) -> dict:
+    """Composite strategy for TIFF image configurations writable by PIL.
+
+    Generates a complete configuration dict for creating a test TIFF:
+    pixel_type, width, height, bands, compression, rows_per_strip.
+
+    PIL limitations applied:
+    - Always chunky (PlanarConfiguration=1)
+    - Always stripped (no tile support)
+    - Bands: 1 or 3 (PIL modes L/I;16/I/F for 1-band, RGB for 3-band uint8)
+    - Float32 and Int32 are single-band only in PIL
+
+    Args:
+        draw: Hypothesis draw function
+        min_size: Minimum dimension
+        max_size: Maximum dimension
+        min_bands: Minimum bands (1)
+        max_bands: Maximum bands (3)
+
+    Returns:
+        Dict with keys: pixel_type, width, height, bands, compression,
+        rows_per_strip, pil_compression
+
+    **Feature: libtiff-ffi-tiff-reading, TIFF Image Config**
+    """
+    pixel_type = draw(tiff_pil_pixel_types())
+    compression = draw(tiff_compression())
+    height = draw(st.integers(min_value=min_size, max_value=max_size))
+    width = draw(st.integers(min_value=min_size, max_value=max_size))
+
+    # PIL only supports multi-band (RGB) for uint8
+    if pixel_type == PixelType.UInt8:
+        bands = draw(st.sampled_from([b for b in [1, 3] if min_bands <= b <= max_bands]))
+    else:
+        bands = 1
+
+    rows_per_strip = draw(tiff_rows_per_strip(height))
+
+    return {
+        "pixel_type": pixel_type,
+        "width": width,
+        "height": height,
+        "bands": bands,
+        "compression": compression,
+        "rows_per_strip": rows_per_strip,
+        "pil_compression": TIFF_COMPRESSION_MAP[compression],
+    }

@@ -21,6 +21,10 @@ use crate::types::AssetType;
 // Import JBP asset providers for downcasting
 use crate::jbp::{JBPDataAssetProvider, JBPGraphicsAssetProvider, JBPImageAssetProvider, JBPTextAssetProvider};
 
+// Import TIFF asset providers for downcasting
+#[cfg(feature = "libtiff")]
+use crate::tiff::TIFFImageAssetProvider;
+
 /// Python wrapper for DatasetReader trait objects.
 ///
 /// This class provides access to geospatial datasets through a unified interface,
@@ -181,27 +185,36 @@ impl PyDatasetReader {
 fn try_as_image_provider(
     asset: &Arc<dyn AssetProvider>,
 ) -> Option<Arc<dyn ImageAssetProvider>> {
-    // Try to downcast to JBPImageAssetProvider using as_any
-    if asset.asset_type() == AssetType::Image {
-        if asset.as_any().downcast_ref::<JBPImageAssetProvider>().is_some() {
-            // We need to clone the Arc and return it as ImageAssetProvider
-            // Since we can't directly convert Arc<dyn AssetProvider> to Arc<dyn ImageAssetProvider>,
-            // we need to create a new Arc from the concrete type
-            // This is safe because we've verified the concrete type
-            let ptr = Arc::as_ptr(asset);
-            // SAFETY: We've verified the concrete type is JBPImageAssetProvider
-            // which implements ImageAssetProvider. We increment the ref count.
-            unsafe {
-                Arc::increment_strong_count(ptr);
-                let concrete_ptr = ptr as *const JBPImageAssetProvider;
-                Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider))
-            }
-        } else {
-            None
-        }
-    } else {
-        None
+    if asset.asset_type() != AssetType::Image {
+        return None;
     }
+
+    // Try JBPImageAssetProvider
+    if asset.as_any().downcast_ref::<JBPImageAssetProvider>().is_some() {
+        let ptr = Arc::as_ptr(asset);
+        // SAFETY: We've verified the concrete type is JBPImageAssetProvider
+        // which implements ImageAssetProvider. We increment the ref count.
+        unsafe {
+            Arc::increment_strong_count(ptr);
+            let concrete_ptr = ptr as *const JBPImageAssetProvider;
+            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
+        }
+    }
+
+    // Try TIFFImageAssetProvider
+    #[cfg(feature = "libtiff")]
+    if asset.as_any().downcast_ref::<TIFFImageAssetProvider>().is_some() {
+        let ptr = Arc::as_ptr(asset);
+        // SAFETY: We've verified the concrete type is TIFFImageAssetProvider
+        // which implements ImageAssetProvider. We increment the ref count.
+        unsafe {
+            Arc::increment_strong_count(ptr);
+            let concrete_ptr = ptr as *const TIFFImageAssetProvider;
+            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
+        }
+    }
+
+    None
 }
 
 /// Attempts to convert an AssetProvider to a TextAssetProvider.
