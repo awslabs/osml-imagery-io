@@ -42,3 +42,45 @@ exclude_patterns = ["internal"]
 # Suppress warnings from PyO3-generated docstrings (RST formatting issues
 # in Rust doc comments that we cannot easily fix at the source).
 suppress_warnings = ["docutils", "myst.xref_missing"]
+
+# -- LaTeX / PDF output configuration ----------------------------------------
+
+latex_engine = "pdflatex"
+
+latex_documents = [
+    (
+        "index",                          # startdocname
+        "osml-imagery-io.tex",            # targetname
+        "osml-imagery-io Documentation",  # title
+        "AWS OSML",                       # author
+        "manual",                         # theme ('manual' or 'howto')
+    ),
+    (
+        "user-guide/index",               # startdocname
+        "osml-imagery-io-user-guide.tex", # targetname
+        "osml-imagery-io User Guide",     # title
+        "AWS OSML",                       # author
+        "manual",                         # theme
+    ),
+]
+
+latex_elements = {
+    "papersize": "letterpaper",
+    "pointsize": "11pt",
+    # Remove blank pages between chapters for a more compact PDF
+    "extraclassoptions": "openany,oneside",
+    # Custom preamble: handle Unicode chars that pdflatex can't render natively
+    "preamble": r"""
+\usepackage{enumitem}
+\setlistdepth{99}
+\usepackage{newunicodechar}
+\newunicodechar{✅}{\checkmark}
+\newunicodechar{❌}{\texttimes}
+\newunicodechar{🚧}{\textbf{[WIP]}}
+\newunicodechar{✗}{\texttimes}
+\newunicodechar{≤}{$\leq$}
+\newunicodechar{≥}{$\geq$}
+\newunicodechar{↔}{$\leftrightarrow$}
+\newunicodechar{→}{$\rightarrow$}
+""",
+}
