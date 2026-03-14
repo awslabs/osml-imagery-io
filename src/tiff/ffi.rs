@@ -180,6 +180,128 @@ unsafe extern "C" fn tiff_size_proc(clientdata: *mut c_void) -> i64 {
 }
 
 // =============================================================================
+// Memory Write Stream Callbacks
+// =============================================================================
+
+/// Memory write stream data for TIFFClientOpen write callbacks.
+/// Holds a growable `Vec<u8>` buffer and current write position.
+pub(crate) struct MemoryWriteStreamData {
+    pub(crate) buffer: Vec<u8>,
+    pub(crate) pos: usize,
+}
+
+/// POSIX-style write callback for writable TIFF streams.
+/// Writes bytes into the growable `Vec<u8>` buffer, extending it as needed.
+unsafe extern "C" fn tiff_write_proc_writable(
+    clientdata: *mut c_void,
+    buf: *mut c_void,
+    size: i64,
+) -> i64 {
+    if clientdata.is_null() || buf.is_null() || size < 0 {
+        return -1;
+    }
+
+    let stream = &mut *(clientdata as *mut MemoryWriteStreamData);
+    let count = size as usize;
+
+    // Ensure the buffer is large enough for the write at the current position
+    let end = stream.pos + count;
+    if end > stream.buffer.len() {
+        stream.buffer.resize(end, 0);
+    }
+
+    ptr::copy_nonoverlapping(
+        buf as *const u8,
+        stream.buffer.as_mut_ptr().add(stream.pos),
+        count,
+    );
+    stream.pos += count;
+
+    size
+}
+
+/// POSIX-style read callback for writable TIFF streams.
+/// libtiff may read back data during write operations (e.g., updating offsets).
+unsafe extern "C" fn tiff_read_proc_writable(
+    clientdata: *mut c_void,
+    buf: *mut c_void,
+    size: i64,
+) -> i64 {
+    if clientdata.is_null() || buf.is_null() || size < 0 {
+        return -1;
+    }
+
+    let stream = &mut *(clientdata as *mut MemoryWriteStreamData);
+    let remaining = stream.buffer.len().saturating_sub(stream.pos);
+    let to_read = (size as usize).min(remaining);
+
+    if to_read == 0 {
+        return 0;
+    }
+
+    ptr::copy_nonoverlapping(
+        stream.buffer.as_ptr().add(stream.pos),
+        buf as *mut u8,
+        to_read,
+    );
+    stream.pos += to_read;
+
+    to_read as i64
+}
+
+/// POSIX-style seek callback for writable TIFF streams.
+/// Supports SEEK_SET (0), SEEK_CUR (1), and SEEK_END (2).
+unsafe extern "C" fn tiff_seek_proc_writable(
+    clientdata: *mut c_void,
+    offset: i64,
+    whence: c_int,
+) -> i64 {
+    if clientdata.is_null() {
+        return -1;
+    }
+
+    let stream = &mut *(clientdata as *mut MemoryWriteStreamData);
+
+    let new_pos: i64 = match whence {
+        0 => offset,                           // SEEK_SET
+        1 => stream.pos as i64 + offset,       // SEEK_CUR
+        2 => stream.buffer.len() as i64 + offset, // SEEK_END
+        _ => return -1,
+    };
+
+    if new_pos < 0 {
+        return -1;
+    }
+
+    stream.pos = new_pos as usize;
+    new_pos
+}
+
+/// Close callback for writable TIFF streams. No-op because Rust owns the memory.
+unsafe extern "C" fn tiff_close_proc_writable(_clientdata: *mut c_void) -> c_int {
+    0 // Success
+}
+
+/// Size callback for writable TIFF streams. Returns the current buffer length.
+unsafe extern "C" fn tiff_size_proc_writable(clientdata: *mut c_void) -> i64 {
+    if clientdata.is_null() {
+        return 0;
+    }
+    let stream = &*(clientdata as *mut MemoryWriteStreamData);
+    stream.buffer.len() as i64
+}
+
+// =============================================================================
+// Stream Data Enum
+// =============================================================================
+
+/// Holds either read or write stream data, keeping it alive for the libtiff handle.
+enum StreamData {
+    Read(Box<MemoryReadStreamData>),
+    Write(Box<MemoryWriteStreamData>),
+}
+
+// =============================================================================
 // TiffHandle — Safe RAII Wrapper
 // =============================================================================
 
@@ -192,7 +314,7 @@ pub(crate) struct TiffHandle {
     handle: *mut c_void,
     /// Prevent deallocation of the stream data while the handle is alive.
     /// libtiff holds a pointer to this data internally.
-    _stream_data: Box<MemoryReadStreamData>,
+    _stream_data: StreamData,
 }
 
 impl std::fmt::Debug for TiffHandle {
@@ -273,7 +395,7 @@ impl TiffHandle {
 
         Ok(TiffHandle {
             handle,
-            _stream_data: stream_data,
+            _stream_data: StreamData::Read(stream_data),
         })
     }
 
@@ -464,6 +586,153 @@ impl TiffHandle {
     /// Return whether the current IFD is organized in tiles (vs strips).
     pub fn is_tiled(&self) -> bool {
         unsafe { sys::TIFFIsTiled(self.handle) != 0 }
+    }
+
+    // =========================================================================
+    // Write-Mode Constructor and Methods
+    // =========================================================================
+
+    /// Open a new TIFF for writing using `TIFFClientOpen` with memory write callbacks.
+    ///
+    /// Returns a `TiffHandle` backed by a growable `Vec<u8>` buffer. Use
+    /// `set_field_u16()` / `set_field_u32()` to set tags, `write_encoded_tile()`
+    /// to write tile data, `write_directory()` to finalize each IFD, and
+    /// `into_bytes()` to close the handle and extract the assembled TIFF bytes.
+    ///
+    /// Returns `CodecError::Encode` if `TIFFClientOpen` fails.
+    pub fn from_write() -> Result<Self, CodecError> {
+        install_error_handlers();
+
+        let _ = take_last_error();
+        let _ = take_last_warning();
+
+        let stream_data = Box::new(MemoryWriteStreamData {
+            buffer: Vec::new(),
+            pos: 0,
+        });
+
+        let clientdata = &*stream_data as *const MemoryWriteStreamData as *mut c_void;
+
+        let name = CString::new("memory").unwrap();
+        let mode = CString::new("w").unwrap();
+
+        let handle = unsafe {
+            sys::TIFFClientOpen(
+                name.as_ptr(),
+                mode.as_ptr(),
+                clientdata,
+                Some(tiff_read_proc_writable),
+                Some(tiff_write_proc_writable),
+                Some(tiff_seek_proc_writable),
+                Some(tiff_close_proc_writable),
+                Some(tiff_size_proc_writable),
+                None, // mapproc
+                None, // unmapproc
+            )
+        };
+
+        if handle.is_null() {
+            let error_msg = take_last_error()
+                .unwrap_or_else(|| "Unknown error creating TIFF writer".to_string());
+            return Err(CodecError::Encode(format!(
+                "Failed to create TIFF writer: {}",
+                error_msg
+            )));
+        }
+
+        Ok(TiffHandle {
+            handle,
+            _stream_data: StreamData::Write(stream_data),
+        })
+    }
+
+    /// Set a `u16` tag value in the current IFD.
+    pub fn set_field_u16(&self, tag: u32, value: u16) -> Result<(), CodecError> {
+        let ret = unsafe { sys::TIFFSetField(self.handle, tag, value as c_int) };
+        if ret == 1 {
+            Ok(())
+        } else {
+            let error_msg = take_last_error()
+                .unwrap_or_else(|| format!("Failed to set TIFF tag {} to u16 value {}", tag, value));
+            Err(CodecError::Encode(error_msg))
+        }
+    }
+
+    /// Set a `u32` tag value in the current IFD.
+    pub fn set_field_u32(&self, tag: u32, value: u32) -> Result<(), CodecError> {
+        let ret = unsafe { sys::TIFFSetField(self.handle, tag, value) };
+        if ret == 1 {
+            Ok(())
+        } else {
+            let error_msg = take_last_error()
+                .unwrap_or_else(|| format!("Failed to set TIFF tag {} to u32 value {}", tag, value));
+            Err(CodecError::Encode(error_msg))
+        }
+    }
+
+    /// Compress and write a tile of data.
+    ///
+    /// Returns `CodecError::Io` if `TIFFWriteEncodedTile` fails.
+    pub fn write_encoded_tile(&self, tile_index: u32, data: &[u8]) -> Result<(), CodecError> {
+        let bytes_written = unsafe {
+            sys::TIFFWriteEncodedTile(
+                self.handle,
+                tile_index,
+                data.as_ptr() as *mut c_void,
+                data.len() as i64,
+            )
+        };
+
+        if bytes_written < 0 {
+            let error_msg = take_last_error()
+                .unwrap_or_else(|| format!("Failed to write tile {}", tile_index));
+            return Err(CodecError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                error_msg,
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Write the current directory and prepare for a new one (multi-IFD support).
+    ///
+    /// Returns `CodecError::Encode` if `TIFFWriteDirectory` fails.
+    pub fn write_directory(&self) -> Result<(), CodecError> {
+        let ret = unsafe { sys::TIFFWriteDirectory(self.handle) };
+        if ret == 1 {
+            Ok(())
+        } else {
+            let error_msg = take_last_error()
+                .unwrap_or_else(|| "Failed to write TIFF directory".to_string());
+            Err(CodecError::Encode(error_msg))
+        }
+    }
+
+    /// Consume the handle, calling `TIFFClose`, and return the assembled TIFF bytes.
+    ///
+    /// This method takes ownership of the `TiffHandle` so that `Drop` does not
+    /// double-close the libtiff handle.
+    ///
+    /// Returns `CodecError::Encode` if the handle was not opened in write mode.
+    pub fn into_bytes(mut self) -> Result<Vec<u8>, CodecError> {
+        // Close the libtiff handle to flush any pending data
+        if !self.handle.is_null() {
+            unsafe {
+                sys::TIFFClose(self.handle);
+            }
+            self.handle = ptr::null_mut();
+        }
+
+        // Extract the buffer from the write stream data
+        match self._stream_data {
+            StreamData::Write(ref mut write_data) => {
+                Ok(std::mem::take(&mut write_data.buffer))
+            }
+            StreamData::Read(_) => Err(CodecError::Encode(
+                "into_bytes() called on a read-mode TiffHandle".to_string(),
+            )),
+        }
     }
 }
 

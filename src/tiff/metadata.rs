@@ -68,6 +68,7 @@ impl TIFFMetadataProvider {
         try_u32_tag!(tags::TILE_WIDTH, "TileWidth");
         try_u32_tag!(tags::TILE_LENGTH, "TileLength");
         try_u32_tag!(tags::ROWS_PER_STRIP, "RowsPerStrip");
+        try_u16_tag!(tags::PREDICTOR, "Predictor");
 
         Ok(Self {
             tags,

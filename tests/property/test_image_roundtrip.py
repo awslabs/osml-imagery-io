@@ -34,6 +34,7 @@ from .strategies import (
     band_counts,
     get_numpy_dtype,
 )
+from .helpers import read_full_image
 from .quality import (
     calculate_psnr,
     calculate_ssim,
@@ -142,46 +143,8 @@ class TestLosslessRoundtrip:
             if path.exists():
                 path.unlink()
     
-    def _read_full_image(self, asset, num_bands: int, num_rows: int, num_cols: int) -> np.ndarray:
-        """Read all blocks from an asset and reassemble into full image.
-        
-        Args:
-            asset: ImageAssetProvider to read from
-            num_bands: Expected number of bands
-            num_rows: Expected number of rows
-            num_cols: Expected number of columns
-            
-        Returns:
-            Reassembled image array in BSQ format (bands, rows, cols)
-        """
-        # Get block grid dimensions
-        block_grid_rows, block_grid_cols = asset.block_grid_size
-        # block_shape returns (bands, rows, cols) - same as BSQ format
-        block_bands, block_rows, block_cols = asset.block_shape
-        
-        # Allocate output array
-        dtype = get_numpy_dtype(asset.pixel_value_type)
-        result = np.zeros((num_bands, num_rows, num_cols), dtype=dtype)
-        
-        # Read each block and place in result
-        for block_row in range(block_grid_rows):
-            for block_col in range(block_grid_cols):
-                # get_block returns (bands, rows, cols) format - same as BSQ
-                block = asset.get_block(block_row, block_col, 0)
-                
-                # Calculate position in full image
-                start_row = block_row * block_rows
-                start_col = block_col * block_cols
-                end_row = min(start_row + block.shape[1], num_rows)
-                end_col = min(start_col + block.shape[2], num_cols)
-                
-                # Handle edge blocks that may be smaller
-                actual_rows = end_row - start_row
-                actual_cols = end_col - start_col
-                
-                result[:, start_row:end_row, start_col:end_col] = block[:, :actual_rows, :actual_cols]
-        
-        return result
+    def _read_full_image(self, asset, num_bands, num_rows, num_cols):
+        return read_full_image(asset, num_bands, num_rows, num_cols)
 
 
 @pytest.mark.property
@@ -292,46 +255,8 @@ class TestLossyRoundtrip:
             if path.exists():
                 path.unlink()
     
-    def _read_full_image(self, asset, num_bands: int, num_rows: int, num_cols: int) -> np.ndarray:
-        """Read all blocks from an asset and reassemble into full image.
-        
-        Args:
-            asset: ImageAssetProvider to read from
-            num_bands: Expected number of bands
-            num_rows: Expected number of rows
-            num_cols: Expected number of columns
-            
-        Returns:
-            Reassembled image array in BSQ format (bands, rows, cols)
-        """
-        # Get block grid dimensions
-        block_grid_rows, block_grid_cols = asset.block_grid_size
-        # block_shape returns (bands, rows, cols) - same as BSQ format
-        block_bands, block_rows, block_cols = asset.block_shape
-        
-        # Allocate output array
-        dtype = get_numpy_dtype(asset.pixel_value_type)
-        result = np.zeros((num_bands, num_rows, num_cols), dtype=dtype)
-        
-        # Read each block and place in result
-        for block_row in range(block_grid_rows):
-            for block_col in range(block_grid_cols):
-                # get_block returns (bands, rows, cols) format - same as BSQ
-                block = asset.get_block(block_row, block_col, 0)
-                
-                # Calculate position in full image
-                start_row = block_row * block_rows
-                start_col = block_col * block_cols
-                end_row = min(start_row + block.shape[1], num_rows)
-                end_col = min(start_col + block.shape[2], num_cols)
-                
-                # Handle edge blocks that may be smaller
-                actual_rows = end_row - start_row
-                actual_cols = end_col - start_col
-                
-                result[:, start_row:end_row, start_col:end_col] = block[:, :actual_rows, :actual_cols]
-        
-        return result
+    def _read_full_image(self, asset, num_bands, num_rows, num_cols):
+        return read_full_image(asset, num_bands, num_rows, num_cols)
 
 
 @pytest.mark.property
@@ -564,46 +489,8 @@ class TestIdempotentEncoding:
             if path2.exists():
                 path2.unlink()
     
-    def _read_full_image(self, asset, num_bands: int, num_rows: int, num_cols: int) -> np.ndarray:
-        """Read all blocks from an asset and reassemble into full image.
-        
-        Args:
-            asset: ImageAssetProvider to read from
-            num_bands: Expected number of bands
-            num_rows: Expected number of rows
-            num_cols: Expected number of columns
-            
-        Returns:
-            Reassembled image array in BSQ format (bands, rows, cols)
-        """
-        # Get block grid dimensions
-        block_grid_rows, block_grid_cols = asset.block_grid_size
-        # block_shape returns (bands, rows, cols) - same as BSQ format
-        block_bands, block_rows, block_cols = asset.block_shape
-        
-        # Allocate output array
-        dtype = get_numpy_dtype(asset.pixel_value_type)
-        result = np.zeros((num_bands, num_rows, num_cols), dtype=dtype)
-        
-        # Read each block and place in result
-        for block_row in range(block_grid_rows):
-            for block_col in range(block_grid_cols):
-                # get_block returns (bands, rows, cols) format - same as BSQ
-                block = asset.get_block(block_row, block_col, 0)
-                
-                # Calculate position in full image
-                start_row = block_row * block_rows
-                start_col = block_col * block_cols
-                end_row = min(start_row + block.shape[1], num_rows)
-                end_col = min(start_col + block.shape[2], num_cols)
-                
-                # Handle edge blocks that may be smaller
-                actual_rows = end_row - start_row
-                actual_cols = end_col - start_col
-                
-                result[:, start_row:end_row, start_col:end_col] = block[:, :actual_rows, :actual_cols]
-        
-        return result
+    def _read_full_image(self, asset, num_bands, num_rows, num_cols):
+        return read_full_image(asset, num_bands, num_rows, num_cols)
 
 
 @pytest.mark.property

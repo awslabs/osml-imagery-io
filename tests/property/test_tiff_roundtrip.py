@@ -87,23 +87,7 @@ def _create_tiff(cfg: dict, array_chw: np.ndarray) -> bytes:
         path.unlink(missing_ok=True)
 
 
-def _read_full_image(asset, num_bands: int, num_rows: int, num_cols: int) -> np.ndarray:
-    """Read all blocks from a TIFF asset and reassemble into CHW array."""
-    grid_rows, grid_cols = asset.block_grid_size
-    bh = asset.num_pixels_per_block_vertical
-    bw = asset.num_pixels_per_block_horizontal
-    dtype = get_numpy_dtype(asset.pixel_value_type)
-    result = np.zeros((num_bands, num_rows, num_cols), dtype=dtype)
-
-    for r in range(grid_rows):
-        for c in range(grid_cols):
-            block = asset.get_block(r, c, 0, None)
-            y0, x0 = r * bh, c * bw
-            y1 = min(y0 + block.shape[1], num_rows)
-            x1 = min(x0 + block.shape[2], num_cols)
-            result[:, y0:y1, x0:x1] = block[:, : y1 - y0, : x1 - x0]
-
-    return result
+from .helpers import read_full_image as _read_full_image
 
 
 # =============================================================================

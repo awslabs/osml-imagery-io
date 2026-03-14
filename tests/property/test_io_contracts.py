@@ -612,13 +612,10 @@ class TestTiffFormatDetection:
         keys = reader.get_asset_keys()
         assert "image_segment_0" in keys
 
-    def test_tiff_write_mode_unsupported(self):
-        """TIFF write mode returns Unsupported error."""
-        with pytest.raises(Exception) as exc_info:
-            IO.open(["output.tif"], "w", "tiff")
-
-        err_msg = str(exc_info.value).lower()
-        assert "not yet implemented" in err_msg or "unsupported" in err_msg
+    def test_tiff_write_mode_supported(self):
+        """TIFF write mode creates a writer successfully."""
+        writer = IO.open(["output.tif"], "w", "tiff")
+        assert writer is not None
 
     def test_tiff_has_asset_consistency(self):
         """has_asset() is consistent with get_asset_keys() for TIFF files."""

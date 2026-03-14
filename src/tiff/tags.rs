@@ -57,6 +57,10 @@ pub const TILE_BYTE_COUNTS: u32 = 325;
 /// Tag 339: Specifies how to interpret each data sample in a pixel.
 pub const SAMPLE_FORMAT: u32 = 339;
 
+/// Tag 317: Predictor for compression pre-filtering.
+pub const PREDICTOR: u32 = 317;
+
+
 // =============================================================================
 // Compression Constants
 // =============================================================================

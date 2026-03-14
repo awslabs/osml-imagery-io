@@ -1204,3 +1204,123 @@ def tiff_image_config(
         "rows_per_strip": rows_per_strip,
         "pil_compression": TIFF_COMPRESSION_MAP[compression],
     }
+
+
+# =============================================================================
+# TIFF Writing Strategies (Phase 2 — our own writer)
+# =============================================================================
+
+# All pixel types supported by TIFFDatasetWriter
+TIFF_WRITER_PIXEL_TYPES = [
+    PixelType.UInt8,
+    PixelType.UInt16,
+    PixelType.UInt32,
+    PixelType.Int8,
+    PixelType.Int16,
+    PixelType.Int32,
+    PixelType.Float32,
+    PixelType.Float64,
+]
+
+# Writer-supported lossless compressions (no PackBits — writer doesn't support it)
+TIFF_WRITER_COMPRESSIONS = ["None", "LZW", "Deflate"]
+
+# Writer-supported predictor values
+TIFF_WRITER_PREDICTORS = ["None", "Horizontal"]
+
+# Writer-supported planar configurations
+TIFF_WRITER_PLANAR_CONFIGS = ["Chunky", "Planar"]
+
+# Tile sizes that are multiples of 16 (TIFF spec requirement)
+TIFF_TILE_SIZES = [64, 128, 256]
+
+
+def tiff_writer_pixel_types() -> st.SearchStrategy[PixelType]:
+    """Strategy for all pixel types supported by TIFFDatasetWriter.
+
+    Includes the full set: UInt8–UInt32, Int8–Int32, Float32, Float64.
+
+    **Feature: tiff-writing, TIFF Writer Pixel Types**
+    """
+    return st.sampled_from(TIFF_WRITER_PIXEL_TYPES)
+
+
+def tiff_writer_compression() -> st.SearchStrategy[str]:
+    """Strategy for compression types supported by TIFFDatasetWriter.
+
+    Returns one of: None, LZW, Deflate.
+
+    **Feature: tiff-writing, TIFF Writer Compression**
+    """
+    return st.sampled_from(TIFF_WRITER_COMPRESSIONS)
+
+
+@st.composite
+def tiff_encoding_hints(draw) -> dict:
+    """Strategy generating TIFF encoding hint key-value pairs.
+
+    Produces a dict with keys matching BufferedMetadataProvider hint names:
+    TileWidth, TileHeight, Compression, Predictor, PlanarConfiguration.
+
+    The predictor is chosen consistently with the compression: Horizontal
+    is only meaningful for LZW/Deflate; None is always valid.
+
+    Returns:
+        Dict of hint name → string value.
+
+    **Feature: tiff-writing, TIFF Encoding Hints**
+    """
+    tile_w = draw(st.sampled_from(TIFF_TILE_SIZES))
+    tile_h = draw(st.sampled_from(TIFF_TILE_SIZES))
+    compression = draw(tiff_writer_compression())
+    planar = draw(st.sampled_from(TIFF_WRITER_PLANAR_CONFIGS))
+
+    if compression == "None":
+        predictor = "None"
+    else:
+        predictor = draw(st.sampled_from(TIFF_WRITER_PREDICTORS))
+
+    return {
+        "TileWidth": str(tile_w),
+        "TileHeight": str(tile_h),
+        "Compression": compression,
+        "Predictor": predictor,
+        "PlanarConfiguration": planar,
+    }
+
+
+@st.composite
+def tiff_writable_image(
+    draw,
+    min_size: int = 16,
+    max_size: int = 128,
+    min_bands: int = 1,
+    max_bands: int = 4,
+) -> Tuple[np.ndarray, PixelType, int, int, int, dict]:
+    """Composite strategy for a writable TIFF image with encoding hints.
+
+    Generates a random image array (CHW) together with pixel type metadata
+    and a matching set of TIFF encoding hints suitable for
+    ``BufferedMetadataProvider``.
+
+    Args:
+        draw: Hypothesis draw function
+        min_size: Minimum image dimension (default 16)
+        max_size: Maximum image dimension (default 128)
+        min_bands: Minimum band count (default 1)
+        max_bands: Maximum band count (default 4)
+
+    Returns:
+        Tuple of (array, pixel_type, num_bands, num_rows, num_cols, hints)
+        where *hints* is a dict of encoding hint strings.
+
+    **Feature: tiff-writing, TIFF Writable Image**
+    """
+    pixel_type = draw(tiff_writer_pixel_types())
+    num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
+    num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
+    hints = draw(tiff_encoding_hints())
+
+    array = draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
+
+    return (array, pixel_type, num_bands, num_rows, num_cols, hints)

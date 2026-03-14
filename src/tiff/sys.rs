@@ -284,4 +284,15 @@ extern "C" {
     /// # Returns
     /// The previous extended warning handler
     pub fn TIFFSetWarningHandlerExt(handler: TIFFErrorHandlerExt) -> TIFFErrorHandlerExt;
+
+    // -------------------------------------------------------------------------
+    // Directory Write Functions
+    // -------------------------------------------------------------------------
+
+    /// Write the current directory to the file and set up to create a new one.
+    ///
+    /// # Returns
+    /// 1 on success, 0 on failure
+    pub fn TIFFWriteDirectory(tif: *mut c_void) -> c_int;
+
 }

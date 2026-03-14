@@ -268,10 +268,15 @@ fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> 
             let writer = jbp::IO::create(&parsed.path, format)?;
             Ok(PyDatasetWriter::new(writer))
         }
+        #[cfg(feature = "libtiff")]
         "tif" | "tiff" | "gtif" | "gtiff" | "geotiff" => {
-            // TIFF writing is Phase 2 scope
+            let writer = tiff::TIFFDatasetWriter::new(&parsed.path)?;
+            Ok(PyDatasetWriter::new(Box::new(writer)))
+        }
+        #[cfg(not(feature = "libtiff"))]
+        "tif" | "tiff" | "gtif" | "gtiff" | "geotiff" => {
             Err(CodecError::Unsupported(
-                "TIFF format writing is not yet implemented (Phase 2 scope)".to_string(),
+                "TIFF format writing requires the 'libtiff' feature".to_string(),
             )
             .into())
         }
@@ -478,28 +483,18 @@ mod tests {
     }
 
     #[test]
-    fn test_create_writer_tiff_unsupported() {
+    #[cfg(feature = "libtiff")]
+    fn test_create_writer_tiff_supported() {
         let parsed = ParsedUri::parse("/tmp/test_output.tif");
         let result = create_writer(&parsed, "tiff");
-        assert!(result.is_err());
-        let err_str = format!("{:?}", result.err());
-        assert!(
-            err_str.contains("Phase 2"),
-            "Expected Phase 2 message, got: {}",
-            err_str
-        );
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
     }
 
     #[test]
-    fn test_create_writer_tif_format_unsupported() {
+    #[cfg(feature = "libtiff")]
+    fn test_create_writer_tif_format_supported() {
         let parsed = ParsedUri::parse("/tmp/test_output.tif");
         let result = create_writer(&parsed, "tif");
-        assert!(result.is_err());
-        let err_str = format!("{:?}", result.err());
-        assert!(
-            err_str.contains("Phase 2"),
-            "Expected Phase 2 message, got: {}",
-            err_str
-        );
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
     }
 }

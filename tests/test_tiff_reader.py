@@ -77,11 +77,10 @@ class TestIOOpen:
         finally:
             os.unlink(tmp)
 
-    def test_write_mode_raises_unsupported(self):
-        """TIFF write mode raises an Unsupported error."""
-        with pytest.raises(Exception) as exc_info:
-            IO.open(["output.tif"], "w", "tiff")
-        assert "not yet implemented" in str(exc_info.value).lower() or "Unsupported" in str(exc_info.value)
+    def test_write_mode_creates_writer(self):
+        """TIFF write mode creates a writer successfully."""
+        writer = IO.open(["output.tif"], "w", "tiff")
+        assert writer is not None
 
     def test_context_manager(self):
         """TIFF reader supports context manager protocol."""

@@ -6,23 +6,23 @@ Implement `TIFFDatasetWriter` following the same architectural pattern as the JB
 
 ## Tasks
 
-- [ ] 1. Extend libtiff FFI layer with write-mode support
-  - [ ] 1.1 Add `TIFFWriteDirectory` declaration to `src/tiff/sys.rs`
+- [x] 1. Extend libtiff FFI layer with write-mode support
+  - [x] 1.1 Add `TIFFWriteDirectory` declaration to `src/tiff/sys.rs`
     - Add `pub fn TIFFWriteDirectory(tif: *mut c_void) -> c_int;` to the extern block
     - _Requirements: 1.1, 2.6_
 
-  - [ ] 1.2 Add `PREDICTOR` tag constant to `src/tiff/tags.rs`
+  - [x] 1.2 Add `PREDICTOR` tag constant to `src/tiff/tags.rs`
     - Add `pub const PREDICTOR: u32 = 317;` for compression pre-filtering
     - _Requirements: 4.9, 4.10, 4.11, 4.12_
 
-  - [ ] 1.3 Implement `MemoryWriteStreamData` and write callbacks in `src/tiff/ffi.rs`
+  - [x] 1.3 Implement `MemoryWriteStreamData` and write callbacks in `src/tiff/ffi.rs`
     - Create `MemoryWriteStreamData` struct with `Vec<u8>` buffer and `pos: usize`
     - Implement `tiff_write_proc_writable()` callback that writes into the growable buffer
     - Implement `tiff_seek_proc_writable()` callback supporting SEEK_SET/CUR/END
     - Implement `tiff_size_proc_writable()` callback returning buffer length
     - _Requirements: 1.1_
 
-  - [ ] 1.4 Add `TiffHandle::from_write()` constructor and write methods to `src/tiff/ffi.rs`
+  - [x] 1.4 Add `TiffHandle::from_write()` constructor and write methods to `src/tiff/ffi.rs`
     - Implement `from_write()` that opens `TIFFClientOpen` in `"w"` mode with write callbacks
     - Implement `write_encoded_tile(tile_index, data)` wrapping `TIFFWriteEncodedTile()`
     - Implement `set_field_u16(tag, value)` wrapping `TIFFSetField()` for u16
@@ -38,8 +38,8 @@ Implement `TIFFDatasetWriter` following the same architectural pattern as the JB
     - Test `into_bytes()` returns valid TIFF bytes
     - _Requirements: 1.1_
 
-- [ ] 2. Implement core `TIFFDatasetWriter` struct and `DatasetWriter` trait
-  - [ ] 2.1 Create `src/tiff/writer.rs` with `TIFFDatasetWriter` struct and asset queuing
+- [x] 2. Implement core `TIFFDatasetWriter` struct and `DatasetWriter` trait
+  - [x] 2.1 Create `src/tiff/writer.rs` with `TIFFDatasetWriter` struct and asset queuing
     - Define `TIFFDatasetWriter` struct with `path`, `assets`, `asset_keys`, `metadata`, `closed` fields
     - Define `QueuedImageAsset` struct for queued assets
     - Implement `new(path)` constructor
@@ -47,26 +47,26 @@ Implement `TIFFDatasetWriter` following the same architectural pattern as the JB
     - Implement `set_metadata()` storing the latest `MetadataProvider`
     - _Requirements: 2.1, 2.3, 2.4, 2.5, 10.1, 10.2_
 
-  - [ ] 2.2 Implement encoding hints parsing in `src/tiff/writer.rs`
+  - [x] 2.2 Implement encoding hints parsing in `src/tiff/writer.rs`
     - Create `TiffEncodingHints` struct with `tile_width`, `tile_height`, `compression`, `predictor`, `planar_config`
     - Parse `"TileWidth"`, `"TileHeight"`, `"Compression"`, `"Predictor"`, `"PlanarConfiguration"` from `MetadataProvider`
     - Apply defaults: 256×256 tiles, Deflate compression, Horizontal predictor for LZW/Deflate, None for uncompressed
     - Return `CodecError::InvalidFormat` for unparseable values
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 4.12, 10.3_
 
-  - [ ] 2.3 Implement `bsq_to_interleaved()` pixel layout conversion in `src/tiff/writer.rs`
+  - [x] 2.3 Implement `bsq_to_interleaved()` pixel layout conversion in `src/tiff/writer.rs`
     - Convert CHW (band-sequential) data to HWC (chunky/interleaved) format
     - Handle all bytes-per-sample sizes (1, 2, 4, 8 bytes)
     - For planar config, skip conversion and write bands as separate tile planes
     - _Requirements: 6.1, 6.2, 6.3, 6.4_
 
-  - [ ] 2.4 Implement edge tile padding in `src/tiff/writer.rs`
+  - [x] 2.4 Implement edge tile padding in `src/tiff/writer.rs`
     - When image dimensions are not divisible by tile dimensions, pad edge tiles
     - Use `ImageAssetProvider.pad_pixel_value()` for fill bytes
     - Allocate full-tile buffer, copy actual data, write padded buffer
     - _Requirements: 5.4_
 
-  - [ ] 2.5 Implement `close()` with TIFF tag setting, tile writing, and file flush
+  - [x] 2.5 Implement `close()` with TIFF tag setting, tile writing, and file flush
     - Parse encoding hints from metadata (or use defaults)
     - Open `TiffHandle::from_write()` for in-memory assembly
     - For each queued image asset:
@@ -78,11 +78,11 @@ Implement `TIFFDatasetWriter` following the same architectural pattern as the JB
     - Return `CodecError::Io` if output path is not writable
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.2, 2.6, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 5.1, 5.2, 5.3, 7.1, 7.2, 7.3_
 
-  - [ ] 2.6 Register the writer module in `src/tiff/mod.rs`
+  - [x] 2.6 Register the writer module in `src/tiff/mod.rs`
     - Add `mod writer;` and `pub use writer::TIFFDatasetWriter;`
     - _Requirements: 1.1_
 
-  - [ ]* 2.7 Write unit tests for `TIFFDatasetWriter` in `src/tiff/writer.rs`
+  - [x] 2.7 Write unit tests for `TIFFDatasetWriter` in `src/tiff/writer.rs`
     - Test `new()` creates instance
     - Test `add_asset()` accepts image assets, rejects non-image, rejects duplicates, rejects after close
     - Test `close()` is idempotent
@@ -93,11 +93,11 @@ Implement `TIFFDatasetWriter` following the same architectural pattern as the JB
     - Test PhotometricInterpretation selection (RGB vs MinIsBlack)
     - _Requirements: 2.1, 2.3, 2.4, 2.5, 1.3, 10.2, 4.2, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 4.12, 6.1, 3.5, 3.6, 7.2_
 
-- [ ] 3. Checkpoint - Ensure Rust tests pass
+- [x] 3. Checkpoint - Ensure Rust tests pass
   - Ensure all tests pass with `cargo test`, ask the user if questions arise.
 
-- [ ] 4. Wire up Python bindings
-  - [ ] 4.1 Update `src/bindings/io.rs` to create `TIFFDatasetWriter` for TIFF format strings
+- [x] 4. Wire up Python bindings
+  - [x] 4.1 Update `src/bindings/io.rs` to create `TIFFDatasetWriter` for TIFF format strings
     - Replace the "Phase 2 scope" error branch for `"tif" | "tiff" | "gtif" | "gtiff" | "geotiff"` with `TIFFDatasetWriter::new()` construction
     - Update the existing `test_create_writer_tiff_unsupported` and `test_create_writer_tif_format_unsupported` tests to assert success instead of error
     - _Requirements: 8.1, 8.2, 8.3, 8.4_
@@ -112,58 +112,79 @@ Implement `TIFFDatasetWriter` following the same architectural pattern as the JB
     - Test default encoding hints are applied when no metadata set
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 1.5, 2.5, 10.2, 10.3_
 
-- [ ] 5. Checkpoint - Ensure Python and Rust tests pass
+- [x] 5. Checkpoint - Ensure Python and Rust tests pass
   - Ensure all tests pass with `cargo test` and `pytest`, ask the user if questions arise.
 
-- [ ] 6. Add hypothesis strategies and property-based tests
-  - [ ] 6.1 Add TIFF writing strategies to `tests/property/strategies.py`
-    - Add `tiff_encoding_hints()` strategy generating `BufferedMetadataProvider` with random TileWidth, TileHeight, Compression, Predictor
-    - Add `tiff_writable_image()` strategy generating `BufferedImageAssetProvider` with random pixel type, dimensions, bands, and populated blocks
-    - Build on existing `pixel_types()`, `image_dimensions()`, `band_counts()`, `block_sizes()` strategies
+- [x] 6. Add hypothesis strategies and property-based tests
+  - [x] 6.1 Add TIFF writing strategies to `tests/property/strategies.py`
+    - Add `tiff_encoding_hints()` strategy generating `BufferedMetadataProvider` with random TileWidth, TileHeight, Compression, Predictor, PlanarConfiguration
+    - Add `tiff_writable_image()` composite strategy generating a `BufferedImageAssetProvider` with random pixel type (full set: UInt8–Float64), dimensions, bands, and populated blocks, plus a matching `BufferedMetadataProvider` with encoding hints
+    - Build on existing `pixel_types()`, `image_dimensions()`, `band_counts()`, `block_sizes()`, `tiff_compression()` strategies
     - _Requirements: 9.1, 9.2, 9.3_
 
-  - [ ]* 6.2 Write property test for lossless pixel roundtrip in `tests/property/test_tiff_write_roundtrip.py`
-    - **Property 1: Lossless Pixel Roundtrip**
-    - Write image via `TIFFDatasetWriter`, read back via `TIFFDatasetReader`, assert pixel data identical
-    - Test across all pixel types, band counts, compressions, and planar configurations
+  - [x] 6.2 Extract shared `read_full_image()` helper to `tests/property/helpers.py`
+    - Move the `_read_full_image()` function (duplicated across `test_image_roundtrip.py`, `test_tiff_roundtrip.py`, and others) into a shared `tests/property/helpers.py` module
+    - The helper reads all blocks from an asset and reassembles into a CHW numpy array
+    - Update existing test files to import from `helpers.py` instead of defining their own copies
+    - _No new requirements — refactor for reuse_
+
+  - [x] 6.3 Write TIFF-specific lossless pixel roundtrip property test in `tests/property/test_tiff_write_roundtrip.py`
+    - **Property: TIFF Lossless Pixel Roundtrip**
+    - Use `tiff_writable_image()` strategy from 6.1 to generate image + encoding hints
+    - Write via `IO.open([path], "w", "tiff")`, read back via `IO.open([path], "r")`, assert pixel data identical
+    - Test across all pixel types, band counts, compressions (None/LZW/Deflate), and planar configurations (Chunky/Planar)
+    - Uses shared `read_full_image()` from 6.2
     - **Validates: Requirements 1.2, 2.1, 5.1, 5.4, 6.1, 6.2, 7.1, 7.3, 9.1, 9.2**
 
-  - [ ]* 6.3 Write property test for metadata roundtrip in `tests/property/test_tiff_write_roundtrip.py`
-    - **Property 2: Metadata Roundtrip**
-    - Write TIFF with encoding hints, read back, assert tag values match hints and image properties
+  - [x] 6.4 Write TIFF-specific metadata roundtrip property test in `tests/property/test_tiff_write_roundtrip.py`
+    - **Property: TIFF Metadata Roundtrip**
+    - Write TIFF with encoding hints, read back, assert TIFF tag values (Compression, TileWidth, TileLength, Predictor, PlanarConfiguration, SampleFormat, PhotometricInterpretation) match hints and image properties
+    - This is TIFF-specific because TIFF tags differ entirely from NITF subheader fields
     - **Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 4.1, 4.3, 4.5, 4.6, 4.7, 4.9, 4.10, 4.11, 6.4, 7.2, 9.3**
 
-  - [ ]* 6.4 Write property test for idempotent encoding in `tests/property/test_tiff_write_roundtrip.py`
-    - **Property 3: Idempotent Encoding**
-    - Write → read → write → read, assert second read matches first read
-    - **Validates: Requirements 9.4**
-
-  - [ ]* 6.5 Write property test for idempotent close in `tests/property/test_tiff_write_roundtrip.py`
-    - **Property 4: Idempotent Close**
-    - Close writer, read file bytes, close again, read file bytes, assert identical
-    - **Validates: Requirements 1.3**
-
-  - [ ]* 6.6 Write property test for non-image asset rejection in `tests/property/test_tiff_write_roundtrip.py`
-    - **Property 5: Non-Image Asset Rejection**
-    - Call `add_asset()` with Text/Graphics/Data providers, assert error, assert no asset queued
+  - [x] 6.5 Write TIFF-specific non-image asset rejection property test in `tests/property/test_tiff_write_roundtrip.py`
+    - **Property: TIFF Non-Image Asset Rejection**
+    - Call `add_asset()` with `AssetProvider.from_bytes()` using `AssetType.Text` / `AssetType.Data`, assert error raised
+    - This is TIFF-specific because NITF accepts text/graphic/DES segments while TIFF only supports images
     - **Validates: Requirements 2.3**
 
-  - [ ]* 6.7 Write property test for duplicate key rejection in `tests/property/test_tiff_write_roundtrip.py`
-    - **Property 6: Duplicate Key Rejection**
-    - Call `add_asset()` twice with same key, assert first succeeds, second errors
+  - [x] 6.6 Write format-parameterized idempotent close property test in `tests/property/test_writer_contracts.py`
+    - **Property: Idempotent Close (NITF + TIFF)**
+    - Parameterize over format configs: `[(".ntf", "nitf", {"IC": "NC"}), (".tif", "tiff", {})]`
+    - Write an image, close writer, read file bytes, close again, read file bytes, assert identical
+    - This property applies to both formats but has no existing property-based test for either — JBP only has Rust unit tests for idempotent close
+    - Uses `random_image()` strategy and shared `read_full_image()` from 6.2
+    - **Validates: Requirements 1.3**
+
+  - [x] 6.7 Write format-parameterized duplicate key rejection property test in `tests/property/test_writer_contracts.py`
+    - **Property: Duplicate Key Rejection (NITF + TIFF)**
+    - Parameterize over format configs: `[(".ntf", "nitf"), (".tif", "tiff")]`
+    - Generate random key strings, call `add_asset()` twice with same key, assert first succeeds, second raises error
+    - JBP has a unit test (`test_add_duplicate_key_raises`) but no property-based version; this strengthens both formats
     - **Validates: Requirements 2.4**
 
-  - [ ]* 6.8 Write property test for multi-image IFD ordering in `tests/property/test_tiff_write_roundtrip.py`
-    - **Property 7: Multi-Image IFD Ordering**
-    - Add N image assets, write, read back, assert N IFDs with matching pixel data in order
+  - [x] 6.8 Write format-parameterized multi-image ordering property test in `tests/property/test_writer_contracts.py`
+    - **Property: Multi-Image Ordering (NITF + TIFF)**
+    - Parameterize over format configs: `[(".ntf", "nitf", {"IC": "NC"}), (".tif", "tiff", {})]`
+    - Add N (2–4) random image assets with distinct keys, write, read back, assert N assets returned with matching pixel data in insertion order
+    - JBP has unit tests (`test_round_trip_preserves_order`) but no property-based version; this strengthens both formats
+    - Uses shared `read_full_image()` from 6.2
     - **Validates: Requirements 2.2, 2.6**
 
-  - [ ]* 6.9 Write Rust property tests for `bsq_to_interleaved` in `src/tiff/writer.rs`
+  - [x] 6.9 Write TIFF-specific idempotent encoding property test in `tests/property/test_tiff_write_roundtrip.py`
+    - **Property: TIFF Idempotent Encoding**
+    - Write → read → write → read, assert second read matches first read
+    - Reuses the same pattern as `TestIdempotentEncoding` in `test_image_roundtrip.py` but with TIFF format and encoding hints
+    - Uses shared `read_full_image()` from 6.2
+    - **Validates: Requirements 9.4**
+
+  - [x] 6.10 Write Rust property tests for `bsq_to_interleaved` in `src/tiff/writer.rs`
     - `prop_bsq_to_interleaved_roundtrip`: CHW → HWC → CHW produces original data
     - `prop_bsq_to_interleaved_preserves_length`: output has same byte length as input
+    - This is TIFF-internal and has no JBP equivalent
     - _Requirements: 6.1_
 
-- [ ] 7. Final checkpoint - Ensure all tests pass
+- [x] 7. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass with `cargo test` and `pytest -m property`, ask the user if questions arise.
 
 ## Notes
@@ -174,3 +195,6 @@ Implement `TIFFDatasetWriter` following the same architectural pattern as the JB
 - Property tests validate universal correctness properties from the design document
 - Unit tests validate specific examples and edge cases
 - The implementation follows the same pattern as the JBP writer for consistency
+- **Cross-format tests (6.6, 6.7, 6.8)** live in `test_writer_contracts.py` and are parameterized over NITF and TIFF, improving JBP test coverage for free
+- **TIFF-specific tests (6.3, 6.4, 6.5, 6.9, 6.10)** live in `test_tiff_write_roundtrip.py` because they test TIFF-only behavior (encoding hints, TIFF tags, non-image rejection, planar config)
+- **Shared helper (6.2)** eliminates the `_read_full_image()` duplication across 4+ test files
