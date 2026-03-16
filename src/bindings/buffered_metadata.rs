@@ -7,10 +7,63 @@
 use std::sync::Arc;
 
 use pyo3::prelude::*;
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 
 use crate::bindings::PyMetadataProvider;
 use crate::buffered::BufferedMetadataProvider;
 use crate::traits::MetadataProvider;
+
+/// Convert a Python object to a serde_json::Value.
+///
+/// Handles None, bool, int, float, str, list, and dict. Floats are always
+/// stored with fractional representation (via `Number::from_f64`) so that
+/// values like `1.0` are not silently coerced to integers by serde_json.
+fn python_to_json(py: Python<'_>, obj: &PyObject) -> PyResult<serde_json::Value> {
+    let bound = obj.bind(py);
+    if bound.is_none() {
+        Ok(serde_json::Value::Null)
+    } else if let Ok(b) = bound.downcast::<PyBool>() {
+        Ok(serde_json::Value::Bool(b.is_true()))
+    } else if let Ok(i) = bound.downcast::<PyInt>() {
+        let val: i64 = i.extract()?;
+        Ok(serde_json::json!(val))
+    } else if let Ok(f) = bound.downcast::<PyFloat>() {
+        let val: f64 = f.extract()?;
+        // Use from_f64 to preserve float representation. serde_json::json!()
+        // would coerce whole-number floats like 1.0 to integer, causing
+        // downstream type inference to pick TIFF_LONG instead of TIFF_DOUBLE.
+        match serde_json::Number::from_f64(val) {
+            Some(n) => Ok(serde_json::Value::Number(n)),
+            None => {
+                // NaN / Infinity cannot be represented in JSON
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Cannot convert float {} to JSON",
+                    val
+                )))
+            }
+        }
+    } else if let Ok(s) = bound.downcast::<PyString>() {
+        let val: String = s.extract()?;
+        Ok(serde_json::Value::String(val))
+    } else if let Ok(list) = bound.downcast::<PyList>() {
+        let mut arr = Vec::new();
+        for item in list.iter() {
+            arr.push(python_to_json(py, &item.into())?);
+        }
+        Ok(serde_json::Value::Array(arr))
+    } else if let Ok(dict) = bound.downcast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in dict.iter() {
+            let key: String = k.str()?.extract()?;
+            map.insert(key, python_to_json(py, &v.into())?);
+        }
+        Ok(serde_json::Value::Object(map))
+    } else {
+        // Fallback: convert to string
+        let s: String = bound.str()?.extract()?;
+        Ok(serde_json::Value::String(s))
+    }
+}
 
 /// Python wrapper for BufferedMetadataProvider.
 ///
@@ -113,6 +166,30 @@ impl PyBufferedMetadataProvider {
     /// ```
     fn set(&self, key: &str, value: &str) {
         self.inner.set(key, value);
+    }
+
+    /// Set a JSON value for the given key.
+    ///
+    /// Unlike [`set`], which always stores a string, this method accepts any
+    /// JSON-compatible Python value (int, float, list, dict, bool, None, str)
+    /// and preserves its type. This is needed for GeoTIFF encoding hints that
+    /// require numeric or array values.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The metadata field name.
+    /// * `value` - A Python value to store as JSON (int, float, list, str, etc.).
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// provider.set_json("GeoProjectedCRS", 32618)
+    /// provider.set_json("GeoPixelScale", [0.5, 0.5, 0.0])
+    /// ```
+    fn set_json(&self, py: Python<'_>, key: &str, value: PyObject) -> PyResult<()> {
+        let json_val = python_to_json(py, &value)?;
+        self.inner.set_json(key, json_val);
+        Ok(())
     }
 
     /// Get the value for the given key, if it exists.

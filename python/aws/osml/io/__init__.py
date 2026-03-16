@@ -4,6 +4,8 @@ This package provides high-performance image format decoders and encoders
 for geospatial imagery formats including NITF and GeoTIFF.
 """
 
+from aws.osml.io.tag_resolver import TagNameResolver
+
 from aws.osml.io._io import (
     __version__,
     AssetType,
@@ -59,4 +61,6 @@ __all__ = [
     "StructureWriter",
     "StructureDefinition",
     "Value",
+    # Tag Resolution
+    "TagNameResolver",
 ]

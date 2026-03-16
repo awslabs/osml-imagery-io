@@ -3,6 +3,7 @@
 mod sys;
 mod ffi;
 mod tags;
+mod geotiff;
 mod image;
 mod reader;
 mod metadata;

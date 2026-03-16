@@ -83,6 +83,21 @@ impl BufferedMetadataProvider {
         data.insert(key.to_string(), serde_json::Value::String(value.to_string()));
     }
 
+    /// Set a raw `serde_json::Value` for the given key.
+    ///
+    /// Unlike [`set`], which always stores a JSON string, this method stores
+    /// the value as-is, preserving its JSON type (number, array, object, etc.).
+    /// This is needed for GeoTIFF encoding hints that require numeric or array values.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The metadata field name.
+    /// * `value` - The JSON value to store.
+    pub fn set_json(&self, key: &str, value: serde_json::Value) {
+        let mut data = self.data.write().unwrap();
+        data.insert(key.to_string(), value);
+    }
+
     /// Get the value for the given key, if it exists.
     ///
     /// # Arguments

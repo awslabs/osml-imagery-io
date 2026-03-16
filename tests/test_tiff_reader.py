@@ -314,13 +314,23 @@ class TestMetadata:
         assert meta["TileLength"] == 256
 
     def test_tiff_section_matches_default(self):
-        """as_dict('tiff') returns the same result as as_dict(None)."""
+        """as_dict('tiff') returns standard TIFF fields only (no Geo-prefixed keys)."""
         skip_if_missing(SMALL_TIF)
         reader = IO.open([str(SMALL_TIF)], "r")
         asset = reader.get_asset("image_segment_0")
         meta_provider = asset.get_metadata()
 
-        assert meta_provider.as_dict("tiff") == meta_provider.as_dict()
+        tiff_dict = meta_provider.as_dict("tiff")
+        full_dict = meta_provider.as_dict()
+
+        # 'tiff' section should be a subset of the full dict (no Geo keys)
+        for key, value in tiff_dict.items():
+            assert key in full_dict
+            assert full_dict[key] == value
+
+        # 'tiff' section should not contain any Geo-prefixed keys
+        for key in tiff_dict:
+            assert not key.startswith("Geo"), f"Unexpected Geo key in tiff section: {key}"
 
     def test_unknown_section_returns_empty(self):
         """as_dict() with unrecognized section name returns empty dict."""

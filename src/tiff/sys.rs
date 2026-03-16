@@ -285,9 +285,16 @@ extern "C" {
     /// The previous extended warning handler
     pub fn TIFFSetWarningHandlerExt(handler: TIFFErrorHandlerExt) -> TIFFErrorHandlerExt;
 
-    // -------------------------------------------------------------------------
-    // Directory Write Functions
-    // -------------------------------------------------------------------------
+    /// Set the tag extender callback for custom tag registration.
+    ///
+    /// # Arguments
+    /// * `proc` - The new extender callback, or None to clear
+    ///
+    /// # Returns
+    /// The previous extender callback
+    pub fn TIFFSetTagExtender(
+        proc_: Option<unsafe extern "C" fn(tif: *mut c_void)>,
+    ) -> Option<unsafe extern "C" fn(tif: *mut c_void)>;
 
     /// Write the current directory to the file and set up to create a new one.
     ///
@@ -295,4 +302,82 @@ extern "C" {
     /// 1 on success, 0 on failure
     pub fn TIFFWriteDirectory(tif: *mut c_void) -> c_int;
 
+    /// Register custom tag definitions with a TIFF handle.
+    ///
+    /// # Arguments
+    /// * `tif` - TIFF handle
+    /// * `info` - Array of TIFFFieldInfo structures
+    /// * `n` - Number of entries in the array
+    ///
+    /// # Returns
+    /// 0 on success, -1 on failure
+    pub fn TIFFMergeFieldInfo(
+        tif: *mut c_void,
+        info: *const TIFFFieldInfo,
+        n: u32,
+    ) -> c_int;
 }
+
+// =============================================================================
+// Custom Tag Registration Structures
+// =============================================================================
+
+/// Field info structure for registering custom TIFF tags with libtiff.
+///
+/// This corresponds to libtiff's `TIFFFieldInfo` struct. Each entry describes
+/// one custom tag: its numeric ID, read/write count, data type, field bit,
+/// whether it's ok to change, whether it has a count, and a human-readable name.
+#[repr(C)]
+pub struct TIFFFieldInfo {
+    /// Tag number (e.g., 34735 for GeoKeyDirectoryTag)
+    pub tag: u32,
+    /// Number of values for reading (-1 = variable)
+    pub read_count: i16,
+    /// Number of values for writing (-1 = variable)
+    pub write_count: i16,
+    /// Data type (see TIFF_* constants below)
+    pub data_type: u32,
+    /// Field bit (use FIELD_CUSTOM = 65)
+    pub field_bit: u16,
+    /// Whether the tag value can be changed after initial set (1 = ok)
+    pub ok_to_change: u8,
+    /// Whether the tag has a count prefix (1 = yes, for variable-length arrays)
+    pub pass_count: u8,
+    /// Human-readable tag name
+    pub name: *const c_char,
+}
+
+// SAFETY: TIFFFieldInfo is a plain C struct with no interior mutability.
+// The `name` pointer must remain valid for the lifetime of the registration,
+// which we ensure by using static string literals.
+unsafe impl Send for TIFFFieldInfo {}
+unsafe impl Sync for TIFFFieldInfo {}
+
+// libtiff data type constants for TIFFFieldInfo.data_type
+/// TIFF BYTE (u8) data type
+pub const TIFF_BYTE: u32 = 1;
+/// TIFF ASCII (string) data type
+pub const TIFF_ASCII: u32 = 2;
+/// TIFF SHORT (u16) data type
+pub const TIFF_SHORT: u32 = 3;
+/// TIFF LONG (u32) data type
+pub const TIFF_LONG: u32 = 4;
+/// TIFF RATIONAL (two u32) data type
+pub const TIFF_RATIONAL: u32 = 5;
+/// TIFF SBYTE (i8) data type
+pub const TIFF_SBYTE: u32 = 6;
+/// TIFF UNDEFINED (u8, application-defined) data type
+pub const TIFF_UNDEFINED: u32 = 7;
+/// TIFF SSHORT (i16) data type
+pub const TIFF_SSHORT: u32 = 8;
+/// TIFF SLONG (i32) data type
+pub const TIFF_SLONG: u32 = 9;
+/// TIFF SRATIONAL (two i32) data type
+pub const TIFF_SRATIONAL: u32 = 10;
+/// TIFF FLOAT (f32) data type
+pub const TIFF_FLOAT: u32 = 11;
+/// TIFF DOUBLE (f64) data type
+pub const TIFF_DOUBLE: u32 = 12;
+
+/// Field bit value for custom (non-standard) tags
+pub const FIELD_CUSTOM: u16 = 65;

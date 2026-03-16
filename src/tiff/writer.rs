@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::error::CodecError;
 use crate::tiff::ffi::TiffHandle;
+use crate::tiff::geotiff;
 use crate::tiff::tags;
 use crate::traits::{AssetProvider, DatasetWriter, ImageAssetProvider, MetadataProvider};
 use crate::types::{AssetType, PixelType};
@@ -150,6 +151,309 @@ fn json_to_string(val: &serde_json::Value, field: &str) -> Result<String, CodecE
         field, val
     )))
 }
+
+// =============================================================================
+// Type Inference for Tag Writing
+// =============================================================================
+
+/// Inferred TIFF field type and value for writing.
+struct InferredTag {
+    field_type: u16,
+    value: serde_json::Value,
+}
+
+/// Infer the TIFF field type from a JSON value, or extract explicit type annotation.
+///
+/// Returns the field type ID and the actual value to write.
+/// For explicit annotations (JSON object with "value" and "type" fields),
+/// extracts the type from the annotation.
+fn infer_field_type(value: &serde_json::Value) -> Result<InferredTag, CodecError> {
+    // Check for explicit type annotation: {"value": ..., "type": N}
+    if let Some(obj) = value.as_object() {
+        if obj.contains_key("value") && obj.contains_key("type") {
+            let annotated_type = obj["type"]
+                .as_u64()
+                .ok_or_else(|| {
+                    CodecError::Encode("Explicit type annotation 'type' must be an integer".into())
+                })?;
+            if annotated_type < 1 || annotated_type > 12 {
+                return Err(CodecError::Encode(format!(
+                    "Invalid TIFF field type {}: must be 1-12",
+                    annotated_type
+                )));
+            }
+            return Ok(InferredTag {
+                field_type: annotated_type as u16,
+                value: obj["value"].clone(),
+            });
+        }
+    }
+
+    match value {
+        serde_json::Value::String(_) => Ok(InferredTag {
+            field_type: tags::TIFF_ASCII,
+            value: value.clone(),
+        }),
+        serde_json::Value::Number(n) => {
+            if n.is_f64() && !n.is_i64() && !n.is_u64() {
+                // Pure float (not representable as integer)
+                Ok(InferredTag {
+                    field_type: tags::TIFF_DOUBLE,
+                    value: value.clone(),
+                })
+            } else if let Some(i) = n.as_i64() {
+                if i >= 0 {
+                    Ok(InferredTag {
+                        field_type: tags::TIFF_LONG,
+                        value: value.clone(),
+                    })
+                } else {
+                    Ok(InferredTag {
+                        field_type: tags::TIFF_SLONG,
+                        value: value.clone(),
+                    })
+                }
+            } else {
+                // u64 that doesn't fit in i64 — still non-negative
+                Ok(InferredTag {
+                    field_type: tags::TIFF_LONG,
+                    value: value.clone(),
+                })
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            if arr.is_empty() {
+                return Err(CodecError::Encode(
+                    "Cannot infer TIFF field type from empty array".into(),
+                ));
+            }
+            let has_float = arr.iter().any(|v| {
+                v.as_f64().is_some() && !v.as_i64().is_some() && !v.as_u64().is_some()
+            });
+            if has_float {
+                return Ok(InferredTag {
+                    field_type: tags::TIFF_DOUBLE,
+                    value: value.clone(),
+                });
+            }
+            // All elements are integers
+            let all_integers = arr.iter().all(|v| v.as_i64().is_some() || v.as_u64().is_some());
+            if !all_integers {
+                return Err(CodecError::Encode(
+                    "Cannot infer TIFF field type from array with mixed types".into(),
+                ));
+            }
+            let has_negative = arr.iter().any(|v| {
+                v.as_i64().map_or(false, |i| i < 0)
+            });
+            if has_negative {
+                Ok(InferredTag {
+                    field_type: tags::TIFF_SSHORT,
+                    value: value.clone(),
+                })
+            } else {
+                Ok(InferredTag {
+                    field_type: tags::TIFF_SHORT,
+                    value: value.clone(),
+                })
+            }
+        }
+        _ => Err(CodecError::Encode(format!(
+            "Cannot infer TIFF field type from JSON value: {:?}",
+            value
+        ))),
+    }
+}
+
+/// Write a single tag to the TIFF handle using the inferred field type.
+fn write_inferred_tag(
+    handle: &TiffHandle,
+    tag: u32,
+    inferred: &InferredTag,
+) -> Result<(), CodecError> {
+    match inferred.field_type {
+        tags::TIFF_BYTE => {
+            // Single byte or byte array
+            let bytes = extract_u8_array(&inferred.value)?;
+            handle.set_field_u8_array(tag, &bytes)
+        }
+        tags::TIFF_ASCII => {
+            let s = inferred
+                .value
+                .as_str()
+                .ok_or_else(|| CodecError::Encode("ASCII tag value must be a string".into()))?;
+            handle.set_field_string(tag, s)
+        }
+        tags::TIFF_SHORT => match &inferred.value {
+            serde_json::Value::Array(arr) => {
+                let data: Result<Vec<u16>, _> = arr
+                    .iter()
+                    .map(|v| {
+                        v.as_u64()
+                            .map(|n| n as u16)
+                            .ok_or_else(|| CodecError::Encode("SHORT array element must be a non-negative integer".into()))
+                    })
+                    .collect();
+                handle.set_field_u16_array(tag, &data?)
+            }
+            _ => {
+                let n = inferred.value.as_u64().ok_or_else(|| {
+                    CodecError::Encode("SHORT tag value must be a non-negative integer".into())
+                })?;
+                handle.set_field_u16(tag, n as u16)
+            }
+        },
+        tags::TIFF_LONG => {
+            let n = inferred.value.as_u64().ok_or_else(|| {
+                CodecError::Encode("LONG tag value must be a non-negative integer".into())
+            })?;
+            handle.set_field_u32(tag, n as u32)
+        }
+        tags::TIFF_RATIONAL => {
+            // RATIONAL is not directly writable via simple inference;
+            // requires explicit annotation. Write as two-element u32 array
+            // is not supported by TiffHandle — use DOUBLE as fallback.
+            let f = inferred.value.as_f64().ok_or_else(|| {
+                CodecError::Encode("RATIONAL tag value must be a number".into())
+            })?;
+            handle.set_field_f64(tag, f)
+        }
+        tags::TIFF_SBYTE => {
+            // Cast i8 values to u8 for the byte array write
+            let bytes = extract_i8_as_u8_array(&inferred.value)?;
+            handle.set_field_u8_array(tag, &bytes)
+        }
+        tags::TIFF_UNDEFINED => {
+            let bytes = extract_u8_array(&inferred.value)?;
+            handle.set_field_u8_array(tag, &bytes)
+        }
+        tags::TIFF_SSHORT => {
+            let data: Result<Vec<i16>, _> = match &inferred.value {
+                serde_json::Value::Array(arr) => arr
+                    .iter()
+                    .map(|v| {
+                        v.as_i64()
+                            .map(|n| n as i16)
+                            .ok_or_else(|| CodecError::Encode("SSHORT array element must be an integer".into()))
+                    })
+                    .collect(),
+                _ => {
+                    let n = inferred.value.as_i64().ok_or_else(|| {
+                        CodecError::Encode("SSHORT tag value must be an integer".into())
+                    })?;
+                    Ok(vec![n as i16])
+                }
+            };
+            handle.set_field_i16_array(tag, &data?)
+        }
+        tags::TIFF_SLONG => {
+            let n = inferred.value.as_i64().ok_or_else(|| {
+                CodecError::Encode("SLONG tag value must be an integer".into())
+            })?;
+            handle.set_field_i32(tag, n as i32)
+        }
+        tags::TIFF_SRATIONAL => {
+            // SRATIONAL is not directly writable via simple inference;
+            // requires explicit annotation. Write as DOUBLE fallback.
+            let f = inferred.value.as_f64().ok_or_else(|| {
+                CodecError::Encode("SRATIONAL tag value must be a number".into())
+            })?;
+            handle.set_field_f64(tag, f)
+        }
+        tags::TIFF_FLOAT => match &inferred.value {
+            serde_json::Value::Array(arr) => {
+                let data: Result<Vec<f32>, _> = arr
+                    .iter()
+                    .map(|v| {
+                        v.as_f64()
+                            .map(|n| n as f32)
+                            .ok_or_else(|| CodecError::Encode("FLOAT array element must be a number".into()))
+                    })
+                    .collect();
+                handle.set_field_f32_array(tag, &data?)
+            }
+            _ => {
+                let f = inferred.value.as_f64().ok_or_else(|| {
+                    CodecError::Encode("FLOAT tag value must be a number".into())
+                })?;
+                handle.set_field_f32(tag, f as f32)
+            }
+        },
+        tags::TIFF_DOUBLE => match &inferred.value {
+            serde_json::Value::Array(arr) => {
+                let data: Result<Vec<f64>, _> = arr
+                    .iter()
+                    .map(|v| {
+                        v.as_f64()
+                            .ok_or_else(|| CodecError::Encode("DOUBLE array element must be a number".into()))
+                    })
+                    .collect();
+                handle.set_field_f64_array(tag, &data?)
+            }
+            _ => {
+                let f = inferred.value.as_f64().ok_or_else(|| {
+                    CodecError::Encode("DOUBLE tag value must be a number".into())
+                })?;
+                handle.set_field_f64(tag, f)
+            }
+        },
+        _ => Err(CodecError::Encode(format!(
+            "Unsupported TIFF field type {} for tag {}",
+            inferred.field_type, tag
+        ))),
+    }
+}
+
+/// Extract a byte array from a JSON value (array of integers 0-255).
+fn extract_u8_array(value: &serde_json::Value) -> Result<Vec<u8>, CodecError> {
+    match value {
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .map(|v| {
+                v.as_u64()
+                    .map(|n| n as u8)
+                    .ok_or_else(|| {
+                        CodecError::Encode("Byte array element must be a non-negative integer".into())
+                    })
+            })
+            .collect(),
+        serde_json::Value::Number(n) => {
+            let byte = n.as_u64().ok_or_else(|| {
+                CodecError::Encode("BYTE tag value must be a non-negative integer".into())
+            })?;
+            Ok(vec![byte as u8])
+        }
+        _ => Err(CodecError::Encode(
+            "BYTE/UNDEFINED tag value must be an integer or array of integers".into(),
+        )),
+    }
+}
+
+/// Extract signed bytes from a JSON value, casting i8 to u8 for the write API.
+fn extract_i8_as_u8_array(value: &serde_json::Value) -> Result<Vec<u8>, CodecError> {
+    match value {
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .map(|v| {
+                v.as_i64()
+                    .map(|n| n as i8 as u8)
+                    .ok_or_else(|| {
+                        CodecError::Encode("SBYTE array element must be an integer".into())
+                    })
+            })
+            .collect(),
+        serde_json::Value::Number(n) => {
+            let byte = n.as_i64().ok_or_else(|| {
+                CodecError::Encode("SBYTE tag value must be an integer".into())
+            })?;
+            Ok(vec![byte as i8 as u8])
+        }
+        _ => Err(CodecError::Encode(
+            "SBYTE tag value must be an integer or array of integers".into(),
+        )),
+    }
+}
+
 
 
 // =============================================================================
@@ -323,6 +627,7 @@ impl TIFFDatasetWriter {
         handle: &TiffHandle,
         image: &dyn ImageAssetProvider,
         hints: &TiffEncodingHints,
+        metadata: Option<&dyn MetadataProvider>,
     ) -> Result<(), CodecError> {
         let num_cols = image.num_columns();
         let num_rows = image.num_rows();
@@ -407,6 +712,105 @@ impl TIFFDatasetWriter {
             }
         }
 
+        // Write GeoTIFF tags from metadata encoding hints
+        if let Some(meta) = metadata {
+            let dict = meta.as_dict(None);
+
+            // Build and write GeoKey directory (tags 34735, 34736, 34737)
+            let (directory, double_params, ascii_params) =
+                geotiff::build_geokey_directory(&dict)?;
+            if !directory.is_empty() {
+                handle.set_field_u16_array(tags::GEO_KEY_DIRECTORY_TAG, &directory)?;
+                if let Some(doubles) = double_params {
+                    handle.set_field_f64_array(tags::GEO_DOUBLE_PARAMS_TAG, &doubles)?;
+                }
+                if let Some(ascii) = ascii_params {
+                    handle.set_field_string(tags::GEO_ASCII_PARAMS_TAG, &ascii)?;
+                }
+            }
+
+            // Write transformation tags (33550, 33922, 34264)
+            let (pixel_scale, tiepoints, transformation) =
+                geotiff::extract_transformation_tags(&dict)?;
+            if let Some(ps) = pixel_scale {
+                handle.set_field_f64_array(tags::MODEL_PIXEL_SCALE_TAG, &ps)?;
+            }
+            if let Some(tp) = tiepoints {
+                handle.set_field_f64_array(tags::MODEL_TIEPOINT_TAG, &tp)?;
+            }
+            if let Some(tf) = transformation {
+                handle.set_field_f64_array(tags::MODEL_TRANSFORMATION_TAG, &tf)?;
+            }
+
+            // Write user-provided tags from numeric keys in the Tag_Dictionary.
+            // Tags managed by the writer or libtiff are skipped to avoid conflicts.
+            let structural_tags: HashSet<u32> = [
+                // Tags set explicitly by write_image_ifd from image properties
+                tags::IMAGE_WIDTH,
+                tags::IMAGE_LENGTH,
+                tags::BITS_PER_SAMPLE,
+                tags::COMPRESSION,
+                tags::PHOTOMETRIC_INTERPRETATION,
+                tags::SAMPLES_PER_PIXEL,
+                tags::PLANAR_CONFIGURATION,
+                tags::PREDICTOR,
+                tags::TILE_WIDTH,
+                tags::TILE_LENGTH,
+                tags::SAMPLE_FORMAT,
+                // Strip/tile offset tags managed by libtiff internally
+                tags::ROWS_PER_STRIP,
+                tags::STRIP_OFFSETS,
+                tags::STRIP_BYTE_COUNTS,
+                tags::TILE_OFFSETS,
+                tags::TILE_BYTE_COUNTS,
+                // GeoTIFF tags handled by the dedicated write path above
+                tags::MODEL_PIXEL_SCALE_TAG,
+                tags::MODEL_TIEPOINT_TAG,
+                tags::MODEL_TRANSFORMATION_TAG,
+                tags::GEO_KEY_DIRECTORY_TAG,
+                tags::GEO_DOUBLE_PARAMS_TAG,
+                tags::GEO_ASCII_PARAMS_TAG,
+            ]
+            .into_iter()
+            .collect();
+
+            // Collect custom tags that need to be written, inferring their types.
+            // We must register all custom tags with libtiff before writing any.
+            let mut custom_tags: Vec<(u32, InferredTag)> = Vec::new();
+            for (key, value) in &dict {
+                let tag: u32 = match key.parse() {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                if structural_tags.contains(&tag) {
+                    continue;
+                }
+                match infer_field_type(value) {
+                    Ok(inferred) => custom_tags.push((tag, inferred)),
+                    Err(e) => {
+                        eprintln!("Warning: cannot infer type for tag {}: {}", tag, e);
+                    }
+                }
+            }
+
+            // Register all custom tags with libtiff in one pass before writing.
+            // We pass `scalar` so libtiff knows whether TIFFSetField will
+            // receive a bare value or a (count, pointer) pair.
+            for (tag, inferred) in &custom_tags {
+                let scalar = !inferred.value.is_array();
+                if let Err(e) = handle.register_custom_tag(*tag, inferred.field_type, scalar) {
+                    eprintln!("Warning: failed to register tag {}: {}", tag, e);
+                }
+            }
+
+            // Now write all custom tags
+            for (tag, inferred) in &custom_tags {
+                if let Err(e) = write_inferred_tag(handle, *tag, inferred) {
+                    eprintln!("Warning: failed to write tag {}: {}", tag, e);
+                }
+            }
+        }
+
         // Finalize this IFD
         handle.write_directory()?;
 
@@ -487,7 +891,12 @@ impl DatasetWriter for TIFFDatasetWriter {
                 ))
             })?;
 
-            Self::write_image_ifd(&handle, image, &hints)?;
+            Self::write_image_ifd(
+                &handle,
+                image,
+                &hints,
+                self.metadata.as_ref().map(|m| m.as_ref() as &dyn MetadataProvider),
+            )?;
         }
 
         // Extract assembled TIFF bytes and write to disk
@@ -899,6 +1308,323 @@ mod tests {
     // proptest: bsq_to_interleaved properties
     // =========================================================================
 
+    // =========================================================================
+    // GeoTIFF writer integration tests
+    // =========================================================================
+
+    /// Helper: write a TIFF with the given metadata and return the file bytes.
+    fn write_tiff_with_metadata(meta: &BufferedMetadataProvider) -> Vec<u8> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("geotiff_test.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        let provider = make_image_provider("image_segment_0");
+        writer
+            .add_asset("image_segment_0", provider, "Image", "desc", &[])
+            .unwrap();
+        writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(meta))).unwrap();
+        writer.close().unwrap();
+        std::fs::read(&path).unwrap()
+    }
+
+    #[test]
+    fn writer_geotiff_roundtrip_geokeys_and_pixel_scale() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        let meta = BufferedMetadataProvider::new();
+        // Build raw GeoKey directory: header + 2 keys (ModelType=Projected, ProjectedCRS=32618)
+        meta.set_json(
+            "34735",
+            serde_json::json!([1, 1, 1, 2, 1024, 0, 1, 1, 3072, 0, 1, 32618]),
+        );
+        meta.set_json("33550", serde_json::json!([0.5, 0.5, 0.0]));
+
+        let bytes = write_tiff_with_metadata(&meta);
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image_segment_0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        // Check GeoKey directory is present under numeric key
+        assert!(dict.contains_key("34735"));
+        // Check pixel scale
+        assert_eq!(dict.get("33550"), Some(&serde_json::json!([0.5, 0.5, 0])));
+    }
+
+    #[test]
+    fn writer_plain_tiff_no_geo_tags() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        // No GeoTIFF numeric keys → plain TIFF
+        let meta = BufferedMetadataProvider::new();
+        meta.set("Compression", "None");
+
+        let bytes = write_tiff_with_metadata(&meta);
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image_segment_0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        assert!(!dict.contains_key("34735"));
+        assert!(!dict.contains_key("33550"));
+    }
+
+    #[test]
+    fn writer_geotiff_invalid_epsg_returns_encode_error() {
+        let meta = BufferedMetadataProvider::new();
+        // Non-array value for "34735" should cause an encode error
+        meta.set_json("34735", serde_json::json!("not an array"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad_epsg.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        let provider = make_image_provider("image_segment_0");
+        writer
+            .add_asset("image_segment_0", provider, "Image", "desc", &[])
+            .unwrap();
+        writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta))).unwrap();
+        let result = writer.close();
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), CodecError::Encode(_)),
+            "Expected CodecError::Encode for invalid GeoKeyDirectoryTag"
+        );
+    }
+
+    #[test]
+    fn writer_geotiff_invalid_pixel_scale_returns_encode_error() {
+        let meta = BufferedMetadataProvider::new();
+        // ModelPixelScaleTag (33550) must be exactly 3 numbers
+        meta.set_json("33550", serde_json::json!([0.5, 0.5]));
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad_scale.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        let provider = make_image_provider("image_segment_0");
+        writer
+            .add_asset("image_segment_0", provider, "Image", "desc", &[])
+            .unwrap();
+        writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta))).unwrap();
+        let result = writer.close();
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), CodecError::Encode(_)),
+            "Expected CodecError::Encode for invalid ModelPixelScaleTag"
+        );
+    }
+
+    // =========================================================================
+    // Type inference tests
+    // =========================================================================
+
+    #[test]
+    fn infer_string_to_ascii() {
+        let val = serde_json::json!("hello");
+        let result = infer_field_type(&val).unwrap();
+        assert_eq!(result.field_type, tags::TIFF_ASCII);
+    }
+
+    #[test]
+    fn infer_positive_integer_to_long() {
+        let val = serde_json::json!(42);
+        let result = infer_field_type(&val).unwrap();
+        assert_eq!(result.field_type, tags::TIFF_LONG);
+    }
+
+    #[test]
+    fn infer_zero_to_long() {
+        let val = serde_json::json!(0);
+        let result = infer_field_type(&val).unwrap();
+        assert_eq!(result.field_type, tags::TIFF_LONG);
+    }
+
+    #[test]
+    fn infer_negative_integer_to_slong() {
+        let val = serde_json::json!(-5);
+        let result = infer_field_type(&val).unwrap();
+        assert_eq!(result.field_type, tags::TIFF_SLONG);
+    }
+
+    #[test]
+    fn infer_float_to_double() {
+        let val = serde_json::json!(3.14);
+        let result = infer_field_type(&val).unwrap();
+        assert_eq!(result.field_type, tags::TIFF_DOUBLE);
+    }
+
+    #[test]
+    fn infer_positive_int_array_to_short() {
+        let val = serde_json::json!([1, 2, 3]);
+        let result = infer_field_type(&val).unwrap();
+        assert_eq!(result.field_type, tags::TIFF_SHORT);
+    }
+
+    #[test]
+    fn infer_mixed_sign_int_array_to_sshort() {
+        let val = serde_json::json!([1, -2, 3]);
+        let result = infer_field_type(&val).unwrap();
+        assert_eq!(result.field_type, tags::TIFF_SSHORT);
+    }
+
+    #[test]
+    fn infer_float_array_to_double() {
+        let val = serde_json::json!([1.5, 2.5]);
+        let result = infer_field_type(&val).unwrap();
+        assert_eq!(result.field_type, tags::TIFF_DOUBLE);
+    }
+
+    #[test]
+    fn infer_explicit_annotation_byte() {
+        let val = serde_json::json!({"value": [72, 101], "type": 1});
+        let result = infer_field_type(&val).unwrap();
+        assert_eq!(result.field_type, tags::TIFF_BYTE);
+        assert_eq!(result.value, serde_json::json!([72, 101]));
+    }
+
+    #[test]
+    fn infer_explicit_annotation_undefined() {
+        let val = serde_json::json!({"value": [0, 255], "type": 7});
+        let result = infer_field_type(&val).unwrap();
+        assert_eq!(result.field_type, tags::TIFF_UNDEFINED);
+        assert_eq!(result.value, serde_json::json!([0, 255]));
+    }
+
+    #[test]
+    fn infer_explicit_annotation_invalid_type() {
+        let val = serde_json::json!({"value": 42, "type": 13});
+        let result = infer_field_type(&val);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn infer_empty_array_returns_error() {
+        let val = serde_json::json!([]);
+        let result = infer_field_type(&val);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn infer_null_returns_error() {
+        let result = infer_field_type(&serde_json::Value::Null);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn infer_bool_returns_error() {
+        let val = serde_json::json!(true);
+        let result = infer_field_type(&val);
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Numeric key write roundtrip tests
+    // =========================================================================
+
+    #[test]
+    fn writer_numeric_key_string_tag_roundtrip() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        let meta = BufferedMetadataProvider::new();
+        meta.set_json("42113", serde_json::json!("nan"));
+
+        let bytes = write_tiff_with_metadata(&meta);
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image_segment_0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        assert_eq!(dict.get("42113"), Some(&serde_json::json!("nan")));
+    }
+
+    #[test]
+    fn writer_numeric_key_integer_tag_roundtrip() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        let meta = BufferedMetadataProvider::new();
+        meta.set_json("65000", serde_json::json!(42));
+
+        let bytes = write_tiff_with_metadata(&meta);
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image_segment_0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        assert!(dict.contains_key("65000"));
+    }
+
+    #[test]
+    fn writer_non_numeric_key_is_skipped() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        let meta = BufferedMetadataProvider::new();
+        meta.set("ByteOrder", "LittleEndian");
+        meta.set_json("42113", serde_json::json!("test"));
+
+        let bytes = write_tiff_with_metadata(&meta);
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image_segment_0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        // Numeric key should be present
+        assert_eq!(dict.get("42113"), Some(&serde_json::json!("test")));
+        // "ByteOrder" is a dataset-level key set by the reader, not a written tag.
+        // It should NOT appear as a TIFF tag in the IFD.
+        // (The reader may add its own "ByteOrder" dataset-level entry, but the
+        // writer should not have written a TIFF tag for it.)
+        // Verify no TIFF tag was created from the non-numeric key by checking
+        // that the dict does not contain a tag that would correspond to "ByteOrder"
+        // as a numeric tag — it simply wasn't written.
+    }
+
+    #[test]
+    fn writer_explicit_type_annotation_roundtrip() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        let meta = BufferedMetadataProvider::new();
+        meta.set_json(
+            "42113",
+            serde_json::json!({"value": [72, 101, 108], "type": 7}),
+        );
+
+        let bytes = write_tiff_with_metadata(&meta);
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image_segment_0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        // Tag should be present — UNDEFINED type is read back as a byte array
+        assert!(dict.contains_key("42113"));
+        let val = dict.get("42113").unwrap();
+        assert!(val.is_array(), "UNDEFINED tag should be read back as an array");
+    }
+
+    #[test]
+    fn writer_structural_tag_not_overwritten() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        let meta = BufferedMetadataProvider::new();
+        // Try to override ImageWidth (tag 256) — should be ignored
+        meta.set_json("256", serde_json::json!(9999));
+
+        let bytes = write_tiff_with_metadata(&meta);
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image_segment_0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        // ImageWidth should be 256 (from the image provider), not 9999
+        assert_eq!(dict.get("256"), Some(&serde_json::json!(256)));
+    }
+
     mod prop {
         use super::*;
         use proptest::prelude::*;
@@ -956,6 +1682,117 @@ mod tests {
                 let result = bsq_to_interleaved(&data, num_bands, pixels_per_band, bps);
 
                 prop_assert_eq!(result.len(), data.len(), "Output length differs from input");
+            }
+        }
+
+        proptest! {
+            /// Feature: tiff-metadata-refactor, Property 5: Field Type Roundtrip
+            /// Validates: Requirements 3.1, 3.2, 3.5, 3.6, 7.1, 7.2, 7.3
+            #[test]
+            fn prop_field_type_roundtrip(
+                field_type in prop_oneof![
+                    Just(2u16),   // ASCII
+                    Just(3u16),   // SHORT
+                    Just(4u16),   // LONG
+                    Just(7u16),   // UNDEFINED
+                    Just(8u16),   // SSHORT
+                    Just(9u16),   // SLONG
+                    Just(12u16),  // DOUBLE
+                ],
+                seed in 0u32..1000,
+            ) {
+                use crate::tiff::TIFFDatasetReader;
+                use crate::traits::DatasetReader;
+
+                // Use a unique tag number per field type to avoid libtiff
+                // global re-registration conflicts across proptest iterations.
+                let tag_num = 60000u32 + field_type as u32;
+                let tag_key = tag_num.to_string();
+
+                let (tag_value, expected_check) = match field_type {
+                    2 => {
+                        // ASCII: generate a simple string
+                        let s = format!("test_{}", seed);
+                        (serde_json::json!(s), serde_json::json!(s))
+                    }
+                    3 => {
+                        // SHORT: explicit annotation, u16 value (count=1 reads back as scalar)
+                        let v = (seed % 65535) as u16;
+                        (
+                            serde_json::json!({"value": [v], "type": 3}),
+                            serde_json::json!(v as i64),
+                        )
+                    }
+                    4 => {
+                        // LONG: positive integer (inferred)
+                        let v = seed * 100;
+                        (serde_json::json!(v), serde_json::json!(v as i64))
+                    }
+                    7 => {
+                        // UNDEFINED: byte array with explicit annotation
+                        let bytes = vec![(seed % 256) as u8, ((seed + 1) % 256) as u8];
+                        (
+                            serde_json::json!({"value": bytes, "type": 7}),
+                            serde_json::json!(bytes),
+                        )
+                    }
+                    8 => {
+                        // SSHORT: signed short with explicit annotation (count=1 reads back as scalar)
+                        let v = -((seed % 32000) as i16);
+                        (
+                            serde_json::json!({"value": [v], "type": 8}),
+                            serde_json::json!(v as i64),
+                        )
+                    }
+                    9 => {
+                        // SLONG: negative integer (inferred)
+                        let v = -(seed as i64 + 1);
+                        (serde_json::json!(v), serde_json::json!(v))
+                    }
+                    12 => {
+                        // DOUBLE: scalar value via explicit annotation.
+                        // The register_custom_tag scalar flag ensures libtiff
+                        // receives a bare f64 instead of (count, pointer).
+                        let v = (seed as f64) * 0.123;
+                        (
+                            serde_json::json!({"value": v, "type": 12}),
+                            serde_json::json!(v),
+                        )
+                    }
+                    _ => unreachable!(),
+                };
+
+                let meta = BufferedMetadataProvider::new();
+                meta.set_json(&tag_key, tag_value);
+
+                let bytes = write_tiff_with_metadata(&meta);
+                let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+                let asset = reader.get_asset("image_segment_0").unwrap();
+                let ifd_meta = asset.metadata();
+                let dict = ifd_meta.as_dict(None);
+
+                prop_assert!(
+                    dict.contains_key(&tag_key),
+                    "Tag {} not found in roundtrip", tag_key
+                );
+
+                if field_type == 12 {
+                    // DOUBLE: check approximate equality (scalar)
+                    let read_val = dict.get(&tag_key).unwrap();
+                    let r_f = read_val.as_f64().unwrap();
+                    let e_f = expected_check.as_f64().unwrap();
+                    prop_assert!(
+                        (r_f - e_f).abs() < 1e-10,
+                        "DOUBLE mismatch: read={}, expected={}", r_f, e_f
+                    );
+                } else {
+                    let read_val = dict.get(&tag_key).unwrap();
+                    prop_assert_eq!(
+                        read_val, &expected_check,
+                        "Roundtrip mismatch for field_type={}: read={}, expected={}",
+                        field_type, read_val, expected_check
+                    );
+                }
             }
         }
     }

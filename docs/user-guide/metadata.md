@@ -103,6 +103,124 @@ code that reads `IGEOLO` from a NITF image, that same key won't exist in a
 GeoTIFF. Plan for this when working across formats — check for key existence or
 use `as_dict()` with a prefix to discover what's available.
 
+## TIFF and GeoTIFF Metadata
+
+For TIFF and GeoTIFF files, the metadata dictionary uses numeric TIFF tag IDs
+as keys. Each key is the string representation of the tag number from the
+TIFF 6.0 specification — for example, `"256"` for ImageWidth, `"259"` for
+Compression, `"33550"` for ModelPixelScale.
+
+This design means every tag in the IFD is preserved, including private-use
+tags (32768+) and vendor-specific tags that would otherwise be dropped by a
+hardcoded name list. The raw tag values are stored directly, with no
+interpretation or transformation applied.
+
+### Reading TIFF Metadata
+
+```python
+from aws.osml.io import IO
+
+with IO.open(["image.tif"], "r") as dataset:
+    meta = dataset.metadata.as_dict()
+
+    # Tags are keyed by their numeric ID as a string
+    width = meta["256"]           # ImageWidth
+    height = meta["257"]          # ImageLength
+    bits = meta["258"]            # BitsPerSample
+    compression = meta["259"]     # Compression
+
+    # GeoTIFF tags use the same numeric key convention
+    pixel_scale = meta["33550"]   # ModelPixelScale — e.g. [0.5, 0.5, 0.0]
+    tiepoints = meta["33922"]     # ModelTiepoint
+    geokeys = meta["34735"]       # GeoKeyDirectory (raw SHORT array)
+
+    # Dataset-level entries use descriptive string keys
+    byte_order = meta["ByteOrder"]              # "LittleEndian"
+    num_dirs = meta["NumberOfDirectories"]       # 3
+
+    # Prefix filtering works on the numeric key strings
+    tags_3xx = dataset.metadata.as_dict("3")
+    # Returns "322" (TileWidth), "323" (TileLength), "339" (SampleFormat),
+    # "33550" (ModelPixelScale), "34735" (GeoKeyDirectory), etc.
+```
+
+### Using TagNameResolver for Name-Based Access
+
+If you prefer human-readable tag names, wrap the dictionary with
+`TagNameResolver`. It translates names like `"ImageWidth"` to the
+corresponding numeric key (`"256"`) behind the scenes.
+
+```python
+from aws.osml.io import IO, TagNameResolver
+
+with IO.open(["image.tif"], "r") as dataset:
+    meta = dataset.metadata.as_dict()
+    tags = TagNameResolver(meta)
+
+    # Look up by name — same value as meta["256"]
+    width = tags["ImageWidth"]
+    height = tags["ImageLength"]
+
+    # GeoTIFF tags work the same way
+    scale = tags["ModelPixelScale"]
+    geokeys = tags["GeoKeyDirectory"]
+
+    # Safe access with a default value
+    nodata = tags.get("GDALNoData", "nan")
+
+    # Direct numeric access when you know the tag number
+    raw = tags.by_number(34735)
+
+    # Check if a tag is present
+    if "Compression" in tags:
+        print(f"Compression: {tags['Compression']}")
+
+    # Iterate over all entries
+    for key, value in tags:
+        print(f"Tag {key}: {value}")
+```
+
+The resolver ships with a default mapping covering baseline TIFF 6.0 tags,
+GeoTIFF tags, and common GDAL tags. You can extend it with custom mappings
+for vendor-specific or application-specific tags:
+
+```python
+custom_tags = TagNameResolver(meta, custom_mapping={
+    "MyVendorTag": 65000,
+    "CloudCover": 65001,
+})
+
+vendor_val = custom_tags["MyVendorTag"]
+cloud = custom_tags["CloudCover"]
+
+# Custom mappings override defaults if there's a name collision
+```
+
+### Writing TIFF Metadata
+
+When writing TIFF files, supply metadata using the same numeric key format.
+The writer infers the TIFF field type from the JSON value type for common
+cases. For types that can't be inferred, use an explicit type annotation.
+
+```python
+from aws.osml.io import IO
+
+metadata = {
+    "256": 512,                    # ImageWidth → inferred as LONG
+    "257": 512,                    # ImageLength → inferred as LONG
+    "259": 1,                      # Compression → inferred as LONG
+    "33550": [0.5, 0.5, 0.0],     # ModelPixelScale → inferred as DOUBLE array
+    "42113": "nan",                # GDALNoData → inferred as ASCII
+}
+
+# For field types that can't be inferred (e.g. UNDEFINED), use an annotation:
+metadata["700"] = {"value": [60, 120, 109, 108], "type": 7}  # XMP as UNDEFINED bytes
+
+with IO.open(["output.tif"], "w") as writer:
+    writer.metadata = metadata
+    # ... write image data
+```
+
 ## Flexible Parsing with Structure Definitions
 
 The metadata you see through `as_dict()` is driven by a data-driven parsing

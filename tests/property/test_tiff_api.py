@@ -6,12 +6,14 @@ This module tests correctness properties for the TIFF reader API:
 - Property 5: Non-image asset access
 - Property 6: Dataset-level metadata contains only file-level information
 - Property 7: Per-IFD metadata completeness
+- Property 8: IFD-level metadata keys are numeric strings
+- Property 9: Custom tags coexist with structural tags
 
 Tests use the existing data/unit/small.tif (tiled, 1024x1024, uint8, 1-band,
 256x256 tiles, Deflate) and PIL-generated stripped TIFFs.
 
 **Validates: Requirements 4.6, 4.7, 4.11, 4.13, 5.4, 5.5, 5.6, 5.7, 5.8,
-5.9, 5.10, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9**
+5.9, 5.10, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 7.1, 8.3**
 """
 
 import tempfile
@@ -20,9 +22,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 from hypothesis import given, settings, Phase
+from hypothesis import strategies as st
 from PIL import Image
 
-from aws.osml.io import IO, AssetType, PixelType
+from aws.osml.io import IO, AssetType, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 
 from .strategies import get_numpy_dtype, tiff_image_config
 
@@ -345,21 +348,11 @@ class TestTiffPerIFDMetadata:
         asset = reader.get_asset("image_segment_0")
         meta = asset.get_metadata().as_dict()
 
-        assert meta["ImageWidth"] == 1024
-        assert meta["ImageLength"] == 1024
-        assert meta["BitsPerSample"] == 8
-        assert meta["SamplesPerPixel"] == 1
-
-    def test_tiff_section_equals_default(self):
-        """as_dict('tiff') returns the same result as as_dict(None)."""
-        if not SMALL_TIF.exists():
-            pytest.skip("Test data not available")
-
-        reader = IO.open([str(SMALL_TIF)], "r")
-        asset = reader.get_asset("image_segment_0")
-        provider = asset.get_metadata()
-
-        assert provider.as_dict("tiff") == provider.as_dict()
+        # Metadata keys are numeric tag ID strings after the metadata refactor
+        assert meta["256"] == 1024   # ImageWidth
+        assert meta["257"] == 1024   # ImageLength
+        assert meta["258"] == 8      # BitsPerSample
+        assert meta["277"] == 1      # SamplesPerPixel
 
     def test_unknown_section_returns_empty(self):
         """as_dict with unrecognized section returns empty dict."""
@@ -372,7 +365,6 @@ class TestTiffPerIFDMetadata:
 
         assert provider.as_dict("unknown") == {}
         assert provider.as_dict("nitf") == {}
-        assert provider.as_dict("geotiff") == {}
 
     @given(config=tiff_image_config(min_size=16, max_size=48))
     @pbt_settings
@@ -393,24 +385,193 @@ class TestTiffPerIFDMetadata:
             asset = reader.get_asset("image_segment_0")
             meta = asset.get_metadata().as_dict()
 
-            assert meta["ImageWidth"] == width, (
-                f"ImageWidth: expected {width}, got {meta['ImageWidth']}"
+            # Metadata keys are numeric tag ID strings
+            assert meta["256"] == width, (
+                f"ImageWidth (256): expected {width}, got {meta['256']}"
             )
-            assert meta["ImageLength"] == height, (
-                f"ImageLength: expected {height}, got {meta['ImageLength']}"
+            assert meta["257"] == height, (
+                f"ImageLength (257): expected {height}, got {meta['257']}"
             )
-            assert meta["BitsPerSample"] == expected_bps, (
-                f"BitsPerSample: expected {expected_bps}, got {meta['BitsPerSample']}"
-            )
-            # PIL may write SamplesPerPixel only for multi-band
-            if "SamplesPerPixel" in meta:
-                assert meta["SamplesPerPixel"] == bands
-
-            # as_dict(None) == as_dict("tiff")
-            provider = asset.get_metadata()
-            assert provider.as_dict("tiff") == provider.as_dict()
+            # BitsPerSample (258) is an array for multi-band images
+            bps = meta["258"]
+            if isinstance(bps, list):
+                assert all(b == expected_bps for b in bps), (
+                    f"BitsPerSample (258): expected all {expected_bps}, got {bps}"
+                )
+            else:
+                assert bps == expected_bps, (
+                    f"BitsPerSample (258): expected {expected_bps}, got {bps}"
+                )
 
             # Unknown section returns empty
+            provider = asset.get_metadata()
             assert provider.as_dict("unknown") == {}
+        finally:
+            path.unlink(missing_ok=True)
+
+
+# =============================================================================
+# Helpers for custom tag metadata contract tests
+# =============================================================================
+
+# Private-use tag range for custom metadata contract testing.
+_CUSTOM_TAG_MIN = 65000
+_CUSTOM_TAG_MAX = 65499
+
+
+def _write_tiff_with_metadata(path, metadata_dict):
+    """Write a minimal 16x16 TIFF with the given metadata tags."""
+    meta = BufferedMetadataProvider()
+    meta.set("TileWidth", "256")
+    meta.set("TileHeight", "256")
+    meta.set("Compression", "None")
+    meta.set("PlanarConfiguration", "Chunky")
+
+    for k, v in metadata_dict.items():
+        meta.set_json(k, v)
+
+    array = np.zeros((1, 16, 16), dtype=np.uint8)
+    provider = BufferedImageAssetProvider.create(
+        key="image_segment_0",
+        num_columns=16,
+        num_rows=16,
+        num_bands=1,
+        block_width=16,
+        block_height=16,
+        pixel_type=PixelType.UInt8,
+        metadata=meta,
+    )
+    provider.set_full_image(array)
+
+    writer = IO.open([str(path)], "w", "tiff")
+    writer.metadata = meta
+    writer.add_asset(
+        key="image_segment_0",
+        provider=provider,
+        title="Test",
+        description="Property test",
+        roles=["data"],
+    )
+    writer.close()
+
+
+def _read_tiff_metadata(path):
+    """Read per-IFD metadata from a TIFF file."""
+    reader = IO.open([str(path)], "r")
+    asset = reader.get_asset("image_segment_0")
+    return asset.get_metadata().as_dict()
+
+
+@st.composite
+def _simple_tag_metadata(draw):
+    """Generate a dict of 1-5 custom tags with simple values for contract tests.
+
+    Returns ``(metadata_dict, expectations)`` where *expectations* is a list
+    of ``(tag_key, type_name)`` tuples.
+    """
+    num_tags = draw(st.integers(min_value=1, max_value=5))
+    tags = draw(
+        st.lists(
+            st.integers(min_value=_CUSTOM_TAG_MIN, max_value=_CUSTOM_TAG_MAX),
+            min_size=num_tags,
+            max_size=num_tags,
+            unique=True,
+        )
+    )
+
+    metadata = {}
+    expectations = []
+    for tag in tags:
+        # Use simple integer values — we only care about key shape, not value fidelity
+        value = draw(st.integers(min_value=0, max_value=65535))
+        key = str(tag)
+        metadata[key] = value
+        expectations.append((key, "long"))
+
+    return metadata, expectations
+
+
+# =============================================================================
+# Property 8: IFD-level metadata keys are numeric strings
+# =============================================================================
+
+
+@pytest.mark.property
+class TestTiffMetadataKeysNumeric:
+    """Property 8: IFD-level metadata keys are numeric strings
+
+    All IFD-level keys in the read-back metadata are numeric strings.
+    Dataset-level keys (ByteOrder, NumberOfDirectories) are excluded
+    from this check because they are not TIFF tags.
+
+    # Feature: tiff-api, Property 8: Metadata keys are numeric
+    **Validates: Requirements 7.1**
+    """
+
+    @given(data=_simple_tag_metadata())
+    @pbt_settings
+    def test_roundtrip_keys_are_numeric(self, data):
+        """All IFD-level keys in the read-back metadata are numeric strings."""
+        metadata_dict, _ = data
+
+        with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
+            path = Path(f.name)
+
+        try:
+            _write_tiff_with_metadata(path, metadata_dict)
+            read_meta = _read_tiff_metadata(path)
+
+            dataset_keys = {"ByteOrder", "NumberOfDirectories"}
+            for key in read_meta:
+                if key in dataset_keys:
+                    continue
+                assert key.isdigit(), (
+                    "IFD-level key " + repr(key) + " is not a numeric string"
+                )
+        finally:
+            path.unlink(missing_ok=True)
+
+
+# =============================================================================
+# Property 9: Custom tags coexist with structural tags
+# =============================================================================
+
+
+@pytest.mark.property
+class TestTiffCustomTagCoexistence:
+    """Property 9: Custom tags coexist with structural tags
+
+    Custom tags in the private-use range do not overwrite structural tags
+    set by the writer. The writer always sets ImageWidth (256),
+    ImageLength (257), etc. from the image properties.
+
+    # Feature: tiff-api, Property 9: Custom tag coexistence
+    **Validates: Requirements 8.3**
+    """
+
+    @given(data=_simple_tag_metadata())
+    @pbt_settings
+    def test_custom_tags_coexist_with_structural(self, data):
+        """Custom tags do not overwrite structural tags set by the writer."""
+        metadata_dict, expectations = data
+
+        with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
+            path = Path(f.name)
+
+        try:
+            _write_tiff_with_metadata(path, metadata_dict)
+            read_meta = _read_tiff_metadata(path)
+
+            # Structural tags must still be present and correct
+            assert read_meta.get("256") == 16  # ImageWidth
+            assert read_meta.get("257") == 16  # ImageLength
+            assert read_meta.get("258") == 8   # BitsPerSample
+            assert read_meta.get("277") == 1   # SamplesPerPixel
+
+            # Custom tags must also be present
+            for key, type_name in expectations:
+                assert key in read_meta, (
+                    "Custom tag " + key + " (" + type_name + ") missing"
+                )
         finally:
             path.unlink(missing_ok=True)

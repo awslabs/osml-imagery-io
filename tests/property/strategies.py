@@ -1324,3 +1324,136 @@ def tiff_writable_image(
     array = draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
 
     return (array, pixel_type, num_bands, num_rows, num_cols, hints)
+
+
+# =============================================================================
+# GeoTIFF Metadata Strategies
+# =============================================================================
+
+
+def geotiff_model_type() -> st.SearchStrategy[str]:
+    """Strategy for GeoTIFF model type values.
+
+    Draws from the two valid GTModelTypeGeoKey labels.
+
+    Requirements: 8.1
+
+    **Feature: geotiff-metadata, GeoTIFF Model Type**
+    """
+    return st.sampled_from(["Projected", "Geographic"])
+
+
+def geotiff_raster_type() -> st.SearchStrategy[str]:
+    """Strategy for GeoTIFF raster type values.
+
+    Draws from the two valid GTRasterTypeGeoKey labels.
+
+    Requirements: 8.1
+
+    **Feature: geotiff-metadata, GeoTIFF Raster Type**
+    """
+    return st.sampled_from(["PixelIsArea", "PixelIsPoint"])
+
+
+def epsg_codes() -> st.SearchStrategy[int]:
+    """Strategy for valid EPSG codes representable as u16.
+
+    EPSG codes range from 1 to 32767 (positive i16 / valid u16 range).
+
+    Requirements: 8.2
+
+    **Feature: geotiff-metadata, EPSG Codes**
+    """
+    return st.integers(min_value=1, max_value=32767)
+
+
+def pixel_scale() -> st.SearchStrategy[list]:
+    """Strategy for GeoPixelScale: 3-element arrays of positive floats.
+
+    Values are kept in a reasonable range to avoid floating-point edge cases
+    during roundtrip through libtiff (which stores as DOUBLE).
+
+    Requirements: 8.3
+
+    **Feature: geotiff-metadata, Pixel Scale**
+    """
+    return st.lists(
+        st.floats(min_value=0.001, max_value=1e6, allow_nan=False, allow_infinity=False),
+        min_size=3,
+        max_size=3,
+    )
+
+
+def tiepoint_tuples() -> st.SearchStrategy[list]:
+    """Strategy for GeoTiepoints: lists of 1-4 tiepoint 6-element float arrays.
+
+    Each tiepoint is [pixel_x, pixel_y, pixel_z, geo_x, geo_y, geo_z].
+
+    Requirements: 8.3
+
+    **Feature: geotiff-metadata, Tiepoint Tuples**
+    """
+    single_tiepoint = st.lists(
+        st.floats(min_value=-1e8, max_value=1e8, allow_nan=False, allow_infinity=False),
+        min_size=6,
+        max_size=6,
+    )
+    return st.lists(single_tiepoint, min_size=1, max_size=4)
+
+
+def transformation_matrix() -> st.SearchStrategy[list]:
+    """Strategy for GeoTransformation: 16-element float arrays (4x4 matrix).
+
+    Requirements: 8.3
+
+    **Feature: geotiff-metadata, Transformation Matrix**
+    """
+    return st.lists(
+        st.floats(min_value=-1e8, max_value=1e8, allow_nan=False, allow_infinity=False),
+        min_size=16,
+        max_size=16,
+    )
+
+
+@st.composite
+def geotiff_metadata(draw) -> dict:
+    """Composite strategy for valid GeoTIFF encoding hint dictionaries.
+
+    Generates a random combination of GeoTIFF metadata fields suitable for
+    passing to BufferedMetadataProvider via set/set_json. The dict uses the
+    same key names the writer expects (GeoModelType, GeoProjectedCRS, etc.).
+
+    Always includes GeoModelType and the matching CRS key. Optionally includes
+    GeoRasterType, GeoPixelScale, and GeoTiepoints. GeoTransformation is
+    mutually exclusive with GeoPixelScale+GeoTiepoints (per GeoTIFF spec).
+
+    Requirements: 8.1, 8.2, 8.3, 8.4
+
+    **Feature: geotiff-metadata, GeoTIFF Metadata Composite**
+    """
+    hints = {}
+
+    # Always include model type
+    model_type = draw(geotiff_model_type())
+    hints["GeoModelType"] = model_type
+
+    # CRS key depends on model type
+    epsg = draw(epsg_codes())
+    if model_type == "Projected":
+        hints["GeoProjectedCRS"] = epsg
+    else:
+        hints["GeoGeographicCRS"] = epsg
+
+    # Optionally include raster type
+    if draw(st.booleans()):
+        hints["GeoRasterType"] = draw(geotiff_raster_type())
+
+    # Transformation tags: either PixelScale+Tiepoints or Transformation matrix
+    use_transform = draw(st.sampled_from(["scale_tiepoints", "matrix", "none"]))
+    if use_transform == "scale_tiepoints":
+        hints["GeoPixelScale"] = draw(pixel_scale())
+        hints["GeoTiepoints"] = draw(tiepoint_tuples())
+    elif use_transform == "matrix":
+        hints["GeoTransformation"] = draw(transformation_matrix())
+
+    return hints

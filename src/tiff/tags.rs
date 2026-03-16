@@ -115,3 +115,102 @@ pub const PLANAR_CONFIG_CONTIG: u16 = 1;
 
 /// Planar format: components are stored in separate planes (RRR...GGG...BBB...).
 pub const PLANAR_CONFIG_SEPARATE: u16 = 2;
+
+// =============================================================================
+// GeoTIFF TIFF Tags
+// =============================================================================
+
+/// Tag 33550: ModelPixelScaleTag — pixel size in CRS units (3 DOUBLEs).
+pub const MODEL_PIXEL_SCALE_TAG: u32 = 33550;
+
+/// Tag 33922: ModelTiepointTag — pixel-to-CRS tiepoint tuples (N×6 DOUBLEs).
+pub const MODEL_TIEPOINT_TAG: u32 = 33922;
+
+/// Tag 34264: ModelTransformationTag — 4×4 affine transformation matrix (16 DOUBLEs).
+pub const MODEL_TRANSFORMATION_TAG: u32 = 34264;
+
+/// Tag 34735: GeoKeyDirectoryTag — GeoKey directory (SHORT array).
+pub const GEO_KEY_DIRECTORY_TAG: u32 = 34735;
+
+/// Tag 34736: GeoDoubleParamsTag — double-precision GeoKey parameters (DOUBLE array).
+pub const GEO_DOUBLE_PARAMS_TAG: u32 = 34736;
+
+/// Tag 34737: GeoAsciiParamsTag — ASCII GeoKey parameters (pipe-delimited string).
+pub const GEO_ASCII_PARAMS_TAG: u32 = 34737;
+
+// =============================================================================
+// GeoKey ID Constants
+// =============================================================================
+
+/// GeoKey 1024: GTModelTypeGeoKey — coordinate model type.
+pub const GT_MODEL_TYPE_GEO_KEY: u16 = 1024;
+
+/// GeoKey 1025: GTRasterTypeGeoKey — raster space interpretation.
+pub const GT_RASTER_TYPE_GEO_KEY: u16 = 1025;
+
+/// GeoKey 2048: GeographicTypeGeoKey — geographic CRS EPSG code.
+pub const GEOGRAPHIC_TYPE_GEO_KEY: u16 = 2048;
+
+/// GeoKey 3072: ProjectedCSTypeGeoKey — projected CRS EPSG code.
+pub const PROJECTED_CS_TYPE_GEO_KEY: u16 = 3072;
+
+// =============================================================================
+// GTModelTypeGeoKey Values
+// =============================================================================
+
+/// GTModelTypeGeoKey value 1: Projected coordinate system.
+pub const MODEL_TYPE_PROJECTED: u16 = 1;
+
+/// GTModelTypeGeoKey value 2: Geographic coordinate system.
+pub const MODEL_TYPE_GEOGRAPHIC: u16 = 2;
+
+// =============================================================================
+// GTRasterTypeGeoKey Values
+// =============================================================================
+
+/// GTRasterTypeGeoKey value 1: Pixel represents an area.
+pub const RASTER_PIXEL_IS_AREA: u16 = 1;
+
+/// GTRasterTypeGeoKey value 2: Pixel represents a point.
+pub const RASTER_PIXEL_IS_POINT: u16 = 2;
+
+// =============================================================================
+// TIFF 6.0 Field Type Constants (Section 2)
+// =============================================================================
+
+/// Field type 1: BYTE — 8-bit unsigned integer.
+pub const TIFF_BYTE: u16 = 1;
+
+/// Field type 2: ASCII — 8-bit byte containing a 7-bit ASCII code.
+pub const TIFF_ASCII: u16 = 2;
+
+/// Field type 3: SHORT — 16-bit unsigned integer.
+pub const TIFF_SHORT: u16 = 3;
+
+/// Field type 4: LONG — 32-bit unsigned integer.
+pub const TIFF_LONG: u16 = 4;
+
+/// Field type 5: RATIONAL — Two LONGs: numerator and denominator.
+pub const TIFF_RATIONAL: u16 = 5;
+
+/// Field type 6: SBYTE — 8-bit signed integer.
+pub const TIFF_SBYTE: u16 = 6;
+
+/// Field type 7: UNDEFINED — 8-bit byte (application-defined semantics).
+pub const TIFF_UNDEFINED: u16 = 7;
+
+/// Field type 8: SSHORT — 16-bit signed integer.
+pub const TIFF_SSHORT: u16 = 8;
+
+/// Field type 9: SLONG — 32-bit signed integer.
+pub const TIFF_SLONG: u16 = 9;
+
+/// Field type 10: SRATIONAL — Two SLONGs: signed numerator and denominator.
+pub const TIFF_SRATIONAL: u16 = 10;
+
+/// Field type 11: FLOAT — Single precision (4-byte) IEEE floating point.
+pub const TIFF_FLOAT: u16 = 11;
+
+/// Field type 12: DOUBLE — Double precision (8-byte) IEEE floating point.
+pub const TIFF_DOUBLE: u16 = 12;
+
