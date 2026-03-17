@@ -20,6 +20,18 @@
 │       ├── quality.py      # PSNR/SSIM calculation utilities
 │       └── test_*.py       # Property test modules
 ├── benches/                # Rust benchmarks (Criterion)
+├── docs/                   # Sphinx documentation site
+│   ├── conf.py             # Sphinx configuration
+│   ├── Makefile            # Build targets (html, pdf, etc.)
+│   ├── index.md            # Documentation root
+│   ├── getting-started.md  # Quick-start guide
+│   ├── api/                # Python API reference (autodoc + hand-written)
+│   ├── design/             # Architecture and design documents
+│   ├── internal/           # Internal working notes (excluded from published site)
+│   ├── roadmap/            # Format implementation roadmaps
+│   ├── user-guide/         # End-user guides (reading/writing imagery, metadata, etc.)
+│   ├── _static/            # Static assets (images, CSS)
+│   └── _build/             # Generated output (gitignored)
 ├── data/                   # Test data directory
 │   ├── unit/               # Small synthetic test files (checked in)
 │   ├── integration/        # 3rd party validation data (gitignored)

@@ -182,6 +182,49 @@ If Python tests fail with import errors or module not found errors:
 3. Rebuild if needed: `maturin develop`
 4. Run tests: `pytest`
 
+## Documentation Build System
+
+The project uses Sphinx with MyST-Parser to build documentation from Markdown sources in `docs/`.
+
+### Key Tools
+
+- Sphinx - Documentation generator
+- MyST-Parser - Markdown support for Sphinx (with `colon_fence` and `fieldlist` extensions)
+- Furo - HTML theme
+- sphinx-autodoc-typehints - Type hint rendering in API docs
+- sphinxcontrib-mermaid - Mermaid diagram support
+- pdflatex + latexmk - PDF output (optional, requires MacTeX)
+
+### Building Docs
+
+```bash
+# HTML output
+make html -C docs
+
+# PDF output (requires pdflatex)
+make pdf -C docs
+
+# User Guide PDF only
+make pdf-user-guide -C docs
+
+# Clean build artifacts
+make clean -C docs
+```
+
+### Documentation Structure
+
+- `docs/api/` - Python API reference (autodoc + hand-written pages)
+- `docs/design/` - Architecture and design documents (API design, parser design, property testing)
+- `docs/internal/` - Internal working notes and bug investigations (excluded from published site via `exclude_patterns`)
+- `docs/roadmap/` - Format implementation roadmaps (JBP, TIFF)
+- `docs/user-guide/` - End-user guides for reading/writing imagery, metadata, assets
+
+### Notes
+
+- `docs/internal/` is excluded from the published Sphinx site but lives in the repo for developer reference.
+- Intersphinx links to Python and NumPy docs are configured.
+- LaTeX output handles Unicode emoji via `newunicodechar` substitutions in `conf.py`.
+
 ## Test Markers
 
 ```bash
