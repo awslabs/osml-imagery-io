@@ -20,6 +20,24 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from aws.osml.io import IO, AssetType
+from aws.osml.io.tiff import TagNameResolver
+
+# TIFF tags that are internal file-structure lookup tables, not useful for
+# human inspection.  These are skipped when formatting TIFF metadata.
+_TIFF_SKIP_TAGS = {
+    "StripOffsets",       # 273 — byte offsets to each strip
+    "StripByteCounts",    # 279 — byte counts for each strip
+    "TileOffsets",        # 324 — byte offsets to each tile
+    "TileByteCounts",     # 325 — byte counts for each tile
+    "FreeOffsets",        # 288 — byte offsets to free space
+    "FreeByteCounts",     # 289 — byte counts of free space
+    "JPEGTables",         # 347 — JPEG quantization/Huffman tables (binary blob)
+}
+
+
+def _is_tiff(asset) -> bool:
+    """Return True if the asset's media type indicates TIFF."""
+    return getattr(asset, "media_type", "") == "image/tiff"
 
 
 def format_metadata(metadata_dict: dict, indent: int = 4) -> str:
@@ -27,6 +45,19 @@ def format_metadata(metadata_dict: dict, indent: int = 4) -> str:
     if not metadata_dict:
         return " " * indent + "(no metadata)"
     return json.dumps(metadata_dict, indent=indent, default=str)
+
+
+def format_tiff_metadata(metadata_dict: dict, indent: int = 4) -> str:
+    """Format TIFF metadata with human-readable tag names, skipping internal tables."""
+    if not metadata_dict:
+        return " " * indent + "(no metadata)"
+    resolver = TagNameResolver(metadata_dict)
+    filtered = {
+        name: value
+        for name, value in resolver
+        if name not in _TIFF_SKIP_TAGS
+    }
+    return json.dumps(filtered, indent=indent, default=str)
 
 
 def describe_image_asset(asset, show_metadata: bool) -> None:
@@ -45,7 +76,10 @@ def describe_image_asset(asset, show_metadata: bool) -> None:
         print("    Metadata:")
         meta = asset.get_metadata()
         meta_dict = meta.as_dict()
-        print(format_metadata(meta_dict, indent=6))
+        if _is_tiff(asset):
+            print(format_tiff_metadata(meta_dict, indent=6))
+        else:
+            print(format_metadata(meta_dict, indent=6))
 
 
 def describe_text_asset(asset, show_metadata: bool) -> None:
