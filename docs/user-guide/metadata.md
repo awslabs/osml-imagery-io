@@ -95,8 +95,8 @@ opened — no translation or normalization layer sits between you and the data.
 
 For NITF files, TREs appear transparently through `as_dict()`. Overflow TREs
 stored in data extension segments are resolved automatically — you don't need to
-chase them across segments. For GeoTIFF files, TIFF tags and GeoKeys are surfaced
-through the same interface.
+chase them across segments. For TIFF and GeoTIFF files, TIFF tags and GeoKeys are
+surfaced through the same interface using numeric tag IDs as keys.
 
 The tradeoff is that field names and semantics are format-specific. If you write
 code that reads `IGEOLO` from a NITF image, that same key won't exist in a

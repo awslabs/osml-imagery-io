@@ -15,9 +15,10 @@ image into memory.
 
 Both NITF and TIFF use this approach. In NITF, the image subheader defines the block
 dimensions (NPPBH × NPPBV) and the block grid size (NBPR × NBPC). In TIFF, the
-TileWidth and TileLength tags serve the same purpose. When the image dimensions aren't
-evenly divisible by the block size, edge blocks along the right and bottom boundaries
-may be smaller than the nominal block size.
+TileWidth and TileLength tags serve the same purpose. Stripped TIFFs are also supported
+— strips are treated as full-width blocks stacked vertically. When the image dimensions
+aren't evenly divisible by the block size, edge blocks along the right and bottom 
+boundaries may be smaller than the nominal block size.
 
 ```python
 from aws.osml.io import IO

@@ -2,12 +2,10 @@
 
 ## Choosing the Output Format
 
-This library supports writing imagery in a variety of formats. NITF 2.1 and NSIF 1.0
-are fully supported today; GeoTIFF support is planned and will follow the same patterns
-described here.
-
-When opening a file for writing you must pass the `format` parameter to `IO.open`.
-The format is not inferred from the file extension — you choose it explicitly:
+This library supports writing imagery in multiple formats. NITF 2.1, NSIF 1.0, and
+GeoTIFF are fully supported. When opening a file for writing you must pass the 
+`format` parameter to `IO.open`. The format is not inferred from the file extension 
+— you choose it explicitly:
 
 ```python
 from aws.osml.io import IO
@@ -20,7 +18,7 @@ with IO.open(["output.ntf"], "w", "nitf") as writer:
 with IO.open(["output.nsf"], "w", "nsif") as writer:
     ...
 
-# Write a GeoTIFF file (planned)
+# Write a GeoTIFF file
 with IO.open(["output.tif"], "w", "geotiff") as writer:
     ...
 ```
@@ -35,10 +33,11 @@ Accepted format strings:
 |---------------|--------|
 | `"nitf"`, `"nitf21"`, `"nitf2.1"` | NITF 2.1 |
 | `"nsif"`, `"nsif10"`, `"nsif1.0"` | NSIF 1.0 |
-| `"geotiff"` (planned) | GeoTIFF |
+| `"geotiff"` | GeoTIFF |
 
 For reading, `IO.open` auto-detects the format from the file extension (`.ntf`, `.nitf`,
-`.nsf`, `.nsif`) or you can override it with the `format` parameter.
+`.nsf`, `.nsif`, `.tif`, `.tiff`) or from magic bytes in the file header. You can also
+override detection with the `format` parameter.
 
 ## Metadata Controls Encoding
 
@@ -49,7 +48,7 @@ in-memory key-value store that serves two roles:
 2. Copy and modify metadata from an existing image when transcoding or chipping.
 
 The metadata values you set are highly dependent on the desired output format. A NITF
-file needs fields like `IC`, `IMODE`, and `COMRAT`; a GeoTIFF file will need TIFF tags
+file needs fields like `IC`, `IMODE`, and `COMRAT`; a GeoTIFF file uses TIFF tags
 and GeoKeys. The field names match what you see when reading files — no translation
 layer sits between you and the format.
 
@@ -325,9 +324,9 @@ metadata.set("NPPBV", "256")
 
 ### GeoTIFF
 
-GeoTIFF support is planned but not yet implemented. When available, the same
-`BufferedMetadataProvider` pattern will apply. Field names are drawn from the
-TIFF 6.0 specification and the OGC GeoTIFF 1.1 standard.
+The GeoTIFF writer reads encoding hints from the asset's metadata using numeric TIFF
+tag IDs as keys. Use `TagNameResolver` for convenient name-based access. The writer
+supports uncompressed, LZW, Deflate, and PackBits compression.
 
 #### TIFF Encoding Hints
 

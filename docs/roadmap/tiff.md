@@ -2,6 +2,8 @@
 
 This roadmap describes the plan for adding GeoTIFF support to osml-imagery-io. Cloud Optimized GeoTIFF (COG) support is covered in a separate roadmap ({doc}`cog`) since it depends on both this work and the cross-format image pyramid support ({doc}`image-pyramid`). The implementation follows the same patterns established by the JBP format: a third-party C library (libtiff) handles the heavy lifting, we integrate it through custom FFI bindings, and expose it through the existing Dataset API so users can read and write pixels without caring about the underlying format.
 
+**Status**: Phases 1–3 (TIFF reading, writing, and GeoTIFF metadata) are complete. COG support is tracked separately.
+
 ## Design Principles
 
 - **Same API, different format.** Users interact with `DatasetReader`, `DatasetWriter`, `ImageAssetProvider`, and `MetadataProvider` exactly as they do for NITF. The only place TIFF-specific details surface is in metadata dictionaries.
@@ -94,18 +96,18 @@ src/tiff/
 **Format detection**: Register `.tif` and `.tiff` extensions in the `IO` factory for auto-detection.
 
 **Tasks**:
-- [ ] Create `src/tiff/sys.rs` with libtiff FFI declarations
-- [ ] Create `src/tiff/ffi.rs` with safe `TiffHandle` wrapper
-- [ ] Create `src/tiff/tags.rs` with TIFF tag constants
-- [ ] Create `src/tiff/image.rs` with `TIFFImageAssetProvider`
-- [ ] Create `src/tiff/reader.rs` with `TIFFDatasetReader`
-- [ ] Create `src/tiff/metadata.rs` with tag-to-metadata mapping
-- [ ] Create `src/tiff/mod.rs` with feature gate
-- [ ] Update `build.rs` with libtiff discovery
-- [ ] Update `Cargo.toml` with `libtiff` feature
-- [ ] Register TIFF format in `IO` factory (format detection by extension and magic bytes `II*\0` / `MM\0*`)
-- [ ] Add Python bindings for `TIFFDatasetReader` and `TIFFImageAssetProvider`
-- [ ] Add unit tests with small synthetic TIFF files in `data/unit/`
+- [x] Create `src/tiff/sys.rs` with libtiff FFI declarations
+- [x] Create `src/tiff/ffi.rs` with safe `TiffHandle` wrapper
+- [x] Create `src/tiff/tags.rs` with TIFF tag constants
+- [x] Create `src/tiff/image.rs` with `TIFFImageAssetProvider`
+- [x] Create `src/tiff/reader.rs` with `TIFFDatasetReader`
+- [x] Create `src/tiff/metadata.rs` with tag-to-metadata mapping
+- [x] Create `src/tiff/mod.rs` with feature gate
+- [x] Update `build.rs` with libtiff discovery
+- [x] Update `Cargo.toml` with `libtiff` feature
+- [x] Register TIFF format in `IO` factory (format detection by extension and magic bytes `II*\0` / `MM\0*`)
+- [x] Add Python bindings for `TIFFDatasetReader` and `TIFFImageAssetProvider`
+- [x] Add unit tests with small synthetic TIFF files in `data/unit/`
 
 ## Phase 2: Basic TIFF Writing
 
@@ -145,11 +147,11 @@ resolver["Compression"] = "Deflate" # stores under key "259"
 ```
 
 **Tasks**:
-- [ ] Create `src/tiff/writer.rs` with `TIFFDatasetWriter`
-- [ ] Add encoding hint parsing from `BufferedMetadataProvider`
-- [ ] Add Python bindings for `TIFFDatasetWriter`
-- [ ] Add write unit tests (write then read-back verification)
-- [ ] Update `IO` factory to support `IO.open(paths, "w", "tiff")`
+- [x] Create `src/tiff/writer.rs` with `TIFFDatasetWriter`
+- [x] Add encoding hint parsing from `BufferedMetadataProvider`
+- [x] Add Python bindings for `TIFFDatasetWriter`
+- [x] Add write unit tests (write then read-back verification)
+- [x] Update `IO` factory to support `IO.open(paths, "w", "tiff")`
 
 ## Phase 3: GeoTIFF Metadata
 
@@ -193,11 +195,11 @@ with IO.open(["image.tif"], "r") as reader:
 ```
 
 **Tasks**:
-- [ ] Create `src/tiff/geotiff.rs` with GeoKey directory parser
-- [ ] Add GeoTIFF tag reading to `TIFFDatasetReader` metadata
-- [ ] Add GeoTIFF tag writing to `TIFFDatasetWriter`
-- [ ] Add unit tests with GeoTIFF test files
-- [ ] Add integration tests with real-world GeoTIFF files in `data/integration/`
+- [x] Create `src/tiff/geotiff.rs` with GeoKey directory parser
+- [x] Add GeoTIFF tag reading to `TIFFDatasetReader` metadata
+- [x] Add GeoTIFF tag writing to `TIFFDatasetWriter`
+- [x] Add unit tests with GeoTIFF test files
+- [x] Add integration tests with real-world GeoTIFF files in `data/integration/`
 
 ## Testing Plan
 

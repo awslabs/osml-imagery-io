@@ -7,16 +7,16 @@ using common geospatial imagery formats. It was built using Rust to provide reli
 performance IO routines for both research and production workloads. Python bindings make 
 it easy to use within the broader machine learning and data science communities. It supports
 memory efficient, tiled access to large images and structured metadata encoded using the 
-NITF, SICD, SIDD, GeoTIFF standards. Pixels are returned as NumPy arrays that integrate 
-directly with ML frameworks like PyTorch and computer vision libraries like OpenCV and 
-scikit-image.
+NITF, SICD, SIDD, TIFF, and GeoTIFF standards. Pixels are returned as NumPy arrays that 
+integrate directly with ML frameworks like PyTorch and computer vision libraries like 
+OpenCV and scikit-image.
 
 The library is designed to serve as the low level IO layer for the
 [OversightML](https://aws.amazon.com/solutions/guidance/processing-overhead-imagery-on-aws/)
 ecosystem. It has a deliberately lean set of dependencies — just the Rust core, PyO3
-bindings, JPEG and TIFF libraries, and NumPy — giving it a clean install footprint that 
-works reliably in containerized environments, automation pipelines, and secure deployment 
-environments where heavyweight dependency chains are a problem.
+bindings, JPEG, TIFF, and JPEG 2000 libraries, and NumPy — giving it a clean install 
+footprint that works reliably in containerized environments, automation pipelines, and 
+secure deployment environments where heavyweight dependency chains are a problem.
 
 ### How does this compare to other libraries?
 
@@ -29,9 +29,9 @@ you need wide format coverage or prebuilt GIS operations but it is a heavyweight
 dependency that can be constraining for image scientists. Some IO operations have 
 degraded performance exasperated by layers of virtual file abstractions.
 osml-imagery-io operates at a lower level, giving direct access to individual segments,
-TRE fields, block masks, and compression parameters — the kind of fine-grained control 
-the image science community needs when the specifics of how data was collected, 
-modified, and encoded matter as much as the pixel values themselves.
+TRE fields, block masks, compression parameters, TIFF tags, and GeoKeys — the kind of 
+fine-grained control the image science community needs when the specifics of how data 
+was collected, modified, and encoded matter as much as the pixel values themselves.
 
 **SarPy** was a Python library from NGA for reading and writing SAR complex data in
 SICD and SIDD formats. NGA
@@ -53,7 +53,8 @@ its robust NITF implementation. The sensor independent XML metadata is available
 | NITF 2.0 | ✅ | ❌ | Read-only; legacy format |
 | SICD (via NITF) | ✅ | ✅ | Complex SAR data; pixel access and DES extraction for XML metadata |
 | SIDD (via NITF) | ✅ | ✅ | Derived SAR products; pixel access and DES extraction for XML metadata |
-| GeoTIFF | 🚧 | 🚧 | In progress |
+| TIFF | ✅ | ✅ | Tiled and stripped; LZW, Deflate, PackBits, uncompressed |
+| GeoTIFF | ✅ | ✅ | GeoKeys, ModelTiepoint, ModelPixelScale, ModelTransformation |
 | Cloud Optimized GeoTIFF (COG) | 🚧 | 🚧 | In progress |
 
 #### NITF Image Compression

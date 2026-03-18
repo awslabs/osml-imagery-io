@@ -3,17 +3,23 @@
 ## Opening a Dataset
 
 The `IO` class is the entry point for reading and writing imagery files. It auto-detects
-the format (NITF, GeoTIFF, etc.) and returns a `DatasetReader` or `DatasetWriter`:
+the format (NITF, TIFF/GeoTIFF, etc.) and returns a `DatasetReader` or `DatasetWriter`:
 
 ```python
 from aws.osml.io import IO
 
-# Read mode — returns a DatasetReader
+# Read mode — returns a DatasetReader (format auto-detected)
 with IO.open(["image.ntf"], "r") as dataset:
     print(type(dataset))  # DatasetReader
 
+with IO.open(["image.tif"], "r") as dataset:
+    print(type(dataset))  # DatasetReader
+
 # Write mode — returns a DatasetWriter
-with IO.open(["output.ntf"], "w") as writer:
+with IO.open(["output.ntf"], "w", "nitf") as writer:
+    print(type(writer))  # DatasetWriter
+
+with IO.open(["output.tif"], "w", "geotiff") as writer:
     print(type(writer))  # DatasetWriter
 ```
 
@@ -75,6 +81,12 @@ with IO.open(["complex_dataset.ntf"], "r") as dataset:
 
     # Retrieve a specific asset
     image = dataset.get_asset("image_segment_0")
+```
+
+NITF files can contain all four asset types. TIFF files contain only image assets —
+each IFD (Image File Directory) in the file becomes a separate image asset keyed as
+`"image_segment_0"`, `"image_segment_1"`, etc. Text, data, and graphics asset queries
+will return empty lists for TIFF datasets.
 ```
 
 ## Dataset-Level Metadata
