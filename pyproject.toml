@@ -64,4 +64,5 @@ testpaths = ["tests"]
 markers = [
     "integration: marks tests requiring integration data",
     "benchmark: marks benchmark tests",
+    "property: marks property-based tests (run with pytest -m property)",
 ]

@@ -5,8 +5,6 @@ This module contains property tests that validate:
 - TextAssetProvider Python API completeness
 - Media type mapping
 - Unknown format code handling
-
-**Feature: jbp-text-segments**
 """
 
 import io
@@ -15,13 +13,15 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, strategies as st
 
 from aws.osml.io import (
     IO,
     AssetType,
     BufferedTextAssetProvider,
 )
+
+from ..conftest import pbt_settings
 
 
 # Strategy for generating valid text content (printable ASCII)
@@ -50,9 +50,6 @@ key_strategy = st.text(
 class TestTextSegmentRoundtrip:
     """Property tests for text segment roundtrip (write and read via NITF).
     
-    **Feature: jbp-text-segments, Property 6: Text Segment Round-Trip**
-    **Validates: Requirements 4.1, 4.2, 4.3, 4.4, 7.1, 7.4, 7.5, 7.6**
-    
     These tests verify that text segments can be written to NITF files
     and read back with content preserved correctly.
     """
@@ -64,16 +61,11 @@ class TestTextSegmentRoundtrip:
             max_size=500,
         ),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_text_segment_roundtrip(self, text_content):
-        """Property 6: Text Segment Round-Trip.
-        
-        For any valid text content, writing a text segment to a NITF
+        """For any valid text content, writing a text segment to a NITF
         file and reading it back SHALL produce text equivalent to the original
         (modulo line ending normalization).
-        
-        **Feature: jbp-text-segments, Property 6: Text Segment Round-Trip**
-        **Validates: Requirements 4.1, 4.2, 7.1, 7.4, 7.5, 7.6**
         """
         from aws.osml.io import AssetProvider
         
@@ -140,17 +132,12 @@ class TestTextSegmentRoundtrip:
             max_size=200,
         ),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_line_delimiter_normalization_roundtrip(self, text_content):
-        """Property 13: Line Delimiter Normalization (Write).
-        
-        For any text content with any combination of line endings (LF, CR, CR/LF),
+        """For any text content with any combination of line endings (LF, CR, CR/LF),
         the BufferedTextAssetProvider's raw_asset() method SHALL return bytes with
         all line endings converted to CR/LF, and reading back SHALL preserve the
         CR/LF format.
-        
-        **Feature: jbp-text-segments, Property 13: Line Delimiter Normalization**
-        **Validates: Requirements 7.4, 7.5, 7.6**
         """
         # Create a BufferedTextAssetProvider to test line ending normalization
         text_asset = BufferedTextAssetProvider.create(
@@ -202,16 +189,11 @@ class TestTextSegmentRoundtrip:
             )
         ),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_text_segment_python_api_via_nitf(self, text_content, title, description):
-        """Property 14: Python API Completeness (via NITF roundtrip).
-        
-        For any text segment accessed via Python's DatasetReader.get_asset(),
+        """For any text segment accessed via Python's DatasetReader.get_asset(),
         the returned TextAssetProvider SHALL expose all required properties
         and methods.
-        
-        **Feature: jbp-text-segments, Property 14: Python API Completeness**
-        **Validates: Requirements 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7**
         """
         from aws.osml.io import AssetProvider
         
@@ -314,11 +296,8 @@ class TestTextSegmentRoundtrip:
 class TestTextAssetProviderAPICompleteness:
     """Property tests for TextAssetProvider Python API completeness.
     
-    **Feature: jbp-text-segments, Property 14: Python API Completeness**
-    **Validates: Requirements 8.1, 8.2, 8.3, 8.4, 8.5, 8.6**
-    
     These tests verify that the TextAssetProvider Python API exposes
-    all required properties and methods as specified in the requirements.
+    all required properties and methods as specified.
     """
 
     @given(
@@ -330,14 +309,11 @@ class TestTextAssetProviderAPICompleteness:
         ),
         encoding=encoding_strategy,
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_buffered_text_asset_provider_exposes_all_asset_properties(
         self, key, text_content, encoding
     ):
         """For any BufferedTextAssetProvider, all AssetProvider properties SHALL be accessible.
-        
-        **Feature: jbp-text-segments, Property 14: Python API Completeness**
-        **Validates: Requirements 8.1**
         
         Tests that key, title, description, media_type, roles, asset_type
         properties are all accessible.
@@ -369,15 +345,11 @@ class TestTextAssetProviderAPICompleteness:
         ),
         encoding=encoding_strategy,
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_buffered_text_asset_provider_get_raw_asset_returns_bytesio(
         self, key, text_content, encoding
     ):
-        """For any BufferedTextAssetProvider, get_raw_asset() SHALL return BytesIO.
-        
-        **Feature: jbp-text-segments, Property 14: Python API Completeness**
-        **Validates: Requirements 8.2**
-        """
+        """For any BufferedTextAssetProvider, get_raw_asset() SHALL return BytesIO."""
         # Skip non-ASCII content for ASCII encoding
         if encoding == "ASCII" and not text_content.isascii():
             return
@@ -406,15 +378,11 @@ class TestTextAssetProviderAPICompleteness:
         ),
         encoding=encoding_strategy,
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_buffered_text_asset_provider_get_metadata_returns_metadata_provider(
         self, key, text_content, encoding
     ):
-        """For any BufferedTextAssetProvider, get_metadata() SHALL return MetadataProvider.
-        
-        **Feature: jbp-text-segments, Property 14: Python API Completeness**
-        **Validates: Requirements 8.3**
-        """
+        """For any BufferedTextAssetProvider, get_metadata() SHALL return MetadataProvider."""
         # Skip non-ASCII content for ASCII encoding
         if encoding == "ASCII" and not text_content.isascii():
             return
@@ -442,15 +410,11 @@ class TestTextAssetProviderAPICompleteness:
         ),
         encoding=encoding_strategy,
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_buffered_text_asset_provider_text_property_returns_string(
         self, key, text_content, encoding
     ):
-        """For any BufferedTextAssetProvider, text property SHALL return string.
-        
-        **Feature: jbp-text-segments, Property 14: Python API Completeness**
-        **Validates: Requirements 8.4**
-        """
+        """For any BufferedTextAssetProvider, text property SHALL return string."""
         # Skip non-ASCII content for ASCII encoding
         if encoding == "ASCII" and not text_content.isascii():
             return
@@ -475,15 +439,11 @@ class TestTextAssetProviderAPICompleteness:
         ),
         encoding=encoding_strategy,
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_buffered_text_asset_provider_encoding_property_returns_string(
         self, key, text_content, encoding
     ):
-        """For any BufferedTextAssetProvider, encoding property SHALL return string.
-        
-        **Feature: jbp-text-segments, Property 14: Python API Completeness**
-        **Validates: Requirements 8.5**
-        """
+        """For any BufferedTextAssetProvider, encoding property SHALL return string."""
         # Skip non-ASCII content for ASCII encoding
         if encoding == "ASCII" and not text_content.isascii():
             return
@@ -508,15 +468,11 @@ class TestTextAssetProviderAPICompleteness:
         ),
         encoding=encoding_strategy,
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_buffered_text_asset_provider_format_property_returns_string(
         self, key, text_content, encoding
     ):
-        """For any BufferedTextAssetProvider, format property SHALL return string.
-        
-        **Feature: jbp-text-segments, Property 14: Python API Completeness**
-        **Validates: Requirements 8.6**
-        """
+        """For any BufferedTextAssetProvider, format property SHALL return string."""
         # Skip non-ASCII content for ASCII encoding
         if encoding == "ASCII" and not text_content.isascii():
             return
@@ -543,11 +499,7 @@ class TestTextAssetProviderAPICompleteness:
 
 @pytest.mark.property
 class TestTextAssetProviderMediaTypeMapping:
-    """Property tests for TextAssetProvider media type mapping.
-    
-    **Feature: jbp-text-segments, Property 10: Media Type Mapping**
-    **Validates: Requirements 5.4, 5.5, 5.6, 5.7**
-    """
+    """Property tests for TextAssetProvider media type mapping."""
 
     @given(
         key=key_strategy,
@@ -557,13 +509,9 @@ class TestTextAssetProviderMediaTypeMapping:
             max_size=100,
         ),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_media_type_mapping_ascii(self, key, text_content):
-        """For TXTFMT=STA, media_type SHALL return 'text/plain; charset=us-ascii'.
-        
-        **Feature: jbp-text-segments, Property 10: Media Type Mapping**
-        **Validates: Requirements 5.4**
-        """
+        """For TXTFMT=STA, media_type SHALL return 'text/plain; charset=us-ascii'."""
         provider = BufferedTextAssetProvider.create(
             key=key,
             text_content=text_content,
@@ -580,13 +528,9 @@ class TestTextAssetProviderMediaTypeMapping:
             max_size=100,
         ),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_media_type_mapping_utf8(self, key, text_content):
-        """For TXTFMT=U8S, media_type SHALL return 'text/plain; charset=utf-8'.
-        
-        **Feature: jbp-text-segments, Property 10: Media Type Mapping**
-        **Validates: Requirements 5.5**
-        """
+        """For TXTFMT=U8S, media_type SHALL return 'text/plain; charset=utf-8'."""
         provider = BufferedTextAssetProvider.create(
             key=key,
             text_content=text_content,
@@ -603,13 +547,9 @@ class TestTextAssetProviderMediaTypeMapping:
             max_size=100,
         ),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_media_type_mapping_ecs(self, key, text_content):
-        """For TXTFMT=UT1, media_type SHALL return 'text/plain; charset=iso-8859-1'.
-        
-        **Feature: jbp-text-segments, Property 10: Media Type Mapping**
-        **Validates: Requirements 5.6**
-        """
+        """For TXTFMT=UT1, media_type SHALL return 'text/plain; charset=iso-8859-1'."""
         provider = BufferedTextAssetProvider.create(
             key=key,
             text_content=text_content,
@@ -626,13 +566,9 @@ class TestTextAssetProviderMediaTypeMapping:
             max_size=100,
         ),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_media_type_mapping_mtf(self, key, text_content):
-        """For TXTFMT=MTF, media_type SHALL return 'text/plain'.
-        
-        **Feature: jbp-text-segments, Property 10: Media Type Mapping**
-        **Validates: Requirements 5.7**
-        """
+        """For TXTFMT=MTF, media_type SHALL return 'text/plain'."""
         provider = BufferedTextAssetProvider.create(
             key=key,
             text_content=text_content,
@@ -646,9 +582,6 @@ class TestTextAssetProviderMediaTypeMapping:
 class TestTextMetadataAccess:
     """Property tests for text segment metadata access.
     
-    **Feature: jbp-text-segments, Properties 3 and 5**
-    **Validates: Requirements 1.4, 2.5, 3.1, 3.4**
-    
     These tests verify that text segment metadata is correctly exposed
     through the Python API, including format codes and attachment levels.
     """
@@ -660,15 +593,12 @@ class TestTextMetadataAccess:
             max_size=200,
         ),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_format_code_accessible_via_metadata(self, text_content):
-        """Property 3: Format code is accessible via metadata.
+        """Format code is accessible via metadata.
         
         For any text segment, the TXTFMT field SHALL be accessible via
         metadata.as_dict()["TXTFMT"].
-        
-        **Feature: jbp-text-segments, Property 3: Unknown Format Code Handling**
-        **Validates: Requirements 1.4, 2.5**
         """
         from aws.osml.io import AssetProvider
         
@@ -729,16 +659,13 @@ class TestTextMetadataAccess:
             max_size=200,
         ),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_attachment_level_accessible_via_metadata(self, text_content):
-        """Property 5: Attachment level is accessible via metadata.
+        """Attachment level is accessible via metadata.
         
         For any text segment, the TXTALVL field SHALL be accessible via
         metadata.as_dict()["TXTALVL"], and parsing SHALL succeed regardless
         of whether the referenced display level exists.
-        
-        **Feature: jbp-text-segments, Property 5: Invalid TXTALVL Reference Parsing**
-        **Validates: Requirements 3.1, 3.4**
         """
         from aws.osml.io import AssetProvider
         
@@ -797,15 +724,12 @@ class TestTextMetadataAccess:
     @given(
         encoding=encoding_strategy,
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_encoding_to_format_mapping(self, encoding):
-        """Property 4: Encoding name maps to correct format code.
+        """Encoding name maps to correct format code.
         
         For any BufferedTextAssetProvider with a known encoding, the format()
         method SHALL return the corresponding TXTFMT code.
-        
-        **Feature: jbp-text-segments, Property 4: Encoding Name Mapping**
-        **Validates: Requirements 2.1, 2.2, 2.3, 2.4**
         """
         provider = BufferedTextAssetProvider.create(
             key="test",

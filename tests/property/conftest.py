@@ -1,11 +1,20 @@
 """Shared fixtures and pytest configuration for property-based tests.
 
 This module provides:
+- Hypothesis profiles for dev (fast) and ci (thorough) runs
+- pbt_settings: shared hypothesis settings for all property tests
 - temp_nitf_path fixture for temporary file handling with cleanup
-- hypothesis_settings fixture with appropriate settings for I/O-bound tests
 - pytest marker registration for 'property' tests
+
+Usage:
+    # Fast local development (default):
+    pytest -m property
+
+    # Full CI run:
+    HYPOTHESIS_PROFILE=ci pytest -m property
 """
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -21,19 +30,40 @@ def pytest_configure(config):
     )
 
 
-# Default hypothesis settings for I/O-bound property tests
-pbt_settings = settings(
+# ---------------------------------------------------------------------------
+# Hypothesis profiles
+# ---------------------------------------------------------------------------
+
+# CI profile: thorough coverage
+settings.register_profile(
+    "ci",
     max_examples=100,
-    deadline=None,  # Disable deadline for I/O operations
+    deadline=None,
     phases=[Phase.explicit, Phase.reuse, Phase.generate, Phase.shrink],
     suppress_health_check=[],
 )
+
+# Dev profile: fast iteration
+settings.register_profile(
+    "dev",
+    max_examples=10,
+    deadline=None,
+    phases=[Phase.explicit, Phase.reuse, Phase.generate],  # skip shrink
+    suppress_health_check=[],
+)
+
+settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "dev"))
+
+
+# Shared settings object — inherits max_examples and phases from the active profile.
+# All property test files should import and use this instead of defining their own.
+pbt_settings = settings(deadline=None)
 
 
 @pytest.fixture
 def temp_nitf_path():
     """Fixture providing a temporary NITF file path with cleanup.
-    
+
     Yields a Path object pointing to a temporary .ntf file.
     The file is automatically deleted after the test completes.
     """
@@ -42,14 +72,3 @@ def temp_nitf_path():
     yield path
     if path.exists():
         path.unlink()
-
-
-@pytest.fixture
-def hypothesis_settings():
-    """Default hypothesis settings for I/O-bound tests.
-    
-    Returns a dict with:
-    - max_examples: 100 (sufficient coverage without excessive runtime)
-    - deadline: None (I/O operations can be slow)
-    """
-    return {"max_examples": 100, "deadline": None}

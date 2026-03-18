@@ -9,14 +9,12 @@ This module provides reusable strategies for generating:
 - Edge case images (single-pixel, gradients, max values, etc.)
 - Valid block coordinates
 - NITF metadata key-value pairs
-
-Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 5.2
 """
 
 from typing import Set, Tuple
 
 import numpy as np
-from hypothesis import strategies as st
+from hypothesis import assume, strategies as st
 from hypothesis.extra.numpy import arrays
 
 from aws.osml.io import PixelType
@@ -50,8 +48,6 @@ def pixel_types() -> st.SearchStrategy[PixelType]:
     """Strategy for supported pixel types.
     
     Returns a strategy that samples from UInt8, UInt16, Int16, and Float32.
-    
-    Requirements: 1.2
     """
     return st.sampled_from(SUPPORTED_PIXEL_TYPES)
 
@@ -68,8 +64,6 @@ def image_dimensions(
     
     Returns:
         Strategy producing (num_rows, num_cols) tuples
-    
-    Requirements: 1.4
     """
     return st.tuples(
         st.integers(min_value=min_size, max_value=max_size),
@@ -89,8 +83,6 @@ def band_counts(
     
     Returns:
         Strategy producing integer band counts
-    
-    Requirements: 1.3
     """
     return st.integers(min_value=min_bands, max_value=max_bands)
 
@@ -103,8 +95,6 @@ def block_sizes() -> st.SearchStrategy[Tuple[int, int]]:
     
     Returns:
         Strategy producing (block_height, block_width) tuples
-    
-    Requirements: 1.4
     """
     return st.sampled_from([
         (32, 32),
@@ -131,8 +121,6 @@ def image_arrays(
     
     Returns:
         Strategy producing numpy arrays with shape (num_bands, num_rows, num_cols)
-    
-    Requirements: 1.1
     """
     dtype = get_numpy_dtype(pixel_type)
     return arrays(dtype=dtype, shape=(num_bands, num_rows, num_cols))
@@ -164,8 +152,6 @@ def random_image(
         - num_bands: number of bands
         - num_rows: number of rows
         - num_cols: number of columns
-    
-    Requirements: 1.1
     """
     pixel_type = draw(pixel_types())
     num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
@@ -195,8 +181,6 @@ def edge_case_images(
         - array: numpy array with shape (num_bands, num_rows, num_cols)
         - pixel_type: PixelType enum value
         - edge_case_name: string describing the edge case type
-    
-    Requirements: 1.5
     """
     if pixel_type is None:
         pixel_type = draw(pixel_types())
@@ -313,8 +297,6 @@ def valid_block_coordinates(
     Returns:
         Strategy producing (block_row, block_col) tuples within valid range
         [0, num_block_rows) × [0, num_block_cols)
-    
-    Requirements: 1.6
     """
     # Calculate number of blocks (ceiling division)
     num_block_rows = (num_rows + block_height - 1) // block_height
@@ -345,8 +327,6 @@ def invalid_block_coordinates(
     
     Returns:
         Strategy producing (block_row, block_col) tuples outside valid range
-    
-    Requirements: 4.4
     """
     num_block_rows = (num_rows + block_height - 1) // block_height
     num_block_cols = (num_cols + block_width - 1) // block_width
@@ -388,8 +368,6 @@ def nitf_field_names() -> st.SearchStrategy[str]:
     
     Returns:
         Strategy producing valid NITF field name strings
-    
-    Requirements: 5.2
     """
     return st.from_regex(r"[A-Z][A-Z0-9]{0,9}", fullmatch=True)
 
@@ -402,8 +380,6 @@ def metadata_values() -> st.SearchStrategy[str]:
     
     Returns:
         Strategy producing valid metadata value strings (1-20 chars)
-    
-    Requirements: 5.2
     """
     # Use printable ASCII characters only (codes 32-126)
     # This matches NITF BCS-A character set
@@ -430,8 +406,6 @@ def metadata_pairs(
     
     Returns:
         Dictionary of NITF field names to metadata values
-    
-    Requirements: 5.2
     """
     num_pairs = draw(st.integers(min_value=min_pairs, max_value=max_pairs))
     
@@ -485,10 +459,6 @@ def mask_patterns(
     
     Returns:
         A set of (row, col) tuples indicating which blocks are present.
-    
-    Requirements: 10.1
-    
-    **Feature: image-masking, Mask Pattern Generation**
     """
     pattern_type = draw(st.sampled_from([
         "all_present",      # No blocks masked
@@ -582,6 +552,11 @@ def masked_image(
     Generates a random image with a mask pattern indicating which blocks are present.
     This is used for testing masked image roundtrip operations.
     
+    Supports all masked IC codes:
+    - NM: uncompressed with mask (any pixel type)
+    - M8: JPEG 2000 with mask (UInt8, UInt16, Int16)
+    - M3: JPEG DCT with mask (UInt8 only, JPEG-friendly pixel values)
+    
     Args:
         draw: Hypothesis draw function (injected by @st.composite)
         min_size: Minimum dimension size (default 32)
@@ -600,37 +575,36 @@ def masked_image(
         - block_height: height of each block
         - block_width: width of each block
         - provided_blocks: set of (row, col) tuples for blocks that have data
-        - ic_value: IC value (NM for uncompressed masked, M8 for J2K masked)
-    
-    Requirements: 10.1
-    
-    **Feature: image-masking, Masked Image Generation**
+        - ic_value: IC value (NM, M8, or M3)
     """
-    # Generate base image parameters
-    # Use pixel types that work with both uncompressed and J2K
-    pixel_type = draw(st.sampled_from([PixelType.UInt8, PixelType.UInt16, PixelType.Int16]))
-    num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
+    # Choose IC value first, as it affects pixel type and dimension constraints
+    # NM = uncompressed with mask, M8 = JPEG 2000 with mask, M3 = JPEG DCT with mask
+    ic_value = draw(st.sampled_from(["NM", "M8", "M3"]))
+    
+    # M3 (JPEG DCT) only supports 8-bit and standard JPEG band counts (1 or 3).
+    # 2-band JPEG is not a valid configuration.
+    if ic_value == "M3":
+        pixel_type = PixelType.UInt8
+        valid_m3_bands = [b for b in [1, 3] if min_bands <= b <= max_bands]
+        assume(len(valid_m3_bands) > 0)
+        num_bands = draw(st.sampled_from(valid_m3_bands))
+    else:
+        pixel_type = draw(st.sampled_from([PixelType.UInt8, PixelType.UInt16, PixelType.Int16]))
+        num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
     block_height, block_width = draw(block_sizes())
     
-    # Choose IC value (masked variant) first, as it affects dimension constraints
-    # NM = uncompressed with mask, M8 = JPEG 2000 with mask
-    ic_value = draw(st.sampled_from(["NM", "M8"]))
-    
-    # For M8 (JPEG 2000), OpenJPEG has minimum tile size requirements.
-    # Even with 0 decomposition levels, tiles smaller than ~32 pixels in any
-    # dimension fail. To ensure valid partial blocks at image edges, we
-    # constrain image dimensions to be multiples of the block size for M8.
-    # This is a reasonable constraint since real-world imagery rarely has
-    # such small partial blocks.
-    if ic_value == "M8":
-        # For M8, ensure image dimensions are multiples of block size
-        # This avoids partial blocks that are too small for OpenJPEG
-        min_blocks = max(1, min_size // block_height)
+    # M8 and M3 both need image dimensions as multiples of block size.
+    # M8: OpenJPEG has minimum tile size requirements.
+    # M3: JPEG DCT works on 8x8 blocks; aligning to block size avoids
+    #     partial-block edge artifacts that hurt quality metrics.
+    if ic_value in ("M8", "M3"):
+        effective_min = max(min_size, 64) if ic_value == "M3" else min_size
+        min_blocks = max(2 if ic_value == "M3" else 1, effective_min // block_height)
         max_blocks = max(min_blocks, max_size // block_height)
         num_block_rows = draw(st.integers(min_value=min_blocks, max_value=max_blocks))
         num_rows = num_block_rows * block_height
         
-        min_blocks = max(1, min_size // block_width)
+        min_blocks = max(2 if ic_value == "M3" else 1, effective_min // block_width)
         max_blocks = max(min_blocks, max_size // block_width)
         num_block_cols = draw(st.integers(min_value=min_blocks, max_value=max_blocks))
         num_cols = num_block_cols * block_width
@@ -649,9 +623,29 @@ def masked_image(
     # Generate mask pattern
     provided_blocks = draw(mask_patterns(num_block_rows, num_block_cols))
     
-    # Generate image data
-    dtype = get_numpy_dtype(pixel_type)
-    array = draw(arrays(dtype=dtype, shape=(num_bands, num_rows, num_cols)))
+    # Generate image data — M3 needs JPEG-friendly values with guaranteed
+    # variance for meaningful PSNR/SSIM calculations.
+    if ic_value == "M3":
+        value_range = draw(st.integers(min_value=100, max_value=200))
+        base_value = draw(st.integers(min_value=20, max_value=55))
+        gradient = np.linspace(0, 1, num_cols)
+        base_pattern = np.tile(gradient, (num_rows, 1))
+        scaled_pattern = base_pattern * value_range + base_value
+        
+        bands = []
+        for _ in range(num_bands):
+            noise = draw(arrays(
+                dtype=np.float64,
+                shape=(num_rows, num_cols),
+                elements=st.floats(min_value=-5, max_value=5,
+                                   allow_nan=False, allow_infinity=False),
+            ))
+            band = np.clip(scaled_pattern + noise, 0, 255)
+            bands.append(band.astype(np.uint8))
+        array = np.stack(bands, axis=0)
+    else:
+        dtype = get_numpy_dtype(pixel_type)
+        array = draw(arrays(dtype=dtype, shape=(num_bands, num_rows, num_cols)))
     
     return (array, pixel_type, num_bands, num_rows, num_cols, 
             block_height, block_width, provided_blocks, ic_value)
@@ -768,10 +762,6 @@ def jpeg_pixel_types() -> st.SearchStrategy[PixelType]:
     
     Returns:
         Strategy producing UInt8 pixel type only.
-    
-    Requirements: 7.1
-    
-    **Feature: jpeg-dct-compression, JPEG Pixel Types**
     """
     return st.sampled_from(JPEG_PIXEL_TYPES)
 
@@ -786,10 +776,6 @@ def jpeg_ic_codes() -> st.SearchStrategy[str]:
     
     Returns:
         Strategy producing JPEG IC code strings.
-    
-    Requirements: 7.1
-    
-    **Feature: jpeg-dct-compression, JPEG IC Codes**
     """
     return st.sampled_from(JPEG_IC_CODES)
 
@@ -803,10 +789,6 @@ def jpeg_quality() -> st.SearchStrategy[int]:
     
     Returns:
         Strategy producing quality values 50-95.
-    
-    Requirements: 7.1
-    
-    **Feature: jpeg-dct-compression, JPEG Quality**
     """
     return st.integers(min_value=50, max_value=95)
 
@@ -819,10 +801,6 @@ def jpeg_comrat() -> st.SearchStrategy[str]:
     
     Returns:
         Strategy producing valid JPEG COMRAT strings.
-    
-    Requirements: 7.1
-    
-    **Feature: jpeg-dct-compression, JPEG COMRAT**
     """
     # Generate quality values that map to good compression quality
     return st.integers(min_value=50, max_value=95).map(
@@ -838,10 +816,6 @@ def i1_image_dimensions() -> st.SearchStrategy[Tuple[int, int]]:
     
     Returns:
         Strategy producing (num_rows, num_cols) tuples within I1 constraints.
-    
-    Requirements: 7.2
-    
-    **Feature: jpeg-dct-compression, I1 Dimension Constraints**
     """
     return st.tuples(
         st.integers(min_value=32, max_value=512),  # Use smaller sizes for faster tests
@@ -872,10 +846,6 @@ def jpeg_image_for_compression(
     
     Returns:
         Tuple of (array, pixel_type, num_bands, num_rows, num_cols)
-    
-    Requirements: 7.1, 7.2
-    
-    **Feature: jpeg-dct-compression, JPEG Image Generation**
     """
     # JPEG only supports 8-bit
     pixel_type = PixelType.UInt8
@@ -945,10 +915,6 @@ def jpeg_i1_image(
     
     Returns:
         Tuple of (array, pixel_type, num_bands, num_rows, num_cols)
-    
-    Requirements: 7.2
-    
-    **Feature: jpeg-dct-compression, I1 Image Generation**
     """
     # I1 supports 1 or 3 bands (grayscale or RGB)
     num_bands = draw(st.sampled_from([1, 3]))
@@ -989,10 +955,6 @@ def masked_jpeg_image(
     Returns:
         Tuple of (array, pixel_type, num_bands, num_rows, num_cols, 
                   block_height, block_width, provided_blocks)
-    
-    Requirements: 7.1
-    
-    **Feature: jpeg-dct-compression, Masked JPEG Image Generation**
     """
     # JPEG only supports 8-bit
     pixel_type = PixelType.UInt8
@@ -1089,8 +1051,6 @@ def tiff_compression() -> st.SearchStrategy[str]:
     """Strategy for TIFF compression types.
 
     Returns a strategy that samples from supported lossless compressions.
-
-    **Feature: libtiff-ffi-tiff-reading, TIFF Compression Types**
     """
     return st.sampled_from(["None", "LZW", "Deflate", "PackBits"])
 
@@ -1100,8 +1060,6 @@ def tiff_planar_config() -> st.SearchStrategy[int]:
 
     Returns 1 (chunky/RGBRGB) or 2 (planar/RRR...GGG...BBB...).
     Note: PIL only writes chunky (1). Planar tests deferred to Phase 2.
-
-    **Feature: libtiff-ffi-tiff-reading, TIFF Planar Configuration**
     """
     return st.sampled_from([1, 2])
 
@@ -1111,8 +1069,6 @@ def tiff_layout() -> st.SearchStrategy[str]:
 
     Returns 'tiled' or 'stripped'.
     Note: PIL only writes stripped. Tiled tests use the existing small.tif fixture.
-
-    **Feature: libtiff-ffi-tiff-reading, TIFF Layout**
     """
     return st.sampled_from(["tiled", "stripped"])
 
@@ -1122,8 +1078,6 @@ def tiff_pil_pixel_types() -> st.SearchStrategy[PixelType]:
 
     Limited to types PIL produces with correct TIFF tags:
     UInt8, UInt16, Int32, Float32.
-
-    **Feature: libtiff-ffi-tiff-reading, TIFF PIL Pixel Types**
     """
     return st.sampled_from(TIFF_PIL_PIXEL_TYPES)
 
@@ -1140,8 +1094,6 @@ def tiff_rows_per_strip(
     Args:
         image_height: Total image height in pixels
         min_rps: Minimum rows per strip (default 8)
-
-    **Feature: libtiff-ffi-tiff-reading, TIFF RowsPerStrip**
     """
     # Pick from powers of 2 and the full height
     candidates = [v for v in [8, 16, 32, 64, 128] if min_rps <= v <= image_height]
@@ -1179,8 +1131,6 @@ def tiff_image_config(
     Returns:
         Dict with keys: pixel_type, width, height, bands, compression,
         rows_per_strip, pil_compression
-
-    **Feature: libtiff-ffi-tiff-reading, TIFF Image Config**
     """
     pixel_type = draw(tiff_pil_pixel_types())
     compression = draw(tiff_compression())
@@ -1239,8 +1189,6 @@ def tiff_writer_pixel_types() -> st.SearchStrategy[PixelType]:
     """Strategy for all pixel types supported by TIFFDatasetWriter.
 
     Includes the full set: UInt8–UInt32, Int8–Int32, Float32, Float64.
-
-    **Feature: tiff-writing, TIFF Writer Pixel Types**
     """
     return st.sampled_from(TIFF_WRITER_PIXEL_TYPES)
 
@@ -1249,8 +1197,6 @@ def tiff_writer_compression() -> st.SearchStrategy[str]:
     """Strategy for compression types supported by TIFFDatasetWriter.
 
     Returns one of: None, LZW, Deflate.
-
-    **Feature: tiff-writing, TIFF Writer Compression**
     """
     return st.sampled_from(TIFF_WRITER_COMPRESSIONS)
 
@@ -1267,8 +1213,6 @@ def tiff_encoding_hints(draw) -> dict:
 
     Returns:
         Dict of hint name → string value.
-
-    **Feature: tiff-writing, TIFF Encoding Hints**
     """
     tile_w = draw(st.sampled_from(TIFF_TILE_SIZES))
     tile_h = draw(st.sampled_from(TIFF_TILE_SIZES))
@@ -1313,8 +1257,6 @@ def tiff_writable_image(
     Returns:
         Tuple of (array, pixel_type, num_bands, num_rows, num_cols, hints)
         where *hints* is a dict of encoding hint strings.
-
-    **Feature: tiff-writing, TIFF Writable Image**
     """
     pixel_type = draw(tiff_writer_pixel_types())
     num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
@@ -1335,10 +1277,6 @@ def geotiff_model_type() -> st.SearchStrategy[str]:
     """Strategy for GeoTIFF model type values.
 
     Draws from the two valid GTModelTypeGeoKey labels.
-
-    Requirements: 8.1
-
-    **Feature: geotiff-metadata, GeoTIFF Model Type**
     """
     return st.sampled_from(["Projected", "Geographic"])
 
@@ -1347,10 +1285,6 @@ def geotiff_raster_type() -> st.SearchStrategy[str]:
     """Strategy for GeoTIFF raster type values.
 
     Draws from the two valid GTRasterTypeGeoKey labels.
-
-    Requirements: 8.1
-
-    **Feature: geotiff-metadata, GeoTIFF Raster Type**
     """
     return st.sampled_from(["PixelIsArea", "PixelIsPoint"])
 
@@ -1359,10 +1293,6 @@ def epsg_codes() -> st.SearchStrategy[int]:
     """Strategy for valid EPSG codes representable as u16.
 
     EPSG codes range from 1 to 32767 (positive i16 / valid u16 range).
-
-    Requirements: 8.2
-
-    **Feature: geotiff-metadata, EPSG Codes**
     """
     return st.integers(min_value=1, max_value=32767)
 
@@ -1372,10 +1302,6 @@ def pixel_scale() -> st.SearchStrategy[list]:
 
     Values are kept in a reasonable range to avoid floating-point edge cases
     during roundtrip through libtiff (which stores as DOUBLE).
-
-    Requirements: 8.3
-
-    **Feature: geotiff-metadata, Pixel Scale**
     """
     return st.lists(
         st.floats(min_value=0.001, max_value=1e6, allow_nan=False, allow_infinity=False),
@@ -1388,10 +1314,6 @@ def tiepoint_tuples() -> st.SearchStrategy[list]:
     """Strategy for GeoTiepoints: lists of 1-4 tiepoint 6-element float arrays.
 
     Each tiepoint is [pixel_x, pixel_y, pixel_z, geo_x, geo_y, geo_z].
-
-    Requirements: 8.3
-
-    **Feature: geotiff-metadata, Tiepoint Tuples**
     """
     single_tiepoint = st.lists(
         st.floats(min_value=-1e8, max_value=1e8, allow_nan=False, allow_infinity=False),
@@ -1403,10 +1325,6 @@ def tiepoint_tuples() -> st.SearchStrategy[list]:
 
 def transformation_matrix() -> st.SearchStrategy[list]:
     """Strategy for GeoTransformation: 16-element float arrays (4x4 matrix).
-
-    Requirements: 8.3
-
-    **Feature: geotiff-metadata, Transformation Matrix**
     """
     return st.lists(
         st.floats(min_value=-1e8, max_value=1e8, allow_nan=False, allow_infinity=False),
@@ -1426,10 +1344,6 @@ def geotiff_metadata(draw) -> dict:
     Always includes GeoModelType and the matching CRS key. Optionally includes
     GeoRasterType, GeoPixelScale, and GeoTiepoints. GeoTransformation is
     mutually exclusive with GeoPixelScale+GeoTiepoints (per GeoTIFF spec).
-
-    Requirements: 8.1, 8.2, 8.3, 8.4
-
-    **Feature: geotiff-metadata, GeoTIFF Metadata Composite**
     """
     hints = {}
 

@@ -1,19 +1,16 @@
 """Property-based tests for TIFF API contracts.
 
 This module tests correctness properties for the TIFF reader API:
-- Property 3: Block coordinate validation
-- Property 4: IFD enumeration and asset key consistency
-- Property 5: Non-image asset access
-- Property 6: Dataset-level metadata contains only file-level information
-- Property 7: Per-IFD metadata completeness
-- Property 8: IFD-level metadata keys are numeric strings
-- Property 9: Custom tags coexist with structural tags
+- Block coordinate validation
+- IFD enumeration and asset key consistency
+- Non-image asset access
+- Dataset-level metadata contains only file-level information
+- Per-IFD metadata completeness
+- IFD-level metadata keys are numeric strings
+- Custom tags coexist with structural tags
 
 Tests use the existing data/unit/small.tif (tiled, 1024x1024, uint8, 1-band,
 256x256 tiles, Deflate) and PIL-generated stripped TIFFs.
-
-**Validates: Requirements 4.6, 4.7, 4.11, 4.13, 5.4, 5.5, 5.6, 5.7, 5.8,
-5.9, 5.10, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 7.1, 8.3**
 """
 
 import tempfile
@@ -21,21 +18,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given, settings, Phase
+from hypothesis import given
 from hypothesis import strategies as st
 from PIL import Image
 
 from aws.osml.io import IO, AssetType, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 
-from .strategies import get_numpy_dtype, tiff_image_config
-
-
-pbt_settings = settings(
-    max_examples=100,
-    deadline=None,
-    phases=[Phase.explicit, Phase.reuse, Phase.generate, Phase.shrink],
-    suppress_health_check=[],
-)
+from ..conftest import pbt_settings
+from ..strategies import get_numpy_dtype, tiff_image_config
 
 UNIT_DATA_DIR = Path("data/unit")
 SMALL_TIF = UNIT_DATA_DIR / "small.tif"
@@ -86,19 +76,16 @@ def _make_array(cfg: dict) -> np.ndarray:
 
 
 # =============================================================================
-# Property 3: Block coordinate validation
+# Block coordinate validation
 # =============================================================================
 
 
 @pytest.mark.property
 class TestTiffBlockCoordinateValidation:
-    """Property 3: Block coordinate validation
+    """Block coordinate validation.
 
     has_block() returns true for all valid coordinates within the block grid,
     and get_block() raises InvalidBlockCoordinates for out-of-bounds access.
-
-    # Feature: libtiff-ffi-tiff-reading, Property 3: Block coordinate validation
-    **Validates: Requirements 4.6, 4.11**
     """
 
     def test_tiled_valid_coordinates(self):
@@ -171,20 +158,17 @@ class TestTiffBlockCoordinateValidation:
 
 
 # =============================================================================
-# Property 4: IFD enumeration and asset key consistency
+# IFD enumeration and asset key consistency
 # =============================================================================
 
 
 @pytest.mark.property
 class TestTiffIFDEnumeration:
-    """Property 4: IFD enumeration and asset key consistency
+    """IFD enumeration and asset key consistency.
 
     For a TIFF with N full-resolution IFDs, get_asset_keys returns N keys,
     each get_asset(key) succeeds, and each provider reports
     num_resolution_levels == 1.
-
-    # Feature: libtiff-ffi-tiff-reading, Property 4: IFD enumeration
-    **Validates: Requirements 4.7, 5.4, 5.5, 5.7, 5.9**
     """
 
     def test_single_ifd_tiled(self):
@@ -219,19 +203,16 @@ class TestTiffIFDEnumeration:
 
 
 # =============================================================================
-# Property 5: Non-image asset access
+# Non-image asset access
 # =============================================================================
 
 
 @pytest.mark.property
 class TestTiffNonImageAssetAccess:
-    """Property 5: Non-image asset access
+    """Non-image asset access.
 
     get_asset() with invalid keys returns AssetNotFound.
     get_asset_keys for Text/Graphics/Data returns empty lists.
-
-    # Feature: libtiff-ffi-tiff-reading, Property 5: Non-image asset access
-    **Validates: Requirements 5.8, 5.10**
     """
 
     def test_invalid_key_raises(self):
@@ -273,19 +254,16 @@ class TestTiffNonImageAssetAccess:
 
 
 # =============================================================================
-# Property 6: Dataset-level metadata contains only file-level information
+# Dataset-level metadata contains only file-level information
 # =============================================================================
 
 
 @pytest.mark.property
 class TestTiffDatasetMetadata:
-    """Property 6: Dataset-level metadata contains only file-level information
+    """Dataset-level metadata contains only file-level information.
 
     The dataset-level MetadataProvider contains exactly three keys:
     ByteOrder, NumberOfDirectories, NumberOfImageSegments.
-
-    # Feature: libtiff-ffi-tiff-reading, Property 6: Dataset-level metadata
-    **Validates: Requirements 5.6, 6.9**
     """
 
     def test_tiled_dataset_metadata(self):
@@ -323,20 +301,17 @@ class TestTiffDatasetMetadata:
 
 
 # =============================================================================
-# Property 7: Per-IFD metadata completeness
+# Per-IFD metadata completeness
 # =============================================================================
 
 
 @pytest.mark.property
 class TestTiffPerIFDMetadata:
-    """Property 7: Per-IFD metadata completeness
+    """Per-IFD metadata completeness.
 
     Per-segment metadata contains ImageWidth, ImageLength, BitsPerSample,
     SamplesPerPixel with correct values. as_dict(None) and as_dict("tiff")
     return identical results.
-
-    # Feature: libtiff-ffi-tiff-reading, Property 7: Per-IFD metadata completeness
-    **Validates: Requirements 4.13, 6.2, 6.3, 6.4, 6.5, 6.6, 6.8**
     """
 
     def test_tiled_per_ifd_metadata(self):
@@ -492,20 +467,17 @@ def _simple_tag_metadata(draw):
 
 
 # =============================================================================
-# Property 8: IFD-level metadata keys are numeric strings
+# IFD-level metadata keys are numeric strings
 # =============================================================================
 
 
 @pytest.mark.property
 class TestTiffMetadataKeysNumeric:
-    """Property 8: IFD-level metadata keys are numeric strings
+    """IFD-level metadata keys are numeric strings.
 
     All IFD-level keys in the read-back metadata are numeric strings.
     Dataset-level keys (ByteOrder, NumberOfDirectories) are excluded
     from this check because they are not TIFF tags.
-
-    # Feature: tiff-api, Property 8: Metadata keys are numeric
-    **Validates: Requirements 7.1**
     """
 
     @given(data=_simple_tag_metadata())
@@ -533,20 +505,17 @@ class TestTiffMetadataKeysNumeric:
 
 
 # =============================================================================
-# Property 9: Custom tags coexist with structural tags
+# Custom tags coexist with structural tags
 # =============================================================================
 
 
 @pytest.mark.property
 class TestTiffCustomTagCoexistence:
-    """Property 9: Custom tags coexist with structural tags
+    """Custom tags coexist with structural tags.
 
     Custom tags in the private-use range do not overwrite structural tags
     set by the writer. The writer always sets ImageWidth (256),
     ImageLength (257), etc. from the image properties.
-
-    # Feature: tiff-api, Property 9: Custom tag coexistence
-    **Validates: Requirements 8.3**
     """
 
     @given(data=_simple_tag_metadata())
@@ -575,3 +544,41 @@ class TestTiffCustomTagCoexistence:
                 )
         finally:
             path.unlink(missing_ok=True)
+
+
+# =============================================================================
+# Non-image asset rejection
+# =============================================================================
+
+from aws.osml.io import AssetProvider
+
+
+@pytest.mark.property
+class TestTiffNonImageAssetRejection:
+    """TIFF non-image asset rejection.
+
+    For any asset whose asset_type() is Text or Data, calling add_asset()
+    on a TIFFDatasetWriter shall raise an error. TIFF only supports images.
+    """
+
+    def test_text_asset_rejected(self):
+        writer = IO.open(["reject_text.tif"], "w", "tiff")
+        asset = AssetProvider.from_bytes(
+            key="text_segment_0",
+            data=b"Hello world",
+            asset_type=AssetType.Text,
+            title="Text",
+        )
+        with pytest.raises(Exception):
+            writer.add_asset("text_segment_0", asset, "Text", "desc", ["metadata"])
+
+    def test_data_asset_rejected(self):
+        writer = IO.open(["reject_data.tif"], "w", "tiff")
+        asset = AssetProvider.from_bytes(
+            key="des_segment_0",
+            data=b"\x00\x01\x02",
+            asset_type=AssetType.Data,
+            title="DES",
+        )
+        with pytest.raises(Exception):
+            writer.add_asset("des_segment_0", asset, "DES", "desc", ["data"])

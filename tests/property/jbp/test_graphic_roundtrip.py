@@ -2,8 +2,6 @@
 
 This module contains property tests that validate graphic segment functionality
 including CGM data round-trip and bounds validation.
-
-**Feature: jbp-graphic-segments**
 """
 
 import io
@@ -11,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, strategies as st
 
 from aws.osml.io import (
     IO,
@@ -19,6 +17,8 @@ from aws.osml.io import (
     AssetType,
     MetadataProvider,
 )
+
+from ..conftest import pbt_settings
 
 
 @pytest.mark.property
@@ -32,16 +32,11 @@ class TestGraphicSegmentProperties:
     @given(
         cgm_data=st.binary(min_size=1, max_size=10000),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_cgm_data_roundtrip(self, cgm_data):
-        """Property 5: CGM Data Round-Trip.
-        
-        For any NITF file containing a graphic segment with CGM data bytes,
+        """For any NITF file containing a graphic segment with CGM data bytes,
         calling raw_asset() on the JBPGraphicsAssetProvider SHALL return bytes
         identical to the original CGM data portion of the segment.
-        
-        **Feature: jbp-graphic-segments, Property 5: CGM Data Round-Trip**
-        **Validates: Requirements 5.1**
         """
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
             path = Path(f.name)
@@ -112,17 +107,12 @@ class TestGraphicSegmentProperties:
             max_codepoint=126
         )),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_python_api_completeness(self, cgm_data, title, description):
-        """Property 12: Python API Completeness.
-        
-        For any graphic segment accessed via Python's DatasetReader.get_asset(),
+        """For any graphic segment accessed via Python's DatasetReader.get_asset(),
         the returned PyGraphicsAssetProvider SHALL expose key, title, description,
         media_type, roles, asset_type properties, get_raw_asset() returning BytesIO,
         and get_metadata() returning PyMetadataProvider.
-        
-        **Feature: jbp-graphic-segments, Property 12: Python API Completeness**
-        **Validates: Requirements 9.1, 9.2, 9.3, 9.4**
         """
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
             path = Path(f.name)

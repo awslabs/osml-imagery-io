@@ -1,14 +1,11 @@
 """Property-based tests for GeoTIFF metadata roundtrip operations.
 
 This module tests correctness properties for GeoTIFF metadata:
-- Property 1: GeoTIFF metadata write-read round-trip
-- Property 2: Idempotent GeoTIFF encoding
+- GeoTIFF metadata write-read round-trip
+- Idempotent GeoTIFF encoding
 
 These validate that GeoTIFF metadata (GeoKeys, transformation tags) survives
 write-read cycles through TIFFDatasetWriter and TIFFDatasetReader.
-
-**Validates: Requirements 1.1–1.5, 3.1–3.5, 4.1–4.7, 5.1–5.3, 6.1–6.4,
-7.1–7.8, 8.1–8.5, 9.1–9.6**
 """
 
 import tempfile
@@ -16,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given, settings, Phase
+from hypothesis import given
 
 from aws.osml.io import (
     IO,
@@ -25,15 +22,8 @@ from aws.osml.io import (
     PixelType,
 )
 
-from .strategies import geotiff_metadata
-
-
-pbt_settings = settings(
-    max_examples=100,
-    deadline=None,
-    phases=[Phase.explicit, Phase.reuse, Phase.generate, Phase.shrink],
-    suppress_health_check=[],
-)
+from ..conftest import pbt_settings
+from ..strategies import geotiff_metadata
 
 
 def _normalize_json_value(val):
@@ -111,21 +101,17 @@ def _read_geo_metadata(path):
 
 
 # =============================================================================
-# Property 1: GeoTIFF metadata write-read round-trip
+# GeoTIFF metadata write-read round-trip
 # =============================================================================
 
 
 @pytest.mark.property
 class TestGeoTiffMetadataRoundtrip:
-    """Property 1: GeoTIFF metadata write-read round-trip
+    """GeoTIFF metadata write-read round-trip.
 
     For any valid combination of GeoTIFF metadata fields, writing a GeoTIFF
     via TIFFDatasetWriter with those fields as encoding hints and reading it
     back via TIFFDatasetReader produces metadata fields with identical values.
-
-    # Feature: geotiff-metadata, Property 1: GeoTIFF metadata write-read round-trip
-    **Validates: Requirements 1.1–1.5, 3.1–3.5, 4.1–4.7, 5.1–5.3, 6.1–6.4,
-    7.1–7.8, 8.1–8.4, 9.1–9.6**
     """
 
     @given(geotiff_metadata())
@@ -158,20 +144,17 @@ class TestGeoTiffMetadataRoundtrip:
 
 
 # =============================================================================
-# Property 2: Idempotent GeoTIFF encoding
+# Idempotent GeoTIFF encoding
 # =============================================================================
 
 
 @pytest.mark.property
 class TestGeoTiffIdempotentEncoding:
-    """Property 2: Idempotent GeoTIFF encoding
+    """Idempotent GeoTIFF encoding.
 
     For any valid GeoTIFF file produced by the writer, reading its metadata
     and writing a new file with those metadata values as encoding hints
     produces a file whose GeoTIFF metadata is identical to the original.
-
-    # Feature: geotiff-metadata, Property 2: Idempotent GeoTIFF encoding
-    **Validates: Requirements 8.5**
     """
 
     @given(geotiff_metadata())

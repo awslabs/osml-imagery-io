@@ -2,11 +2,9 @@
 
 These tests are parameterized over NITF and TIFF to verify universal
 writer properties that apply to both formats:
-- Property 4: Idempotent Close
-- Property 6: Duplicate Key Rejection
-- Property 7: Multi-Image IFD Ordering
-
-**Validates: Requirements 1.3, 2.2, 2.4, 2.6**
+- Idempotent Close
+- Duplicate Key Rejection
+- Multi-Image IFD Ordering
 """
 
 import tempfile
@@ -14,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given, settings, Phase
+from hypothesis import given
 
 from aws.osml.io import (
     IO,
@@ -23,16 +21,9 @@ from aws.osml.io import (
     PixelType,
 )
 
-from .helpers import read_full_image
-from .strategies import get_numpy_dtype, random_image
-
-
-pbt_settings = settings(
-    max_examples=100,
-    deadline=None,
-    phases=[Phase.explicit, Phase.reuse, Phase.generate, Phase.shrink],
-    suppress_health_check=[],
-)
+from ..conftest import pbt_settings
+from ..helpers import read_full_image
+from ..strategies import get_numpy_dtype, random_image
 
 # Format configurations: (extension, format_string, metadata_hints)
 FORMAT_CONFIGS = [
@@ -64,20 +55,17 @@ def _make_provider(array, pixel_type, num_bands, num_rows, num_cols, key, hints)
 
 
 # =============================================================================
-# Property 4: Idempotent Close (NITF + TIFF)
+# Idempotent Close (NITF + TIFF)
 # =============================================================================
 
 
 @pytest.mark.property
 class TestIdempotentClose:
-    """Property 4: Idempotent Close
+    """Idempotent Close
 
     For any writer that has been populated with assets and closed, calling
     close() a second time returns successfully and the output file remains
     unchanged.
-
-    # Feature: tiff-writing, Property 4: Idempotent close
-    **Validates: Requirements 1.3**
     """
 
     @pytest.mark.parametrize("ext,fmt,hints", FORMAT_CONFIGS, ids=FORMAT_IDS)
@@ -118,7 +106,7 @@ class TestIdempotentClose:
 
 
 # =============================================================================
-# Property 6: Duplicate Key Rejection (NITF + TIFF)
+# Duplicate Key Rejection (NITF + TIFF)
 # =============================================================================
 
 # Simplified format configs without hints (not needed for this test)
@@ -130,13 +118,10 @@ FORMAT_CONFIGS_SIMPLE = [
 
 @pytest.mark.property
 class TestDuplicateKeyRejection:
-    """Property 6: Duplicate Key Rejection
+    """Duplicate Key Rejection
 
     For any key string, calling add_asset() twice with the same key shall
     succeed on the first call and raise an error on the second call.
-
-    # Feature: tiff-writing, Property 6: Duplicate key rejection
-    **Validates: Requirements 2.4**
     """
 
     @pytest.mark.parametrize("ext,fmt", FORMAT_CONFIGS_SIMPLE, ids=FORMAT_IDS)
@@ -179,19 +164,16 @@ class TestDuplicateKeyRejection:
 
 
 # =============================================================================
-# Property 7: Multi-Image Ordering (NITF + TIFF)
+# Multi-Image Ordering (NITF + TIFF)
 # =============================================================================
 
 
 @pytest.mark.property
 class TestMultiImageOrdering:
-    """Property 7: Multi-Image IFD Ordering
+    """Multi-Image IFD Ordering
 
     For any sequence of N image assets added via add_asset(), the resulting
     file shall contain N images with pixel data matching insertion order.
-
-    # Feature: tiff-writing, Property 7: Multi-image IFD ordering
-    **Validates: Requirements 2.2, 2.6**
     """
 
     @pytest.mark.parametrize("ext,fmt,hints", FORMAT_CONFIGS, ids=FORMAT_IDS)

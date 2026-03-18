@@ -1,13 +1,9 @@
 """Property-based tests for IO contracts.
 
 This module contains property tests that validate IO factory behavior including:
-- Format auto-detection (Property 23)
-- Dataset round-trip consistency (Property 20)
-- TIFF format detection and routing (Requirements 8.1, 8.2)
-
-Tests are migrated from tests/test_jbp_io.py.
-
-**Validates: Requirements 8.1, 8.2, 9.1, 9.5, 17.1, 17.2, 17.3, 19.3**
+- Format auto-detection
+- Dataset round-trip consistency
+- TIFF format detection and routing
 """
 
 from pathlib import Path
@@ -30,18 +26,13 @@ MULTI_SEGMENT = UNIT_DATA_DIR / "multi_segment.ntf"
 
 
 # =============================================================================
-# Property 23: Python Format Auto-Detection Tests
+# Python Format Auto-Detection Tests
 # =============================================================================
 
 @pytest.mark.property
 class TestFormatAutoDetection:
-    """Property 23: Python Format Auto-Detection
-    
-    For any NITF or NSIF file opened via Python `IO.open()`, the returned reader
+    """For any NITF or NSIF file opened via Python `IO.open()`, the returned reader
     SHALL be able to access all segments without the caller specifying the format.
-    
-    **Feature: property-based-testing-framework, Property 23: Format Auto-Detection**
-    **Validates: Requirements 19.3**
     """
 
     def test_open_nitf_file_without_format_specification(self):
@@ -147,11 +138,7 @@ class TestFormatAutoDetection:
 
 @pytest.mark.property
 class TestIOOpenWithFormat:
-    """Tests for IO.open() with explicit format specification.
-    
-    **Feature: property-based-testing-framework, Property 23: Format Auto-Detection**
-    **Validates: Requirements 19.3**
-    """
+    """Tests for IO.open() with explicit format specification."""
 
     def test_open_with_nitf_format(self):
         """Test IO.open() with explicit 'nitf' format."""
@@ -188,11 +175,7 @@ class TestIOOpenWithFormat:
 
 @pytest.mark.property
 class TestIOCreate:
-    """Tests for IO.open() with write mode.
-    
-    **Feature: property-based-testing-framework, Property 23: Format Auto-Detection**
-    **Validates: Requirements 19.3**
-    """
+    """Tests for IO.open() with write mode."""
 
     def test_create_with_nitf_format(self, tmp_path):
         """Test IO.open() with 'w' mode and 'nitf' format."""
@@ -238,11 +221,7 @@ class TestIOCreate:
 
 @pytest.mark.property
 class TestIOInvalidMode:
-    """Tests for IO.open() with invalid mode.
-    
-    **Feature: property-based-testing-framework, Property 23: Format Auto-Detection**
-    **Validates: Requirements 19.3**
-    """
+    """Tests for IO.open() with invalid mode."""
 
     def test_invalid_mode_rejected(self):
         """Test IO.open() rejects invalid mode strings."""
@@ -257,11 +236,7 @@ class TestIOInvalidMode:
 
 @pytest.mark.property
 class TestIOOpenPathsList:
-    """Tests for IO.open() paths list parameter.
-    
-    **Feature: property-based-testing-framework, Property 23: Format Auto-Detection**
-    **Validates: Requirements 1.2, 1.3**
-    """
+    """Tests for IO.open() paths list parameter."""
 
     def test_single_element_list(self):
         """Test IO.open() with single-element list."""
@@ -293,18 +268,13 @@ class TestIOOpenPathsList:
 
 
 # =============================================================================
-# Property 20: Dataset Round-Trip Consistency Tests
+# Dataset Round-Trip Consistency Tests
 # =============================================================================
 
 @pytest.mark.property
 class TestDatasetRoundTripConsistency:
-    """Property 20: Dataset Round-Trip Consistency
-    
-    For any valid dataset written with JBPDatasetWriter, reading it back with
+    """For any valid dataset written with JBPDatasetWriter, reading it back with
     JBPDatasetReader SHALL produce equivalent metadata and asset data.
-    
-    **Feature: property-based-testing-framework, Property 20: Dataset Round-Trip Consistency**
-    **Validates: Requirements 17.1, 17.2, 17.3**
     """
 
     def test_nitf21_round_trip_asset_count(self):
@@ -558,9 +528,6 @@ class TestTiffFormatDetection:
 
     Verifies that the IO factory correctly routes .tif/.tiff extensions
     and explicit "tiff"/"tif" format strings to the TIFF reader.
-
-    **Feature: libtiff-ffi-tiff-reading, TIFF Format Detection**
-    **Validates: Requirements 8.1, 8.2**
     """
 
     def test_tif_extension_auto_detected(self):

@@ -234,12 +234,27 @@ pytest -m integration
 # Run benchmark tests
 pytest -m benchmark
 
-# Run property-based tests only
+# Run property-based tests only (dev profile, fast)
 pytest -m property
+
+# Run property tests with CI profile (100 examples, thorough)
+HYPOTHESIS_PROFILE=ci pytest -m property
 
 # Run unit tests only (exclude property tests)
 pytest -m "not property"
 
 # Run property tests with verbose output
 pytest -m property -v
+
+# Show per-test durations to find slow tests
+pytest -m property --durations=0
 ```
+
+### Hypothesis Profiles
+
+Property tests use hypothesis profiles defined in `tests/property/conftest.py`:
+
+- `dev` (default): 10 examples, no shrink phase — fast iteration
+- `ci`: 100 examples, full shrink phase — thorough coverage
+
+Set the profile via the `HYPOTHESIS_PROFILE` environment variable. CI should set `HYPOTHESIS_PROFILE=ci`.

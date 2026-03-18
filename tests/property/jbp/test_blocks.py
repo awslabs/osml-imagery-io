@@ -1,16 +1,8 @@
 """Property-based tests for block access operations.
 
-This module tests the correctness properties for block-based image access:
-- Block access completeness (Property 5)
-- Block reassembly roundtrip (Property 6)
-- Invalid block coordinate error handling (Property 7)
-- Resolution level consistency (Property 12)
-
 The tests verify that block-based access patterns work correctly across
 all valid block coordinates and that blocks can be reassembled into
 the original image.
-
-Requirements: 4.1, 4.2, 4.3, 4.4, 7.1, 7.2, 7.3
 """
 
 import tempfile
@@ -18,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given, settings, Phase
+from hypothesis import given
 
 from aws.osml.io import (
     IO,
@@ -27,7 +19,8 @@ from aws.osml.io import (
     PixelType,
 )
 
-from .strategies import (
+from ..conftest import pbt_settings
+from ..strategies import (
     random_image,
     block_sizes,
     valid_block_coordinates,
@@ -36,27 +29,13 @@ from .strategies import (
 )
 
 
-# Default hypothesis settings for I/O-bound property tests
-pbt_settings = settings(
-    max_examples=100,
-    deadline=None,
-    phases=[Phase.explicit, Phase.reuse, Phase.generate, Phase.shrink],
-    suppress_health_check=[],
-)
-
-
 @pytest.mark.property
 class TestBlockAccessCompleteness:
     """Property tests for block access completeness.
     
-    These tests verify Property 5: Block Access Completeness.
-    
     For any valid block coordinates within an image's block grid, get_block
     SHALL return a block without error, with shape consistent with the block
     dimensions (or smaller for edge blocks).
-    
-    **Feature: property-based-testing-framework, Property 5: Block Access Completeness**
-    **Validates: Requirements 4.1, 4.2**
     """
     
     @given(
@@ -65,9 +44,7 @@ class TestBlockAccessCompleteness:
     )
     @pbt_settings
     def test_block_access_completeness(self, image_tuple, block_size):
-        """Property 5: Block Access Completeness
-        
-        For any valid block coordinates within an image's block grid, get_block
+        """For any valid block coordinates within an image's block grid, get_block
         SHALL return a block without error, with shape consistent with the block
         dimensions (or smaller for edge blocks).
         
@@ -77,9 +54,6 @@ class TestBlockAccessCompleteness:
         3. Iterates over ALL valid block coordinates
         4. Verifies get_block succeeds for each coordinate
         5. Verifies the returned block has the expected shape
-        
-        **Feature: property-based-testing-framework, Property 5: Block Access Completeness**
-        **Validates: Requirements 4.1, 4.2**
         """
         array, pixel_type, num_bands, num_rows, num_cols = image_tuple
         block_height, block_width = block_size
@@ -188,13 +162,8 @@ class TestBlockAccessCompleteness:
 class TestBlockReassembly:
     """Property tests for block reassembly roundtrip.
     
-    These tests verify Property 6: Block Reassembly Roundtrip.
-    
     For any image, reading all blocks via get_block and reassembling them
     in order SHALL produce an array equal to the original image data.
-    
-    **Feature: property-based-testing-framework, Property 6: Block Reassembly Roundtrip**
-    **Validates: Requirements 4.3**
     """
     
     @given(
@@ -203,9 +172,7 @@ class TestBlockReassembly:
     )
     @pbt_settings
     def test_block_reassembly_roundtrip(self, image_tuple, block_size):
-        """Property 6: Block Reassembly Roundtrip
-        
-        For any image, reading all blocks via get_block and reassembling them
+        """For any image, reading all blocks via get_block and reassembling them
         in order SHALL produce an array equal to the original image data.
         
         This test:
@@ -214,9 +181,6 @@ class TestBlockReassembly:
         3. Reads ALL blocks from the file
         4. Reassembles the blocks into a full array
         5. Verifies the reassembled array equals the original
-        
-        **Feature: property-based-testing-framework, Property 6: Block Reassembly Roundtrip**
-        **Validates: Requirements 4.3**
         """
         array, pixel_type, num_bands, num_rows, num_cols = image_tuple
         block_height, block_width = block_size
@@ -317,13 +281,8 @@ class TestBlockReassembly:
 class TestInvalidBlockCoordinates:
     """Property tests for invalid block coordinate error handling.
     
-    These tests verify Property 7: Invalid Block Coordinate Error Handling.
-    
     For any block coordinates outside the valid range, get_block SHALL raise
     an appropriate error rather than returning invalid data or crashing.
-    
-    **Feature: property-based-testing-framework, Property 7: Invalid Block Coordinate Error Handling**
-    **Validates: Requirements 4.4**
     """
     
     @given(
@@ -332,9 +291,7 @@ class TestInvalidBlockCoordinates:
     )
     @pbt_settings
     def test_invalid_block_coordinate_error_handling(self, image_tuple, block_size):
-        """Property 7: Invalid Block Coordinate Error Handling
-        
-        For any block coordinates outside the valid range, get_block SHALL
+        """For any block coordinates outside the valid range, get_block SHALL
         raise an appropriate error rather than returning invalid data or crashing.
         
         This test:
@@ -342,9 +299,6 @@ class TestInvalidBlockCoordinates:
         2. Writes it to a NITF file with a specific block size
         3. Generates invalid block coordinates (negative or out of bounds)
         4. Verifies that get_block raises IndexError for invalid coordinates
-        
-        **Feature: property-based-testing-framework, Property 7: Invalid Block Coordinate Error Handling**
-        **Validates: Requirements 4.4**
         """
         array, pixel_type, num_bands, num_rows, num_cols = image_tuple
         block_height, block_width = block_size
@@ -428,15 +382,10 @@ class TestInvalidBlockCoordinates:
 class TestResolutionLevels:
     """Property tests for resolution level consistency.
     
-    These tests verify Property 12: Resolution Level Consistency.
-    
     For any image with multiple resolution levels, resolution level N SHALL
     have dimensions reduced by factor 2^N from level 0, and get_block at
     level N SHALL return blocks with shapes consistent with that level's
     dimensions.
-    
-    **Feature: property-based-testing-framework, Property 12: Resolution Level Consistency**
-    **Validates: Requirements 7.1, 7.2, 7.3**
     """
     
     @given(
@@ -444,9 +393,7 @@ class TestResolutionLevels:
     )
     @pbt_settings
     def test_resolution_level_consistency(self, image_tuple):
-        """Property 12: Resolution Level Consistency
-        
-        For any image with multiple resolution levels, resolution level N SHALL
+        """For any image with multiple resolution levels, resolution level N SHALL
         have dimensions reduced by factor 2^N from level 0, and get_block at
         level N SHALL return blocks with shapes consistent with that level's
         dimensions.
@@ -459,9 +406,6 @@ class TestResolutionLevels:
            - Block dimensions are reduced by factor 2^N from level 0
            - get_block succeeds at each level
            - Block shapes are consistent with the resolution level
-        
-        **Feature: property-based-testing-framework, Property 12: Resolution Level Consistency**
-        **Validates: Requirements 7.1, 7.2, 7.3**
         """
         array, pixel_type, num_bands, num_rows, num_cols = image_tuple
         

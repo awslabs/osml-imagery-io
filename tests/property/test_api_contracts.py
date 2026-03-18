@@ -1,10 +1,7 @@
 """Property-based tests for API contracts.
 
 This module contains property tests that validate API contracts and polymorphism
-behavior. Tests are migrated from tests/test_api_design_alignment_pbt.py.
-
-**Property 3: add_asset accepts all AssetProvider subtypes**
-**Validates: Requirements 3.2, 9.1, 9.5**
+behavior.
 """
 
 import os
@@ -12,7 +9,7 @@ import tempfile
 
 import numpy as np
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, strategies as st
 
 from aws.osml.io import (
     IO,
@@ -22,13 +19,12 @@ from aws.osml.io import (
     PixelType,
 )
 
+from .conftest import pbt_settings
+
 
 @pytest.mark.property
 class TestAssetProviderPolymorphism:
     """Property tests for add_asset accepting all AssetProvider subtypes.
-    
-    **Property 3: add_asset accepts all AssetProvider subtypes**
-    **Validates: Requirements 3.2**
     
     These tests verify that the add_asset method correctly accepts any
     implementation of the AssetProvider interface, including:
@@ -50,13 +46,9 @@ class TestAssetProviderPolymorphism:
         description=st.text(max_size=100),
         asset_type=st.sampled_from([AssetType.Image, AssetType.Text, AssetType.Data]),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_add_asset_accepts_bytes_asset_provider(self, key, title, description, asset_type):
-        """For any AssetProvider created via from_bytes, add_asset SHALL succeed.
-        
-        **Feature: property-based-testing-framework, Property: AssetProvider Polymorphism**
-        **Validates: Requirements 3.2**
-        """
+        """For any AssetProvider created via from_bytes, add_asset SHALL succeed."""
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
             path = f.name
         
@@ -106,15 +98,11 @@ class TestAssetProviderPolymorphism:
         num_rows=st.integers(min_value=16, max_value=128),
         num_bands=st.integers(min_value=1, max_value=4),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_add_asset_accepts_buffered_image_asset_provider(
         self, key, title, description, num_cols, num_rows, num_bands
     ):
-        """For any BufferedImageAssetProvider, add_asset SHALL succeed.
-        
-        **Feature: property-based-testing-framework, Property: AssetProvider Polymorphism**
-        **Validates: Requirements 3.2**
-        """
+        """For any BufferedImageAssetProvider, add_asset SHALL succeed."""
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
             path = f.name
         

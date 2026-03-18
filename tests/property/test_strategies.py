@@ -2,13 +2,6 @@
 
 This module contains property tests that verify the strategies themselves
 produce valid outputs according to their specifications.
-
-Properties tested:
-- Property 1: Image Strategy Configuration Consistency
-- Property 2: Block Strategy Coordinate Validity
-- Property 9: Metadata Strategy Validity
-
-Requirements: 1.1, 1.2, 1.3, 1.4, 1.6, 5.2
 """
 
 import numpy as np
@@ -16,6 +9,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from tests.property.conftest import pbt_settings
 from tests.property.strategies import (
     SUPPORTED_PIXEL_TYPES,
     band_counts,
@@ -33,14 +27,9 @@ from tests.property.strategies import (
 
 @pytest.mark.property
 class TestImageStrategyConsistency:
-    """Property 1: Image Strategy Configuration Consistency
-    
-    For any valid image configuration (pixel type, band count, dimensions),
+    """For any valid image configuration (pixel type, band count, dimensions),
     the Image_Strategy SHALL produce a NumPy array with shape (bands, rows, cols)
     matching the configuration and dtype matching the pixel type.
-    
-    **Feature: property-based-testing-framework, Property 1: Image Strategy Configuration Consistency**
-    **Validates: Requirements 1.1, 1.2, 1.3, 1.4**
     """
 
     @given(
@@ -49,7 +38,7 @@ class TestImageStrategyConsistency:
         num_bands=band_counts(min_bands=1, max_bands=4),
         data=st.data(),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_image_arrays_shape_matches_config(self, pixel_type, dims, num_bands, data):
         """Verify image_arrays produces arrays with correct shape."""
         num_rows, num_cols = dims
@@ -69,7 +58,7 @@ class TestImageStrategyConsistency:
         num_bands=band_counts(min_bands=1, max_bands=4),
         data=st.data(),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_image_arrays_dtype_matches_pixel_type(self, pixel_type, dims, num_bands, data):
         """Verify image_arrays produces arrays with correct dtype."""
         num_rows, num_cols = dims
@@ -84,7 +73,7 @@ class TestImageStrategyConsistency:
         )
 
     @given(random_image(min_size=16, max_size=64, min_bands=1, max_bands=4))
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_random_image_consistency(self, image_data):
         """Verify random_image returns consistent metadata with array."""
         array, pixel_type, num_bands, num_rows, num_cols = image_data
@@ -108,13 +97,13 @@ class TestImageStrategyConsistency:
         )
 
     @given(pixel_types())
-    @settings(max_examples=50, deadline=None)
+    @pbt_settings
     def test_pixel_types_are_supported(self, pixel_type):
         """Verify pixel_types strategy only produces supported types."""
         assert pixel_type in SUPPORTED_PIXEL_TYPES
 
     @given(image_dimensions(min_size=16, max_size=256))
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_image_dimensions_within_bounds(self, dims):
         """Verify image_dimensions produces values within specified bounds."""
         num_rows, num_cols = dims
@@ -122,7 +111,7 @@ class TestImageStrategyConsistency:
         assert 16 <= num_cols <= 256, f"num_cols {num_cols} out of bounds [16, 256]"
 
     @given(band_counts(min_bands=1, max_bands=8))
-    @settings(max_examples=50, deadline=None)
+    @pbt_settings
     def test_band_counts_within_bounds(self, num_bands):
         """Verify band_counts produces values within specified bounds."""
         assert 1 <= num_bands <= 8, f"num_bands {num_bands} out of bounds [1, 8]"
@@ -130,14 +119,9 @@ class TestImageStrategyConsistency:
 
 @pytest.mark.property
 class TestBlockStrategyValidity:
-    """Property 2: Block Strategy Coordinate Validity
-    
-    For any image dimensions and block dimensions, the Block_Strategy SHALL
+    """For any image dimensions and block dimensions, the Block_Strategy SHALL
     produce block coordinates (row, col) that are within the valid range
     [0, num_block_rows) × [0, num_block_cols).
-    
-    **Feature: property-based-testing-framework, Property 2: Block Strategy Coordinate Validity**
-    **Validates: Requirements 1.6**
     """
 
     @given(
@@ -145,7 +129,7 @@ class TestBlockStrategyValidity:
         block_size=block_sizes(),
         data=st.data(),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_valid_block_coordinates_within_range(self, dims, block_size, data):
         """Verify valid_block_coordinates produces coordinates within valid range."""
         num_rows, num_cols = dims
@@ -172,7 +156,7 @@ class TestBlockStrategyValidity:
         dims=image_dimensions(min_size=32, max_size=128),
         block_size=block_sizes(),
     )
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_block_coordinate_calculation_correctness(self, dims, block_size):
         """Verify block count calculation is correct (ceiling division)."""
         num_rows, num_cols = dims
@@ -196,7 +180,7 @@ class TestBlockStrategyValidity:
         assert expected_block_cols >= 1
 
     @given(block_sizes())
-    @settings(max_examples=20, deadline=None)
+    @pbt_settings
     def test_block_sizes_are_valid(self, block_size):
         """Verify block_sizes produces valid block dimensions."""
         block_height, block_width = block_size
@@ -210,18 +194,13 @@ class TestBlockStrategyValidity:
 
 @pytest.mark.property
 class TestMetadataStrategyValidity:
-    """Property 9: Metadata Strategy Validity
-    
-    For any generated metadata key-value pair, the key SHALL be a valid NITF
+    """For any generated metadata key-value pair, the key SHALL be a valid NITF
     field name (uppercase alphanumeric, 1-10 chars starting with a letter)
     and the value SHALL be a valid printable ASCII string.
-    
-    **Feature: property-based-testing-framework, Property 9: Metadata Strategy Validity**
-    **Validates: Requirements 5.2**
     """
 
     @given(nitf_field_names())
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_nitf_field_names_format(self, field_name):
         """Verify nitf_field_names produces valid NITF field names."""
         # Must be 1-10 characters
@@ -243,7 +222,7 @@ class TestMetadataStrategyValidity:
         )
 
     @given(metadata_values())
-    @settings(max_examples=100, deadline=None)
+    @pbt_settings
     def test_metadata_values_format(self, value):
         """Verify metadata_values produces valid metadata strings."""
         # Must be 1-20 characters
@@ -258,7 +237,7 @@ class TestMetadataStrategyValidity:
             )
 
     @given(nitf_field_names())
-    @settings(max_examples=50, deadline=None)
+    @pbt_settings
     def test_nitf_field_names_regex_compliance(self, field_name):
         """Verify field names match the NITF regex pattern."""
         import re

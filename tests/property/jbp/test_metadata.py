@@ -1,11 +1,6 @@
 """Property-based tests for metadata preservation.
 
-This module tests the correctness properties for metadata roundtrip operations:
-- Metadata roundtrip preservation (Property 8)
-
 The tests verify that user-settable NITF fields survive encode/decode cycles.
-
-Requirements: 5.1, 5.3
 """
 
 import tempfile
@@ -13,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given, settings, Phase, assume
+from hypothesis import given, assume
 from hypothesis import strategies as st
 
 from aws.osml.io import (
@@ -23,18 +18,10 @@ from aws.osml.io import (
     PixelType,
 )
 
-from .strategies import (
+from ..conftest import pbt_settings
+from ..strategies import (
     random_image,
     get_numpy_dtype,
-)
-
-
-# Default hypothesis settings for I/O-bound property tests
-pbt_settings = settings(
-    max_examples=100,
-    deadline=None,
-    phases=[Phase.explicit, Phase.reuse, Phase.generate, Phase.shrink],
-    suppress_health_check=[],
 )
 
 
@@ -106,8 +93,6 @@ def nitf_user_metadata(draw, min_fields: int = 1, max_fields: int = 4):
 class TestMetadataRoundtrip:
     """Property tests for metadata roundtrip preservation.
     
-    These tests verify Property 8: Metadata Roundtrip Preservation.
-    
     For any valid metadata key-value pairs attached to an image, encoding then
     decoding SHALL preserve all metadata key-value pairs.
     
@@ -115,9 +100,6 @@ class TestMetadataRoundtrip:
     user-settable fields (ONAME, OPHONE, FTITLE, IID1, IID2, TGTID, ISORCE)
     that are free-text fields users can populate, as opposed to fields like
     ICAT which are derived from image properties.
-    
-    **Feature: property-based-testing-framework, Property 8: Metadata Roundtrip Preservation**
-    **Validates: Requirements 5.1, 5.3**
     """
     
     @given(
@@ -126,9 +108,7 @@ class TestMetadataRoundtrip:
     )
     @pbt_settings
     def test_metadata_roundtrip_preservation(self, image_tuple, user_metadata):
-        """Property 8: Metadata Roundtrip Preservation
-        
-        For any valid user-settable NITF fields attached to an image, encoding
+        """For any valid user-settable NITF fields attached to an image, encoding
         then decoding SHALL preserve all field values.
         
         This test:
@@ -137,9 +117,6 @@ class TestMetadataRoundtrip:
         3. Attaches metadata to the image and encodes to NITF
         4. Decodes the NITF and retrieves metadata
         5. Verifies all user-provided field values are preserved
-        
-        **Feature: property-based-testing-framework, Property 8: Metadata Roundtrip Preservation**
-        **Validates: Requirements 5.1, 5.3**
         """
         array, pixel_type, num_bands, num_rows, num_cols = image_tuple
         
