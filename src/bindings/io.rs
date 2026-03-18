@@ -231,7 +231,7 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
             {
                 let mmap = mmap_file(&parsed.path)?;
                 let reader = tiff::TIFFDatasetReader::from_bytes(&mmap)?;
-                return Ok(PyDatasetReader::new(Box::new(reader)));
+                Ok(PyDatasetReader::new(Box::new(reader)))
             }
             #[cfg(not(feature = "libtiff"))]
             {

@@ -320,7 +320,7 @@ impl UncompressedBlockDecoder {
 
     /// Calculate the number of bytes per pixel.
     fn bytes_per_pixel(&self) -> usize {
-        ((self.nbpp as usize) + 7) / 8
+        (self.nbpp as usize).div_ceil(8)
     }
 
     /// Calculate the size of a single block in bytes.
@@ -896,7 +896,7 @@ impl JpegNitfBlockDecoder {
 
     /// Calculate bytes per pixel.
     fn bytes_per_pixel(&self) -> usize {
-        ((self.nbpp as usize) + 7) / 8
+        (self.nbpp as usize).div_ceil(8)
     }
 
     /// Compute block offsets by scanning through the image data for JPEG EOI markers.

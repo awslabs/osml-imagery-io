@@ -332,7 +332,7 @@ impl<'a> ImageSubheaderFacade<'a> {
     pub fn bytes_per_pixel(&self) -> Result<usize, CodecError> {
         let nbpp = self.nbpp()? as usize;
         // Round up to nearest byte
-        Ok((nbpp + 7) / 8)
+        Ok(nbpp.div_ceil(8))
     }
 
     /// Calculate the size of a single block in bytes.

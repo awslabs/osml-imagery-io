@@ -10,10 +10,12 @@ use crate::error::CodecError;
 /// For JPEG DCT compression, COMRAT specifies a quality factor
 /// in the format "nn.n" where higher values mean higher quality.
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub enum JpegComrat {
     /// Quality factor (0-100 mapped from COMRAT 00.0-99.9)
     Quality(u8),
     /// Default quality (75)
+    #[default]
     Default,
 }
 
@@ -75,11 +77,6 @@ impl JpegComrat {
     }
 }
 
-impl Default for JpegComrat {
-    fn default() -> Self {
-        Self::Default
-    }
-}
 
 #[cfg(test)]
 mod tests {

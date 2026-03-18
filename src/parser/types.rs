@@ -214,8 +214,8 @@ impl Encoding {
     pub fn is_valid_byte(&self, byte: u8) -> bool {
         match self {
             Encoding::Ascii => byte.is_ascii(),
-            Encoding::BcsA => byte >= 0x20 && byte <= 0x7E,
-            Encoding::BcsN => (byte >= 0x30 && byte <= 0x39) || byte == 0x20,
+            Encoding::BcsA => (0x20..=0x7E).contains(&byte),
+            Encoding::BcsN => (0x30..=0x39).contains(&byte) || byte == 0x20,
             Encoding::EcsA => byte >= 0x20, // Extended allows broader range
         }
     }

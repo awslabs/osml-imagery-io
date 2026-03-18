@@ -110,11 +110,11 @@ impl BufferedMetadataProvider {
     /// or None if the key doesn't exist.
     pub fn get(&self, key: &str) -> Option<String> {
         let data = self.data.read().unwrap();
-        data.get(key).and_then(|v| {
+        data.get(key).map(|v| {
             match v {
-                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::String(s) => s.clone(),
                 // For non-string values, convert to string representation
-                other => Some(other.to_string()),
+                other => other.to_string(),
             }
         })
     }
@@ -130,10 +130,10 @@ impl BufferedMetadataProvider {
     /// The previous value if the key existed, or None if it didn't.
     pub fn remove(&self, key: &str) -> Option<String> {
         let mut data = self.data.write().unwrap();
-        data.remove(key).and_then(|v| {
+        data.remove(key).map(|v| {
             match v {
-                serde_json::Value::String(s) => Some(s),
-                other => Some(other.to_string()),
+                serde_json::Value::String(s) => s,
+                other => other.to_string(),
             }
         })
     }

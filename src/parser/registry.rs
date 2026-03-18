@@ -269,14 +269,14 @@ impl StructureRegistry {
                 if let Ok(subdir_entries) = fs::read_dir(&path) {
                     for sub_entry in subdir_entries.flatten() {
                         let sub_path = sub_entry.path();
-                        if sub_path.extension().map_or(false, |ext| ext == "ksy") {
+                        if sub_path.extension().is_some_and(|ext| ext == "ksy") {
                             if let Some(name) = self.filename_to_name(&sub_path, dir) {
                                 names.push(name);
                             }
                         }
                     }
                 }
-            } else if path.extension().map_or(false, |ext| ext == "ksy") {
+            } else if path.extension().is_some_and(|ext| ext == "ksy") {
                 // KSY file directly in the root
                 if let Some(name) = self.filename_to_name(&path, dir) {
                     names.push(name);

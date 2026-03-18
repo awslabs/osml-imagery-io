@@ -49,8 +49,7 @@ impl PyDatasetWriter {
         self.inner
             .as_mut()
             .ok_or_else(|| {
-                CodecError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                CodecError::Io(std::io::Error::other(
                     "DatasetWriter has been closed",
                 ))
                 .into()

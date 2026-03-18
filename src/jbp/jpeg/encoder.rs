@@ -217,7 +217,7 @@ impl JpegBlockEncoder {
             }
             JpegColorSpace::Rgb | JpegColorSpace::YCbCr601 => {
                 // RGB/YCbCr - need to convert from BSQ to pixel-interleaved
-                let interleaved = self.band_sequential_to_pixel(&pixel_data);
+                let interleaved = self.band_sequential_to_pixel(pixel_data);
                 // turbojpeg handles YCbCr conversion internally
                 ffi::compress_8bit(
                     &interleaved,

@@ -312,8 +312,8 @@ impl ImageSubheaderBuilder {
         // Calculate NBPR and NBPC to cover image dimensions
         // NBPR × NPPBH ≥ NCOLS
         // NBPC × NPPBV ≥ NROWS
-        let nbpr = (ncols + nppbh - 1) / nppbh;
-        let nbpc = (nrows + nppbv - 1) / nppbv;
+        let nbpr = ncols.div_ceil(nppbh);
+        let nbpc = nrows.div_ceil(nppbv);
 
         Ok((nbpr, nbpc))
     }

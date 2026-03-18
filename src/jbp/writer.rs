@@ -630,11 +630,7 @@ impl JBPDatasetWriter {
                     s.trim().parse::<u32>().ok()
                 } else if let Some(n) = v.as_u64() {
                     Some(n as u32)
-                } else if let Some(n) = v.as_i64() {
-                    Some(n as u32)
-                } else {
-                    None
-                }
+                } else { v.as_i64().map(|n| n as u32) }
             })
             .filter(|&n| n > 0)
             .unwrap_or(image_props.nppbh);
@@ -647,11 +643,7 @@ impl JBPDatasetWriter {
                     s.trim().parse::<u32>().ok()
                 } else if let Some(n) = v.as_u64() {
                     Some(n as u32)
-                } else if let Some(n) = v.as_i64() {
-                    Some(n as u32)
-                } else {
-                    None
-                }
+                } else { v.as_i64().map(|n| n as u32) }
             })
             .filter(|&n| n > 0)
             .unwrap_or(image_props.nppbv);
@@ -757,11 +749,7 @@ impl JBPDatasetWriter {
                 s.trim().parse::<u32>().ok()
             } else if let Some(n) = nbands_value.as_u64() {
                 Some(n as u32)
-            } else if let Some(n) = nbands_value.as_i64() {
-                Some(n as u32)
-            } else {
-                None
-            };
+            } else { nbands_value.as_i64().map(|n| n as u32) };
 
             if let Some(meta_bands) = metadata_nbands {
                 if meta_bands != image_props.nbands {
@@ -793,11 +781,7 @@ impl JBPDatasetWriter {
                 s.trim().parse::<u32>().ok()
             } else if let Some(n) = nrows_value.as_u64() {
                 Some(n as u32)
-            } else if let Some(n) = nrows_value.as_i64() {
-                Some(n as u32)
-            } else {
-                None
-            };
+            } else { nrows_value.as_i64().map(|n| n as u32) };
 
             if let Some(meta_rows) = metadata_nrows {
                 if meta_rows != image_props.nrows {
@@ -815,11 +799,7 @@ impl JBPDatasetWriter {
                 s.trim().parse::<u32>().ok()
             } else if let Some(n) = ncols_value.as_u64() {
                 Some(n as u32)
-            } else if let Some(n) = ncols_value.as_i64() {
-                Some(n as u32)
-            } else {
-                None
-            };
+            } else { ncols_value.as_i64().map(|n| n as u32) };
 
             if let Some(meta_cols) = metadata_ncols {
                 if meta_cols != image_props.ncols {
@@ -960,14 +940,13 @@ impl JBPDatasetWriter {
             }
             
             // I1 (Downsampled JPEG) has dimension constraints
-            if ic_trimmed == "I1" {
-                if image_props.nrows > 2048 || image_props.ncols > 2048 {
+            if ic_trimmed == "I1"
+                && (image_props.nrows > 2048 || image_props.ncols > 2048) {
                     return Err(CodecError::InvalidFormat(format!(
                         "IC=I1 (Downsampled JPEG) requires dimensions ≤2048×2048, got {}×{}",
                         image_props.ncols, image_props.nrows
                     )));
                 }
-            }
             
             // JPEG supports IMODE=B, P, or S (not R for row interleaved)
             // For RGB/YCbCr, IMODE=P is typical
@@ -1150,7 +1129,7 @@ impl JBPDatasetWriter {
             if encoding_ic == "NC" {
                 // Uncompressed masked image: encode blocks sequentially
                 let mut encoded_data = Vec::new();
-                let bpp = ((props.nbpp as usize) + 7) / 8;
+                let bpp = (props.nbpp as usize).div_ceil(8);
                 
                 for block_row in 0..grid_rows {
                     for block_col in 0..grid_cols {
@@ -1436,7 +1415,7 @@ impl JBPDatasetWriter {
         subheader.extend_from_slice(b"IM");
         // IID1 (10) - Image Identifier 1 (use metadata if provided, else asset.key)
         let iid1_default = truncate_to_bytes(&asset.key, 10);
-        let iid1 = format!("{:10}", get_field("IID1", &iid1_default, 10));
+        let iid1 = format!("{:10}", get_field("IID1", iid1_default, 10));
         subheader.extend_from_slice(iid1.as_bytes());
         // IDATIM (14) - Image Date and Time
         let idatim = format!("{:14}", get_field("IDATIM", "", 14));
@@ -1446,7 +1425,7 @@ impl JBPDatasetWriter {
         subheader.extend_from_slice(tgtid.as_bytes());
         // IID2 (80) - Image Identifier 2 (use metadata if provided, else asset.title)
         let iid2_default = truncate_to_bytes(&asset.title, 80);
-        let iid2 = format!("{:80}", get_field("IID2", &iid2_default, 80));
+        let iid2 = format!("{:80}", get_field("IID2", iid2_default, 80));
         subheader.extend_from_slice(iid2.as_bytes());
         // ISCLAS (1) - Image Security Classification
         subheader.extend_from_slice(b"U");
@@ -1563,8 +1542,8 @@ impl JBPDatasetWriter {
         subheader.extend_from_slice(hints.imode.as_bytes());
         
         // Calculate blocking parameters using hints
-        let nbpr = (props.ncols + hints.nppbh - 1) / hints.nppbh;
-        let nbpc = (props.nrows + hints.nppbv - 1) / hints.nppbv;
+        let nbpr = props.ncols.div_ceil(hints.nppbh);
+        let nbpc = props.nrows.div_ceil(hints.nppbv);
         
         // NBPR (4) - Number of Blocks Per Row
         subheader.extend_from_slice(format!("{:04}", nbpr).as_bytes());

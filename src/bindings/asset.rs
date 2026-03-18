@@ -219,17 +219,11 @@ impl BytesAssetProvider {
 }
 
 /// Empty metadata provider for BytesAssetProvider
+#[derive(Default)]
 struct EmptyMetadataProvider {
     empty_bytes: Vec<u8>,
 }
 
-impl Default for EmptyMetadataProvider {
-    fn default() -> Self {
-        Self {
-            empty_bytes: Vec::new(),
-        }
-    }
-}
 
 impl MetadataProvider for EmptyMetadataProvider {
     fn as_dict(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {

@@ -119,9 +119,8 @@ impl J2KComrat {
             // Numerically lossless: "Nn.n" - we don't need to parse the value
             // as it's always effectively 1.0 (no loss)
             Ok(J2KComrat::NumericallyLossless)
-        } else if comrat.starts_with('V') {
+        } else if let Some(value_str) = comrat.strip_prefix('V') {
             // Visually lossless: "Vn.n"
-            let value_str = &comrat[1..];
             let value: f32 = value_str.parse().map_err(|_| {
                 CodecError::InvalidFormat(format!(
                     "Invalid COMRAT visually lossless value: '{}' (from '{}')",

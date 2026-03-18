@@ -115,7 +115,7 @@ impl ImageDataMask {
         // Parse TPXCD if TPXCDLNTH > 0
         let pad_pixel_code = if pad_pixel_code_length > 0 {
             // TPXCD is stored in ceil(TPXCDLNTH / 8) bytes
-            let tpxcd_bytes = ((pad_pixel_code_length as usize) + 7) / 8;
+            let tpxcd_bytes = (pad_pixel_code_length as usize).div_ceil(8);
             if data.len() < offset + tpxcd_bytes {
                 return Err(CodecError::Parse(format!(
                     "Image Data Mask too short: need {} bytes for TPXCD",
@@ -221,7 +221,7 @@ impl ImageDataMask {
         // Calculate the actual IMDATOFF based on mask table size
         let header_size = 10; // IMDATOFF(4) + BMRLNTH(2) + TMRLNTH(2) + TPXCDLNTH(2)
         let tpxcd_size = if self.pad_pixel_code_length > 0 {
-            ((self.pad_pixel_code_length as usize) + 7) / 8
+            (self.pad_pixel_code_length as usize).div_ceil(8)
         } else {
             0
         };
@@ -244,7 +244,7 @@ impl ImageDataMask {
 
         // Write TPXCD if present
         if let Some(code) = self.pad_pixel_code {
-            let tpxcd_bytes = ((self.pad_pixel_code_length as usize) + 7) / 8;
+            let tpxcd_bytes = (self.pad_pixel_code_length as usize).div_ceil(8);
             // Write the code in big-endian, using only the required bytes
             let code_bytes = code.to_be_bytes();
             let start = 4 - tpxcd_bytes;

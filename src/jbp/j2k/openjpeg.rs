@@ -157,7 +157,7 @@ impl J2KCodec for OpenJpegCodec {
         let is_signed = comp0.is_signed;
 
         // Calculate bytes per sample
-        let bytes_per_sample = ((precision as usize) + 7) / 8;
+        let bytes_per_sample = (precision as usize).div_ceil(8);
 
         // Convert to band-sequential byte format
         let pixels_per_band = (width * height) as usize;
@@ -377,8 +377,8 @@ impl J2KCodec for OpenJpegCodec {
                 let tile_offset_x = xtosiz - xosiz;
                 let tile_offset_y = ytosiz - yosiz;
                 
-                let num_tiles_x = (image_width - tile_offset_x + xtsiz - 1) / xtsiz;
-                let num_tiles_y = (image_height - tile_offset_y + ytsiz - 1) / ytsiz;
+                let num_tiles_x = (image_width - tile_offset_x).div_ceil(xtsiz);
+                let num_tiles_y = (image_height - tile_offset_y).div_ceil(ytsiz);
                 
                 return Ok((xtsiz, ytsiz, num_tiles_x, num_tiles_y));
             }
@@ -480,8 +480,8 @@ impl J2KCodec for OpenJpegCodec {
         let tile_y0 = tile_row * tile_height;
         let actual_tile_width = (full_width - tile_x0).min(tile_width);
         let actual_tile_height = (full_height - tile_y0).min(tile_height);
-        let scaled_actual_width = (actual_tile_width + scale - 1) / scale;
-        let scaled_actual_height = (actual_tile_height + scale - 1) / scale;
+        let scaled_actual_width = actual_tile_width.div_ceil(scale);
+        let scaled_actual_height = actual_tile_height.div_ceil(scale);
 
         let width = comp0.width.min(scaled_actual_width);
         let height = comp0.height.min(scaled_actual_height);
@@ -489,7 +489,7 @@ impl J2KCodec for OpenJpegCodec {
         let is_signed = comp0.is_signed;
 
         // Calculate bytes per sample
-        let bytes_per_sample = ((precision as usize) + 7) / 8;
+        let bytes_per_sample = (precision as usize).div_ceil(8);
 
         // Convert to band-sequential byte format
         let pixels_per_band = (width * height) as usize;
@@ -671,8 +671,8 @@ impl OpenJpegEncodeState {
         let stream = OjpStream::new_memory_write()?;
 
         // Calculate total tiles
-        let tiles_x = (params.width + params.tile_width - 1) / params.tile_width;
-        let tiles_y = (params.height + params.tile_height - 1) / params.tile_height;
+        let tiles_x = params.width.div_ceil(params.tile_width);
+        let tiles_y = params.height.div_ceil(params.tile_height);
         let total_tiles = tiles_x * tiles_y;
 
         Ok(Self {

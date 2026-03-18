@@ -127,8 +127,8 @@ pub trait ImageAssetProvider: AssetProvider {
         let (_, h, w) = self.image_shape();
         let (_, bh, bw) = self.block_shape();
         // Block size of 0 means entire image is one block
-        let rows = if bh == 0 { 1 } else { (h + bh - 1) / bh };
-        let cols = if bw == 0 { 1 } else { (w + bw - 1) / bw };
+        let rows = if bh == 0 { 1 } else { h.div_ceil(bh) };
+        let cols = if bw == 0 { 1 } else { w.div_ceil(bw) };
         (rows, cols)
     }
 }

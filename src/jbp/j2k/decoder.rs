@@ -378,8 +378,8 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         let tile_y0 = block_row * tile_height;
         let actual_tile_width = (self.ncols - tile_x0).min(tile_width);
         let actual_tile_height = (self.nrows - tile_y0).min(tile_height);
-        let expected_width = (actual_tile_width + scale - 1) / scale;
-        let expected_height = (actual_tile_height + scale - 1) / scale;
+        let expected_width = actual_tile_width.div_ceil(scale);
+        let expected_height = actual_tile_height.div_ceil(scale);
 
         // Validate decoded dimensions match expected scaled dimensions
         if result.width != expected_width || result.height != expected_height {
@@ -398,7 +398,7 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         }
 
         // Calculate bytes per pixel
-        let bytes_per_pixel = ((self.nbpp as usize) + 7) / 8;
+        let bytes_per_pixel = (self.nbpp as usize).div_ceil(8);
         let pixels_per_band = (result.width * result.height) as usize;
 
         // Apply band selection if specified
@@ -551,8 +551,8 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         let tile_y0 = block_row * tile_height;
         let actual_tile_width = (self.ncols.saturating_sub(tile_x0)).min(tile_width);
         let actual_tile_height = (self.nrows.saturating_sub(tile_y0)).min(tile_height);
-        let expected_width = (actual_tile_width + scale - 1) / scale;
-        let expected_height = (actual_tile_height + scale - 1) / scale;
+        let expected_width = actual_tile_width.div_ceil(scale);
+        let expected_height = actual_tile_height.div_ceil(scale);
 
         // Validate decoded dimensions match expected scaled dimensions
         if result.width != expected_width || result.height != expected_height {
@@ -571,7 +571,7 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         }
 
         // Calculate bytes per pixel
-        let bytes_per_pixel = ((self.nbpp as usize) + 7) / 8;
+        let bytes_per_pixel = (self.nbpp as usize).div_ceil(8);
         let pixels_per_band = (result.width * result.height) as usize;
 
         // Apply band selection if specified

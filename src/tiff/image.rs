@@ -143,7 +143,7 @@ impl TIFFImageAssetProvider {
 
     /// Bytes per sample (pixel component).
     fn bytes_per_sample(&self) -> usize {
-        (self.bits_per_sample as usize + 7) / 8
+        (self.bits_per_sample as usize).div_ceil(8)
     }
 
     /// Number of pixels in a full block.
@@ -293,7 +293,7 @@ impl TIFFImageAssetProvider {
         bands: Option<&[u32]>,
     ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
         let bps = self.bytes_per_sample();
-        let tiles_across = (self.width + self.block_width - 1) / self.block_width;
+        let tiles_across = self.width.div_ceil(self.block_width);
 
         // Actual pixel dimensions for this block (edge blocks may be smaller)
         let actual_rows = std::cmp::min(
@@ -332,7 +332,7 @@ impl TIFFImageAssetProvider {
         } else {
             // Planar: separate tile per band
             let tiles_per_band = tiles_across
-                * ((self.height + self.block_height - 1) / self.block_height);
+                * self.height.div_ceil(self.block_height);
             let base_tile = block_row * tiles_across + block_col;
 
             let mut bsq = Vec::with_capacity(
@@ -402,7 +402,7 @@ impl TIFFImageAssetProvider {
         } else {
             // Planar: separate strip per band
             let strips_per_band =
-                (self.height + self.block_height - 1) / self.block_height;
+                self.height.div_ceil(self.block_height);
 
             let mut bsq = Vec::with_capacity(
                 num_out_bands as usize * actual_rows as usize * actual_cols as usize * bps,
@@ -445,7 +445,7 @@ impl TIFFImageAssetProvider {
 fn deinterleave_chunky_to_bsq(
     raw: &[u8],
     block_width: u32,
-    block_height: u32,
+    _block_height: u32,
     actual_cols: u32,
     actual_rows: u32,
     total_bands: u32,
@@ -508,10 +508,10 @@ fn extract_actual_pixels(
             output.extend_from_slice(&raw[src_start..]);
             // Pad remaining with zeros
             let missing = dst_row_bytes - (raw.len() - src_start);
-            output.extend(std::iter::repeat(0u8).take(missing));
+            output.extend(std::iter::repeat_n(0u8, missing));
         } else {
             // No data for this row, pad with zeros
-            output.extend(std::iter::repeat(0u8).take(dst_row_bytes));
+            output.extend(std::iter::repeat_n(0u8, dst_row_bytes));
         }
     }
 }

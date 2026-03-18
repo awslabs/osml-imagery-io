@@ -218,7 +218,7 @@ fn infer_field_type(value: &serde_json::Value) -> Result<InferredTag, CodecError
                 .ok_or_else(|| {
                     CodecError::Encode("Explicit type annotation 'type' must be an integer".into())
                 })?;
-            if annotated_type < 1 || annotated_type > 12 {
+            if !(1..=12).contains(&annotated_type) {
                 return Err(CodecError::Encode(format!(
                     "Invalid TIFF field type {}: must be 1-12",
                     annotated_type
@@ -270,7 +270,7 @@ fn infer_field_type(value: &serde_json::Value) -> Result<InferredTag, CodecError
                 ));
             }
             let has_float = arr.iter().any(|v| {
-                v.as_f64().is_some() && !v.as_i64().is_some() && !v.as_u64().is_some()
+                v.as_f64().is_some() && v.as_i64().is_none() && v.as_u64().is_none()
             });
             if has_float {
                 return Ok(InferredTag {
@@ -286,7 +286,7 @@ fn infer_field_type(value: &serde_json::Value) -> Result<InferredTag, CodecError
                 ));
             }
             let has_negative = arr.iter().any(|v| {
-                v.as_i64().map_or(false, |i| i < 0)
+                v.as_i64().is_some_and(|i| i < 0)
             });
             if has_negative {
                 Ok(InferredTag {
@@ -708,8 +708,8 @@ impl TIFFDatasetWriter {
         }
         handle.set_field_u16(tags::PLANAR_CONFIGURATION, hints.planar_config)?;
 
-        let tiles_across = (num_cols + tile_width - 1) / tile_width;
-        let tiles_down = (num_rows + tile_height - 1) / tile_height;
+        let tiles_across = num_cols.div_ceil(tile_width);
+        let tiles_down = num_rows.div_ceil(tile_height);
 
         let is_planar = hints.planar_config == tags::PLANAR_CONFIG_SEPARATE;
 
@@ -882,8 +882,7 @@ impl DatasetWriter for TIFFDatasetWriter {
         roles: &[String],
     ) -> Result<(), CodecError> {
         if self.closed {
-            return Err(CodecError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(CodecError::Io(std::io::Error::other(
                 "Writer has been closed",
             )));
         }

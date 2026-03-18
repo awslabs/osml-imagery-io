@@ -1059,7 +1059,7 @@ impl TiffHandle {
                     Ok(json_f64(read_f64_at(data_offset)?))
                 } else {
                     let arr: Result<Vec<Value>, _> = (0..count)
-                        .map(|i| read_f64_at(data_offset + i * 8).map(|v| json_f64(v)))
+                        .map(|i| read_f64_at(data_offset + i * 8).map(json_f64))
                         .collect();
                     Ok(Value::Array(arr?))
                 }
@@ -1495,8 +1495,7 @@ impl TiffHandle {
         if bytes_written < 0 {
             let error_msg = take_last_error()
                 .unwrap_or_else(|| format!("Failed to write tile {}", tile_index));
-            return Err(CodecError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(CodecError::Io(std::io::Error::other(
                 error_msg,
             )));
         }

@@ -96,12 +96,12 @@ impl MemoryImageConfig {
 
     /// Calculate the number of blocks in the horizontal direction.
     pub fn num_blocks_horizontal(&self) -> u32 {
-        (self.num_columns + self.block_width - 1) / self.block_width
+        self.num_columns.div_ceil(self.block_width)
     }
 
     /// Calculate the number of blocks in the vertical direction.
     pub fn num_blocks_vertical(&self) -> u32 {
-        (self.num_rows + self.block_height - 1) / self.block_height
+        self.num_rows.div_ceil(self.block_height)
     }
 
     /// Calculate the total number of blocks.
@@ -111,17 +111,11 @@ impl MemoryImageConfig {
 }
 
 /// Empty metadata provider for BufferedImageAssetProvider.
+#[derive(Default)]
 struct EmptyMetadataProvider {
     empty_bytes: Vec<u8>,
 }
 
-impl Default for EmptyMetadataProvider {
-    fn default() -> Self {
-        Self {
-            empty_bytes: Vec::new(),
-        }
-    }
-}
 
 impl MetadataProvider for EmptyMetadataProvider {
     fn as_dict(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {

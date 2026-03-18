@@ -327,7 +327,7 @@ impl<'a> TileAssembler<'a> {
             image_width: source.num_columns(),
             image_height: source.num_rows(),
             num_bands: source.num_bands(),
-            bytes_per_pixel: ((source.num_bits_per_pixel() + 7) / 8) as usize,
+            bytes_per_pixel: source.num_bits_per_pixel().div_ceil(8) as usize,
         }
     }
 
@@ -337,8 +337,8 @@ impl<'a> TileAssembler<'a> {
     /// A tuple of (num_rows, num_cols) representing the number of output tiles
     /// needed to cover the entire image.
     pub fn output_grid_size(&self) -> (u32, u32) {
-        let cols = (self.image_width + self.output_tile_width - 1) / self.output_tile_width;
-        let rows = (self.image_height + self.output_tile_height - 1) / self.output_tile_height;
+        let cols = self.image_width.div_ceil(self.output_tile_width);
+        let rows = self.image_height.div_ceil(self.output_tile_height);
         (rows, cols)
     }
 
@@ -552,13 +552,13 @@ impl UncompressedBlockEncoder {
         nppbv: u32,
     ) -> Self {
         // Calculate block grid size using ceiling division
-        let nbpr = (ncols + nppbh - 1) / nppbh;
-        let nbpc = (nrows + nppbv - 1) / nppbv;
+        let nbpr = ncols.div_ceil(nppbh);
+        let nbpc = nrows.div_ceil(nppbv);
 
         // Pre-allocate space for encoded data
         // NITF stores data in blocks with nominal sizes, so we need to allocate
         // based on block grid * nominal block size, not actual image dimensions
-        let bytes_per_pixel = ((nbpp as usize) + 7) / 8;
+        let bytes_per_pixel = (nbpp as usize).div_ceil(8);
         
         let total_size = match imode {
             InterleaveMode::S => {
@@ -600,7 +600,7 @@ impl UncompressedBlockEncoder {
 
     /// Calculate the number of bytes per pixel.
     fn bytes_per_pixel(&self) -> usize {
-        ((self.nbpp as usize) + 7) / 8
+        (self.nbpp as usize).div_ceil(8)
     }
 
     /// Calculate the actual dimensions of a block, handling edge blocks.
@@ -1023,11 +1023,11 @@ impl JpegNitfBlockEncoder {
         )?;
 
         // Calculate block grid
-        let nbpr = (ncols + nppbh - 1) / nppbh;
-        let nbpc = (nrows + nppbv - 1) / nppbv;
+        let nbpr = ncols.div_ceil(nppbh);
+        let nbpc = nrows.div_ceil(nppbv);
 
         // Calculate bytes per pixel
-        let bytes_per_pixel = ((nbpp as usize) + 7) / 8;
+        let bytes_per_pixel = (nbpp as usize).div_ceil(8);
 
         Ok(Self {
             jpeg_encoder,

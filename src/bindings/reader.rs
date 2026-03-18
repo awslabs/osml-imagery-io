@@ -59,8 +59,7 @@ impl PyDatasetReader {
         self.inner
             .as_ref()
             .map(|b| b.as_ref())
-            .ok_or_else(|| CodecError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            .ok_or_else(|| CodecError::Io(std::io::Error::other(
                 "DatasetReader has been closed",
             )).into())
     }

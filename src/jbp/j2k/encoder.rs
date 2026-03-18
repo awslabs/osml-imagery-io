@@ -187,11 +187,11 @@ impl Jpeg2000BlockEncoder {
         let encode_state = codec.start_encode(&params)?;
 
         // Calculate block grid based on tile size
-        let block_cols = (ncols + nppbh - 1) / nppbh;
-        let block_rows = (nrows + nppbv - 1) / nppbv;
+        let block_cols = ncols.div_ceil(nppbh);
+        let block_rows = nrows.div_ceil(nppbv);
 
         // Calculate bytes per pixel (round up bits to bytes)
-        let bytes_per_pixel = ((nbpp as usize) + 7) / 8;
+        let bytes_per_pixel = (nbpp as usize).div_ceil(8);
 
         Ok(Self {
             codec,

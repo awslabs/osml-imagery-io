@@ -1,3 +1,9 @@
+// PyO3's #[pymethods] proc macro generates `.into()` calls on error paths
+// that are identity conversions when the return type is already PyResult.
+// This is a known issue (not fixable in user code), so we suppress it
+// module-wide.
+#![allow(clippy::useless_conversion)]
+
 //! High-performance reading and writing of geospatial imagery datasets.
 //!
 //! The ``aws.osml.io`` package provides access to NITF, GeoTIFF, and other

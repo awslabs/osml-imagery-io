@@ -54,7 +54,7 @@ pub fn validate_bcs_a(data: &[u8]) -> bool {
 /// `true` if the byte is in the range 0x20-0x7E, `false` otherwise.
 #[inline]
 pub fn is_valid_bcs_a_byte(byte: u8) -> bool {
-    byte >= 0x20 && byte <= 0x7E
+    (0x20..=0x7E).contains(&byte)
 }
 
 /// Validate BCS-N (Basic Character Set - Numeric).
@@ -97,7 +97,7 @@ pub fn validate_bcs_n(data: &[u8]) -> bool {
 /// `true` if the byte is a digit (0x30-0x39) or space (0x20), `false` otherwise.
 #[inline]
 pub fn is_valid_bcs_n_byte(byte: u8) -> bool {
-    (byte >= 0x30 && byte <= 0x39) || byte == 0x20
+    (0x30..=0x39).contains(&byte) || byte == 0x20
 }
 
 /// Validate ECS-A (Extended Character Set - Alphanumeric).

@@ -54,7 +54,7 @@ pub fn bytes_per_pixel(pvtype: PixelValueType, nbpp: u8) -> usize {
         }
         _ => {
             // For all other types, bytes = ceil(nbpp / 8)
-            ((nbpp as usize) + 7) / 8
+            (nbpp as usize).div_ceil(8)
         }
     }
 }
@@ -388,7 +388,7 @@ fn encode_complex_value(real: f64, imag: f64) -> Vec<u8> {
 /// # Returns
 /// The packed bytes with MSB first.
 fn pack_bilevel(values: &[f64]) -> Vec<u8> {
-    let num_bytes = (values.len() + 7) / 8;
+    let num_bytes = values.len().div_ceil(8);
     let mut result = vec![0u8; num_bytes];
     
     for (i, &value) in values.iter().enumerate() {
