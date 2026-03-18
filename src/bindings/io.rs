@@ -3,12 +3,16 @@
 //! This module provides the IO factory class that selects appropriate
 //! reader/writer implementations based on URI scheme and file format.
 
+use std::fs::File;
+use std::path::Path;
+
+use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
 use crate::error::CodecError;
-use crate::jbp;
+use crate::jbp::{JBPDatasetReader, JBPDatasetWriter, NitfFormat};
 #[cfg(feature = "libtiff")]
 use crate::tiff;
 
@@ -154,10 +158,22 @@ impl IO {
     }
 }
 
+/// Memory-maps a file at the given path.
+///
+/// Returns the `Mmap` handle which dereferences to `&[u8]`. The caller
+/// must keep the `Mmap` alive for as long as the byte slice is needed.
+fn mmap_file(path: &str) -> Result<Mmap, CodecError> {
+    let file = File::open(Path::new(path))?;
+    // SAFETY: We rely on the file not being modified while mapped. This is
+    // the same assumption made by any memory-mapped reader.
+    unsafe { Ok(Mmap::map(&file)?) }
+}
+
 /// Creates a DatasetReader for the given URI.
 ///
 /// This function determines the appropriate reader implementation based on
-/// the URI scheme and file format.
+/// the URI scheme and file format. Files are memory-mapped and passed as
+/// byte slices to the format-specific readers.
 fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDatasetReader> {
     // Validate scheme is supported
     match parsed.scheme.as_str() {
@@ -181,12 +197,14 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
     if let Some(fmt) = format {
         match fmt.to_lowercase().as_str() {
             "nitf" | "nitf21" | "nitf2.1" | "nsif" | "nsif10" | "nsif1.0" | "jbp" => {
-                let reader = jbp::IO::open_as(&parsed.path, fmt)?;
-                return Ok(PyDatasetReader::new(reader));
+                let mmap = mmap_file(&parsed.path)?;
+                let reader = JBPDatasetReader::from_bytes(&mmap)?;
+                return Ok(PyDatasetReader::new(Box::new(reader)));
             }
             #[cfg(feature = "libtiff")]
             "tiff" | "tif" => {
-                let reader = tiff::TIFFDatasetReader::open(&parsed.path)?;
+                let mmap = mmap_file(&parsed.path)?;
+                let reader = tiff::TIFFDatasetReader::from_bytes(&mmap)?;
                 return Ok(PyDatasetReader::new(Box::new(reader)));
             }
             _ => {
@@ -204,14 +222,15 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
 
     match extension.as_deref() {
         Some("ntf") | Some("nitf") | Some("nsif") | Some("nsf") => {
-            // NITF/NSIF format - use JBP reader
-            let reader = jbp::IO::open(&parsed.path)?;
-            Ok(PyDatasetReader::new(reader))
+            let mmap = mmap_file(&parsed.path)?;
+            let reader = JBPDatasetReader::from_bytes(&mmap)?;
+            Ok(PyDatasetReader::new(Box::new(reader)))
         }
         Some("tif") | Some("tiff") | Some("gtif") | Some("gtiff") => {
             #[cfg(feature = "libtiff")]
             {
-                let reader = tiff::TIFFDatasetReader::open(&parsed.path)?;
+                let mmap = mmap_file(&parsed.path)?;
+                let reader = tiff::TIFFDatasetReader::from_bytes(&mmap)?;
                 return Ok(PyDatasetReader::new(Box::new(reader)));
             }
             #[cfg(not(feature = "libtiff"))]
@@ -224,7 +243,6 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
             }
         }
         Some("jp2") | Some("j2k") | Some("jpx") => {
-            // JPEG2000 format - not yet implemented
             Err(CodecError::Unsupported(format!(
                 "JPEG2000 format reader not yet implemented for: {}",
                 parsed.path
@@ -232,7 +250,6 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
             .into())
         }
         Some(ext) => {
-            // Unknown format
             Err(CodecError::InvalidFormat(format!(
                 "Unsupported file format: .{}",
                 ext
@@ -240,7 +257,6 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
             .into())
         }
         None => {
-            // No extension - cannot determine format
             Err(CodecError::InvalidFormat(
                 "Cannot determine file format: no file extension".to_string(),
             )
@@ -273,10 +289,13 @@ fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> 
     }
 
     match format.to_lowercase().as_str() {
-        "nitf" | "nitf21" | "nitf2.1" | "nsif" | "nsif10" | "nsif1.0" => {
-            // NITF/NSIF format - use JBP writer
-            let writer = jbp::IO::create(&parsed.path, format)?;
-            Ok(PyDatasetWriter::new(writer))
+        "nitf" | "nitf21" | "nitf2.1" => {
+            let writer = JBPDatasetWriter::new(&parsed.path, NitfFormat::Nitf21)?;
+            Ok(PyDatasetWriter::new(Box::new(writer)))
+        }
+        "nsif" | "nsif10" | "nsif1.0" => {
+            let writer = JBPDatasetWriter::new(&parsed.path, NitfFormat::Nsif10)?;
+            Ok(PyDatasetWriter::new(Box::new(writer)))
         }
         #[cfg(feature = "libtiff")]
         "tif" | "tiff" | "gtif" | "gtiff" | "geotiff" => {

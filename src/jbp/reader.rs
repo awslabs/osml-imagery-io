@@ -4,9 +4,6 @@
 //! trait for NITF/NSIF files.
 
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read;
-use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use crate::error::CodecError;
@@ -43,7 +40,8 @@ use crate::types::AssetType;
 /// ```ignore
 /// use osml_imagery_io::jbp::JBPDatasetReader;
 ///
-/// let reader = JBPDatasetReader::open("image.ntf")?;
+/// let data = std::fs::read("image.ntf")?;
+/// let reader = JBPDatasetReader::from_bytes(&data)?;
 /// let keys = reader.get_asset_keys(None, None);
 /// for key in keys {
 ///     let asset = reader.get_asset(&key)?;
@@ -74,26 +72,6 @@ pub struct JBPDatasetReader {
 }
 
 impl JBPDatasetReader {
-    /// Create a new reader from a file path.
-    ///
-    /// This method reads the entire file into memory and parses the file header
-    /// to calculate segment offsets. The magic number is validated during
-    /// header parsing.
-    ///
-    /// # Arguments
-    /// * `path` - Path to the NITF/NSIF file
-    ///
-    /// # Returns
-    /// A new `JBPDatasetReader` or an error if the file cannot be read or parsed.
-    ///
-    /// # Errors
-    /// - `CodecError::Io` if the file cannot be read
-    /// - `CodecError::InvalidFormat` if the magic number is invalid
-    /// - `CodecError::Parse` if the header cannot be parsed
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, CodecError> {
-        Self::with_options(path, JBPReaderOptions::default())
-    }
-
     /// Create a new reader from a byte slice.
     ///
     /// This method creates a reader from in-memory data, useful for testing
@@ -106,29 +84,6 @@ impl JBPDatasetReader {
     /// A new `JBPDatasetReader` or an error if the data cannot be parsed.
     pub fn from_bytes(data: &[u8]) -> Result<Self, CodecError> {
         Self::from_bytes_with_options(data, JBPReaderOptions::default())
-    }
-
-    /// Create a new reader with custom options.
-    ///
-    /// # Arguments
-    /// * `path` - Path to the NITF/NSIF file
-    /// * `options` - Reader configuration options
-    ///
-    /// # Returns
-    /// A new `JBPDatasetReader` or an error if the file cannot be read or parsed.
-    pub fn with_options(
-        path: impl AsRef<Path>,
-        options: JBPReaderOptions,
-    ) -> Result<Self, CodecError> {
-        let path = path.as_ref();
-        
-        // Read the entire file into memory
-        let mut file = File::open(path).map_err(|e| JBPError::IoError { source: e })?;
-        let mut data = Vec::new();
-        file.read_to_end(&mut data)
-            .map_err(|e| JBPError::IoError { source: e })?;
-        
-        Self::from_bytes_with_options(&data, options)
     }
 
     /// Create a new reader from a byte slice with custom options.
@@ -2264,10 +2219,17 @@ mod nitf_integration_tests {
         
         for file_path in &test_files {
             // Try to open the file
-            let reader = match JBPDatasetReader::open(file_path) {
+            let data = match std::fs::read(file_path) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Warning: Failed to read {:?}: {}", file_path, e);
+                    continue;
+                }
+            };
+            let reader = match JBPDatasetReader::from_bytes(&data) {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("Warning: Failed to open {:?}: {}", file_path, e);
+                    eprintln!("Warning: Failed to parse {:?}: {}", file_path, e);
                     continue;
                 }
             };
@@ -2372,7 +2334,11 @@ mod nitf_integration_tests {
         let mut files_with_complete_fields = 0;
         
         for file_path in test_files {
-            let reader = match JBPDatasetReader::open(file_path) {
+            let data = match std::fs::read(file_path) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let reader = match JBPDatasetReader::from_bytes(&data) {
                 Ok(r) => r,
                 Err(_) => continue,
             };

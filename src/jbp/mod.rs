@@ -14,9 +14,10 @@
 //! # Example
 //!
 //! ```ignore
-//! use osml_imagery_io::jbp::{JBPDatasetReader, NitfFormat};
+//! use osml_imagery_io::jbp::JBPDatasetReader;
 //!
-//! let reader = JBPDatasetReader::open("image.ntf")?;
+//! let data = std::fs::read("image.ntf")?;
+//! let reader = JBPDatasetReader::from_bytes(&data)?;
 //! let keys = reader.get_asset_keys(None, None);
 //! for key in keys {
 //!     let asset = reader.get_asset(&key)?;
@@ -30,7 +31,6 @@ mod error;
 pub mod format;
 pub mod graphics;
 pub mod image;
-pub mod io;
 pub mod j2k;
 #[cfg(feature = "libjpeg-turbo")]
 pub mod jpeg;
@@ -53,7 +53,6 @@ pub use datetime::{parse_nitf_datetime, DateTimeParseError, NitfDateTime};
 pub use error::{JBPError, ValidationCode, ValidationWarning};
 pub use format::{is_nitf_extension, validate_nitf_magic};
 pub use graphics::GraphicSubheaderFacade;
-pub use io::IO;
 pub use metadata::{JBPFileMetadataProvider, JBPSegmentMetadataProvider};
 pub use overflow::{create_overflow_des, OverflowSource};
 pub use text::TextSubheaderFacade;

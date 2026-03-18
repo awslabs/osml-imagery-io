@@ -3269,7 +3269,8 @@ mod tests {
         writer.close().unwrap();
         
         // Read the file back
-        let reader = JBPDatasetReader::open(&path).unwrap();
+        let data = std::fs::read(&path).unwrap();
+        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         
         // Verify we have one image asset
         let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);

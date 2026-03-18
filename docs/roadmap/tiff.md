@@ -36,11 +36,11 @@ IO layer (src/bindings/io.rs)
         └── libtiff: TIFFClientOpen with memory read/seek callbacks on &[u8]
 ```
 
-The JBP reader already follows this pattern: `JBPDatasetReader::open(path)` is a thin convenience method that calls `File::read_to_end()` then delegates to `from_bytes_with_options(&[u8])`. The format implementation itself — segment parsing, codec FFI, metadata extraction — never touches the filesystem.
+Both readers accept only `&[u8]` via `from_bytes()` — format implementations never touch the filesystem. The `bindings/io.rs` module is the single place that handles file paths: it memory-maps the file with `memmap2` and passes the resulting byte slice to the appropriate reader's `from_bytes()`.
 
 The TIFF implementation follows the same pattern. `TIFFClientOpen()` accepts custom function pointers for read, seek, close, and size operations. Our callbacks perform pointer arithmetic on the `&[u8]` byte slice, identical to the `MemoryReadStreamData` pattern in `src/jbp/j2k/ffi.rs` for OpenJPEG. libtiff never opens a file descriptor.
 
-This design means that when the IO layer is later updated to produce bytes via mmap or S3 range requests, every format reader benefits automatically with zero code changes.
+This design means that when the IO layer is later updated to produce bytes via S3 range requests, every format reader benefits automatically with zero code changes.
 
 ## Rust Source Layout
 

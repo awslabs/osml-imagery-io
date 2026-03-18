@@ -208,7 +208,8 @@ mod tests {
         assert!(result.is_ok(), "Failed to generate NITF 2.1: {:?}", result.err());
 
         // Verify the file can be read back
-        let reader = JBPDatasetReader::open(&path);
+        let data = std::fs::read(&path).unwrap();
+        let reader = JBPDatasetReader::from_bytes(&data);
         assert!(reader.is_ok(), "Failed to read generated NITF 2.1: {:?}", reader.err());
 
         let reader = reader.unwrap();
@@ -228,7 +229,8 @@ mod tests {
         assert!(result.is_ok(), "Failed to generate NSIF 1.0: {:?}", result.err());
 
         // Verify the file can be read back
-        let reader = JBPDatasetReader::open(&path);
+        let data = std::fs::read(&path).unwrap();
+        let reader = JBPDatasetReader::from_bytes(&data);
         assert!(reader.is_ok(), "Failed to read generated NSIF 1.0: {:?}", reader.err());
 
         let reader = reader.unwrap();
@@ -248,7 +250,8 @@ mod tests {
         assert!(result.is_ok(), "Failed to generate multi-segment NITF: {:?}", result.err());
 
         // Verify the file can be read back
-        let reader = JBPDatasetReader::open(&path);
+        let data = std::fs::read(&path).unwrap();
+        let reader = JBPDatasetReader::from_bytes(&data);
         assert!(reader.is_ok(), "Failed to read generated multi-segment NITF: {:?}", reader.err());
 
         let reader = reader.unwrap();
@@ -290,7 +293,8 @@ mod tests {
         writer.close().unwrap();
 
         // Read back
-        let reader = JBPDatasetReader::open(&path).unwrap();
+        let data = std::fs::read(&path).unwrap();
+        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image_segment_0").unwrap();
         let read_data = asset.raw_asset().unwrap();
 
@@ -312,7 +316,8 @@ mod tests {
         writer.close().unwrap();
 
         // Read back
-        let reader = JBPDatasetReader::open(&path).unwrap();
+        let data = std::fs::read(&path).unwrap();
+        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("text_segment_0").unwrap();
         let read_data = asset.raw_asset().unwrap();
 

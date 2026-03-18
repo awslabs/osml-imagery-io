@@ -1,12 +1,10 @@
 //! TIFFDatasetReader — implements DatasetReader for TIFF files.
 //!
-//! Opens a TIFF from a byte slice (or file path), enumerates IFDs, classifies
-//! each by `NewSubfileType`, and creates one `TIFFImageAssetProvider` per
+//! Opens a TIFF from a byte slice, enumerates IFDs, classifies each by
+//! `NewSubfileType`, and creates one `TIFFImageAssetProvider` per
 //! full-resolution IFD. Dataset-level metadata contains byte order, directory
 //! count, and image segment count.
 
-use std::fs;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::error::CodecError;
@@ -57,14 +55,6 @@ impl std::fmt::Debug for TIFFDatasetReader {
 }
 
 impl TIFFDatasetReader {
-    /// Open a TIFF file from a filesystem path.
-    ///
-    /// Reads the entire file into memory, then delegates to `from_bytes`.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, CodecError> {
-        let data = fs::read(path.as_ref())?;
-        Self::from_bytes(&data)
-    }
-
     /// Open a TIFF from an in-memory byte slice.
     ///
     /// Validates the TIFF magic bytes, opens via `TIFFClientOpen` with memory

@@ -2577,7 +2577,8 @@ mod round_trip_property_tests {
             writer.close().unwrap();
 
             // Read the file back
-            let reader = JBPDatasetReader::open(&path).unwrap();
+            let file_data = std::fs::read(&path).unwrap();
+            let reader = JBPDatasetReader::from_bytes(&file_data).unwrap();
 
             // Verify we have one image asset
             let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
@@ -2728,7 +2729,8 @@ mod round_trip_property_tests {
             writer.close().unwrap();
 
             // Read the file back
-            let reader = JBPDatasetReader::open(&path).unwrap();
+            let file_data = std::fs::read(&path).unwrap();
+            let reader = JBPDatasetReader::from_bytes(&file_data).unwrap();
             let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
             let asset = reader.get_asset(&asset_keys[0]).unwrap();
 
@@ -2864,7 +2866,8 @@ mod round_trip_property_tests {
             writer.close().unwrap();
 
             // Read the file back
-            let reader = JBPDatasetReader::open(&path).unwrap();
+            let file_data = std::fs::read(&path).unwrap();
+            let reader = JBPDatasetReader::from_bytes(&file_data).unwrap();
             let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
             let asset = reader.get_asset(&asset_keys[0]).unwrap();
 
