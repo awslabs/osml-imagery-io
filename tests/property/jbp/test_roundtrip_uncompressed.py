@@ -1,6 +1,7 @@
 """Property-based tests for uncompressed (IC=NC) roundtrip operations.
 
-This module tests lossless roundtrip preservation for uncompressed NITF images.
+This module tests lossless roundtrip preservation for uncompressed NITF and
+NSIF images.
 """
 
 import pytest
@@ -32,5 +33,22 @@ class TestLosslessRoundtrip:
         decoded = write_and_read_jbp(
             array, pixel_type, num_bands, num_rows, num_cols,
             metadata_hints={"IC": "NC"},
+        )
+        assert_lossless_match(array, decoded)
+
+    @given(random_image(min_size=16, max_size=64, min_bands=1, max_bands=3))
+    @pbt_settings
+    def test_uncompressed_roundtrip_nsif(self, image_tuple):
+        """Lossless Roundtrip Preservation (IC=NC uncompressed, NSIF 1.0)
+
+        For any valid image written as NSIF 1.0 with IC=NC (uncompressed),
+        encoding then decoding SHALL produce an image that is exactly equal
+        to the original.
+        """
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+        decoded = write_and_read_jbp(
+            array, pixel_type, num_bands, num_rows, num_cols,
+            metadata_hints={"IC": "NC"},
+            format="nsif",
         )
         assert_lossless_match(array, decoded)

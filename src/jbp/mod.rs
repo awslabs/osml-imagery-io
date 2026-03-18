@@ -37,8 +37,6 @@ pub mod jpeg;
 mod metadata;
 pub mod overflow;
 mod reader;
-#[cfg(test)]
-pub mod test_data_generator;
 pub mod text;
 pub mod tre;
 pub mod tre_fields;
