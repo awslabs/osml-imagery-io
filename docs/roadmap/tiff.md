@@ -273,6 +273,22 @@ Currently generates NITF files only. Changes needed:
 - [ ] Add example usage: `python scripts/generate_synthetic_image.py output.tif --format tiff --bands 3 --compression Deflate`
 - [ ] Masked images are not applicable for TIFF — skip `--masked` when format is `tiff`
 
+## Future Consideration: Palette Color (Indexed Color) Expansion
+
+TIFF files can use `PhotometricInterpretation = 3` (Palette color), where each pixel is a single-byte index into a 256-entry RGB color lookup table stored in the `ColorMap` tag (320). These files report as 1-band uint8 but appear as full-color images in viewers like macOS Preview, which apply the palette automatically.
+
+The current reader behavior is correct at the data level: it returns the raw index values as a 1-band image, which is what the file actually contains. However, downstream consumers (e.g. `chip_image.py` saving to PNG) will produce grayscale output because they have no knowledge of the palette.
+
+Rather than embedding palette expansion into the reader itself, this should be implemented as a separate post-read operation or utility. Reasons:
+
+- The raw index values are the actual pixel data. Some workflows (classification maps, thematic rasters) need the indices, not the expanded RGB.
+- Palette expansion is a presentation concern, not a decoding concern.
+- A standalone `expand_palette(image_asset) -> ndarray` function or a `PaletteExpander` wrapper would keep the reader simple and give users control over when expansion happens.
+
+The `ColorMap` tag values are already accessible through the per-IFD `MetadataProvider` once Phase 1 is complete. A palette expansion tool would read the `ColorMap` and `PhotometricInterpretation` metadata, then map the 1-band indices to 3-band RGB.
+
+This is low priority relative to the core read/write/GeoTIFF phases but worth revisiting once real-world palette-color GeoTIFFs appear in integration testing.
+
 ## Build and Environment
 
 - `environment.yml` — Add `libtiff` to conda dependencies

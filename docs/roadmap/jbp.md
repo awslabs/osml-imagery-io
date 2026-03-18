@@ -19,6 +19,25 @@ This roadmap addresses gaps in CLEVEL conformance identified in the JBP CLEVEL A
 
 **Notes**: VQ is a legacy format found in older NGA/DoD imagery archives; read-only support is sufficient. No new VQ imagery is being created. Note this as a limitation in docs.
 
+## Writer Support for Image Lookup Tables (IREP=RGB/LUT)
+
+**Objective**: Allow users to write uncompressed NITF images with per-band lookup tables.
+
+**Current State**: The reader correctly parses LUT data from the image subheader — `NLUTSn`, `NELUTn`, and `LUTDnm` fields are accessible through the `ImageSubheaderFacade` (`nluts()`, `nelut()`, `lut_data()`). The Rust-side infrastructure is in place: `LookUpTable` provides `from_bytes()`, `apply()`, and `as_bytes()` methods, the `ImageBandInfoBuilder` supports `add_lut()`, and validation enforces LUT constraints (e.g. `RGB/LUT` requires exactly 3 LUTs, `NELUTn >= 2^ABPP`). However, the writer's `create_image_subheader_with_tres()` hardcodes `NLUTS=0` for every band and does not handle `IREP=RGB/LUT` in the `IREPBAND` field mapping. Users cannot currently write images with lookup tables.
+
+**Scope**:
+- Update the writer's band info loop to check for LUT data on the asset's metadata and write `NLUTSn`, `NELUTn`, and `LUTDnm` fields when present
+- Handle `IREP=RGB/LUT` in the `IREPBAND` mapping (should emit `LU` for the single band)
+- Handle `IREP=MONO` and `IREP=MULTI` bands with `IREPBANDn=LU` and 1–2 LUTs
+- Expose LUT configuration through `BufferedMetadataProvider` or a dedicated API so users can attach LUT data to an image before writing
+- Validate LUT constraints at write time: `PVTYPE` must be `INT` or `B`, `NLUTSn` ≤ 3, `NELUTn` ≤ 65536, and LUT count must match `IREP` requirements
+
+**JBP Requirements**: §5.13.2.28 (`NLUTSn`), §5.13.2.29 (`NELUTn`), §5.13.2.30 (`LUTDnm`)
+
+**Complexity**: Low. The parsing, data structures, builder, and validation already exist. The work is wiring the writer's subheader serialization to use them instead of hardcoding zero, and providing a user-facing way to attach LUT data to an image asset.
+
+**Notes**: LUTs are only valid for uncompressed images (`IC=NC` or `NM`). For JPEG and JPEG 2000, color handling is internal to the codec and `NLUTSn` is always 0. The VQ codec (C4/M4) has its own codebook-based color lookup defined in MIL-STD-188-199, which is separate from the subheader LUT fields.
+
 ## ZLIB Compression (IC=CC/MC)
 
 **Objective**: Read and write ZLIB compressed imagery for floating-point scientific data.

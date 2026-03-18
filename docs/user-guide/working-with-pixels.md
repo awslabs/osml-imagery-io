@@ -112,4 +112,55 @@ for row in range(4):
         provider.set_block(row, col, block)
 ```
 
+## Indexed (Palette Color) Images
+
+Some image formats store pixel values as indices into a color lookup table rather than
+direct color values. Both TIFF and NITF support this concept, though the mechanisms
+differ. In all cases, `ImageAssetProvider` returns the raw index values as stored in
+the file — it does not apply lookup tables automatically.
+
+The library does not perform palette expansion because many workflows need the raw
+indices. Classification maps and thematic rasters use each index to represent a land
+cover class or category, not a display color. Applying the lookup table to produce
+RGB pixels is a separate processing step.
+
+### TIFF Palette Color
+
+In TIFF files, palette color is indicated by `PhotometricInterpretation = 3`. Each
+pixel is a single-byte index and the actual RGB colors are defined in a separate
+`ColorMap` tag. A palette-color TIFF will report 1 band of `uint8` data, and
+`get_block()` returns the index array — not the expanded RGB pixels.
+
+```python
+from aws.osml.io import IO
+
+with IO.open(["indexed_image.tif"], "r") as dataset:
+    image = dataset.get_asset("image_segment_0")
+    print(image.num_bands)          # 1
+    print(image.pixel_value_type)   # PixelType.UInt8
+
+    block = image.get_block(0, 0, resolution_level=0)
+    print(block.shape)              # (1, rows, cols) — index values, not RGB
+```
+
+### NITF Lookup Tables (LUTs)
+
+NITF files support per-band lookup tables through the image subheader fields `NLUTSn`,
+`NELUTn`, and `LUTDnm` (JBP §5.13.2.28–5.13.2.30). The most common case is
+`IREP=RGB/LUT`: a single-band image where each pixel is an index and three LUTs
+(red, green, blue) define the color mapping. Individual bands in `IREP=MONO` or
+`IREP=MULTI` images can also carry LUTs when `IREPBANDn=LU`.
+
+LUTs are only valid for uncompressed images (`IC=NC` or `NM`) with integer or binary
+pixel types (`PVTYPE=INT` or `B`). For compressed formats like JPEG (`IC=C3`) and
+JPEG 2000 (`IC=C8`), color handling is internal to the codec — the decoder outputs
+final pixel values directly and `NLUTSn` is always 0. Vector Quantization (`IC=C4`)
+uses its own codebook-based color lookup mechanism defined in MIL-STD-188-199, which
+is separate from the subheader LUT fields.
+
+As with TIFF, `get_block()` returns the raw stored values. For an `IREP=RGB/LUT`
+image, this means 1 band of index values. The LUT data itself is accessible through
+the image segment's metadata — the subheader fields `NLUTSn`, `NELUTn`, and `LUTDnm`
+are parsed and available for applications that need to perform the lookup.
+
 <!-- TODO: Image operations — cropping, resampling, mosaicking, etc. -->
