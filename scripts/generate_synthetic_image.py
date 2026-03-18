@@ -1,24 +1,35 @@
 #!/usr/bin/env python3
-"""Generate synthetic NITF test images with configurable parameters.
+"""Generate synthetic test images with configurable parameters.
 
-This script creates tiled NITF images with checkerboard patterns and tile IDs
+This script creates tiled images with checkerboard patterns and tile IDs
 for visual verification of pixel correctness. It uses the existing IO library
 Python bindings to create images with configurable dimensions, tile sizes,
 band configurations, pixel types, and interleave modes.
 
+Supported output formats:
+- NITF (default) - National Imagery Transmission Format (.ntf)
+- TIFF/GeoTIFF - Tagged Image File Format (.tif, .tiff)
+
 The script also supports generating masked images where some blocks are empty,
-useful for testing sparse imagery handling.
+useful for testing sparse imagery handling (NITF only).
 
 Usage:
     python scripts/generate_synthetic_image.py output.ntf
+    python scripts/generate_synthetic_image.py output.tif --format tiff
     python scripts/generate_synthetic_image.py output.ntf --width 1024 --height 1024
     python scripts/generate_synthetic_image.py output.ntf --bands 3 --pixel-type uint16
     python scripts/generate_synthetic_image.py output.ntf --tile-width 128 --tile-height 128
     python scripts/generate_synthetic_image.py output.ntf --masked --mask-pattern checkerboard
 
 Examples:
-    # Generate a default 512x512 grayscale image
+    # Generate a default 512x512 grayscale NITF image
     python scripts/generate_synthetic_image.py test.ntf
+
+    # Generate a 512x512 grayscale TIFF image
+    python scripts/generate_synthetic_image.py test.tif --format tiff
+
+    # Generate a GeoTIFF image (alias for tiff)
+    python scripts/generate_synthetic_image.py test.tif --format geotiff
 
     # Generate a 1024x1024 RGB image with 128x128 tiles
     python scripts/generate_synthetic_image.py rgb_test.ntf --width 1024 --height 1024 \\
@@ -27,7 +38,7 @@ Examples:
     # Generate a 16-bit image with 11-bit actual precision
     python scripts/generate_synthetic_image.py hdr_test.ntf --pixel-type uint16 --abpp 11
 
-    # Generate a masked image with checkerboard pattern
+    # Generate a masked image with checkerboard pattern (NITF only)
     python scripts/generate_synthetic_image.py masked_test.ntf --masked --mask-pattern checkerboard
 
     # Generate a masked image with random pattern (50% blocks masked)
@@ -35,6 +46,9 @@ Examples:
 
     # Generate a masked J2K image
     python scripts/generate_synthetic_image.py masked_j2k.ntf --masked --compression C8
+
+    # Generate a TIFF with LZW compression
+    python scripts/generate_synthetic_image.py test.tif --format tiff --compression lzw
 """
 
 import argparse
@@ -55,7 +69,8 @@ class ImageConfig:
     """Configuration for synthetic image generation.
     
     Attributes:
-        output_path: Path to the output NITF file
+        output_path: Path to the output file
+        format: Output format - "nitf" (default), "tiff", or "geotiff"
         width: Image width in pixels (default: 512)
         height: Image height in pixels (default: 512)
         tile_width: Tile width in pixels (default: 256)
@@ -63,14 +78,16 @@ class ImageConfig:
         num_bands: Number of bands - 1 (grayscale), 3 (RGB), or 5 (multispectral)
         pixel_type: Pixel data type - "uint8" or "uint16"
         abpp: Actual bits per pixel (defaults to full range for pixel_type)
-        imode: Interleave mode - "B", "P", "R", or "S"
-        compression: Compression type - "NC" (none) or "C8" (JPEG2000)
-        comrat: Compression ratio for JPEG2000 (e.g., "N001.0" for lossless, "01.0" for 1.0 bpp)
-        masked: Enable masked output mode (uses NM for uncompressed, M8 for J2K)
+        imode: Interleave mode - "B", "P", "R", or "S" (NITF only)
+        compression: Compression type. NITF: "NC" (none), "C8" (JPEG2000).
+            TIFF: "none" (default), "lzw", "deflate".
+        comrat: Compression ratio for JPEG2000 (NITF only)
+        masked: Enable masked output mode (NITF only)
         mask_pattern: Mask pattern type (checkerboard, border, random, single)
         mask_ratio: Fraction of blocks to mask for random pattern (0.0-1.0)
     """
     output_path: str
+    format: str = "nitf"
     width: int = 512
     height: int = 512
     tile_width: int = 256
@@ -79,7 +96,7 @@ class ImageConfig:
     pixel_type: str = "uint8"
     abpp: Optional[int] = None
     imode: str = "B"
-    compression: str = "NC"
+    compression: str = "auto"
     comrat: Optional[str] = None
     masked: bool = False
     mask_pattern: str = "checkerboard"
@@ -87,6 +104,13 @@ class ImageConfig:
     
     def __post_init__(self) -> None:
         """Validate configuration and set defaults."""
+        # Normalize format: "geotiff" is an alias for "tiff"
+        valid_formats = ("nitf", "tiff", "geotiff")
+        if self.format not in valid_formats:
+            raise ValueError(
+                f"Format must be one of {valid_formats}, got '{self.format}'"
+            )
+        
         # Validate dimensions
         if self.width < 1:
             raise ValueError(f"Width must be at least 1, got {self.width}")
@@ -115,9 +139,26 @@ class ImageConfig:
         if self.imode not in ("B", "P", "R", "S"):
             raise ValueError(f"IMODE must be 'B', 'P', 'R', or 'S', got '{self.imode}'")
         
-        # Validate compression
-        if self.compression not in ("NC", "C8"):
-            raise ValueError(f"Compression must be 'NC' or 'C8', got '{self.compression}'")
+        # Validate and normalize compression for the target format
+        nitf_compressions = ("NC", "C8")
+        tiff_compressions = ("none", "lzw", "deflate")
+        
+        if self.compression == "auto":
+            # Set format-appropriate default
+            self.compression = "NC" if self.format == "nitf" else "none"
+        
+        if self.format == "nitf":
+            if self.compression not in nitf_compressions:
+                raise ValueError(
+                    f"Compression '{self.compression}' is not valid for NITF. "
+                    f"Use one of: {', '.join(nitf_compressions)}"
+                )
+        elif self.format in ("tiff", "geotiff"):
+            if self.compression not in tiff_compressions:
+                raise ValueError(
+                    f"Compression '{self.compression}' is not valid for TIFF. "
+                    f"Use one of: {', '.join(tiff_compressions)}"
+                )
         
         # Validate mask pattern
         if self.mask_pattern not in ("checkerboard", "border", "random", "single"):
@@ -129,6 +170,11 @@ class ImageConfig:
         # Validate mask ratio
         if not 0.0 <= self.mask_ratio <= 1.0:
             raise ValueError(f"Mask ratio must be between 0.0 and 1.0, got {self.mask_ratio}")
+        
+        # Validate TIFF-incompatible options
+        if self.format in ("tiff", "geotiff"):
+            if self.masked:
+                raise ValueError("Masked output is not supported for TIFF format")
         
         # Set ABPP to full bit depth if not specified
         max_bits = 8 if self.pixel_type == "uint8" else 16
@@ -185,6 +231,17 @@ class ImageConfig:
             "C8": "M8",
         }
         return ic_mapping.get(self.compression, self.compression)
+    
+    @property
+    def io_format(self) -> str:
+        """Return the format string expected by IO.open().
+        
+        Maps "geotiff" alias to "tiff" since the IO library treats them
+        identically for writing.
+        """
+        if self.format in ("tiff", "geotiff"):
+            return "tiff"
+        return self.format
     
     def get_provided_blocks(self) -> set:
         """Get the set of block coordinates that should have data based on mask pattern.
@@ -446,14 +503,14 @@ class TileGenerator:
 class ImageWriter:
     """Writes synthetic images using the IO library.
     
-    This class assembles tiles into a full image and writes it to a NITF file
-    using the existing IO library Python bindings. The image data is converted
-    to band-sequential format before writing.
+    This class assembles tiles into a full image and writes it using the
+    existing IO library Python bindings. Supports NITF and TIFF output formats.
+    The image data is converted to band-sequential format before writing.
     
     The writer:
     - Creates a BufferedImageAssetProvider with the correct configuration
     - Generates all tiles and sets them as the full image
-    - Uses IO.open() to create a DatasetWriter
+    - Uses IO.open() to create a DatasetWriter for the target format
     - Writes the file using DatasetWriter.add_image_asset() and close()
     """
     
@@ -461,9 +518,12 @@ class ImageWriter:
     def write_image(config: ImageConfig) -> None:
         """Generate and write a synthetic image.
         
-        Creates a synthetic NITF image with checkerboard pattern and tile IDs.
+        Creates a synthetic image with checkerboard pattern and tile IDs.
         The image is written using the IO library's DatasetWriter with a
         BufferedImageAssetProvider that contains the proper image configuration.
+        
+        For NITF output, IMODE and IC metadata are set on the provider.
+        For TIFF output, these NITF-specific fields are omitted.
         
         Args:
             config: Image configuration containing all parameters
@@ -477,13 +537,33 @@ class ImageWriter:
         # Map pixel type string to PixelType enum
         pixel_type = PixelType.UInt8 if config.pixel_type == "uint8" else PixelType.UInt16
         
-        # Create metadata provider with encoding hints (uppercase field names match .ksy definitions)
+        # Create metadata provider with encoding hints
         metadata = BufferedMetadataProvider()
-        metadata.set("IMODE", config.imode)
-        metadata.set("IC", config.effective_ic)
         
-        if config.compression == "C8" and config.comrat:
-            metadata.set("COMRAT", config.comrat)
+        # NITF-specific metadata (IMODE, IC, COMRAT)
+        if config.io_format == "nitf":
+            metadata.set("IMODE", config.imode)
+            metadata.set("IC", config.effective_ic)
+            if config.compression == "C8" and config.comrat:
+                metadata.set("COMRAT", config.comrat)
+        
+        # TIFF-specific metadata (tile dimensions must match the provider's block grid)
+        if config.io_format == "tiff":
+            metadata.set("TileWidth", str(config.tile_width))
+            metadata.set("TileHeight", str(config.tile_height))
+            # Map compression CLI value to the TiffEncodingHints value.
+            # Default is "none" because macOS Preview cannot render tiled
+            # TIFFs with Deflate compression.
+            tiff_compression_map = {"none": "None", "lzw": "LZW", "deflate": "Deflate"}
+            metadata.set("Compression", tiff_compression_map[config.compression])
+        
+        # Build description string
+        if config.io_format == "nitf":
+            desc = (f"{config.width}x{config.height} {config.num_bands}-band "
+                    f"{config.pixel_type} IMODE={config.imode}")
+        else:
+            desc = (f"{config.width}x{config.height} {config.num_bands}-band "
+                    f"{config.pixel_type}")
         
         # Create BufferedImageAssetProvider with the correct configuration
         try:
@@ -498,8 +578,7 @@ class ImageWriter:
                 actual_bits_per_pixel=config.abpp,
                 metadata=metadata,
                 title="Synthetic Test Image",
-                description=f"{config.width}x{config.height} {config.num_bands}-band "
-                           f"{config.pixel_type} IMODE={config.imode}",
+                description=desc,
             )
         except Exception as e:
             raise RuntimeError(f"Failed to create image provider: {e}")
@@ -528,13 +607,16 @@ class ImageWriter:
         except Exception as e:
             raise RuntimeError(f"Failed to set image data: {e}")
         
-        # Create writer for NITF format
+        # Create writer for the target format
         try:
-            writer = IO.open([config.output_path], "w", "nitf")
+            writer = IO.open([config.output_path], "w", config.io_format)
         except Exception as e:
-            raise RuntimeError(f"Failed to create NITF writer for {config.output_path}: {e}")
+            raise RuntimeError(f"Failed to create {config.format} writer for {config.output_path}: {e}")
         
         try:
+            # For TIFF, set dataset-level metadata with encoding hints (tile size, etc.)
+            if config.io_format == "tiff":
+                writer.metadata = metadata
             # Add image asset to writer using the BufferedImageAssetProvider
             writer.add_asset(
                 key="image_segment_0",
@@ -654,12 +736,15 @@ def parse_args(args: Optional[list] = None) -> ImageConfig:
         ImageConfig with parsed values
     """
     parser = argparse.ArgumentParser(
-        description="Generate synthetic NITF test images with checkerboard patterns.",
+        description="Generate synthetic test images with checkerboard patterns.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s output.ntf
-      Generate a default 512x512 grayscale image
+      Generate a default 512x512 grayscale NITF image
+
+  %(prog)s output.tif --format tiff
+      Generate a 512x512 grayscale TIFF image
 
   %(prog)s output.ntf --width 1024 --height 1024 --bands 3
       Generate a 1024x1024 RGB image
@@ -672,7 +757,16 @@ Examples:
     # Positional argument for output path
     parser.add_argument(
         "output",
-        help="Output file path (e.g., output.ntf)"
+        help="Output file path (e.g., output.ntf, output.tif)"
+    )
+    
+    # Output format
+    parser.add_argument(
+        "--format",
+        type=str,
+        default="nitf",
+        choices=["nitf", "tiff", "geotiff"],
+        help="Output format: nitf (default), tiff, or geotiff (alias for tiff)"
     )
     
     # Image dimension arguments
@@ -745,9 +839,13 @@ Examples:
     parser.add_argument(
         "--compression",
         type=str,
-        default="NC",
-        choices=["NC", "C8"],
-        help="Compression: NC (none) or C8 (JPEG2000) (default: NC)"
+        default="auto",
+        choices=["auto", "NC", "C8", "none", "lzw", "deflate"],
+        help=(
+            "Compression type. NITF: NC (none), C8 (JPEG2000). "
+            "TIFF: none, lzw, deflate. "
+            "Default: auto (NC for NITF, none for TIFF)"
+        )
     )
     parser.add_argument(
         "--comrat",
@@ -782,6 +880,7 @@ Examples:
     
     return ImageConfig(
         output_path=parsed.output,
+        format=parsed.format,
         width=parsed.width,
         height=parsed.height,
         tile_width=parsed.tile_width,
@@ -814,13 +913,17 @@ def main() -> int:
         return e.code if isinstance(e.code, int) else 1
     
     print(f"Generating synthetic image: {config.output_path}")
+    print(f"  Format: {config.format}")
     print(f"  Dimensions: {config.width} x {config.height} pixels")
     print(f"  Tile size: {config.tile_width} x {config.tile_height} pixels")
     print(f"  Tiles: {config.num_tiles_x} x {config.num_tiles_y} = {config.total_tiles} total")
     print(f"  Bands: {config.num_bands}")
     print(f"  Pixel type: {config.pixel_type} (ABPP: {config.abpp})")
-    print(f"  IMODE: {config.imode}")
-    print(f"  IC: {config.effective_ic}")
+    if config.io_format == "nitf":
+        print(f"  IMODE: {config.imode}")
+        print(f"  IC: {config.effective_ic}")
+    else:
+        print(f"  Compression: {config.compression}")
     if config.masked:
         provided_blocks = config.get_provided_blocks()
         print(f"  Masked: yes (pattern: {config.mask_pattern})")
