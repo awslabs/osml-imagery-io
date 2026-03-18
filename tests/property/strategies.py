@@ -14,11 +14,10 @@ This module provides reusable strategies for generating:
 from typing import Set, Tuple
 
 import numpy as np
-from hypothesis import assume, strategies as st
-from hypothesis.extra.numpy import arrays
-
 from aws.osml.io import PixelType
-
+from hypothesis import assume
+from hypothesis import strategies as st
+from hypothesis.extra.numpy import arrays
 
 # Supported pixel types for property testing
 # These are the types most commonly used in NITF imagery
@@ -32,12 +31,12 @@ SUPPORTED_PIXEL_TYPES = [
 
 def get_numpy_dtype(pixel_type: PixelType) -> np.dtype:
     """Get the numpy dtype for a PixelType.
-    
+
     Uses the PixelType.to_numpy_dtype() method provided by the library.
-    
+
     Args:
         pixel_type: The PixelType enum value
-        
+
     Returns:
         The corresponding numpy dtype
     """
@@ -46,7 +45,7 @@ def get_numpy_dtype(pixel_type: PixelType) -> np.dtype:
 
 def pixel_types() -> st.SearchStrategy[PixelType]:
     """Strategy for supported pixel types.
-    
+
     Returns a strategy that samples from UInt8, UInt16, Int16, and Float32.
     """
     return st.sampled_from(SUPPORTED_PIXEL_TYPES)
@@ -57,11 +56,11 @@ def image_dimensions(
     max_size: int = 256
 ) -> st.SearchStrategy[Tuple[int, int]]:
     """Strategy for image dimensions (rows, cols).
-    
+
     Args:
         min_size: Minimum dimension size (default 16)
         max_size: Maximum dimension size (default 256)
-    
+
     Returns:
         Strategy producing (num_rows, num_cols) tuples
     """
@@ -76,11 +75,11 @@ def band_counts(
     max_bands: int = 8
 ) -> st.SearchStrategy[int]:
     """Strategy for number of bands.
-    
+
     Args:
         min_bands: Minimum band count (default 1)
         max_bands: Maximum band count (default 8)
-    
+
     Returns:
         Strategy producing integer band counts
     """
@@ -89,10 +88,10 @@ def band_counts(
 
 def block_sizes() -> st.SearchStrategy[Tuple[int, int]]:
     """Strategy for block dimensions.
-    
+
     Returns a strategy that samples from common block sizes:
     (32, 32), (64, 64), (128, 128), (256, 256)
-    
+
     Returns:
         Strategy producing (block_height, block_width) tuples
     """
@@ -112,13 +111,13 @@ def image_arrays(
     num_cols: int,
 ) -> st.SearchStrategy[np.ndarray]:
     """Strategy for generating image data arrays in BSQ format (bands, rows, cols).
-    
+
     Args:
         pixel_type: The pixel type determining the numpy dtype
         num_bands: Number of bands in the image
         num_rows: Number of rows (height) in the image
         num_cols: Number of columns (width) in the image
-    
+
     Returns:
         Strategy producing numpy arrays with shape (num_bands, num_rows, num_cols)
     """
@@ -135,16 +134,16 @@ def random_image(
     max_bands: int = 8,
 ) -> Tuple[np.ndarray, PixelType, int, int, int]:
     """Composite strategy for random images with metadata.
-    
+
     Generates a random image with random pixel type, dimensions, and band count.
-    
+
     Args:
         draw: Hypothesis draw function (injected by @st.composite)
         min_size: Minimum dimension size (default 16)
         max_size: Maximum dimension size (default 256)
         min_bands: Minimum band count (default 1)
         max_bands: Maximum band count (default 8)
-    
+
     Returns:
         Tuple of (array, pixel_type, num_bands, num_rows, num_cols)
         - array: numpy array with shape (num_bands, num_rows, num_cols)
@@ -156,9 +155,9 @@ def random_image(
     pixel_type = draw(pixel_types())
     num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
     num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
-    
+
     array = draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
-    
+
     return (array, pixel_type, num_bands, num_rows, num_cols)
 
 
@@ -169,13 +168,13 @@ def edge_case_images(
     pixel_type: PixelType = None,
 ) -> Tuple[np.ndarray, PixelType, str]:
     """Strategy for edge case images: single-pixel, gradients, max values, etc.
-    
+
     Generates images that test boundary conditions and special cases.
-    
+
     Args:
         draw: Hypothesis draw function (injected by @st.composite)
         pixel_type: Optional fixed pixel type. If None, randomly selected.
-    
+
     Returns:
         Tuple of (array, pixel_type, edge_case_name)
         - array: numpy array with shape (num_bands, num_rows, num_cols)
@@ -184,9 +183,9 @@ def edge_case_images(
     """
     if pixel_type is None:
         pixel_type = draw(pixel_types())
-    
+
     dtype = get_numpy_dtype(pixel_type)
-    
+
     # Choose an edge case type
     edge_case_type = draw(st.sampled_from([
         "single_pixel",
@@ -197,77 +196,77 @@ def edge_case_images(
         "gradient_vertical",
         "random_noise",
     ]))
-    
+
     if edge_case_type == "single_pixel":
         # Single pixel image (1x1)
         num_bands = draw(band_counts(min_bands=1, max_bands=3))
         array = draw(arrays(dtype=dtype, shape=(num_bands, 1, 1)))
         return (array, pixel_type, edge_case_type)
-    
+
     elif edge_case_type == "single_band":
         # Single band image with random dimensions
         num_rows, num_cols = draw(image_dimensions(min_size=16, max_size=64))
         array = draw(arrays(dtype=dtype, shape=(1, num_rows, num_cols)))
         return (array, pixel_type, edge_case_type)
-    
+
     elif edge_case_type == "max_value":
         # Image filled with maximum values for the dtype
         num_bands = draw(band_counts(min_bands=1, max_bands=3))
         num_rows, num_cols = draw(image_dimensions(min_size=16, max_size=64))
-        
+
         if np.issubdtype(dtype, np.integer):
             max_val = np.iinfo(dtype).max
         else:
             max_val = 1.0  # For float types, use 1.0 as max
-        
+
         array = np.full((num_bands, num_rows, num_cols), max_val, dtype=dtype)
         return (array, pixel_type, edge_case_type)
-    
+
     elif edge_case_type == "min_value":
         # Image filled with minimum values for the dtype
         num_bands = draw(band_counts(min_bands=1, max_bands=3))
         num_rows, num_cols = draw(image_dimensions(min_size=16, max_size=64))
-        
+
         if np.issubdtype(dtype, np.integer):
             min_val = np.iinfo(dtype).min
         else:
             min_val = 0.0  # For float types, use 0.0 as min
-        
+
         array = np.full((num_bands, num_rows, num_cols), min_val, dtype=dtype)
         return (array, pixel_type, edge_case_type)
-    
+
     elif edge_case_type == "gradient_horizontal":
         # Horizontal gradient (values increase left to right)
         num_bands = draw(band_counts(min_bands=1, max_bands=3))
         num_rows, num_cols = draw(image_dimensions(min_size=16, max_size=64))
-        
+
         if np.issubdtype(dtype, np.integer):
             max_val = np.iinfo(dtype).max
         else:
             max_val = 1.0
-        
+
         # Create gradient for one row, then tile
         gradient = np.linspace(0, max_val, num_cols, dtype=dtype)
         single_band = np.tile(gradient, (num_rows, 1))
         array = np.stack([single_band] * num_bands, axis=0)
         return (array, pixel_type, edge_case_type)
-    
+
     elif edge_case_type == "gradient_vertical":
         # Vertical gradient (values increase top to bottom)
         num_bands = draw(band_counts(min_bands=1, max_bands=3))
         num_rows, num_cols = draw(image_dimensions(min_size=16, max_size=64))
-        
+
         if np.issubdtype(dtype, np.integer):
             max_val = np.iinfo(dtype).max
         else:
             max_val = 1.0
-        
+
         # Create gradient for one column, then tile
         gradient = np.linspace(0, max_val, num_rows, dtype=dtype)
         single_band = np.tile(gradient.reshape(-1, 1), (1, num_cols))
         array = np.stack([single_band] * num_bands, axis=0)
         return (array, pixel_type, edge_case_type)
-    
+
     else:  # random_noise
         # Random noise image
         num_bands = draw(band_counts(min_bands=1, max_bands=3))
@@ -284,16 +283,16 @@ def valid_block_coordinates(
     block_width: int,
 ) -> st.SearchStrategy[Tuple[int, int]]:
     """Strategy for valid block (row, col) coordinates.
-    
+
     Calculates the number of block rows and columns based on image and block
     dimensions, then returns a strategy that generates valid coordinate pairs.
-    
+
     Args:
         num_rows: Number of rows in the image
         num_cols: Number of columns in the image
         block_height: Height of each block
         block_width: Width of each block
-    
+
     Returns:
         Strategy producing (block_row, block_col) tuples within valid range
         [0, num_block_rows) × [0, num_block_cols)
@@ -301,7 +300,7 @@ def valid_block_coordinates(
     # Calculate number of blocks (ceiling division)
     num_block_rows = (num_rows + block_height - 1) // block_height
     num_block_cols = (num_cols + block_width - 1) // block_width
-    
+
     return st.tuples(
         st.integers(min_value=0, max_value=max(0, num_block_rows - 1)),
         st.integers(min_value=0, max_value=max(0, num_block_cols - 1))
@@ -315,22 +314,22 @@ def invalid_block_coordinates(
     block_width: int,
 ) -> st.SearchStrategy[Tuple[int, int]]:
     """Strategy for invalid block coordinates (outside valid range).
-    
+
     Generates block coordinates that are outside the valid range, useful for
     testing error handling.
-    
+
     Args:
         num_rows: Number of rows in the image
         num_cols: Number of columns in the image
         block_height: Height of each block
         block_width: Width of each block
-    
+
     Returns:
         Strategy producing (block_row, block_col) tuples outside valid range
     """
     num_block_rows = (num_rows + block_height - 1) // block_height
     num_block_cols = (num_cols + block_width - 1) // block_width
-    
+
     # Generate coordinates that are either:
     # - negative row or col
     # - row >= num_block_rows
@@ -362,10 +361,10 @@ def invalid_block_coordinates(
 
 def nitf_field_names() -> st.SearchStrategy[str]:
     """Strategy for valid NITF field names.
-    
+
     NITF field names are uppercase alphanumeric strings, 1-10 characters,
     starting with a letter.
-    
+
     Returns:
         Strategy producing valid NITF field name strings
     """
@@ -374,10 +373,10 @@ def nitf_field_names() -> st.SearchStrategy[str]:
 
 def metadata_values() -> st.SearchStrategy[str]:
     """Strategy for valid metadata values.
-    
+
     Generates printable ASCII strings suitable for NITF metadata values.
     NITF uses BCS-A (Basic Character Set - Alphanumeric) which is ASCII.
-    
+
     Returns:
         Strategy producing valid metadata value strings (1-20 chars)
     """
@@ -398,17 +397,17 @@ def metadata_pairs(
     max_pairs: int = 5,
 ) -> dict:
     """Strategy for generating metadata key-value dictionaries.
-    
+
     Args:
         draw: Hypothesis draw function (injected by @st.composite)
         min_pairs: Minimum number of key-value pairs
         max_pairs: Maximum number of key-value pairs
-    
+
     Returns:
         Dictionary of NITF field names to metadata values
     """
     num_pairs = draw(st.integers(min_value=min_pairs, max_value=max_pairs))
-    
+
     # Generate unique keys
     keys = draw(st.lists(
         nitf_field_names(),
@@ -416,12 +415,12 @@ def metadata_pairs(
         max_size=num_pairs,
         unique=True
     ))
-    
+
     # Generate values for each key
     result = {}
     for key in keys:
         result[key] = draw(metadata_values())
-    
+
     return result
 
 
@@ -449,14 +448,14 @@ def mask_patterns(
     num_block_cols: int,
 ) -> set:
     """Strategy for generating block mask patterns.
-    
+
     Generates various mask patterns indicating which blocks are present (not masked).
-    
+
     Args:
         draw: Hypothesis draw function (injected by @st.composite)
         num_block_rows: Number of block rows in the image
         num_block_cols: Number of block columns in the image
-    
+
     Returns:
         A set of (row, col) tuples indicating which blocks are present.
     """
@@ -468,9 +467,9 @@ def mask_patterns(
         "random",           # Random subset of blocks
         "single_block",     # Only one block present
     ]))
-    
+
     all_blocks = {(r, c) for r in range(num_block_rows) for c in range(num_block_cols)}
-    
+
     if pattern_type == "all_present":
         return all_blocks
     elif pattern_type == "all_masked":
@@ -478,7 +477,7 @@ def mask_patterns(
     elif pattern_type == "checkerboard":
         return {(r, c) for r, c in all_blocks if (r + c) % 2 == 0}
     elif pattern_type == "border_only":
-        return {(r, c) for r, c in all_blocks 
+        return {(r, c) for r, c in all_blocks
                 if r == 0 or r == num_block_rows - 1 or c == 0 or c == num_block_cols - 1}
     elif pattern_type == "single_block":
         if all_blocks:
@@ -491,49 +490,49 @@ def mask_patterns(
 
 
 def calculate_safe_j2k_decomposition_levels(
-    block_height: int, 
+    block_height: int,
     block_width: int,
     num_rows: int = None,
     num_cols: int = None
 ) -> int:
     """Calculate safe JPEG 2000 decomposition levels for given block dimensions.
-    
+
     OpenJPEG requires that the tile dimensions are large enough to support
     the requested number of decomposition levels. The requirement is:
     min_dim >= 2^decomposition_levels
-    
+
     When image dimensions are provided, this also considers partial blocks
     at the edges which may be smaller than the nominal block size.
-    
+
     Args:
         block_height: Height of the block/tile
         block_width: Width of the block/tile
         num_rows: Optional total image rows (to calculate partial block sizes)
         num_cols: Optional total image columns (to calculate partial block sizes)
-    
+
     Returns:
         Safe number of decomposition levels (minimum 0)
     """
     min_dim = min(block_height, block_width)
-    
+
     # If image dimensions provided, consider partial blocks at edges
     if num_rows is not None and num_cols is not None:
         # Calculate the size of the last partial block (if any)
         last_block_height = num_rows % block_height
         last_block_width = num_cols % block_width
-        
+
         # If there's a partial block, consider its dimensions
         if last_block_height > 0:
             min_dim = min(min_dim, last_block_height)
         if last_block_width > 0:
             min_dim = min(min_dim, last_block_width)
-    
+
     # Calculate max levels based on OpenJPEG's requirement:
     # min_dim >= 2^decomposition_levels
     # Therefore: decomposition_levels <= floor(log2(min_dim))
     if min_dim <= 1:
         return 0  # 1-pixel blocks can only have 0 decomposition levels
-    
+
     # floor(log2(min_dim)) gives max safe levels, cap at 5 for reasonable compression
     max_levels = int(np.floor(np.log2(min_dim)))
     return min(5, max_levels)
@@ -548,24 +547,24 @@ def masked_image(
     max_bands: int = 3,
 ) -> Tuple[np.ndarray, PixelType, int, int, int, int, int, Set[Tuple[int, int]], str]:
     """Composite strategy for generating masked images with metadata.
-    
+
     Generates a random image with a mask pattern indicating which blocks are present.
     This is used for testing masked image roundtrip operations.
-    
+
     Supports all masked IC codes:
     - NM: uncompressed with mask (any pixel type)
     - M8: JPEG 2000 with mask (UInt8, UInt16, Int16)
     - M3: JPEG DCT with mask (UInt8 only, JPEG-friendly pixel values)
-    
+
     Args:
         draw: Hypothesis draw function (injected by @st.composite)
         min_size: Minimum dimension size (default 32)
         max_size: Maximum dimension size (default 128)
         min_bands: Minimum band count (default 1)
         max_bands: Maximum band count (default 3)
-    
+
     Returns:
-        Tuple of (array, pixel_type, num_bands, num_rows, num_cols, 
+        Tuple of (array, pixel_type, num_bands, num_rows, num_cols,
                   block_height, block_width, provided_blocks, ic_value)
         - array: numpy array with shape (num_bands, num_rows, num_cols)
         - pixel_type: PixelType enum value
@@ -580,7 +579,7 @@ def masked_image(
     # Choose IC value first, as it affects pixel type and dimension constraints
     # NM = uncompressed with mask, M8 = JPEG 2000 with mask, M3 = JPEG DCT with mask
     ic_value = draw(st.sampled_from(["NM", "M8", "M3"]))
-    
+
     # M3 (JPEG DCT) only supports 8-bit and standard JPEG band counts (1 or 3).
     # 2-band JPEG is not a valid configuration.
     if ic_value == "M3":
@@ -592,7 +591,7 @@ def masked_image(
         pixel_type = draw(st.sampled_from([PixelType.UInt8, PixelType.UInt16, PixelType.Int16]))
         num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
     block_height, block_width = draw(block_sizes())
-    
+
     # M8 and M3 both need image dimensions as multiples of block size.
     # M8: OpenJPEG has minimum tile size requirements.
     # M3: JPEG DCT works on 8x8 blocks; aligning to block size avoids
@@ -603,7 +602,7 @@ def masked_image(
         max_blocks = max(min_blocks, max_size // block_height)
         num_block_rows = draw(st.integers(min_value=min_blocks, max_value=max_blocks))
         num_rows = num_block_rows * block_height
-        
+
         min_blocks = max(2 if ic_value == "M3" else 1, effective_min // block_width)
         max_blocks = max(min_blocks, max_size // block_width)
         num_block_cols = draw(st.integers(min_value=min_blocks, max_value=max_blocks))
@@ -611,18 +610,18 @@ def masked_image(
     else:
         # For NM (uncompressed), any dimensions work
         num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
-        
+
         # Ensure block size doesn't exceed image dimensions
         block_height = min(block_height, num_rows)
         block_width = min(block_width, num_cols)
-        
+
         # Calculate block grid
         num_block_rows = (num_rows + block_height - 1) // block_height
         num_block_cols = (num_cols + block_width - 1) // block_width
-    
+
     # Generate mask pattern
     provided_blocks = draw(mask_patterns(num_block_rows, num_block_cols))
-    
+
     # Generate image data — M3 needs JPEG-friendly values with guaranteed
     # variance for meaningful PSNR/SSIM calculations.
     if ic_value == "M3":
@@ -631,7 +630,7 @@ def masked_image(
         gradient = np.linspace(0, 1, num_cols)
         base_pattern = np.tile(gradient, (num_rows, 1))
         scaled_pattern = base_pattern * value_range + base_value
-        
+
         bands = []
         for _ in range(num_bands):
             noise = draw(arrays(
@@ -646,8 +645,8 @@ def masked_image(
     else:
         dtype = get_numpy_dtype(pixel_type)
         array = draw(arrays(dtype=dtype, shape=(num_bands, num_rows, num_cols)))
-    
-    return (array, pixel_type, num_bands, num_rows, num_cols, 
+
+    return (array, pixel_type, num_bands, num_rows, num_cols,
             block_height, block_width, provided_blocks, ic_value)
 
 
@@ -660,19 +659,19 @@ def realistic_image_for_compression(
     max_bands: int = 3,
 ) -> Tuple[np.ndarray, PixelType, int, int, int]:
     """Composite strategy for images suitable for lossy compression testing.
-    
+
     Generates images with realistic value distributions that work well with
     lossy compression quality metrics. This strategy creates gradient-like
     images that have guaranteed variance across the image, making them
     suitable for meaningful PSNR and SSIM calculations.
-    
+
     Args:
         draw: Hypothesis draw function (injected by @st.composite)
         min_size: Minimum dimension size (default 32)
         max_size: Maximum dimension size (default 64)
         min_bands: Minimum band count (default 1)
         max_bands: Maximum band count (default 3)
-    
+
     Returns:
         Tuple of (array, pixel_type, num_bands, num_rows, num_cols)
     """
@@ -680,14 +679,14 @@ def realistic_image_for_compression(
     pixel_type = draw(st.sampled_from(J2K_PIXEL_TYPES))
     num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
     num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
-    
+
     dtype = get_numpy_dtype(pixel_type)
-    
+
     # Get dtype range
     dtype_info = np.iinfo(dtype)
     dtype_min = int(dtype_info.min)
     dtype_max = int(dtype_info.max)
-    
+
     # For signed types (Int16), use positive range only for simpler quality metrics
     if dtype_min < 0:
         effective_min = 0
@@ -695,25 +694,25 @@ def realistic_image_for_compression(
     else:
         effective_min = dtype_min
         effective_max = dtype_max
-    
+
     # Generate a gradient-based image with noise overlay
     # This ensures we have actual variance in the image
-    
+
     # Pick a value range that spans at least 1000 values for meaningful compression
     min_range = 1000
     max_range = (effective_max - effective_min) // 2
     if max_range < min_range:
         max_range = min_range
-    
+
     value_range = draw(st.integers(min_value=min_range, max_value=max_range))
-    
+
     # Pick a base value that allows the full range
     max_base = effective_max - value_range
     base_value = draw(st.integers(min_value=effective_min, max_value=max(effective_min, max_base)))
-    
+
     # Create gradient pattern (horizontal, vertical, or diagonal)
     pattern_type = draw(st.sampled_from(["horizontal", "vertical", "diagonal"]))
-    
+
     # Create base gradient
     if pattern_type == "horizontal":
         gradient = np.linspace(0, 1, num_cols)
@@ -726,13 +725,13 @@ def realistic_image_for_compression(
         y = np.linspace(0, 1, num_rows)
         xx, yy = np.meshgrid(x, y)
         base_pattern = (xx + yy) / 2
-    
+
     # Scale to value range and add base
     scaled_pattern = base_pattern * value_range + base_value
-    
+
     # Add small random noise (up to 5% of range) for more realistic texture
     noise_scale = value_range * 0.05
-    
+
     # Create the multi-band image
     bands = []
     for _ in range(num_bands):
@@ -744,9 +743,9 @@ def realistic_image_for_compression(
         ))
         band = np.clip(scaled_pattern + noise, effective_min, effective_max)
         bands.append(band.astype(dtype))
-    
+
     array = np.stack(bands, axis=0)
-    
+
     return (array, pixel_type, num_bands, num_rows, num_cols)
 
 
@@ -756,10 +755,10 @@ def realistic_image_for_compression(
 
 def jpeg_pixel_types() -> st.SearchStrategy[PixelType]:
     """Strategy for pixel types supported by JPEG DCT compression.
-    
+
     JPEG DCT only supports 8-bit samples. 12-bit JPEG is not supported
     due to libjpeg-turbo architectural constraints.
-    
+
     Returns:
         Strategy producing UInt8 pixel type only.
     """
@@ -768,12 +767,12 @@ def jpeg_pixel_types() -> st.SearchStrategy[PixelType]:
 
 def jpeg_ic_codes() -> st.SearchStrategy[str]:
     """Strategy for JPEG DCT IC codes.
-    
+
     Returns a strategy that samples from:
     - C3: JPEG DCT compressed imagery
     - M3: JPEG DCT compressed imagery with block mask
     - I1: Downsampled JPEG (single block ≤2048×2048)
-    
+
     Returns:
         Strategy producing JPEG IC code strings.
     """
@@ -782,11 +781,11 @@ def jpeg_ic_codes() -> st.SearchStrategy[str]:
 
 def jpeg_quality() -> st.SearchStrategy[int]:
     """Strategy for JPEG quality values.
-    
+
     JPEG quality ranges from 1 (worst) to 100 (best).
     For property testing, we use values that provide good quality
     to ensure PSNR/SSIM thresholds are met.
-    
+
     Returns:
         Strategy producing quality values 50-95.
     """
@@ -795,10 +794,10 @@ def jpeg_quality() -> st.SearchStrategy[int]:
 
 def jpeg_comrat() -> st.SearchStrategy[str]:
     """Strategy for JPEG COMRAT values.
-    
+
     COMRAT for JPEG uses format "nn.n" representing quality 00.0 to 99.9.
     Higher values = higher quality.
-    
+
     Returns:
         Strategy producing valid JPEG COMRAT strings.
     """
@@ -810,10 +809,10 @@ def jpeg_comrat() -> st.SearchStrategy[str]:
 
 def i1_image_dimensions() -> st.SearchStrategy[Tuple[int, int]]:
     """Strategy for IC=I1 (downsampled JPEG) image dimensions.
-    
+
     I1 images are constrained to ≤2048×2048 pixels and are encoded
     as a single JPEG block.
-    
+
     Returns:
         Strategy producing (num_rows, num_cols) tuples within I1 constraints.
     """
@@ -832,18 +831,18 @@ def jpeg_image_for_compression(
     max_bands: int = 3,
 ) -> Tuple[np.ndarray, PixelType, int, int, int]:
     """Composite strategy for images suitable for JPEG DCT compression testing.
-    
+
     Generates 8-bit images with realistic value distributions that work well
     with lossy JPEG compression quality metrics. Creates gradient-like images
     with guaranteed variance for meaningful PSNR and SSIM calculations.
-    
+
     Args:
         draw: Hypothesis draw function (injected by @st.composite)
         min_size: Minimum dimension size (default 32)
         max_size: Maximum dimension size (default 128)
         min_bands: Minimum band count (default 1)
         max_bands: Maximum band count (default 3)
-    
+
     Returns:
         Tuple of (array, pixel_type, num_bands, num_rows, num_cols)
     """
@@ -851,17 +850,17 @@ def jpeg_image_for_compression(
     pixel_type = PixelType.UInt8
     num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
     num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
-    
+
     dtype = np.uint8
-    
+
     # Generate a gradient-based image with noise overlay for realistic compression
     # Pick a value range that spans meaningful values for 8-bit
     value_range = draw(st.integers(min_value=100, max_value=200))
     base_value = draw(st.integers(min_value=20, max_value=55))
-    
+
     # Create gradient pattern
     pattern_type = draw(st.sampled_from(["horizontal", "vertical", "diagonal"]))
-    
+
     if pattern_type == "horizontal":
         gradient = np.linspace(0, 1, num_cols)
         base_pattern = np.tile(gradient, (num_rows, 1))
@@ -873,27 +872,27 @@ def jpeg_image_for_compression(
         y = np.linspace(0, 1, num_rows)
         xx, yy = np.meshgrid(x, y)
         base_pattern = (xx + yy) / 2
-    
+
     # Scale to value range and add base
     scaled_pattern = base_pattern * value_range + base_value
-    
+
     # Add small random noise (up to 5% of range) for more realistic texture
     noise_scale = value_range * 0.05
-    
+
     # Create the multi-band image
     bands = []
     for _ in range(num_bands):
         noise = draw(arrays(
             dtype=np.float64,
             shape=(num_rows, num_cols),
-            elements=st.floats(min_value=-noise_scale, max_value=noise_scale, 
+            elements=st.floats(min_value=-noise_scale, max_value=noise_scale,
                              allow_nan=False, allow_infinity=False)
         ))
         band = np.clip(scaled_pattern + noise, 0, 255)
         bands.append(band.astype(dtype))
-    
+
     array = np.stack(bands, axis=0)
-    
+
     return (array, pixel_type, num_bands, num_rows, num_cols)
 
 
@@ -904,21 +903,21 @@ def jpeg_i1_image(
     max_size: int = 256,
 ) -> Tuple[np.ndarray, PixelType, int, int, int]:
     """Composite strategy for IC=I1 (downsampled JPEG) images.
-    
+
     Generates images suitable for I1 encoding, which is constrained to
     ≤2048×2048 pixels and encoded as a single JPEG block.
-    
+
     Args:
         draw: Hypothesis draw function (injected by @st.composite)
         min_size: Minimum dimension size (default 32)
         max_size: Maximum dimension size (default 256, kept small for tests)
-    
+
     Returns:
         Tuple of (array, pixel_type, num_bands, num_rows, num_cols)
     """
     # I1 supports 1 or 3 bands (grayscale or RGB)
     num_bands = draw(st.sampled_from([1, 3]))
-    
+
     # Use the JPEG image generator with I1 dimension constraints
     array, pixel_type, _, num_rows, num_cols = draw(
         jpeg_image_for_compression(
@@ -928,7 +927,7 @@ def jpeg_i1_image(
             max_bands=num_bands,
         )
     )
-    
+
     return (array, pixel_type, num_bands, num_rows, num_cols)
 
 
@@ -941,37 +940,37 @@ def masked_jpeg_image(
     max_bands: int = 3,
 ) -> Tuple[np.ndarray, PixelType, int, int, int, int, int, Set[Tuple[int, int]]]:
     """Composite strategy for generating masked JPEG (IC=M3) images.
-    
+
     Generates a random 8-bit image with a mask pattern indicating which
     blocks are present. Used for testing masked JPEG roundtrip operations.
-    
+
     Args:
         draw: Hypothesis draw function (injected by @st.composite)
         min_size: Minimum dimension size (default 64)
         max_size: Maximum dimension size (default 128)
         min_bands: Minimum band count (default 1)
         max_bands: Maximum band count (default 3)
-    
+
     Returns:
-        Tuple of (array, pixel_type, num_bands, num_rows, num_cols, 
+        Tuple of (array, pixel_type, num_bands, num_rows, num_cols,
                   block_height, block_width, provided_blocks)
     """
     # JPEG only supports 8-bit
     pixel_type = PixelType.UInt8
     num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
     block_height, block_width = draw(block_sizes())
-    
+
     # Ensure image dimensions are multiples of block size for cleaner testing
     min_blocks = max(2, min_size // block_height)
     max_blocks = max(min_blocks, max_size // block_height)
     num_block_rows = draw(st.integers(min_value=min_blocks, max_value=max_blocks))
     num_rows = num_block_rows * block_height
-    
+
     min_blocks = max(2, min_size // block_width)
     max_blocks = max(min_blocks, max_size // block_width)
     num_block_cols = draw(st.integers(min_value=min_blocks, max_value=max_blocks))
     num_cols = num_block_cols * block_width
-    
+
     # Generate mask pattern (exclude all_masked to ensure we have data)
     pattern_type = draw(st.sampled_from([
         "all_present",
@@ -980,47 +979,47 @@ def masked_jpeg_image(
         "random",
         "single_block",
     ]))
-    
+
     all_blocks = {(r, c) for r in range(num_block_rows) for c in range(num_block_cols)}
-    
+
     if pattern_type == "all_present":
         provided_blocks = all_blocks
     elif pattern_type == "checkerboard":
         provided_blocks = {(r, c) for r, c in all_blocks if (r + c) % 2 == 0}
     elif pattern_type == "border_only":
-        provided_blocks = {(r, c) for r, c in all_blocks 
+        provided_blocks = {(r, c) for r, c in all_blocks
                 if r == 0 or r == num_block_rows - 1 or c == 0 or c == num_block_cols - 1}
     elif pattern_type == "single_block":
         provided_blocks = {draw(st.sampled_from(sorted(list(all_blocks))))}
     else:  # random - ensure at least one block
-        selected = draw(st.lists(st.sampled_from(sorted(list(all_blocks))), 
+        selected = draw(st.lists(st.sampled_from(sorted(list(all_blocks))),
                                 min_size=1, unique=True))
         provided_blocks = set(selected)
-    
+
     # Generate image data using JPEG-friendly values
     dtype = np.uint8
     value_range = draw(st.integers(min_value=100, max_value=200))
     base_value = draw(st.integers(min_value=20, max_value=55))
-    
+
     # Create gradient pattern
     gradient = np.linspace(0, 1, num_cols)
     base_pattern = np.tile(gradient, (num_rows, 1))
     scaled_pattern = base_pattern * value_range + base_value
-    
+
     bands = []
     for _ in range(num_bands):
         noise = draw(arrays(
             dtype=np.float64,
             shape=(num_rows, num_cols),
-            elements=st.floats(min_value=-5, max_value=5, 
+            elements=st.floats(min_value=-5, max_value=5,
                              allow_nan=False, allow_infinity=False)
         ))
         band = np.clip(scaled_pattern + noise, 0, 255)
         bands.append(band.astype(dtype))
-    
+
     array = np.stack(bands, axis=0)
-    
-    return (array, pixel_type, num_bands, num_rows, num_cols, 
+
+    return (array, pixel_type, num_bands, num_rows, num_cols,
             block_height, block_width, provided_blocks)
 
 

@@ -8,8 +8,8 @@ import pytest
 from hypothesis import given
 
 from ..conftest import pbt_settings
+from ..helpers import assert_lossless_match, write_and_read_jbp
 from ..strategies import random_image
-from ..helpers import write_and_read_jbp, assert_lossless_match
 
 
 @pytest.mark.property

@@ -4,19 +4,17 @@
 import tempfile
 from pathlib import Path
 
-import numpy as np
 import pytest
-from hypothesis import given
-
 from aws.osml.io import (
     IO,
     BufferedImageAssetProvider,
     BufferedMetadataProvider,
 )
+from hypothesis import given
 
 from ..conftest import pbt_settings
+from ..helpers import assert_lossless_match, read_full_image, write_and_read_jbp
 from ..strategies import random_image
-from ..helpers import read_full_image, write_and_read_jbp, assert_lossless_match
 
 
 @pytest.mark.property

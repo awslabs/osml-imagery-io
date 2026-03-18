@@ -9,8 +9,6 @@ import tempfile
 
 import numpy as np
 import pytest
-from hypothesis import given, strategies as st
-
 from aws.osml.io import (
     IO,
     AssetProvider,
@@ -18,6 +16,8 @@ from aws.osml.io import (
     BufferedImageAssetProvider,
     PixelType,
 )
+from hypothesis import given
+from hypothesis import strategies as st
 
 from .conftest import pbt_settings
 
@@ -25,7 +25,7 @@ from .conftest import pbt_settings
 @pytest.mark.property
 class TestAssetProviderPolymorphism:
     """Property tests for add_asset accepting all AssetProvider subtypes.
-    
+
     These tests verify that the add_asset method correctly accepts any
     implementation of the AssetProvider interface, including:
     - BytesAssetProvider (created via AssetProvider.from_bytes)
@@ -51,7 +51,7 @@ class TestAssetProviderPolymorphism:
         """For any AssetProvider created via from_bytes, add_asset SHALL succeed."""
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
             path = f.name
-        
+
         try:
             # Create an AssetProvider using from_bytes (BytesAssetProvider)
             data = bytes([i % 256 for i in range(100)])
@@ -61,9 +61,9 @@ class TestAssetProviderPolymorphism:
                 asset_type=asset_type,
                 title=title,
             )
-            
+
             writer = IO.open([path], "w", "nitf")
-            
+
             # This should succeed without error
             writer.add_asset(
                 key=key,
@@ -72,12 +72,12 @@ class TestAssetProviderPolymorphism:
                 description=description,
                 roles=["data"],
             )
-            
+
             writer.close()
-            
+
             # Verify file was created
             assert os.path.exists(path)
-            
+
         finally:
             if os.path.exists(path):
                 os.unlink(path)
@@ -105,7 +105,7 @@ class TestAssetProviderPolymorphism:
         """For any BufferedImageAssetProvider, add_asset SHALL succeed."""
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
             path = f.name
-        
+
         try:
             # Create a BufferedImageAssetProvider
             provider = BufferedImageAssetProvider.create(
@@ -117,13 +117,13 @@ class TestAssetProviderPolymorphism:
                 block_height=min(num_rows, 64),
                 pixel_type=PixelType.UInt8,
             )
-            
+
             # Set image data
             image_data = np.zeros((num_bands, num_rows, num_cols), dtype=np.uint8)
             provider.set_full_image(image_data)
-            
+
             writer = IO.open([path], "w", "nitf")
-            
+
             # This should succeed without error - using add_asset, not add_image_asset
             writer.add_asset(
                 key=key,
@@ -132,12 +132,12 @@ class TestAssetProviderPolymorphism:
                 description=description,
                 roles=["data"],
             )
-            
+
             writer.close()
-            
+
             # Verify file was created
             assert os.path.exists(path)
-            
+
         finally:
             if os.path.exists(path):
                 os.unlink(path)

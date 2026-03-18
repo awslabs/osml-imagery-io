@@ -12,18 +12,16 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given
-
 from aws.osml.io import (
     IO,
     BufferedImageAssetProvider,
     BufferedMetadataProvider,
-    PixelType,
 )
+from hypothesis import given
 
 from ..conftest import pbt_settings
 from ..helpers import read_full_image
-from ..strategies import get_numpy_dtype, random_image
+from ..strategies import random_image
 
 # Format configurations: (extension, format_string, metadata_hints)
 FORMAT_CONFIGS = [

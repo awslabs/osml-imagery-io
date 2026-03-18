@@ -4,9 +4,8 @@ This module contains property tests that verify the strategies themselves
 produce valid outputs according to their specifications.
 """
 
-import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from tests.property.conftest import pbt_settings
@@ -42,10 +41,10 @@ class TestImageStrategyConsistency:
     def test_image_arrays_shape_matches_config(self, pixel_type, dims, num_bands, data):
         """Verify image_arrays produces arrays with correct shape."""
         num_rows, num_cols = dims
-        
+
         # Generate an array using the strategy via data.draw()
         array = data.draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
-        
+
         # Verify shape matches configuration
         assert array.shape == (num_bands, num_rows, num_cols), (
             f"Expected shape ({num_bands}, {num_rows}, {num_cols}), "
@@ -63,10 +62,10 @@ class TestImageStrategyConsistency:
         """Verify image_arrays produces arrays with correct dtype."""
         num_rows, num_cols = dims
         expected_dtype = get_numpy_dtype(pixel_type)
-        
+
         # Generate an array using the strategy via data.draw()
         array = data.draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
-        
+
         # Verify dtype matches pixel type
         assert array.dtype == expected_dtype, (
             f"Expected dtype {expected_dtype}, got {array.dtype}"
@@ -77,20 +76,20 @@ class TestImageStrategyConsistency:
     def test_random_image_consistency(self, image_data):
         """Verify random_image returns consistent metadata with array."""
         array, pixel_type, num_bands, num_rows, num_cols = image_data
-        
+
         # Verify shape matches returned metadata
         assert array.shape == (num_bands, num_rows, num_cols), (
             f"Array shape {array.shape} doesn't match metadata "
             f"({num_bands}, {num_rows}, {num_cols})"
         )
-        
+
         # Verify dtype matches pixel type
         expected_dtype = get_numpy_dtype(pixel_type)
         assert array.dtype == expected_dtype, (
             f"Array dtype {array.dtype} doesn't match pixel type {pixel_type} "
             f"(expected {expected_dtype})"
         )
-        
+
         # Verify pixel type is one of the supported types
         assert pixel_type in SUPPORTED_PIXEL_TYPES, (
             f"Pixel type {pixel_type} not in supported types"
@@ -134,16 +133,16 @@ class TestBlockStrategyValidity:
         """Verify valid_block_coordinates produces coordinates within valid range."""
         num_rows, num_cols = dims
         block_height, block_width = block_size
-        
+
         # Calculate expected number of blocks
         num_block_rows = (num_rows + block_height - 1) // block_height
         num_block_cols = (num_cols + block_width - 1) // block_width
-        
+
         # Generate coordinates using the strategy via data.draw()
         block_row, block_col = data.draw(valid_block_coordinates(
             num_rows, num_cols, block_height, block_width
         ))
-        
+
         # Verify coordinates are within valid range
         assert 0 <= block_row < num_block_rows, (
             f"block_row {block_row} out of range [0, {num_block_rows})"
@@ -161,20 +160,20 @@ class TestBlockStrategyValidity:
         """Verify block count calculation is correct (ceiling division)."""
         num_rows, num_cols = dims
         block_height, block_width = block_size
-        
+
         # Calculate expected number of blocks using ceiling division
         expected_block_rows = (num_rows + block_height - 1) // block_height
         expected_block_cols = (num_cols + block_width - 1) // block_width
-        
+
         # Alternative calculation using math.ceil
         import math
         alt_block_rows = math.ceil(num_rows / block_height)
         alt_block_cols = math.ceil(num_cols / block_width)
-        
+
         # Both calculations should match
         assert expected_block_rows == alt_block_rows
         assert expected_block_cols == alt_block_cols
-        
+
         # Verify at least one block exists
         assert expected_block_rows >= 1
         assert expected_block_cols >= 1
@@ -184,7 +183,7 @@ class TestBlockStrategyValidity:
     def test_block_sizes_are_valid(self, block_size):
         """Verify block_sizes produces valid block dimensions."""
         block_height, block_width = block_size
-        
+
         # Block dimensions should be positive powers of 2
         assert block_height > 0
         assert block_width > 0
@@ -207,12 +206,12 @@ class TestMetadataStrategyValidity:
         assert 1 <= len(field_name) <= 10, (
             f"Field name '{field_name}' length {len(field_name)} not in [1, 10]"
         )
-        
+
         # Must start with uppercase letter
         assert field_name[0].isupper() and field_name[0].isalpha(), (
             f"Field name '{field_name}' must start with uppercase letter"
         )
-        
+
         # All characters must be uppercase alphanumeric
         assert field_name.isupper(), (
             f"Field name '{field_name}' must be uppercase"
@@ -229,7 +228,7 @@ class TestMetadataStrategyValidity:
         assert 1 <= len(value) <= 20, (
             f"Metadata value length {len(value)} not in [1, 20]"
         )
-        
+
         # All characters must be printable ASCII (32-126)
         for char in value:
             assert 32 <= ord(char) <= 126, (

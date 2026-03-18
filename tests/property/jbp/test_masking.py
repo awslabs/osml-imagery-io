@@ -12,20 +12,19 @@ method covers all three compression modes unless filtered with ``assume()``.
 
 import numpy as np
 import pytest
-from hypothesis import given, assume
-
 from aws.osml.io import IO
+from hypothesis import assume, given
 
 from ..conftest import pbt_settings
-from ..strategies import (
-    masked_image,
-    calculate_safe_j2k_decomposition_levels,
-)
 from ..helpers import (
-    write_masked_jbp,
     assert_mask_preserved,
+    write_masked_jbp,
 )
-from ..quality import calculate_psnr, MIN_PSNR_DB
+from ..quality import MIN_PSNR_DB, calculate_psnr
+from ..strategies import (
+    calculate_safe_j2k_decomposition_levels,
+    masked_image,
+)
 
 # IC codes that use lossless compression (exact pixel match expected)
 _LOSSLESS_IC = {"NM"}

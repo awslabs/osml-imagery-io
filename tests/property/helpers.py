@@ -20,16 +20,14 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-
 from aws.osml.io import (
     IO,
     BufferedImageAssetProvider,
     BufferedMetadataProvider,
 )
 
-from .quality import calculate_psnr, calculate_ssim, MIN_PSNR_DB, MIN_SSIM
+from .quality import MIN_PSNR_DB, MIN_SSIM, calculate_psnr, calculate_ssim
 from .strategies import get_numpy_dtype
-
 
 # ---------------------------------------------------------------------------
 # Full-image reassembly

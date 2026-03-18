@@ -11,19 +11,17 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given, assume
+from aws.osml.io import IO, PixelType
+from hypothesis import assume, given
 from PIL import Image
 
-from aws.osml.io import IO, PixelType
-
 from ..conftest import pbt_settings
-from ..helpers import read_full_image, write_and_read_tiff, assert_lossless_match
+from ..helpers import assert_lossless_match, read_full_image, write_and_read_tiff
 from ..strategies import (
     get_numpy_dtype,
     tiff_image_config,
     tiff_writable_image,
 )
-
 
 # PIL mode mapping for creating images from numpy arrays.
 _PIL_MODE = {

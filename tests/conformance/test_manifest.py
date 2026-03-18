@@ -1,8 +1,9 @@
 """Unit tests for TestFileEntry and TestManifest classes."""
 
 import json
-import pytest
 from pathlib import Path
+
+import pytest
 
 from tests.conformance import TestFileEntry, TestManifest
 
@@ -133,7 +134,7 @@ class TestTestManifest:
         manifest = TestManifest(entries=entries, base_path=Path("."))
         json_str = manifest.to_json()
         loaded = TestManifest.from_json(json_str, Path("."))
-        
+
         assert len(loaded.entries) == 2
         assert loaded.entries[0].path == "test.ntf"
         assert loaded.entries[0].expected_valid is True

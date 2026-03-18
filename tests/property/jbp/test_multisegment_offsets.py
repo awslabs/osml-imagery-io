@@ -9,12 +9,11 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from hypothesis import given, strategies as st
-
 from aws.osml.io import IO, AssetProvider, AssetType
+from hypothesis import given
+from hypothesis import strategies as st
 
 from ..conftest import pbt_settings
-
 
 # Strategies for generating segment content
 image_data_strategy = st.binary(min_size=1, max_size=256)

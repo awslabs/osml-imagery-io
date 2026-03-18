@@ -10,9 +10,7 @@ Requirements: 19.1, 19.3, 19.5
 from pathlib import Path
 
 import pytest
-
 from aws.osml.io import IO, AssetType
-
 
 # =============================================================================
 # Test Data Paths
@@ -36,7 +34,7 @@ class TestIOOpen:
         """Test opening a NITF 2.1 file."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
         assert reader is not None
 
@@ -44,7 +42,7 @@ class TestIOOpen:
         """Test opening an NSIF 1.0 file."""
         if not SAMPLE_NSIF10.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NSIF10)], "r")
         assert reader is not None
 
@@ -52,7 +50,7 @@ class TestIOOpen:
         """Test opening a small NITF file."""
         if not SMALL_NTF.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SMALL_NTF)], "r")
         assert reader is not None
 
@@ -60,7 +58,7 @@ class TestIOOpen:
         """Test opening a multi-segment NITF file."""
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(MULTI_SEGMENT)], "r")
         assert reader is not None
 
@@ -68,7 +66,7 @@ class TestIOOpen:
         """Test opening with explicit 'nitf' format."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r", "nitf")
         assert reader is not None
 
@@ -76,7 +74,7 @@ class TestIOOpen:
         """Test opening with explicit 'jbp' format."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r", "jbp")
         assert reader is not None
 
@@ -103,13 +101,13 @@ class TestGetAssetKeys:
         """Test getting all asset keys without filtering."""
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(MULTI_SEGMENT)], "r")
         keys = reader.get_asset_keys()
-        
+
         assert isinstance(keys, list)
         assert len(keys) == 4  # 2 images + 1 text + 1 DES
-        
+
         # Verify expected keys are present
         assert "image_segment_0" in keys
         assert "image_segment_1" in keys
@@ -120,10 +118,10 @@ class TestGetAssetKeys:
         """Test filtering asset keys by Image type."""
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(MULTI_SEGMENT)], "r")
         keys = reader.get_asset_keys(asset_type=AssetType.Image)
-        
+
         assert len(keys) == 2
         assert "image_segment_0" in keys
         assert "image_segment_1" in keys
@@ -134,10 +132,10 @@ class TestGetAssetKeys:
         """Test filtering asset keys by Text type."""
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(MULTI_SEGMENT)], "r")
         keys = reader.get_asset_keys(asset_type=AssetType.Text)
-        
+
         assert len(keys) == 1
         assert "text_segment_0" in keys
 
@@ -145,10 +143,10 @@ class TestGetAssetKeys:
         """Test filtering asset keys by Data type."""
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(MULTI_SEGMENT)], "r")
         keys = reader.get_asset_keys(asset_type=AssetType.Data)
-        
+
         assert len(keys) == 1
         assert "des_segment_0" in keys
 
@@ -156,10 +154,10 @@ class TestGetAssetKeys:
         """Test getting asset keys from a single-image file."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
         keys = reader.get_asset_keys()
-        
+
         assert len(keys) == 1
         assert "image_segment_0" in keys
 
@@ -167,10 +165,10 @@ class TestGetAssetKeys:
         """Test that asset keys follow the expected format."""
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(MULTI_SEGMENT)], "r")
         keys = reader.get_asset_keys()
-        
+
         for key in keys:
             # Keys should follow pattern: {type}_segment_{index}
             parts = key.split("_")
@@ -190,10 +188,10 @@ class TestGetAsset:
         """Test getting an image asset."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
-        
+
         assert asset is not None
         assert asset.key == "image_segment_0"
         assert asset.asset_type == AssetType.Image
@@ -203,10 +201,10 @@ class TestGetAsset:
         """Test getting a text asset."""
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(MULTI_SEGMENT)], "r")
         asset = reader.get_asset("text_segment_0")
-        
+
         assert asset is not None
         assert asset.key == "text_segment_0"
         assert asset.asset_type == AssetType.Text
@@ -216,10 +214,10 @@ class TestGetAsset:
         """Test getting a data (DES) asset."""
         if not MULTI_SEGMENT.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(MULTI_SEGMENT)], "r")
         asset = reader.get_asset("des_segment_0")
-        
+
         assert asset is not None
         assert asset.key == "des_segment_0"
         assert asset.asset_type == AssetType.Data
@@ -229,13 +227,13 @@ class TestGetAsset:
         """Test getting raw asset data."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
-        
+
         raw_io = asset.get_raw_asset()
         data = raw_io.read()
-        
+
         assert isinstance(data, bytes)
         assert len(data) == 64  # 8x8 grayscale image
 
@@ -243,9 +241,9 @@ class TestGetAsset:
         """Test that getting a nonexistent asset raises an error."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
-        
+
         with pytest.raises(Exception):
             reader.get_asset("nonexistent_key")
 
@@ -253,18 +251,18 @@ class TestGetAsset:
         """Test has_asset() returns True for existing assets."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
-        
+
         assert reader.has_asset("image_segment_0") is True
 
     def test_has_asset_false_for_nonexistent(self):
         """Test has_asset() returns False for nonexistent assets."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
-        
+
         assert reader.has_asset("nonexistent_key") is False
         assert reader.has_asset("") is False
         assert reader.has_asset("image_segment_999") is False
@@ -281,24 +279,24 @@ class TestMetadata:
         """Test getting file-level metadata."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
         metadata = reader.metadata
-        
+
         assert metadata is not None
 
     def test_metadata_as_dict_all_fields(self):
         """Test getting all metadata fields."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
         metadata = reader.metadata
         all_fields = metadata.as_dict()
-        
+
         assert isinstance(all_fields, dict)
         assert len(all_fields) > 0
-        
+
         # Should contain standard NITF header fields
         assert "fhdr" in all_fields or "FHDR" in all_fields
 
@@ -306,13 +304,13 @@ class TestMetadata:
         """Test getting metadata fields with prefix filtering."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
         metadata = reader.metadata
-        
+
         # Get only fields starting with 'f' (file-level fields)
         f_fields = metadata.as_dict("f")
-        
+
         assert isinstance(f_fields, dict)
         # All returned keys should start with 'f'
         for key in f_fields.keys():
@@ -322,12 +320,12 @@ class TestMetadata:
         """Test getting raw metadata bytes."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
         metadata = reader.metadata
         raw_io = metadata.raw
         raw_bytes = raw_io.read()
-        
+
         assert isinstance(raw_bytes, bytes)
         assert len(raw_bytes) > 0
         # Should start with NITF magic
@@ -337,13 +335,13 @@ class TestMetadata:
         """Test getting asset-level metadata."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
         asset = reader.get_asset("image_segment_0")
         metadata = asset.get_metadata()
-        
+
         assert metadata is not None
-        
+
         all_fields = metadata.as_dict()
         assert isinstance(all_fields, dict)
 
@@ -359,7 +357,7 @@ class TestContextManager:
         """Test basic context manager usage."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         with IO.open([str(SAMPLE_NITF21)], "r") as reader:
             keys = reader.get_asset_keys()
             assert len(keys) == 1
@@ -368,12 +366,12 @@ class TestContextManager:
         """Test that context manager closes the reader on exit."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
         with reader:
             keys = reader.get_asset_keys()
             assert len(keys) == 1
-        
+
         # After exiting context, reader should be closed
         # Attempting to use it should raise an error
         with pytest.raises(Exception):
@@ -383,15 +381,15 @@ class TestContextManager:
         """Test that context manager closes even when exception occurs."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
-        
+
         try:
             with reader:
                 raise ValueError("Test exception")
         except ValueError:
             pass
-        
+
         # Reader should still be closed
         with pytest.raises(Exception):
             reader.get_asset_keys()
@@ -400,12 +398,12 @@ class TestContextManager:
         """Test nested context managers."""
         if not SAMPLE_NITF21.exists() or not MULTI_SEGMENT.exists():
             pytest.skip("Test data files not available")
-        
+
         with IO.open([str(SAMPLE_NITF21)], "r") as reader1:
             with IO.open([str(MULTI_SEGMENT)], "r") as reader2:
                 keys1 = reader1.get_asset_keys()
                 keys2 = reader2.get_asset_keys()
-                
+
                 assert len(keys1) == 1
                 assert len(keys2) == 4
 
@@ -413,13 +411,13 @@ class TestContextManager:
         """Test explicit close() method."""
         if not SAMPLE_NITF21.exists():
             pytest.skip("Test data file not available")
-        
+
         reader = IO.open([str(SAMPLE_NITF21)], "r")
         keys = reader.get_asset_keys()
         assert len(keys) == 1
-        
+
         reader.close()
-        
+
         # After close, reader should not be usable
         with pytest.raises(Exception):
             reader.get_asset_keys()

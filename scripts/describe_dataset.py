@@ -19,8 +19,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from aws.osml.io import IO, AssetType
-from aws.osml.io.tiff import TagNameResolver
+from aws.osml.io import IO, AssetType  # noqa: E402
+from aws.osml.io.tiff import TagNameResolver  # noqa: E402
 
 # TIFF tags that are internal file-structure lookup tables, not useful for
 # human inspection.  These are skipped when formatting TIFF metadata.
@@ -71,7 +71,7 @@ def describe_image_asset(asset, show_metadata: bool) -> None:
         print(f"    Block size: {asset.num_pixels_per_block_horizontal} x {asset.num_pixels_per_block_vertical}")
         print(f"    Block grid: {asset.block_grid_size}")
         print(f"    Resolution levels: {asset.num_resolution_levels}")
-    
+
     if show_metadata:
         print("    Metadata:")
         meta = asset.get_metadata()
@@ -94,7 +94,7 @@ def describe_text_asset(asset, show_metadata: bool) -> None:
             print(f"    Content preview: {preview!r}")
         except Exception as e:
             print(f"    Content: (error reading: {e})")
-    
+
     if show_metadata:
         print("    Metadata:")
         meta = asset.get_metadata()
@@ -177,24 +177,24 @@ def describe_generic_asset(asset, show_metadata: bool) -> None:
 
 def describe_dataset(path: str, show_metadata: bool) -> int:
     """Describe a dataset file.
-    
+
     Args:
         path: Path to the dataset file
         show_metadata: Whether to print metadata for file and segments
-        
+
     Returns:
         0 on success, 1 on error
     """
     file_path = Path(path)
-    
+
     if not file_path.exists():
         print(f"Error: File not found: {path}", file=sys.stderr)
         return 1
-    
+
     print(f"Dataset: {file_path}")
     print(f"Size: {file_path.stat().st_size} bytes")
     print()
-    
+
     try:
         with IO.open([str(file_path)], "r") as reader:
             # Dataset-level metadata
@@ -205,16 +205,16 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
                 meta_dict = file_meta.as_dict()
                 print(format_metadata(meta_dict))
                 print()
-            
+
             # Get all asset keys
             all_keys = reader.get_asset_keys()
-            
+
             # Group by asset type
             image_keys = reader.get_asset_keys(asset_type=AssetType.Image)
             text_keys = reader.get_asset_keys(asset_type=AssetType.Text)
             data_keys = reader.get_asset_keys(asset_type=AssetType.Data)
             graphics_keys = reader.get_asset_keys(asset_type=AssetType.Graphics)
-            
+
             print("Asset Summary:")
             print("-" * 40)
             print(f"  Total assets: {len(all_keys)}")
@@ -223,14 +223,14 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
             print(f"  Data: {len(data_keys)}")
             print(f"  Graphics: {len(graphics_keys)}")
             print()
-            
+
             # Describe each asset
             print("Assets:")
             print("-" * 40)
-            
+
             for key in all_keys:
                 asset = reader.get_asset(key)
-                
+
                 print(f"  [{key}]")
                 print(f"    Type: {asset.asset_type}")
                 print(f"    Title: {asset.title}")
@@ -238,7 +238,7 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
                     print(f"    Description: {asset.description}")
                 print(f"    Media type: {asset.media_type}")
                 print(f"    Roles: {asset.roles}")
-                
+
                 # Type-specific details
                 if asset.asset_type == AssetType.Image:
                     describe_image_asset(asset, show_metadata)
@@ -248,11 +248,11 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
                     describe_data_asset(asset, show_metadata)
                 else:
                     describe_generic_asset(asset, show_metadata)
-                
+
                 print()
-        
+
         return 0
-        
+
     except Exception as e:
         print(f"Error reading dataset: {e}", file=sys.stderr)
         import traceback
@@ -273,7 +273,7 @@ def main():
         action="store_true",
         help="Include metadata for file and each segment"
     )
-    
+
     args = parser.parse_args()
     return describe_dataset(args.path, args.metadata)
 

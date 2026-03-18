@@ -8,8 +8,8 @@ import pytest
 from hypothesis import given
 
 from ..conftest import pbt_settings
+from ..helpers import assert_lossy_quality, write_and_read_jbp
 from ..strategies import realistic_image_for_compression
-from ..helpers import write_and_read_jbp, assert_lossy_quality
 
 
 @pytest.mark.property

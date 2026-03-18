@@ -9,10 +9,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given, assume
-from PIL import Image
-
 from aws.osml.io import IO
+from hypothesis import assume, given
+from PIL import Image
 
 from ..conftest import pbt_settings
 from ..strategies import get_numpy_dtype, tiff_image_config
@@ -93,7 +92,7 @@ class TestTiffStrippedBlockDimensions:
         try:
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image_segment_0")
-            meta = asset.get_metadata().as_dict()
+            asset.get_metadata().as_dict()
 
             assert asset.num_pixels_per_block_horizontal == width, (
                 f"Block width should be ImageWidth ({width}), got {asset.num_pixels_per_block_horizontal}"

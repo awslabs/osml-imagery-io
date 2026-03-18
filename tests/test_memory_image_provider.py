@@ -7,8 +7,6 @@ Requirements: 2.1, 2.2, 2.3
 """
 
 import numpy as np
-import pytest
-
 from aws.osml.io import BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 
 
@@ -85,7 +83,7 @@ class TestBufferedImageAssetProviderWithMetadata:
 
     def test_metadata_round_trip(self):
         """Test that metadata is accessible after construction.
-        
+
         **Validates: Requirements 2.2**
         """
         # Create metadata with encoding hints

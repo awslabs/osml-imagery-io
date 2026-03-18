@@ -10,23 +10,20 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given
-from hypothesis import strategies as st
-
 from aws.osml.io import (
     IO,
     BufferedImageAssetProvider,
     BufferedMetadataProvider,
     PixelType,
 )
+from hypothesis import given
+from hypothesis import strategies as st
 
 from ..conftest import pbt_settings
-from ..helpers import read_full_image
 from ..strategies import (
     get_numpy_dtype,
     tiff_writable_image,
 )
-
 
 # Mapping from hint strings to expected TIFF tag integer values
 _COMPRESSION_TAG = {"None": 1, "LZW": 5, "Deflate": 8}

@@ -7,12 +7,9 @@ Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6
 """
 
 import mmap
-import os
-import tempfile
 from pathlib import Path
 
 import pytest
-
 from aws.osml.io import (
     StructureAccessor,
     StructureDefinition,
@@ -20,7 +17,6 @@ from aws.osml.io import (
     StructureWriter,
     Value,
 )
-
 
 # =============================================================================
 # Test Data Paths
@@ -57,7 +53,7 @@ class TestStructureRegistry:
         """Test getting an existing structure definition."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        
+
         definition = registry.get("nitf_02.10_file_header")
         assert definition is not None
         assert isinstance(definition, StructureDefinition)
@@ -73,7 +69,7 @@ class TestStructureRegistry:
         """Test listing available structure names."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        
+
         names = registry.list()
         assert isinstance(names, list)
         # Verify NITF structures are listed with new naming convention
@@ -83,10 +79,10 @@ class TestStructureRegistry:
         """Test reloading definitions from disk."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        
+
         # Should not raise
         registry.reload()
-        
+
         # Definitions should still be available
         definition = registry.get("nitf_02.10_file_header")
         assert definition is not None
@@ -95,14 +91,14 @@ class TestStructureRegistry:
         """Test registering a definition at runtime."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        
+
         # Get an existing definition
         original = registry.get("nitf_02.10_file_header")
         assert original is not None
-        
+
         # Register it under a new name
         registry.register("CustomDefinition", original)
-        
+
         # Should be retrievable under the new name
         custom = registry.get("CustomDefinition")
         assert custom is not None
@@ -172,26 +168,26 @@ class TestStructureAccessor:
     def test_accessor_getitem(self, nitf_definition, synthetic_data):
         """Test dict-like access via __getitem__."""
         accessor = StructureAccessor(nitf_definition, synthetic_data)
-        
+
         # Access string fields
         fhdr = accessor["FHDR"]
         assert isinstance(fhdr, Value)
         assert fhdr.as_str() == "NITF"
-        
+
         fver = accessor["FVER"]
         assert fver.as_str() == "02.10"
 
     def test_accessor_getitem_unknown_field(self, nitf_definition, synthetic_data):
         """Test accessing unknown field raises KeyError."""
         accessor = StructureAccessor(nitf_definition, synthetic_data)
-        
+
         with pytest.raises(KeyError):
             _ = accessor["nonexistent_field"]
 
     def test_accessor_has(self, nitf_definition, synthetic_data):
         """Test checking field existence with has()."""
         accessor = StructureAccessor(nitf_definition, synthetic_data)
-        
+
         assert accessor.has("FHDR") is True
         assert accessor.has("FVER") is True
         assert accessor.has("nonexistent") is False
@@ -199,7 +195,7 @@ class TestStructureAccessor:
     def test_accessor_contains(self, nitf_definition, synthetic_data):
         """Test 'in' operator support."""
         accessor = StructureAccessor(nitf_definition, synthetic_data)
-        
+
         assert "FHDR" in accessor
         assert "FVER" in accessor
         assert "nonexistent" not in accessor
@@ -207,7 +203,7 @@ class TestStructureAccessor:
     def test_accessor_fields(self, nitf_definition, synthetic_data):
         """Test iterating over accessible field paths."""
         accessor = StructureAccessor(nitf_definition, synthetic_data)
-        
+
         fields = accessor.fields()
         assert isinstance(fields, list)
         assert "FHDR" in fields
@@ -217,7 +213,7 @@ class TestStructureAccessor:
     def test_accessor_numeric_field(self, nitf_definition, synthetic_data):
         """Test accessing numeric fields."""
         accessor = StructureAccessor(nitf_definition, synthetic_data)
-        
+
         # CLEVEL is a BCS-N field
         clevel = accessor["CLEVEL"]
         assert clevel.as_int() == 3
@@ -225,7 +221,7 @@ class TestStructureAccessor:
     def test_accessor_data_property(self, nitf_definition, synthetic_data):
         """Test getting underlying data buffer."""
         accessor = StructureAccessor(nitf_definition, synthetic_data)
-        
+
         data = accessor.data
         assert isinstance(data, bytes)
         assert len(data) == len(synthetic_data)
@@ -233,7 +229,7 @@ class TestStructureAccessor:
     def test_accessor_definition_property(self, nitf_definition, synthetic_data):
         """Test getting structure definition."""
         accessor = StructureAccessor(nitf_definition, synthetic_data)
-        
+
         definition = accessor.definition
         assert isinstance(definition, StructureDefinition)
         assert definition.id == nitf_definition.id
@@ -261,11 +257,11 @@ class TestStructureWriter:
     def test_writer_setitem_streaming(self, nitf_definition):
         """Test dict-like write via __setitem__ in streaming mode."""
         writer = StructureWriter.new_streaming(nitf_definition)
-        
+
         # Write string fields in order (streaming mode requires order)
         writer["FHDR"] = "NITF"
         writer["FVER"] = "02.10"
-        
+
         # Check field is set
         assert writer.is_set("FHDR") is True
         assert writer.is_set("FVER") is True
@@ -273,14 +269,14 @@ class TestStructureWriter:
     def test_writer_set_method(self, nitf_definition):
         """Test set() method."""
         writer = StructureWriter.new_streaming(nitf_definition)
-        
+
         writer.set("FHDR", "NITF")
         assert writer.is_set("FHDR") is True
 
     def test_writer_is_set(self, nitf_definition):
         """Test checking if field has been written."""
         writer = StructureWriter.new_streaming(nitf_definition)
-        
+
         assert writer.is_set("FHDR") is False
         writer["FHDR"] = "NITF"
         assert writer.is_set("FHDR") is True
@@ -289,7 +285,7 @@ class TestStructureWriter:
         """Test getting current buffer contents."""
         writer = StructureWriter.new_streaming(nitf_definition)
         writer["FHDR"] = "NITF"
-        
+
         buffer = writer.buffer()
         assert isinstance(buffer, bytes)
         assert b"NITF" in buffer
@@ -308,10 +304,10 @@ class TestValue:
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
         definition = registry.get("nitf_02.10_file_header")
-        
+
         with open(SYNTHETIC_NITF_HEADER, "rb") as f:
             data = f.read()
-        
+
         return StructureAccessor(definition, data)
 
     def test_value_as_str(self, accessor):
@@ -381,10 +377,10 @@ class TestRawView:
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
         definition = registry.get("nitf_02.10_file_header")
-        
+
         with open(SYNTHETIC_NITF_HEADER, "rb") as f:
             data = f.read()
-        
+
         return StructureAccessor(definition, data)
 
     def test_raw_view_returns_bytes(self, accessor):
@@ -403,11 +399,11 @@ class TestRawView:
         """Test raw_view matches field_byte_range slice."""
         raw = accessor.raw_view("FVER")
         offset, length = accessor.field_byte_range("FVER")
-        
+
         # Get the same bytes from the data property
         data = accessor.data
         sliced = data[offset:offset + length]
-        
+
         assert raw == sliced
 
 
@@ -431,7 +427,7 @@ class TestMmapSupport:
             mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
             try:
                 accessor = StructureAccessor(nitf_definition, mm)
-                
+
                 # Should be able to access fields
                 fhdr = accessor["FHDR"]
                 assert fhdr.as_str() == "NITF"
@@ -442,10 +438,10 @@ class TestMmapSupport:
         """Test creating accessor from memoryview."""
         with open(SYNTHETIC_NITF_HEADER, "rb") as f:
             data = f.read()
-        
+
         mv = memoryview(data)
         accessor = StructureAccessor(nitf_definition, mv)
-        
+
         fhdr = accessor["FHDR"]
         assert fhdr.as_str() == "NITF"
 
@@ -453,9 +449,9 @@ class TestMmapSupport:
         """Test creating accessor from bytearray."""
         with open(SYNTHETIC_NITF_HEADER, "rb") as f:
             data = bytearray(f.read())
-        
+
         accessor = StructureAccessor(nitf_definition, data)
-        
+
         fhdr = accessor["FHDR"]
         assert fhdr.as_str() == "NITF"
 
@@ -486,12 +482,12 @@ class TestRoundTrip:
         accessor = StructureAccessor(nitf_definition, synthetic_data)
         original_fhdr = accessor["FHDR"].as_str()
         original_fver = accessor["FVER"].as_str()
-        
+
         # Write to a new structure using streaming mode
         writer = StructureWriter.new_streaming(nitf_definition)
         writer["FHDR"] = original_fhdr
         writer["FVER"] = original_fver
-        
+
         # Verify written values match
         buffer = writer.buffer()
         assert buffer[:4] == b"NITF"

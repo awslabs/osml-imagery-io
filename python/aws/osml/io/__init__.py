@@ -5,27 +5,27 @@ for geospatial imagery formats including NITF and GeoTIFF.
 """
 
 from aws.osml.io._io import (
-    __version__,
-    AssetType,
-    PixelType,
     IO,
-    DatasetReader,
-    DatasetWriter,
     AssetProvider,
-    ImageAssetProvider,
+    AssetType,
     BufferedImageAssetProvider,
-    TextAssetProvider,
+    BufferedMetadataProvider,
     BufferedTextAssetProvider,
     DataAssetProvider,
+    DatasetReader,
+    DatasetWriter,
     GraphicsAssetProvider,
+    ImageAssetProvider,
     MetadataProvider,
-    BufferedMetadataProvider,
+    PixelType,
+    StructureAccessor,
+    StructureDefinition,
     # Parser bindings
     StructureRegistry,
-    StructureAccessor,
     StructureWriter,
-    StructureDefinition,
+    TextAssetProvider,
     Value,
+    __version__,
 )
 
 # Convenience alias for IO.open

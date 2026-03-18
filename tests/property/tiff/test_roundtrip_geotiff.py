@@ -13,14 +13,13 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given
-
 from aws.osml.io import (
     IO,
     BufferedImageAssetProvider,
     BufferedMetadataProvider,
     PixelType,
 )
+from hypothesis import given
 
 from ..conftest import pbt_settings
 from ..strategies import geotiff_metadata

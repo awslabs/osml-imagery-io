@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from hypothesis import settings, Phase
+from hypothesis import Phase, settings
 
 
 def pytest_configure(config):

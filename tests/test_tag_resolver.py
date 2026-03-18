@@ -6,9 +6,7 @@ and pass-through behaviour for unmapped keys.
 """
 
 import pytest
-
 from aws.osml.io.tiff import TagNameResolver
-
 
 # Sample Tag_Dictionary mimicking TIFFMetadataProvider output
 SAMPLE_TAG_DICT = {

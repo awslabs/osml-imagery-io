@@ -10,34 +10,31 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given
-
 from aws.osml.io import (
     IO,
     BufferedImageAssetProvider,
     BufferedMetadataProvider,
     PixelType,
 )
+from hypothesis import given
 
 from ..conftest import pbt_settings
 from ..strategies import (
-    random_image,
     block_sizes,
-    valid_block_coordinates,
-    invalid_block_coordinates,
     get_numpy_dtype,
+    random_image,
 )
 
 
 @pytest.mark.property
 class TestBlockAccessCompleteness:
     """Property tests for block access completeness.
-    
+
     For any valid block coordinates within an image's block grid, get_block
     SHALL return a block without error, with shape consistent with the block
     dimensions (or smaller for edge blocks).
     """
-    
+
     @given(
         image_tuple=random_image(min_size=16, max_size=128, min_bands=1, max_bands=4),
         block_size=block_sizes(),
@@ -47,7 +44,7 @@ class TestBlockAccessCompleteness:
         """For any valid block coordinates within an image's block grid, get_block
         SHALL return a block without error, with shape consistent with the block
         dimensions (or smaller for edge blocks).
-        
+
         This test:
         1. Generates a random image with random dimensions, bands, and pixel type
         2. Writes it to a NITF file with a specific block size
@@ -57,19 +54,19 @@ class TestBlockAccessCompleteness:
         """
         array, pixel_type, num_bands, num_rows, num_cols = image_tuple
         block_height, block_width = block_size
-        
+
         # Ensure block size doesn't exceed image dimensions
         actual_block_height = min(block_height, num_rows)
         actual_block_width = min(block_width, num_cols)
-        
+
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
             path = Path(f.name)
-        
+
         try:
             # Create metadata for uncompressed (IC=NC) - simplest case for block access
             metadata = BufferedMetadataProvider()
             metadata.set("IC", "NC")
-            
+
             # Create image provider with specified block size
             provider = BufferedImageAssetProvider.create(
                 key="image_segment_0",
@@ -81,10 +78,10 @@ class TestBlockAccessCompleteness:
                 pixel_type=pixel_type,
                 metadata=metadata,
             )
-            
+
             # Set image data (array is in BSQ format: bands, rows, cols)
             provider.set_full_image(array)
-            
+
             # Write to NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
@@ -95,19 +92,19 @@ class TestBlockAccessCompleteness:
                 roles=["data"],
             )
             writer.close()
-            
+
             # Read back and verify block access
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image_segment_0")
-            
+
             # Get block grid dimensions from the asset
             block_grid_rows, block_grid_cols = asset.block_grid_size
             asset_block_bands, asset_block_rows, asset_block_cols = asset.block_shape
-            
+
             # Calculate expected block grid dimensions
             expected_block_grid_rows = (num_rows + actual_block_height - 1) // actual_block_height
             expected_block_grid_cols = (num_cols + actual_block_width - 1) // actual_block_width
-            
+
             # Verify block grid dimensions match expectations
             assert block_grid_rows == expected_block_grid_rows, (
                 f"Block grid rows mismatch: expected {expected_block_grid_rows}, got {block_grid_rows}"
@@ -115,21 +112,21 @@ class TestBlockAccessCompleteness:
             assert block_grid_cols == expected_block_grid_cols, (
                 f"Block grid cols mismatch: expected {expected_block_grid_cols}, got {block_grid_cols}"
             )
-            
+
             # Iterate over ALL valid block coordinates and verify access
             for block_row in range(block_grid_rows):
                 for block_col in range(block_grid_cols):
                     # Requirement 4.1: get_block SHALL return a block without error
                     block = asset.get_block(block_row, block_col, 0)
-                    
+
                     # Requirement 4.2: Verify returned block has expected shape
                     # Calculate expected block dimensions (edge blocks may be smaller)
                     start_row = block_row * asset_block_rows
                     start_col = block_col * asset_block_cols
-                    
+
                     expected_rows = min(asset_block_rows, num_rows - start_row)
                     expected_cols = min(asset_block_cols, num_cols - start_col)
-                    
+
                     # Block shape is (bands, rows, cols) in BSQ format
                     assert block.shape[0] == num_bands, (
                         f"Block ({block_row}, {block_col}) band count mismatch: "
@@ -143,16 +140,16 @@ class TestBlockAccessCompleteness:
                         f"Block ({block_row}, {block_col}) col count mismatch: "
                         f"expected {expected_cols}, got {block.shape[2]}"
                     )
-                    
+
                     # Verify dtype matches
                     expected_dtype = get_numpy_dtype(pixel_type)
                     assert block.dtype == expected_dtype, (
                         f"Block ({block_row}, {block_col}) dtype mismatch: "
                         f"expected {expected_dtype}, got {block.dtype}"
                     )
-            
+
             reader.close()
-            
+
         finally:
             if path.exists():
                 path.unlink()
@@ -161,11 +158,11 @@ class TestBlockAccessCompleteness:
 @pytest.mark.property
 class TestBlockReassembly:
     """Property tests for block reassembly roundtrip.
-    
+
     For any image, reading all blocks via get_block and reassembling them
     in order SHALL produce an array equal to the original image data.
     """
-    
+
     @given(
         image_tuple=random_image(min_size=16, max_size=128, min_bands=1, max_bands=4),
         block_size=block_sizes(),
@@ -174,7 +171,7 @@ class TestBlockReassembly:
     def test_block_reassembly_roundtrip(self, image_tuple, block_size):
         """For any image, reading all blocks via get_block and reassembling them
         in order SHALL produce an array equal to the original image data.
-        
+
         This test:
         1. Generates a random image with random dimensions, bands, and pixel type
         2. Writes it to a NITF file with a specific block size
@@ -184,19 +181,19 @@ class TestBlockReassembly:
         """
         array, pixel_type, num_bands, num_rows, num_cols = image_tuple
         block_height, block_width = block_size
-        
+
         # Ensure block size doesn't exceed image dimensions
         actual_block_height = min(block_height, num_rows)
         actual_block_width = min(block_width, num_cols)
-        
+
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
             path = Path(f.name)
-        
+
         try:
             # Create metadata for uncompressed (IC=NC) - simplest case for block access
             metadata = BufferedMetadataProvider()
             metadata.set("IC", "NC")
-            
+
             # Create image provider with specified block size
             provider = BufferedImageAssetProvider.create(
                 key="image_segment_0",
@@ -208,10 +205,10 @@ class TestBlockReassembly:
                 pixel_type=pixel_type,
                 metadata=metadata,
             )
-            
+
             # Set image data (array is in BSQ format: bands, rows, cols)
             provider.set_full_image(array)
-            
+
             # Write to NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
@@ -222,43 +219,43 @@ class TestBlockReassembly:
                 roles=["data"],
             )
             writer.close()
-            
+
             # Read back and reassemble blocks
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image_segment_0")
-            
+
             # Get block grid dimensions from the asset
             block_grid_rows, block_grid_cols = asset.block_grid_size
             asset_block_bands, asset_block_rows, asset_block_cols = asset.block_shape
-            
+
             # Get the expected dtype
             expected_dtype = get_numpy_dtype(pixel_type)
-            
+
             # Create an empty array to reassemble the blocks into
             reassembled = np.zeros((num_bands, num_rows, num_cols), dtype=expected_dtype)
-            
+
             # Read all blocks and place them in the reassembled array
             for block_row in range(block_grid_rows):
                 for block_col in range(block_grid_cols):
                     # Read the block
                     block = asset.get_block(block_row, block_col, 0)
-                    
+
                     # Calculate the position in the full image
                     start_row = block_row * asset_block_rows
                     start_col = block_col * asset_block_cols
-                    
+
                     # Get the actual block dimensions (edge blocks may be smaller)
                     block_bands, block_rows, block_cols = block.shape
-                    
+
                     # Place the block in the reassembled array
                     reassembled[
                         :block_bands,
                         start_row:start_row + block_rows,
                         start_col:start_col + block_cols
                     ] = block
-            
+
             reader.close()
-            
+
             # Verify the reassembled array equals the original
             # Requirement 4.3: Reading all blocks and reassembling them produces the original image
             assert reassembled.shape == array.shape, (
@@ -271,7 +268,7 @@ class TestBlockReassembly:
                 reassembled, array,
                 err_msg="Reassembled image does not match original"
             )
-            
+
         finally:
             if path.exists():
                 path.unlink()
@@ -280,11 +277,11 @@ class TestBlockReassembly:
 @pytest.mark.property
 class TestInvalidBlockCoordinates:
     """Property tests for invalid block coordinate error handling.
-    
+
     For any block coordinates outside the valid range, get_block SHALL raise
     an appropriate error rather than returning invalid data or crashing.
     """
-    
+
     @given(
         image_tuple=random_image(min_size=16, max_size=64, min_bands=1, max_bands=3),
         block_size=block_sizes(),
@@ -293,7 +290,7 @@ class TestInvalidBlockCoordinates:
     def test_invalid_block_coordinate_error_handling(self, image_tuple, block_size):
         """For any block coordinates outside the valid range, get_block SHALL
         raise an appropriate error rather than returning invalid data or crashing.
-        
+
         This test:
         1. Generates a random image with random dimensions, bands, and pixel type
         2. Writes it to a NITF file with a specific block size
@@ -302,19 +299,19 @@ class TestInvalidBlockCoordinates:
         """
         array, pixel_type, num_bands, num_rows, num_cols = image_tuple
         block_height, block_width = block_size
-        
+
         # Ensure block size doesn't exceed image dimensions
         actual_block_height = min(block_height, num_rows)
         actual_block_width = min(block_width, num_cols)
-        
+
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
             path = Path(f.name)
-        
+
         try:
             # Create metadata for uncompressed (IC=NC) - simplest case for block access
             metadata = BufferedMetadataProvider()
             metadata.set("IC", "NC")
-            
+
             # Create image provider with specified block size
             provider = BufferedImageAssetProvider.create(
                 key="image_segment_0",
@@ -326,10 +323,10 @@ class TestInvalidBlockCoordinates:
                 pixel_type=pixel_type,
                 metadata=metadata,
             )
-            
+
             # Set image data (array is in BSQ format: bands, rows, cols)
             provider.set_full_image(array)
-            
+
             # Write to NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
@@ -340,39 +337,39 @@ class TestInvalidBlockCoordinates:
                 roles=["data"],
             )
             writer.close()
-            
+
             # Read back and test invalid block access
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image_segment_0")
-            
+
             # Get block grid dimensions from the asset
             block_grid_rows, block_grid_cols = asset.block_grid_size
-            
+
             # Test various invalid coordinate scenarios
             # Requirement 4.4: Invalid coordinates SHALL raise appropriate error
-            
+
             # Test 1: Row index too large
             with pytest.raises(IndexError):
                 asset.get_block(block_grid_rows, 0, 0)
-            
+
             # Test 2: Column index too large
             with pytest.raises(IndexError):
                 asset.get_block(0, block_grid_cols, 0)
-            
+
             # Test 3: Both row and column too large
             with pytest.raises(IndexError):
                 asset.get_block(block_grid_rows, block_grid_cols, 0)
-            
+
             # Test 4: Very large row index
             with pytest.raises(IndexError):
                 asset.get_block(block_grid_rows + 100, 0, 0)
-            
+
             # Test 5: Very large column index
             with pytest.raises(IndexError):
                 asset.get_block(0, block_grid_cols + 100, 0)
-            
+
             reader.close()
-            
+
         finally:
             if path.exists():
                 path.unlink()
@@ -381,13 +378,13 @@ class TestInvalidBlockCoordinates:
 @pytest.mark.property
 class TestResolutionLevels:
     """Property tests for resolution level consistency.
-    
+
     For any image with multiple resolution levels, resolution level N SHALL
     have dimensions reduced by factor 2^N from level 0, and get_block at
     level N SHALL return blocks with shapes consistent with that level's
     dimensions.
     """
-    
+
     @given(
         image_tuple=random_image(min_size=64, max_size=128, min_bands=1, max_bands=3),
     )
@@ -397,7 +394,7 @@ class TestResolutionLevels:
         have dimensions reduced by factor 2^N from level 0, and get_block at
         level N SHALL return blocks with shapes consistent with that level's
         dimensions.
-        
+
         This test:
         1. Generates a random image with dimensions suitable for multi-resolution
         2. Writes it to a NITF file with J2K compression and multiple decomposition levels
@@ -408,14 +405,14 @@ class TestResolutionLevels:
            - Block shapes are consistent with the resolution level
         """
         array, pixel_type, num_bands, num_rows, num_cols = image_tuple
-        
+
         # Skip Float32 as J2K doesn't support it well
         if pixel_type == PixelType.Float32:
             return
-        
+
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
             path = Path(f.name)
-        
+
         try:
             # Calculate appropriate decomposition levels for image size
             # J2K requires image dimensions >= 2^decomposition_levels
@@ -423,21 +420,21 @@ class TestResolutionLevels:
             max_decomp_levels = max(1, int(np.floor(np.log2(min_dim))) - 1)
             # Use at least 2 decomposition levels to test multi-resolution
             decomp_levels = min(max_decomp_levels, 4)
-            
+
             if decomp_levels < 2:
                 # Image too small for meaningful multi-resolution test
                 return
-            
+
             # Create metadata for J2K lossless compression with multiple decomposition levels
             metadata = BufferedMetadataProvider()
             metadata.set("IC", "C8")  # JPEG 2000
             metadata.set("COMRAT", "N1.0")  # Lossless
             metadata.set("J2K_DECOMPOSITION_LEVELS", str(decomp_levels))
-            
+
             # Use block size equal to image size (single tile)
             block_width = num_cols
             block_height = num_rows
-            
+
             # Create image provider
             provider = BufferedImageAssetProvider.create(
                 key="image_segment_0",
@@ -449,10 +446,10 @@ class TestResolutionLevels:
                 pixel_type=pixel_type,
                 metadata=metadata,
             )
-            
+
             # Set image data (array is in BSQ format: bands, rows, cols)
             provider.set_full_image(array)
-            
+
             # Write to NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
@@ -463,21 +460,21 @@ class TestResolutionLevels:
                 roles=["data"],
             )
             writer.close()
-            
+
             # Read back and verify resolution levels
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image_segment_0")
-            
+
             # Requirement 7.1: Verify multiple resolution levels exist
             num_levels = asset.num_resolution_levels
             assert num_levels >= 2, (
                 f"Expected at least 2 resolution levels, got {num_levels}"
             )
-            
+
             # Get full resolution block (level 0) for reference
             block_level_0 = asset.get_block(0, 0, 0)
             level_0_bands, level_0_rows, level_0_cols = block_level_0.shape
-            
+
             # Requirement 7.3: Resolution level 0 always returns full-resolution data
             assert level_0_bands == num_bands, (
                 f"Level 0 band count mismatch: expected {num_bands}, got {level_0_bands}"
@@ -488,22 +485,22 @@ class TestResolutionLevels:
             assert level_0_cols == num_cols, (
                 f"Level 0 col count mismatch: expected {num_cols}, got {level_0_cols}"
             )
-            
+
             # Test each resolution level
             for level in range(1, num_levels):
                 # Check if block exists at this level
                 if not asset.has_block(0, 0, level):
                     continue
-                
+
                 # Requirement 7.1: Dimension reduction by 2^N at level N
                 scale = 1 << level  # 2^level
                 expected_rows = (num_rows + scale - 1) // scale  # Ceiling division
                 expected_cols = (num_cols + scale - 1) // scale
-                
+
                 # Get block at this resolution level
                 block_level_n = asset.get_block(0, 0, level)
                 level_n_bands, level_n_rows, level_n_cols = block_level_n.shape
-                
+
                 # Requirement 7.2: Block shapes at each level are consistent
                 assert level_n_bands == num_bands, (
                     f"Level {level} band count mismatch: expected {num_bands}, got {level_n_bands}"
@@ -516,15 +513,15 @@ class TestResolutionLevels:
                     f"Level {level} col count mismatch: expected {expected_cols}, got {level_n_cols} "
                     f"(original {num_cols}, scale {scale})"
                 )
-                
+
                 # Verify dtype is preserved
                 expected_dtype = get_numpy_dtype(pixel_type)
                 assert block_level_n.dtype == expected_dtype, (
                     f"Level {level} dtype mismatch: expected {expected_dtype}, got {block_level_n.dtype}"
                 )
-            
+
             reader.close()
-            
+
         finally:
             if path.exists():
                 path.unlink()

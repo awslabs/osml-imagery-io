@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from aws.osml.io import IO
 
 logger = logging.getLogger(__name__)

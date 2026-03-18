@@ -5,16 +5,16 @@ including lossy roundtrip quality and downsampled JPEG (I1) roundtrip.
 """
 
 import pytest
-from hypothesis import given, assume
+from hypothesis import assume, given
 
 from ..conftest import pbt_settings
-from ..strategies import (
-    jpeg_image_for_compression,
-    jpeg_i1_image,
-)
 from ..helpers import (
-    write_and_read_jbp,
     assert_lossy_quality,
+    write_and_read_jbp,
+)
+from ..strategies import (
+    jpeg_i1_image,
+    jpeg_image_for_compression,
 )
 
 

@@ -18,11 +18,17 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from aws.osml.io import (
+    IO,
+    AssetProvider,
+    AssetType,
+    BufferedImageAssetProvider,
+    BufferedMetadataProvider,
+    PixelType,
+)
 from hypothesis import given
 from hypothesis import strategies as st
 from PIL import Image
-
-from aws.osml.io import IO, AssetType, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 
 from ..conftest import pbt_settings
 from ..strategies import get_numpy_dtype, tiff_image_config
@@ -346,7 +352,7 @@ class TestTiffPerIFDMetadata:
     def test_stripped_per_ifd_metadata(self, config):
         """Stripped TIFF per-IFD metadata matches the written configuration."""
         pixel_type = config["pixel_type"]
-        width, height, bands = config["width"], config["height"], config["bands"]
+        width, height, _bands = config["width"], config["height"], config["bands"]
         dtype = get_numpy_dtype(pixel_type)
 
         # Expected BitsPerSample from dtype
@@ -549,8 +555,6 @@ class TestTiffCustomTagCoexistence:
 # =============================================================================
 # Non-image asset rejection
 # =============================================================================
-
-from aws.osml.io import AssetProvider
 
 
 @pytest.mark.property
