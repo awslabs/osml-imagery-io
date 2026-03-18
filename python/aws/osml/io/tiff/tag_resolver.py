@@ -1,4 +1,4 @@
-"""Tag name resolver for TIFF metadata dictionaries.
+"""Tag name resolver for TIFF / GeoTIFF metadata dictionaries.
 
 Provides convenient name-based access to TIFF tag values stored under
 numeric string keys in a Tag_Dictionary.
@@ -14,6 +14,10 @@ class TagNameResolver:
 
     Wraps a Tag_Dictionary (from MetadataProvider.as_dict()) and provides
     lookup by human-readable tag name via a configurable name-to-number mapping.
+
+    Keys that are not present in the mapping are passed through unchanged,
+    mirroring the behaviour of :meth:`__iter__` which exposes unmapped keys
+    directly.
 
     Example::
 
@@ -105,19 +109,33 @@ class TagNameResolver:
         if custom_mapping:
             self._mapping.update(custom_mapping)
 
+    def _resolve_key(self, name: str) -> str:
+        """Return the numeric string key for *name*.
+
+        If *name* is in the mapping it is resolved to ``str(tag_number)``.
+        Otherwise *name* is returned unchanged so that unmapped keys pass
+        through transparently.
+        """
+        if name in self._mapping:
+            return str(self._mapping[name])
+        return name
+
     def __getitem__(self, name: str) -> Any:
         """Look up a tag value by human-readable name.
 
+        If *name* is in the mapping it is resolved to the corresponding
+        numeric key.  Otherwise *name* is used directly as the dictionary
+        key, allowing unmapped keys to pass through.
+
         Raises:
-            KeyError: If the name is not in the mapping or the tag is not
-                present in the underlying dictionary.
+            KeyError: If the resolved key is not present in the underlying
+                dictionary.
         """
-        if name not in self._mapping:
-            raise KeyError(f"Unknown tag name: {name!r}")
-        tag_num = self._mapping[name]
-        key = str(tag_num)
+        key = self._resolve_key(name)
         if key not in self._tag_dict:
-            raise KeyError(f"Tag {name!r} ({tag_num}) not present in metadata")
+            if name in self._mapping:
+                raise KeyError(f"Tag {name!r} ({self._mapping[name]}) not present in metadata")
+            raise KeyError(name)
         return self._tag_dict[key]
 
     def get(self, name: str, default: Any = None) -> Any:
@@ -155,9 +173,26 @@ class TagNameResolver:
     def __contains__(self, name: str) -> bool:
         """Check if a tag name is present in the metadata.
 
-        Returns ``True`` only when *name* exists in the mapping **and** the
-        corresponding numeric key exists in the underlying dictionary.
+        Returns ``True`` when the resolved key exists in the underlying
+        dictionary.  For mapped names this checks the numeric key; for
+        unmapped names the raw key is checked directly.
         """
-        if name not in self._mapping:
-            return False
-        return str(self._mapping[name]) in self._tag_dict
+        key = self._resolve_key(name)
+        return key in self._tag_dict
+
+    def __setitem__(self, name: str, value: Any) -> None:
+        """Set a tag value by human-readable name.
+
+        If *name* is in the mapping it is resolved to the corresponding
+        numeric key.  Otherwise *name* is used directly as the dictionary
+        key, allowing unmapped keys to pass through.
+        """
+        key = self._resolve_key(name)
+        self._tag_dict[key] = value
+
+    def set(self, name: str, value: Any) -> None:
+        """Set a tag value by name.
+
+        Convenience wrapper around ``__setitem__``.
+        """
+        self[name] = value

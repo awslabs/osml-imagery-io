@@ -296,22 +296,24 @@ class TestMetadata:
         assert set(meta.keys()) == {"ByteOrder", "NumberOfDirectories", "NumberOfImageSegments"}
 
     def test_image_metadata(self):
-        """Per-image metadata contains standard TIFF tags."""
+        """Per-image metadata contains standard TIFF tags (numeric keys)."""
         skip_if_missing(SMALL_TIF)
         reader = IO.open([str(SMALL_TIF)], "r")
         asset = reader.get_asset("image_segment_0")
         meta = asset.get_metadata().as_dict()
 
-        assert meta["ImageWidth"] == 1024
-        assert meta["ImageLength"] == 1024
-        assert meta["BitsPerSample"] == 8
-        assert meta["SamplesPerPixel"] == 1
-        assert meta["Compression"] == 8  # Deflate
-        assert meta["PhotometricInterpretation"] == 1  # MinIsBlack
-        assert meta["PlanarConfiguration"] == 1  # Chunky
-        assert meta["SampleFormat"] == 1  # UInt
-        assert meta["TileWidth"] == 256
-        assert meta["TileLength"] == 256
+        # The reader returns numeric tag IDs as string keys.
+        # Use TagNameResolver for human-readable access if needed.
+        assert meta["256"] == 1024       # ImageWidth
+        assert meta["257"] == 1024       # ImageLength
+        assert meta["258"] == 8          # BitsPerSample
+        assert meta["277"] == 1          # SamplesPerPixel
+        assert meta["259"] == 8          # Compression (Deflate)
+        assert meta["262"] == 1          # PhotometricInterpretation (MinIsBlack)
+        assert meta["284"] == 1          # PlanarConfiguration (Chunky)
+        assert meta["339"] == 1          # SampleFormat (UInt)
+        assert meta["322"] == 256        # TileWidth
+        assert meta["323"] == 256        # TileLength
 
     def test_tiff_section_matches_default(self):
         """as_dict('tiff') returns standard TIFF fields only (no Geo-prefixed keys)."""

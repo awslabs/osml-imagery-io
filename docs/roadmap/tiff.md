@@ -114,9 +114,10 @@ src/tiff/
 **Scope**:
 - `writer.rs` — `TIFFDatasetWriter` implementing `DatasetWriter`:
   - Writes to an in-memory buffer via `TIFFClientOpen` with memory write callbacks, then flushes to disk on `close()` (same pattern as JBP writer — the format implementation produces bytes, the IO layer writes them)
-  - Reads encoding hints from `BufferedMetadataProvider`:
-    - `"TileWidth"` / `"TileHeight"` — tile dimensions (default 256×256)
-    - `"Compression"` — `"None"`, `"LZW"`, `"Deflate"` (default `"Deflate"`)
+  - Reads encoding hints from `BufferedMetadataProvider` using numeric TIFF tag IDs:
+    - `"322"` / `"323"` — tile dimensions (TileWidth / TileLength, default 256×256)
+    - `"259"` — compression (`"None"`, `"LZW"`, `"Deflate"`, default `"Deflate"`)
+    - Use `TagNameResolver` for human-readable name-to-number conversion
   - Writes image data tile-by-tile via `TIFFWriteEncodedTile()`
   - Sets standard TIFF tags from image properties (dimensions, bands, bit depth, sample format)
   - Handles band-sequential to chunky/planar conversion based on `PlanarConfiguration`
@@ -131,6 +132,17 @@ src/tiff/
 | `TileWidth` | Tile width in pixels | `256`, `512` (default: 256) |
 | `TileHeight` | Tile height in pixels | `256`, `512` (default: 256) |
 | `Predictor` | Compression predictor | `None`, `Horizontal` (default for LZW/Deflate) |
+
+Encoding hints use numeric TIFF tag IDs as keys (e.g. `"259"` for Compression, `"322"` for TileWidth).
+Use `TagNameResolver` to convert human-readable names to numeric keys:
+
+```python
+from aws.osml.io.tiff import TagNameResolver
+tag_dict = metadata.as_dict()
+resolver = TagNameResolver(tag_dict)
+resolver["TileWidth"] = "256"       # stores under key "322"
+resolver["Compression"] = "Deflate" # stores under key "259"
+```
 
 **Tasks**:
 - [ ] Create `src/tiff/writer.rs` with `TIFFDatasetWriter`

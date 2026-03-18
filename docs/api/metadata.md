@@ -57,7 +57,7 @@ below.
 ## TagNameResolver
 
 ```{eval-rst}
-.. autoclass:: aws.osml.io.TagNameResolver
+.. autoclass:: aws.osml.io.tiff.TagNameResolver
    :members:
    :undoc-members:
    :show-inheritance:
@@ -69,7 +69,8 @@ tag names to their numeric keys. It ships with a default mapping covering
 baseline TIFF 6.0 tags, GeoTIFF tags, and common GDAL tags.
 
 ```python
-from aws.osml.io import IO, TagNameResolver
+from aws.osml.io import IO
+from aws.osml.io.tiff import TagNameResolver
 
 with IO.open(["image.tif"], "r") as dataset:
     meta = dataset.metadata.as_dict()

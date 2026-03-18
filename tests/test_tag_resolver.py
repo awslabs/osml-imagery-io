@@ -1,12 +1,13 @@
 """Unit tests for TagNameResolver.
 
 Tests cover default mappings, custom mappings, name-based lookup,
-numeric access, error handling, iteration, and containment checks.
+numeric access, error handling, iteration, containment checks,
+and pass-through behaviour for unmapped keys.
 """
 
 import pytest
 
-from aws.osml.io import TagNameResolver
+from aws.osml.io.tiff import TagNameResolver
 
 
 # Sample Tag_Dictionary mimicking TIFFMetadataProvider output
@@ -72,11 +73,11 @@ class TestNameLookup:
 
 
 class TestMissingNameError:
-    """Test that missing names raise KeyError with descriptive messages."""
+    """Test that missing/absent tags raise KeyError with descriptive messages."""
 
-    def test_unknown_name_raises_key_error(self):
+    def test_unmapped_name_absent_raises_key_error(self):
         resolver = TagNameResolver(SAMPLE_TAG_DICT)
-        with pytest.raises(KeyError, match="Unknown tag name"):
+        with pytest.raises(KeyError):
             resolver["CompletelyFakeTag"]
 
     def test_known_name_absent_tag_raises_key_error(self):
@@ -85,10 +86,10 @@ class TestMissingNameError:
         with pytest.raises(KeyError, match="not present in metadata"):
             resolver["Predictor"]
 
-    def test_unknown_name_error_includes_name(self):
-        resolver = TagNameResolver(SAMPLE_TAG_DICT)
-        with pytest.raises(KeyError, match="'NoSuchTag'"):
-            resolver["NoSuchTag"]
+    def test_unmapped_name_passes_through_when_present(self):
+        tag_dict = {"my_raw_key": 42}
+        resolver = TagNameResolver(tag_dict)
+        assert resolver["my_raw_key"] == 42
 
 
 class TestCustomMapping:
@@ -152,7 +153,13 @@ class TestGetWithDefault:
 
     def test_get_unknown_name_returns_default(self):
         resolver = TagNameResolver(SAMPLE_TAG_DICT)
+        # Unmapped name not present in dict → returns default
         assert resolver.get("TotallyFake", default="fallback") == "fallback"
+
+    def test_get_unmapped_name_present_in_dict(self):
+        tag_dict = {"raw_key": "hello"}
+        resolver = TagNameResolver(tag_dict)
+        assert resolver.get("raw_key") == "hello"
 
 
 class TestContains:
@@ -170,7 +177,13 @@ class TestContains:
 
     def test_contains_unknown_name(self):
         resolver = TagNameResolver(SAMPLE_TAG_DICT)
+        # Unmapped name not in dict → False
         assert "NoSuchTag" not in resolver
+
+    def test_contains_unmapped_name_present_in_dict(self):
+        tag_dict = {"raw_key": "val"}
+        resolver = TagNameResolver(tag_dict)
+        assert "raw_key" in resolver
 
     def test_contains_custom_mapping(self):
         custom = {"MyTag": 50000}
@@ -225,3 +238,67 @@ class TestIteration:
     def test_len_empty(self):
         resolver = TagNameResolver({})
         assert len(resolver) == 0
+
+
+class TestSetItem:
+    """Test __setitem__ and set() for writing values by name."""
+
+    def test_setitem_stores_under_numeric_key(self):
+        tag_dict = {}
+        resolver = TagNameResolver(tag_dict)
+        resolver["TileWidth"] = 512
+        # TileWidth maps to tag 322
+        assert tag_dict["322"] == 512
+
+    def test_setitem_overwrites_existing(self):
+        tag_dict = {"259": 1}
+        resolver = TagNameResolver(tag_dict)
+        resolver["Compression"] = "Deflate"
+        assert tag_dict["259"] == "Deflate"
+
+    def test_setitem_unknown_name_passes_through(self):
+        tag_dict = {}
+        resolver = TagNameResolver(tag_dict)
+        resolver["CompletelyFakeTag"] = 42
+        assert tag_dict["CompletelyFakeTag"] == 42
+
+    def test_set_method_stores_under_numeric_key(self):
+        tag_dict = {}
+        resolver = TagNameResolver(tag_dict)
+        resolver.set("TileLength", 256)
+        # TileLength maps to tag 323
+        assert tag_dict["323"] == 256
+
+    def test_set_method_unknown_name_passes_through(self):
+        tag_dict = {}
+        resolver = TagNameResolver(tag_dict)
+        resolver.set("NoSuchTag", "value")
+        assert tag_dict["NoSuchTag"] == "value"
+
+    def test_setitem_then_getitem_roundtrip(self):
+        tag_dict = {}
+        resolver = TagNameResolver(tag_dict)
+        resolver["ImageWidth"] = 1024
+        assert resolver["ImageWidth"] == 1024
+
+    def test_setitem_with_custom_mapping(self):
+        custom = {"MyTag": 50000}
+        tag_dict = {}
+        resolver = TagNameResolver(tag_dict, custom_mapping=custom)
+        resolver["MyTag"] = "custom_value"
+        assert tag_dict["50000"] == "custom_value"
+        assert resolver["MyTag"] == "custom_value"
+
+    def test_setitem_visible_in_contains(self):
+        tag_dict = {}
+        resolver = TagNameResolver(tag_dict)
+        assert "TileWidth" not in resolver
+        resolver["TileWidth"] = 256
+        assert "TileWidth" in resolver
+
+    def test_setitem_visible_in_iteration(self):
+        tag_dict = {}
+        resolver = TagNameResolver(tag_dict)
+        resolver["Compression"] = "LZW"
+        items = dict(resolver)
+        assert items["Compression"] == "LZW"

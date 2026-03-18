@@ -547,15 +547,23 @@ class ImageWriter:
             if config.compression == "C8" and config.comrat:
                 metadata.set("COMRAT", config.comrat)
         
-        # TIFF-specific metadata (tile dimensions must match the provider's block grid)
+        # TIFF-specific metadata: use TagNameResolver to convert human-readable
+        # tag names to the numeric string keys the writer expects.
         if config.io_format == "tiff":
-            metadata.set("TileWidth", str(config.tile_width))
-            metadata.set("TileHeight", str(config.tile_height))
-            # Map compression CLI value to the TiffEncodingHints value.
-            # Default is "none" because macOS Preview cannot render tiled
+            from aws.osml.io.tiff import TagNameResolver
+            
+            tag_dict = metadata.as_dict()
+            resolver = TagNameResolver(tag_dict)
+            resolver["TileWidth"] = str(config.tile_width)
+            resolver["TileLength"] = str(config.tile_height)
+            # Map compression CLI value to the writer's expected string values.
+            # Default is "None" because macOS Preview cannot render tiled
             # TIFFs with Deflate compression.
             tiff_compression_map = {"none": "None", "lzw": "LZW", "deflate": "Deflate"}
-            metadata.set("Compression", tiff_compression_map[config.compression])
+            resolver["Compression"] = tiff_compression_map[config.compression]
+            # Write resolved numeric keys back into the metadata provider
+            for key, value in tag_dict.items():
+                metadata.set(key, str(value) if not isinstance(value, str) else value)
         
         # Build description string
         if config.io_format == "nitf":

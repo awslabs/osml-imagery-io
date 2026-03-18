@@ -1205,14 +1205,17 @@ def tiff_writer_compression() -> st.SearchStrategy[str]:
 def tiff_encoding_hints(draw) -> dict:
     """Strategy generating TIFF encoding hint key-value pairs.
 
-    Produces a dict with keys matching BufferedMetadataProvider hint names:
-    TileWidth, TileHeight, Compression, Predictor, PlanarConfiguration.
+    Produces a dict with numeric TIFF tag IDs as keys (matching the TIFF 6.0
+    specification) suitable for passing to ``BufferedMetadataProvider.set()``.
+
+    Keys: "322" (TileWidth), "323" (TileLength), "259" (Compression),
+    "317" (Predictor), "284" (PlanarConfiguration).
 
     The predictor is chosen consistently with the compression: Horizontal
     is only meaningful for LZW/Deflate; None is always valid.
 
     Returns:
-        Dict of hint name → string value.
+        Dict of numeric tag ID string → string value.
     """
     tile_w = draw(st.sampled_from(TIFF_TILE_SIZES))
     tile_h = draw(st.sampled_from(TIFF_TILE_SIZES))
@@ -1225,11 +1228,11 @@ def tiff_encoding_hints(draw) -> dict:
         predictor = draw(st.sampled_from(TIFF_WRITER_PREDICTORS))
 
     return {
-        "TileWidth": str(tile_w),
-        "TileHeight": str(tile_h),
-        "Compression": compression,
-        "Predictor": predictor,
-        "PlanarConfiguration": planar,
+        "322": str(tile_w),       # TileWidth
+        "323": str(tile_h),       # TileLength
+        "259": compression,       # Compression
+        "317": predictor,         # Predictor
+        "284": planar,            # PlanarConfiguration
     }
 
 
@@ -1337,37 +1340,60 @@ def transformation_matrix() -> st.SearchStrategy[list]:
 def geotiff_metadata(draw) -> dict:
     """Composite strategy for valid GeoTIFF encoding hint dictionaries.
 
-    Generates a random combination of GeoTIFF metadata fields suitable for
-    passing to BufferedMetadataProvider via set/set_json. The dict uses the
-    same key names the writer expects (GeoModelType, GeoProjectedCRS, etc.).
+    Generates raw numeric GeoTIFF tags suitable for passing to
+    BufferedMetadataProvider via set_json. The dict uses numeric tag ID
+    string keys that the writer's build_geokey_directory() expects:
 
-    Always includes GeoModelType and the matching CRS key. Optionally includes
-    GeoRasterType, GeoPixelScale, and GeoTiepoints. GeoTransformation is
-    mutually exclusive with GeoPixelScale+GeoTiepoints (per GeoTIFF spec).
+    - "34735" — GeoKeyDirectory (u16 array)
+    - "33550" — ModelPixelScale (3 doubles, optional)
+    - "33922" — ModelTiepoint (flat array of 6-tuples, optional)
+    - "34264" — ModelTransformation (16 doubles, optional)
+
+    Always includes a GeoKeyDirectory with GTModelTypeGeoKey (1024) and
+    the matching CRS key. Optionally includes GTRasterTypeGeoKey (1025).
     """
-    hints = {}
+    # GeoKey constants
+    MODEL_TYPE_PROJECTED = 1
+    MODEL_TYPE_GEOGRAPHIC = 2
+    RASTER_PIXEL_IS_AREA = 1
+    RASTER_PIXEL_IS_POINT = 2
+
+    # Build GeoKey directory entries: [key_id, tiff_tag_location, count, value]
+    geokeys = []
 
     # Always include model type
-    model_type = draw(geotiff_model_type())
-    hints["GeoModelType"] = model_type
+    is_projected = draw(st.booleans())
+    model_type_val = MODEL_TYPE_PROJECTED if is_projected else MODEL_TYPE_GEOGRAPHIC
+    geokeys.append([1024, 0, 1, model_type_val])
 
     # CRS key depends on model type
     epsg = draw(epsg_codes())
-    if model_type == "Projected":
-        hints["GeoProjectedCRS"] = epsg
+    if is_projected:
+        geokeys.append([3072, 0, 1, epsg])  # ProjectedCSTypeGeoKey
     else:
-        hints["GeoGeographicCRS"] = epsg
+        geokeys.append([2048, 0, 1, epsg])  # GeographicTypeGeoKey
 
     # Optionally include raster type
     if draw(st.booleans()):
-        hints["GeoRasterType"] = draw(geotiff_raster_type())
+        raster_val = draw(st.sampled_from([RASTER_PIXEL_IS_AREA, RASTER_PIXEL_IS_POINT]))
+        geokeys.append([1025, 0, 1, raster_val])
+
+    # Build the directory array: [version, revision, minor_revision, num_keys, ...entries]
+    num_keys = len(geokeys)
+    directory = [1, 1, 0, num_keys]
+    for entry in geokeys:
+        directory.extend(entry)
+
+    hints = {"34735": directory}
 
     # Transformation tags: either PixelScale+Tiepoints or Transformation matrix
     use_transform = draw(st.sampled_from(["scale_tiepoints", "matrix", "none"]))
     if use_transform == "scale_tiepoints":
-        hints["GeoPixelScale"] = draw(pixel_scale())
-        hints["GeoTiepoints"] = draw(tiepoint_tuples())
+        hints["33550"] = draw(pixel_scale())
+        # Flatten tiepoint tuples into a single array
+        tp_tuples = draw(tiepoint_tuples())
+        hints["33922"] = [v for tp in tp_tuples for v in tp]
     elif use_transform == "matrix":
-        hints["GeoTransformation"] = draw(transformation_matrix())
+        hints["34264"] = draw(transformation_matrix())
 
     return hints

@@ -151,7 +151,8 @@ If you prefer human-readable tag names, wrap the dictionary with
 corresponding numeric key (`"256"`) behind the scenes.
 
 ```python
-from aws.osml.io import IO, TagNameResolver
+from aws.osml.io import IO
+from aws.osml.io.tiff import TagNameResolver
 
 with IO.open(["image.tif"], "r") as dataset:
     meta = dataset.metadata.as_dict()

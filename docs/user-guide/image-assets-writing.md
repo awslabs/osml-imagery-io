@@ -76,22 +76,28 @@ filtered = metadata.as_dict("NPP")  # {"NPPBH": "256", "NPPBV": "256"}
 
 Create a `BufferedImageAssetProvider` with tiled assets and a `BufferedMetadataProvider`
 with encoding hints, then write through the `IO` interface. This example shows a
-GeoTIFF workflow with Deflate compression and UTM georeferencing. The metadata field
-names come from the TIFF 6.0 and OGC GeoTIFF 1.1 specifications — `Compression`,
-`TileWidth`, `TileHeight` are standard TIFF tags, while `GeoModelType`,
+GeoTIFF workflow with Deflate compression and UTM georeferencing. The TIFF writer
+expects numeric tag IDs as metadata keys (per the TIFF 6.0 specification). Use
+`TagNameResolver` for convenient name-based access. `GeoModelType`,
 `GeoRasterType`, `GeoProjectedCRS`, `GeoPixelScale`, and `GeoTiepoints` are derived
 from GeoTIFF GeoKeys and coordinate transformation tags:
 
 ```python
 from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
+from aws.osml.io.tiff import TagNameResolver
 import numpy as np
 
-# Set up TIFF encoding hints and GeoTIFF metadata
+# Set up TIFF encoding hints using TagNameResolver for readable names
 metadata = BufferedMetadataProvider()
-metadata.set("Compression", "Deflate")   # Deflate compression (LZW, None also supported)
-metadata.set("TileWidth", "256")         # 256-pixel tile width
-metadata.set("TileHeight", "256")        # 256-pixel tile height
-metadata.set("Predictor", "Horizontal")  # Horizontal differencing predictor
+tag_dict = metadata.as_dict()
+resolver = TagNameResolver(tag_dict)
+resolver["Compression"] = "Deflate"      # Tag 259: Deflate compression (LZW, None also supported)
+resolver["TileWidth"] = "256"            # Tag 322: 256-pixel tile width
+resolver["TileLength"] = "256"           # Tag 323: 256-pixel tile height
+resolver["Predictor"] = "Horizontal"     # Tag 317: Horizontal differencing predictor
+# Write resolved numeric keys back into the metadata provider
+for key, value in tag_dict.items():
+    metadata.set(key, str(value) if not isinstance(value, str) else value)
 
 # GeoTIFF coordinate reference system (EPSG:32618 = WGS 84 / UTM zone 18N)
 metadata.set("GeoModelType", "Projected")
@@ -351,10 +357,16 @@ These control the georeferencing of the image:
 
 ```python
 # Deflate-compressed GeoTIFF with UTM Zone 18N georeferencing
+from aws.osml.io.tiff import TagNameResolver
+
 metadata = BufferedMetadataProvider()
-metadata.set("Compression", "Deflate")
-metadata.set("TileWidth", "256")
-metadata.set("TileHeight", "256")
+tag_dict = metadata.as_dict()
+resolver = TagNameResolver(tag_dict)
+resolver["Compression"] = "Deflate"   # Tag 259
+resolver["TileWidth"] = "256"         # Tag 322
+resolver["TileLength"] = "256"        # Tag 323
+for key, value in tag_dict.items():
+    metadata.set(key, str(value) if not isinstance(value, str) else value)
 metadata.set("GeoModelType", "Projected")
 metadata.set("GeoRasterType", "PixelIsArea")
 metadata.set("GeoProjectedCRS", "32618")

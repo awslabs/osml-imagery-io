@@ -47,15 +47,16 @@ def _write_geotiff(path, hints):
 
     Creates a small 64x64 single-band UInt8 image with the GeoTIFF
     encoding hints applied via BufferedMetadataProvider.set_json.
+    All keys are raw numeric tag IDs (e.g. "34735", "33550").
     """
     metadata = BufferedMetadataProvider()
 
-    # TIFF encoding hints (tile layout)
-    metadata.set("TileWidth", "64")
-    metadata.set("TileHeight", "64")
-    metadata.set("Compression", "None")
+    # TIFF encoding hints (tile layout) — use numeric tag IDs
+    metadata.set("322", "64")    # TileWidth
+    metadata.set("323", "64")    # TileLength
+    metadata.set("259", "None")  # Compression
 
-    # GeoTIFF encoding hints
+    # GeoTIFF encoding hints (raw numeric tags)
     for key, value in hints.items():
         if isinstance(value, str):
             metadata.set(key, value)
@@ -89,15 +90,20 @@ def _write_geotiff(path, hints):
     writer.close()
 
 
-def _read_geo_metadata(path):
-    """Read back Geo-prefixed metadata from a TIFF file.
+# GeoTIFF numeric tag IDs used for read-back verification
+_GEOTIFF_TAGS = {"34735", "34736", "34737", "33550", "33922", "34264"}
 
-    Returns a dict of only the Geo-prefixed metadata fields from the
-    first image segment.
+
+def _read_geo_metadata(path):
+    """Read back GeoTIFF metadata from a TIFF file.
+
+    Returns a dict of only the GeoTIFF-related numeric tag entries from
+    the first image segment.
     """
     reader = IO.open([str(path)], "r")
     asset = reader.get_asset("image_segment_0")
-    return asset.get_metadata().as_dict("Geo")
+    full = asset.get_metadata().as_dict()
+    return {k: v for k, v in full.items() if k in _GEOTIFF_TAGS}
 
 
 # =============================================================================
@@ -109,9 +115,9 @@ def _read_geo_metadata(path):
 class TestGeoTiffMetadataRoundtrip:
     """GeoTIFF metadata write-read round-trip.
 
-    For any valid combination of GeoTIFF metadata fields, writing a GeoTIFF
-    via TIFFDatasetWriter with those fields as encoding hints and reading it
-    back via TIFFDatasetReader produces metadata fields with identical values.
+    For any valid combination of raw GeoTIFF tags, writing a GeoTIFF
+    via TIFFDatasetWriter and reading it back via TIFFDatasetReader
+    produces tag values identical to the input.
     """
 
     @given(geotiff_metadata())
@@ -124,23 +130,16 @@ class TestGeoTiffMetadataRoundtrip:
             _write_geotiff(path, hints)
             geo = _read_geo_metadata(path)
 
-            # Every Geo-prefixed hint should appear in the read-back metadata
+            # Every hint tag should appear in the read-back metadata
             for key, expected in hints.items():
-                assert key in geo, f"Missing key {key!r} in read-back metadata"
+                assert key in geo, f"Missing tag {key!r} in read-back metadata"
                 actual = geo[key]
                 normalized = _normalize_json_value(expected)
                 assert actual == normalized, (
-                    f"Mismatch for {key!r}: expected {normalized!r}, got {actual!r}"
-                )
-
-            # All read-back keys should be Geo-prefixed
-            for key in geo:
-                assert key.startswith("Geo"), (
-                    f"Non-Geo key {key!r} in Geo-filtered metadata"
+                    f"Mismatch for tag {key!r}: expected {normalized!r}, got {actual!r}"
                 )
         finally:
             path.unlink(missing_ok=True)
-
 
 
 # =============================================================================

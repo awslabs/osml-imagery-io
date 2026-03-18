@@ -177,8 +177,8 @@ def write_and_read_tiff(
         for k, v in hints.items():
             metadata.set(k, v)
 
-        tile_w = int(hints.get("TileWidth", "256"))
-        tile_h = int(hints.get("TileHeight", "256"))
+        tile_w = int(hints.get("322", "256"))   # TileWidth
+        tile_h = int(hints.get("323", "256"))   # TileLength
 
         provider = BufferedImageAssetProvider.create(
             key="image_segment_0",

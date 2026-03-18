@@ -46,8 +46,8 @@ def _write_tiff(path, array, pixel_type, num_bands, num_rows, num_cols, hints):
     for k, v in hints.items():
         metadata.set(k, v)
 
-    tile_w = int(hints.get("TileWidth", "256"))
-    tile_h = int(hints.get("TileHeight", "256"))
+    tile_w = int(hints.get("322", "256"))   # TileWidth
+    tile_h = int(hints.get("323", "256"))   # TileLength
 
     provider = BufferedImageAssetProvider.create(
         key="image_segment_0",
@@ -125,17 +125,18 @@ class TestTiffMetadataRoundtrip:
             expected_photo = 2 if num_bands >= 3 else 1
             assert meta["262"] == expected_photo
 
-            assert meta["259"] == _COMPRESSION_TAG[hints["Compression"]]
+            assert meta["259"] == _COMPRESSION_TAG[hints["259"]]
 
-            tile_w = int(hints["TileWidth"])
-            tile_h = int(hints["TileHeight"])
-            assert meta["322"] == tile_w
-            assert meta["323"] == tile_h
+            # Tile dimensions are passed through to libtiff as-is (they are
+            # already multiples of 16 from the encoding hints strategy).
+            # They may exceed image dimensions — libtiff stores them verbatim.
+            assert meta["322"] == int(hints["322"])
+            assert meta["323"] == int(hints["323"])
 
-            if hints["Predictor"] == "Horizontal" and hints["Compression"] != "None":
-                assert meta.get("317") == _PREDICTOR_TAG[hints["Predictor"]]
+            if hints["317"] == "Horizontal" and hints["259"] != "None":
+                assert meta.get("317") == _PREDICTOR_TAG[hints["317"]]
 
-            assert meta["284"] == _PLANAR_TAG[hints["PlanarConfiguration"]]
+            assert meta["284"] == _PLANAR_TAG[hints["284"]]
         finally:
             path.unlink(missing_ok=True)
 
@@ -151,10 +152,10 @@ CUSTOM_TAG_MAX = 65499
 def _write_tiff_with_metadata(path, metadata_dict):
     """Write a minimal 16x16 TIFF with the given metadata tags."""
     meta = BufferedMetadataProvider()
-    meta.set("TileWidth", "256")
-    meta.set("TileHeight", "256")
-    meta.set("Compression", "None")
-    meta.set("PlanarConfiguration", "Chunky")
+    meta.set("322", "256")   # TileWidth
+    meta.set("323", "256")   # TileLength
+    meta.set("259", "None")  # Compression
+    meta.set("284", "Chunky")  # PlanarConfiguration
 
     for k, v in metadata_dict.items():
         meta.set_json(k, v)

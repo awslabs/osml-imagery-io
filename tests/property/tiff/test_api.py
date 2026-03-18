@@ -397,10 +397,10 @@ _CUSTOM_TAG_MAX = 65499
 def _write_tiff_with_metadata(path, metadata_dict):
     """Write a minimal 16x16 TIFF with the given metadata tags."""
     meta = BufferedMetadataProvider()
-    meta.set("TileWidth", "256")
-    meta.set("TileHeight", "256")
-    meta.set("Compression", "None")
-    meta.set("PlanarConfiguration", "Chunky")
+    meta.set("322", "256")   # TileWidth
+    meta.set("323", "256")   # TileLength
+    meta.set("259", "None")  # Compression
+    meta.set("284", "Chunky")  # PlanarConfiguration
 
     for k, v in metadata_dict.items():
         meta.set_json(k, v)

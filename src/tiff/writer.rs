@@ -36,6 +36,10 @@ struct TiffEncodingHints {
     compression: u16,
     predictor: u16,
     planar_config: u16,
+    /// Whether tile_width was explicitly set via metadata (tag 322).
+    tile_width_explicit: bool,
+    /// Whether tile_height was explicitly set via metadata (tag 323).
+    tile_height_explicit: bool,
 }
 
 impl Default for TiffEncodingHints {
@@ -46,29 +50,48 @@ impl Default for TiffEncodingHints {
             compression: tags::COMPRESSION_DEFLATE,
             predictor: 2, // Horizontal predictor for Deflate
             planar_config: tags::PLANAR_CONFIG_CONTIG,
+            tile_width_explicit: false,
+            tile_height_explicit: false,
         }
     }
 }
 
 impl TiffEncodingHints {
     /// Parse encoding hints from a `MetadataProvider`.
+    ///
+    /// Metadata keys must be numeric TIFF tag IDs (as strings), matching the
+    /// TIFF 6.0 specification. Human-readable names like "TileWidth" are
+    /// ignored — use the Python `TagNameResolver` to convert names to numeric
+    /// keys before passing metadata to the writer.
+    ///
+    /// Recognized tags:
+    /// - `"322"` (TileWidth) — tile width in pixels
+    /// - `"323"` (TileLength) — tile height in pixels
+    /// - `"259"` (Compression) — compression scheme: `"None"`, `"LZW"`, or `"Deflate"`
+    /// - `"317"` (Predictor) — predictor: `"None"` or `"Horizontal"`
+    /// - `"284"` (PlanarConfiguration) — `"Chunky"` or `"Planar"`
     fn from_metadata(metadata: &dyn MetadataProvider) -> Result<Self, CodecError> {
         let dict = metadata.as_dict(None);
         let mut hints = TiffEncodingHints::default();
 
-        // Parse TileWidth
-        if let Some(val) = dict.get("TileWidth") {
-            hints.tile_width = parse_u32_from_json(val, "TileWidth")?;
+        // Tag 322: TileWidth
+        let tile_width_key = tags::TILE_WIDTH.to_string();
+        if let Some(val) = dict.get(&tile_width_key) {
+            hints.tile_width = parse_u32_from_json(val, "TileWidth (322)")?;
+            hints.tile_width_explicit = true;
         }
 
-        // Parse TileHeight
-        if let Some(val) = dict.get("TileHeight") {
-            hints.tile_height = parse_u32_from_json(val, "TileHeight")?;
+        // Tag 323: TileLength (tile height)
+        let tile_length_key = tags::TILE_LENGTH.to_string();
+        if let Some(val) = dict.get(&tile_length_key) {
+            hints.tile_height = parse_u32_from_json(val, "TileLength (323)")?;
+            hints.tile_height_explicit = true;
         }
 
-        // Parse Compression
-        if let Some(val) = dict.get("Compression") {
-            let s = json_to_string(val, "Compression")?;
+        // Tag 259: Compression
+        let compression_key = tags::COMPRESSION.to_string();
+        if let Some(val) = dict.get(&compression_key) {
+            let s = json_to_string(val, "Compression (259)")?;
             hints.compression = match s.as_str() {
                 "None" => tags::COMPRESSION_NONE,
                 "LZW" => tags::COMPRESSION_LZW,
@@ -82,10 +105,11 @@ impl TiffEncodingHints {
             };
         }
 
-        // Parse Predictor
-        let explicit_predictor = dict.contains_key("Predictor");
-        if let Some(val) = dict.get("Predictor") {
-            let s = json_to_string(val, "Predictor")?;
+        // Tag 317: Predictor
+        let predictor_key = tags::PREDICTOR.to_string();
+        let explicit_predictor = dict.contains_key(&predictor_key);
+        if let Some(val) = dict.get(&predictor_key) {
+            let s = json_to_string(val, "Predictor (317)")?;
             hints.predictor = match s.as_str() {
                 "None" => 1,
                 "Horizontal" => 2,
@@ -106,9 +130,10 @@ impl TiffEncodingHints {
             };
         }
 
-        // Parse PlanarConfiguration
-        if let Some(val) = dict.get("PlanarConfiguration") {
-            let s = json_to_string(val, "PlanarConfiguration")?;
+        // Tag 284: PlanarConfiguration
+        let planar_key = tags::PLANAR_CONFIGURATION.to_string();
+        if let Some(val) = dict.get(&planar_key) {
+            let s = json_to_string(val, "PlanarConfiguration (284)")?;
             hints.planar_config = match s.as_str() {
                 "Chunky" => tags::PLANAR_CONFIG_CONTIG,
                 "Planar" => tags::PLANAR_CONFIG_SEPARATE,
@@ -122,6 +147,23 @@ impl TiffEncodingHints {
         }
 
         Ok(hints)
+    }
+
+    /// Apply provider block dimensions as defaults for tile size.
+    ///
+    /// If the metadata did not explicitly specify tile dimensions, use the
+    /// provider's block_width/block_height instead. This mirrors how the JBP
+    /// writer uses NPPBH/NPPBV from the provider as defaults.
+    ///
+    /// Provider block dimensions are rounded up to the nearest multiple of 16
+    /// because the TIFF spec requires tile dimensions to be multiples of 16.
+    fn apply_provider_defaults(&mut self, block_width: u32, block_height: u32) {
+        if !self.tile_width_explicit && block_width > 0 {
+            self.tile_width = (block_width + 15) & !15;
+        }
+        if !self.tile_height_explicit && block_height > 0 {
+            self.tile_height = (block_height + 15) & !15;
+        }
     }
 }
 
@@ -636,6 +678,14 @@ impl TIFFDatasetWriter {
         let pixel_type = image.pixel_value_type();
         let bytes_per_sample = pixel_type.bytes_per_pixel() as u32;
 
+        // Use tile dimensions directly from hints. The TIFF spec requires
+        // tile dimensions to be multiples of 16, which is guaranteed by
+        // apply_provider_defaults() (rounds up) and the encoding hint
+        // strategies (64, 128, 256). Tile dimensions may exceed image
+        // dimensions — libtiff handles this correctly by padding edge tiles.
+        let tile_width = hints.tile_width;
+        let tile_height = hints.tile_height;
+
         // Set TIFF tags
         handle.set_field_u32(tags::IMAGE_WIDTH, num_cols)?;
         handle.set_field_u32(tags::IMAGE_LENGTH, num_rows)?;
@@ -646,8 +696,8 @@ impl TIFFDatasetWriter {
             tags::PHOTOMETRIC_INTERPRETATION,
             Self::photometric_interpretation(num_bands),
         )?;
-        handle.set_field_u32(tags::TILE_WIDTH, hints.tile_width)?;
-        handle.set_field_u32(tags::TILE_LENGTH, hints.tile_height)?;
+        handle.set_field_u32(tags::TILE_WIDTH, tile_width)?;
+        handle.set_field_u32(tags::TILE_LENGTH, tile_height)?;
         handle.set_field_u16(tags::COMPRESSION, hints.compression)?;
         // Only set Predictor tag for compressions that support it (LZW, Deflate).
         // libtiff rejects the Predictor tag for uncompressed images.
@@ -658,8 +708,8 @@ impl TIFFDatasetWriter {
         }
         handle.set_field_u16(tags::PLANAR_CONFIGURATION, hints.planar_config)?;
 
-        let tiles_across = (num_cols + hints.tile_width - 1) / hints.tile_width;
-        let tiles_down = (num_rows + hints.tile_height - 1) / hints.tile_height;
+        let tiles_across = (num_cols + tile_width - 1) / tile_width;
+        let tiles_down = (num_rows + tile_height - 1) / tile_height;
 
         let is_planar = hints.planar_config == tags::PLANAR_CONFIG_SEPARATE;
 
@@ -669,8 +719,8 @@ impl TIFFDatasetWriter {
                 let (block_data, shape) = image.get_block(block_row, block_col, 0, None)?;
                 let [_bands, actual_rows, actual_cols] = shape;
 
-                let needs_padding = actual_rows < hints.tile_height
-                    || actual_cols < hints.tile_width;
+                let needs_padding = actual_rows < tile_height
+                    || actual_cols < tile_width;
 
                 // Pad edge tiles if needed
                 let padded = if needs_padding {
@@ -678,8 +728,8 @@ impl TIFFDatasetWriter {
                         &block_data,
                         actual_rows,
                         actual_cols,
-                        hints.tile_height,
-                        hints.tile_width,
+                        tile_height,
+                        tile_width,
                         num_bands,
                         bytes_per_sample,
                         Self::pad_byte(image.pad_pixel_value()),
@@ -692,7 +742,7 @@ impl TIFFDatasetWriter {
                     // Write each band as a separate tile plane
                     let tiles_per_plane = tiles_across * tiles_down;
                     let plane_size =
-                        (hints.tile_height as usize) * (hints.tile_width as usize) * (bytes_per_sample as usize);
+                        (tile_height as usize) * (tile_width as usize) * (bytes_per_sample as usize);
                     for band in 0..num_bands {
                         let tile_index =
                             band * tiles_per_plane + block_row * tiles_across + block_col;
@@ -703,7 +753,7 @@ impl TIFFDatasetWriter {
                 } else {
                     // Convert CHW → HWC and write as a single tile
                     let pixels_in_tile =
-                        hints.tile_height * hints.tile_width;
+                        tile_height * tile_width;
                     let interleaved =
                         bsq_to_interleaved(&padded, num_bands, pixels_in_tile, bytes_per_sample);
                     let tile_index = block_row * tiles_across + block_col;
@@ -873,8 +923,8 @@ impl DatasetWriter for TIFFDatasetWriter {
             return Ok(());
         }
 
-        // Parse encoding hints
-        let hints = match &self.metadata {
+        // Parse encoding hints from dataset-level metadata
+        let mut hints = match &self.metadata {
             Some(meta) => TiffEncodingHints::from_metadata(meta.as_ref())?,
             None => TiffEncodingHints::default(),
         };
@@ -890,6 +940,13 @@ impl DatasetWriter for TIFFDatasetWriter {
                     asset.key
                 ))
             })?;
+
+            // Use provider block dimensions as defaults when metadata didn't
+            // specify tile sizes (mirrors JBP writer's NPPBH/NPPBV fallback).
+            hints.apply_provider_defaults(
+                image.num_pixels_per_block_horizontal(),
+                image.num_pixels_per_block_vertical(),
+            );
 
             Self::write_image_ifd(
                 &handle,
@@ -1078,7 +1135,7 @@ mod tests {
     #[test]
     fn writer_parse_compression_none() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("Compression", "None");
+        meta.set("259", "None"); // Tag 259 = Compression
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.compression, tags::COMPRESSION_NONE);
     }
@@ -1086,7 +1143,7 @@ mod tests {
     #[test]
     fn writer_parse_compression_lzw() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("Compression", "LZW");
+        meta.set("259", "LZW"); // Tag 259 = Compression
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.compression, tags::COMPRESSION_LZW);
     }
@@ -1094,7 +1151,7 @@ mod tests {
     #[test]
     fn writer_parse_compression_deflate() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("Compression", "Deflate");
+        meta.set("259", "Deflate"); // Tag 259 = Compression
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.compression, tags::COMPRESSION_DEFLATE);
     }
@@ -1102,7 +1159,7 @@ mod tests {
     #[test]
     fn writer_parse_predictor_horizontal() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("Predictor", "Horizontal");
+        meta.set("317", "Horizontal"); // Tag 317 = Predictor
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 2);
     }
@@ -1110,7 +1167,7 @@ mod tests {
     #[test]
     fn writer_parse_predictor_none() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("Predictor", "None");
+        meta.set("317", "None"); // Tag 317 = Predictor
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 1);
     }
@@ -1118,7 +1175,7 @@ mod tests {
     #[test]
     fn writer_predictor_default_with_lzw_compression() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("Compression", "LZW");
+        meta.set("259", "LZW"); // Tag 259 = Compression
         // No explicit Predictor → should default to Horizontal (2)
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 2);
@@ -1127,7 +1184,7 @@ mod tests {
     #[test]
     fn writer_predictor_default_with_deflate_compression() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("Compression", "Deflate");
+        meta.set("259", "Deflate"); // Tag 259 = Compression
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 2);
     }
@@ -1135,7 +1192,7 @@ mod tests {
     #[test]
     fn writer_predictor_default_without_compression() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("Compression", "None");
+        meta.set("259", "None"); // Tag 259 = Compression
         // No explicit Predictor + no compression → should default to None (1)
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 1);
@@ -1144,8 +1201,8 @@ mod tests {
     #[test]
     fn writer_parse_tile_dimensions() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("TileWidth", "512");
-        meta.set("TileHeight", "128");
+        meta.set("322", "512"); // Tag 322 = TileWidth
+        meta.set("323", "128"); // Tag 323 = TileLength
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.tile_width, 512);
         assert_eq!(hints.tile_height, 128);
@@ -1154,7 +1211,7 @@ mod tests {
     #[test]
     fn writer_parse_planar_configuration_chunky() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("PlanarConfiguration", "Chunky");
+        meta.set("284", "Chunky"); // Tag 284 = PlanarConfiguration
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.planar_config, tags::PLANAR_CONFIG_CONTIG);
     }
@@ -1162,7 +1219,7 @@ mod tests {
     #[test]
     fn writer_parse_planar_configuration_planar() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("PlanarConfiguration", "Planar");
+        meta.set("284", "Planar"); // Tag 284 = PlanarConfiguration
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.planar_config, tags::PLANAR_CONFIG_SEPARATE);
     }
@@ -1170,7 +1227,7 @@ mod tests {
     #[test]
     fn writer_parse_invalid_compression_returns_error() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("Compression", "JPEG");
+        meta.set("259", "JPEG"); // Tag 259 = Compression
         let result = TiffEncodingHints::from_metadata(&meta);
         assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
     }
@@ -1178,9 +1235,43 @@ mod tests {
     #[test]
     fn writer_parse_invalid_predictor_returns_error() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("Predictor", "FloatingPoint");
+        meta.set("317", "FloatingPoint"); // Tag 317 = Predictor
         let result = TiffEncodingHints::from_metadata(&meta);
         assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
+    }
+
+    #[test]
+    fn writer_ignores_non_numeric_metadata_keys() {
+        // Human-readable names like "TileWidth" should be ignored
+        let meta = BufferedMetadataProvider::new();
+        meta.set("TileWidth", "512");
+        meta.set("TileHeight", "128");
+        meta.set("Compression", "LZW");
+        let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
+        // Should all be defaults since non-numeric keys are ignored
+        assert_eq!(hints.tile_width, DEFAULT_TILE_WIDTH);
+        assert_eq!(hints.tile_height, DEFAULT_TILE_HEIGHT);
+        assert_eq!(hints.compression, tags::COMPRESSION_DEFLATE);
+    }
+
+    #[test]
+    fn writer_apply_provider_defaults_when_no_metadata() {
+        let mut hints = TiffEncodingHints::default();
+        hints.apply_provider_defaults(128, 64);
+        assert_eq!(hints.tile_width, 128);
+        assert_eq!(hints.tile_height, 64);
+    }
+
+    #[test]
+    fn writer_metadata_overrides_provider_defaults() {
+        let meta = BufferedMetadataProvider::new();
+        meta.set("322", "512"); // Tag 322 = TileWidth
+        meta.set("323", "512"); // Tag 323 = TileLength
+        let mut hints = TiffEncodingHints::from_metadata(&meta).unwrap();
+        // Provider defaults should NOT override explicit metadata values
+        hints.apply_provider_defaults(128, 64);
+        assert_eq!(hints.tile_width, 512);
+        assert_eq!(hints.tile_height, 512);
     }
 
     // =========================================================================
