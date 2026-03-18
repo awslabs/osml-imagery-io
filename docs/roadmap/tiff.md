@@ -1,15 +1,15 @@
 # TIFF / GeoTIFF Implementation Roadmap
 
-This roadmap describes the plan for adding GeoTIFF and Cloud Optimized GeoTIFF (COG) support to osml-imagery-io. The implementation follows the same patterns established by the JBP format: a third-party C library (libtiff) handles the heavy lifting, we integrate it through custom FFI bindings, and expose it through the existing Dataset API so users can read and write pixels without caring about the underlying format.
+This roadmap describes the plan for adding GeoTIFF support to osml-imagery-io. Cloud Optimized GeoTIFF (COG) support is covered in a separate roadmap ({doc}`cog`) since it depends on both this work and the cross-format image pyramid support ({doc}`image-pyramid`). The implementation follows the same patterns established by the JBP format: a third-party C library (libtiff) handles the heavy lifting, we integrate it through custom FFI bindings, and expose it through the existing Dataset API so users can read and write pixels without caring about the underlying format.
 
 ## Design Principles
 
 - **Same API, different format.** Users interact with `DatasetReader`, `DatasetWriter`, `ImageAssetProvider`, and `MetadataProvider` exactly as they do for NITF. The only place TIFF-specific details surface is in metadata dictionaries.
-- **Multiple images per file.** A TIFF file can contain multiple IFDs, each defining a separate image (subfile) with its own tags. The `TIFFDatasetReader` enumerates all full-resolution IFDs (those where `NewSubfileType` bit 0 is 0) as separate `ImageAssetProvider`s keyed as `"image_segment_0"`, `"image_segment_1"`, etc. Reduced-resolution overview IFDs (bit 0 = 1) are associated with their parent full-resolution image and handled as resolution levels within the same provider (Phase 4). Each `ImageAssetProvider` exposes per-image metadata through its `metadata()` method, since TIFF tags are per-IFD. There are no text, graphic, or data segments — only image segments and a dataset-level `MetadataProvider`.
+- **Multiple images per file.** A TIFF file can contain multiple IFDs, each defining a separate image (subfile) with its own tags. The `TIFFDatasetReader` enumerates all full-resolution IFDs (those where `NewSubfileType` bit 0 is 0) as separate `ImageAssetProvider`s keyed as `"image_segment_0"`, `"image_segment_1"`, etc. Reduced-resolution overview IFDs (bit 0 = 1) are associated with their parent full-resolution image and handled through the cross-format image pyramid support (see {doc}`image-pyramid`). Each `ImageAssetProvider` exposes per-image metadata through its `metadata()` method, since TIFF tags are per-IFD. There are no text, graphic, or data segments — only image segments and a dataset-level `MetadataProvider`.
 - **libtiff via custom FFI.** We write our own `sys.rs` / `ffi.rs` bindings to libtiff (BSD-licensed), dynamically linked, following the same pattern as OpenJPEG and libjpeg-turbo. No third-party `-sys` crates.
 - **GeoTIFF tags parsed in Rust.** GeoTIFF metadata (GeoKeys, ModelTiepoint, ModelPixelScale, ModelTransformation) is parsed directly from libtiff's tag interface rather than linking libgeotiff as a second dependency. The GeoKey directory spec is straightforward enough to implement in Rust.
 - **Format implementation operates on `&[u8]`, not files.** The TIFF format implementation never touches the filesystem. Like JBP, the core constructor is `from_bytes(&[u8])` and all parsing operates on a byte slice. The IO layer is solely responsible for deciding how to produce those bytes (file read, mmap, future S3-backed mmap, etc.). libtiff is accessed via `TIFFClientOpen` with memory read/seek callbacks over the byte slice — the same pattern used for OpenJPEG's memory stream adapters.
-- **COG as a later phase.** Cloud Optimized GeoTIFF is a tiled GeoTIFF with overviews in a specific IFD layout. We build basic GeoTIFF read/write first, then layer COG support on top.
+- **COG as a separate roadmap.** Cloud Optimized GeoTIFF is a tiled GeoTIFF with overviews in a specific IFD layout. We complete basic GeoTIFF read/write first, then layer COG support on top. COG depends on both this roadmap and the cross-format image pyramid support. See {doc}`cog` for the COG roadmap.
 
 ## I/O Architecture
 
@@ -72,7 +72,7 @@ src/tiff/
 - `reader.rs` — `TIFFDatasetReader` implementing `DatasetReader`:
   - Core constructor: `from_bytes(&[u8])` — opens via `TIFFClientOpen` with memory callbacks on the byte slice
   - Convenience method: `open(path)` — reads file into `Vec<u8>` then delegates to `from_bytes()` (same pattern as `JBPDatasetReader`)
-  - Enumerates all IFDs, classifying each by `NewSubfileType`: full-resolution images (bit 0 = 0) become `ImageAssetProvider`s, overview IFDs (bit 0 = 1) are skipped in Phase 1 (handled in Phase 4)
+  - Enumerates all IFDs, classifying each by `NewSubfileType`: full-resolution images (bit 0 = 0) become `ImageAssetProvider`s, overview IFDs (bit 0 = 1) are skipped in Phase 1 (handled by the cross-format image pyramid support, see {doc}`image-pyramid`)
   - Exposes one `ImageAssetProvider` per full-resolution IFD, keyed as `"image_segment_0"`, `"image_segment_1"`, etc.
   - Each `ImageAssetProvider` exposes per-IFD metadata through its `metadata()` method (TIFF tags are per-IFD)
   - Exposes dataset-level `MetadataProvider` with file-level information only (byte order, number of directories, number of image segments) — IFD-specific tags live on the per-asset `MetadataProvider`
@@ -187,73 +187,6 @@ with IO.open(["image.tif"], "r") as reader:
 - [ ] Add unit tests with GeoTIFF test files
 - [ ] Add integration tests with real-world GeoTIFF files in `data/integration/`
 
-## Phase 4: Multi-Resolution (Overview) Support
-
-**Objective**: Read and write TIFF files with reduced-resolution overviews (image pyramids).
-
-**Scope**:
-- `ifd.rs` — IFD navigation:
-  - Detect overview IFDs by checking `NewSubfileType` tag (bit 0 = reduced resolution)
-  - Build resolution level map: IFD 0 = level 0 (full res), subsequent reduced-res IFDs = levels 1, 2, ...
-  - Validate overview dimensions follow 2× reduction pattern
-- Update `TIFFImageAssetProvider`:
-  - `num_resolution_levels` returns count of overview IFDs + 1
-  - `get_block(row, col, resolution_level)` switches to the appropriate IFD before reading
-- Writer support:
-  - Generate overviews by downsampling (nearest-neighbor or averaging)
-  - Write each overview as a separate IFD with `NewSubfileType = 1`
-  - Encoding hint: `"Overviews"` → `"true"` / `"false"` (default: `"false"`)
-  - Encoding hint: `"OverviewResampling"` → `"nearest"` / `"average"` (default: `"average"`)
-
-**Tasks**:
-- [ ] Create `src/tiff/ifd.rs` with IFD navigation and overview detection
-- [ ] Update `TIFFImageAssetProvider` for multi-resolution access
-- [ ] Add overview generation to `TIFFDatasetWriter`
-- [ ] Add unit tests for overview reading and writing
-- [ ] Add integration tests with real overview TIFFs
-
-## Phase 5: Cloud Optimized GeoTIFF (COG) Reading
-
-**Objective**: Read COG files with efficient tile access.
-
-**Scope**:
-- COG validation: verify file meets COG requirements (tiled, overviews present, IFD order correct, ghost metadata)
-- Efficient tile access: COG files are already tiled GeoTIFFs with overviews — Phase 4 handles the core access pattern
-- BigTIFF support: COG files larger than 4 GB use BigTIFF format — libtiff handles this transparently when opened via `TIFFClientOpen`
-- JPEG and JPEG2000 tile compression: COG tiles may use JPEG (compression=7) or JPEG2000 — libtiff handles JPEG natively; for JPEG2000 tiles, delegate to our existing OpenJPEG codec
-- Remote COG access is not handled here — the IO layer is responsible for producing the `&[u8]` byte slice (via future mmap or S3-backed mmap). The TIFF format implementation is unaware of whether the bytes are local or remote.
-
-**Tasks**:
-- [ ] Add COG detection (check IFD layout, ghost metadata)
-- [ ] Add BigTIFF support in `TIFFClientOpen` calls
-- [ ] Verify JPEG-compressed tile reading works through libtiff
-- [ ] Add integration tests with real COG files
-- [ ] Document COG-specific metadata fields
-
-## Phase 6: COG Writing
-
-**Objective**: Write valid COG files that conform to the COG specification.
-
-**Scope**:
-- COG layout requirements:
-  - Ghost IFD with COG metadata
-  - Full-resolution IFD first, then overviews in descending resolution order
-  - All IFDs tiled
-  - Tile data ordered for sequential access
-- Encoding hints:
-  - `"Format"` → `"COG"` (triggers COG-specific layout)
-  - `"Compression"` → `"Deflate"`, `"LZW"`, `"JPEG"` (default: `"Deflate"`)
-  - `"JPEGQuality"` → `"75"` (for JPEG compression)
-  - `"Overviews"` → `"true"` (required for COG, auto-enabled)
-- Validate output meets COG spec before finalizing
-
-**Tasks**:
-- [ ] Implement COG-specific IFD ordering in writer
-- [ ] Add ghost IFD generation
-- [ ] Add tile data ordering for sequential access
-- [ ] Add COG validation pass
-- [ ] Add unit and integration tests for COG output
-
 ## Testing Plan
 
 ### Unit Tests (Rust)
@@ -270,7 +203,6 @@ with IO.open(["image.tif"], "r") as reader:
 - `tests/test_tiff_reader.py` — Read synthetic TIFF files, verify dimensions, pixel values, metadata
 - `tests/test_tiff_writer.py` — Write then read-back, verify pixel-perfect roundtrip
 - `tests/test_tiff_geotiff.py` — GeoTIFF metadata parsing and writing
-- `tests/test_tiff_cog.py` — COG detection, overview access
 
 ### Property-Based Tests
 
@@ -294,7 +226,7 @@ Extend the existing property test suite under `tests/property/`:
 ### Integration Tests
 
 - Add GeoTIFF test files to `data/integration/` (gitignored, documented in README)
-- Test with real-world GeoTIFF/COG files from public sources (Landsat, Sentinel-2 COGs)
+- Test with real-world GeoTIFF files from public sources
 - Marker: `pytest -m integration` to run
 
 ## Example Script Updates

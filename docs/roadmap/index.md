@@ -7,4 +7,6 @@ Implementation roadmaps for format support.
 
 jbp
 tiff
+cog
+image-pyramid
 ```
