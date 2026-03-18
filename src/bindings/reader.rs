@@ -25,12 +25,24 @@ use crate::jbp::{JBPDataAssetProvider, JBPGraphicsAssetProvider, JBPImageAssetPr
 #[cfg(feature = "libtiff")]
 use crate::tiff::TIFFImageAssetProvider;
 
-/// Python wrapper for DatasetReader trait objects.
+/// Provides read access to geospatial datasets.
 ///
-/// This class provides access to geospatial datasets through a unified interface,
-/// allowing access to imagery and metadata without knowing format-specific details.
+/// A :class:`DatasetReader` exposes the assets and metadata contained in a
+/// geospatial dataset (NITF, GeoTIFF, etc.) through a uniform interface.
+/// Use :meth:`IO.open` with mode ``"r"`` to obtain an instance. The reader
+/// supports the Python context manager protocol, so resources are released
+/// automatically when the ``with`` block exits.
 ///
-/// Supports Python context manager protocol via `__enter__` and `__exit__` methods.
+/// Example::
+///
+///     from aws.osml.io import IO
+///
+///     with IO.open(["image.ntf"], "r") as dataset:
+///         image_keys = dataset.get_asset_keys(asset_type="image")
+///         print(f"Found {len(image_keys)} image assets")
+///
+///         image = dataset.get_asset(image_keys[0])
+///         print(type(image))  # ImageAssetProvider
 #[pyclass(name = "DatasetReader")]
 pub struct PyDatasetReader {
     inner: Option<Box<dyn DatasetReader>>,
@@ -57,21 +69,23 @@ impl PyDatasetReader {
 
 #[pymethods]
 impl PyDatasetReader {
-    /// Returns an AssetProvider for the specified asset key.
+    /// Retrieve an asset by its unique key.
     ///
-    /// The returned object type depends on the asset type:
-    /// - Image assets return ImageAssetProvider
-    /// - Text assets return TextAssetProvider
-    /// - Data assets return DataAssetProvider
-    /// - Graphics assets return GraphicsAssetProvider
+    /// The returned object type depends on the asset's type:
+    /// :class:`ImageAssetProvider` for images,
+    /// :class:`TextAssetProvider` for text,
+    /// :class:`DataAssetProvider` for structured data, or
+    /// :class:`GraphicsAssetProvider` for vector graphics.
     ///
-    /// # Arguments
+    /// :param key: Unique string identifier for the asset.
+    /// :type key: str
+    /// :returns: An asset provider whose concrete type matches the asset's type.
+    /// :rtype: ImageAssetProvider | TextAssetProvider | DataAssetProvider | GraphicsAssetProvider
+    /// :raises KeyError: If no asset with the given key exists.
     ///
-    /// * `key` - The unique string identifier for the asset.
+    /// Example::
     ///
-    /// # Raises
-    ///
-    /// * KeyError - If no asset with the given key exists.
+    ///     image = dataset.get_asset("image_segment_0")
     fn get_asset(&self, py: Python<'_>, key: &str) -> PyResult<PyObject> {
         let inner = self.get_inner()?;
         let asset = inner.get_asset(key)?;
@@ -110,16 +124,21 @@ impl PyDatasetReader {
         }
     }
 
-    /// Returns a list of asset keys matching the filter criteria.
+    /// List asset keys, optionally filtered by type or roles.
     ///
-    /// # Arguments
+    /// :param asset_type: Restrict results to assets of this type
+    ///     (e.g., ``"image"``, ``"text"``, ``"data"``, ``"graphics"``).
+    /// :type asset_type: str, optional
+    /// :param roles: Restrict results to assets that have any of the
+    ///     specified roles.
+    /// :type roles: list[str], optional
+    /// :returns: Asset keys matching the filter criteria.
+    /// :rtype: list[str]
     ///
-    /// * `asset_type` - Optional filter to return only assets of the specified type.
-    /// * `roles` - Optional filter to return only assets with any of the specified roles.
+    /// Example::
     ///
-    /// # Returns
-    ///
-    /// A list of asset keys matching the filter criteria.
+    ///     image_keys = dataset.get_asset_keys(asset_type="image")
+    ///     text_keys = dataset.get_asset_keys(asset_type="text")
     #[pyo3(signature = (asset_type=None, roles=None))]
     fn get_asset_keys(
         &self,
@@ -131,17 +150,18 @@ impl PyDatasetReader {
         Ok(inner.get_asset_keys(asset_type, roles_slice))
     }
 
-    /// Returns true if an asset with the given key exists.
+    /// Check whether an asset with the given key exists.
     ///
-    /// # Arguments
-    ///
-    /// * `key` - The unique string identifier for the asset.
+    /// :param key: Unique string identifier for the asset.
+    /// :type key: str
+    /// :returns: ``True`` if the asset exists, ``False`` otherwise.
+    /// :rtype: bool
     fn has_asset(&self, key: &str) -> PyResult<bool> {
         let inner = self.get_inner()?;
         Ok(inner.has_asset(key))
     }
 
-    /// Returns the dataset-level metadata provider.
+    /// Dataset-level metadata as a :class:`MetadataProvider`.
     #[getter]
     fn metadata(&self) -> PyResult<PyMetadataProvider> {
         let inner = self.get_inner()?;

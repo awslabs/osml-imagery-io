@@ -10,10 +10,30 @@ use pyo3::types::{PyBytes, PyDict, PyList};
 
 use crate::traits::MetadataProvider;
 
-/// Python wrapper for MetadataProvider trait objects.
+/// Provides access to key-value metadata associated with a dataset or asset.
 ///
-/// This class provides access to metadata in both raw byte form and as
-/// structured dictionaries.
+/// Every dataset and asset exposes metadata through a ``MetadataProvider``.
+/// You can retrieve metadata as a Python dictionary via :meth:`as_dict`, with
+/// an optional prefix filter to select a group of related fields, or obtain
+/// the underlying bytes in their original binary format via the :attr:`raw`
+/// property. The dictionary values are native Python types — ``str``, ``int``,
+/// ``list``, or nested ``dict`` — depending on how the field is defined in the
+/// format's structure definition.
+///
+/// You typically obtain a ``MetadataProvider`` from a
+/// :class:`DatasetReader` or an :class:`AssetProvider` rather than creating
+/// one directly.
+///
+/// Example::
+///
+///     from aws.osml.io import IO
+///
+///     with IO.open(["image.ntf"], "r") as dataset:
+///         # All dataset-level metadata
+///         all_meta = dataset.metadata.as_dict()
+///
+///         # Only fields whose key starts with "FS" (file security)
+///         security = dataset.metadata.as_dict("FS")
 #[pyclass(name = "MetadataProvider", subclass)]
 pub struct PyMetadataProvider {
     inner: Arc<dyn MetadataProvider>,
@@ -33,9 +53,7 @@ impl PyMetadataProvider {
 
 #[pymethods]
 impl PyMetadataProvider {
-    /// Returns the raw metadata bytes as a BytesIO object.
-    ///
-    /// This provides access to the underlying metadata in its original binary format.
+    /// The underlying metadata in its original binary format, as a ``BytesIO`` object.
     #[getter]
     fn raw<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let bytes = self.inner.raw();
@@ -49,18 +67,21 @@ impl PyMetadataProvider {
         Ok(bytes_io.into())
     }
 
-    /// Returns metadata as a dictionary, optionally filtered by section name.
+    /// Return metadata as a Python dictionary, optionally filtered by key prefix.
     ///
-    /// # Arguments
+    /// When *name* is provided, only keys that start with that prefix are
+    /// included. When omitted, all metadata fields are returned.
     ///
-    /// * `name` - Optional section name to filter the returned metadata.
-    ///   - If provided, returns only the named metadata section.
-    ///   - If not provided, returns all metadata sections.
+    /// :param name: Key prefix used to filter the returned fields.
+    /// :type name: str, optional
+    /// :returns: Metadata fields as a dictionary mapping string keys to
+    ///     native Python values (``str``, ``int``, ``list``, or ``dict``).
+    /// :rtype: dict
     ///
-    /// # Returns
+    /// Example::
     ///
-    /// A dictionary where keys are metadata field names and values are
-    /// JSON-compatible Python objects.
+    ///     all_meta = provider.as_dict()
+    ///     security = provider.as_dict("FS")
     #[pyo3(signature = (name=None))]
     fn as_dict<'py>(&self, py: Python<'py>, name: Option<&str>) -> PyResult<PyObject> {
         let metadata = self.inner.as_dict(name);

@@ -65,36 +65,41 @@ fn python_to_json(py: Python<'_>, obj: &PyObject) -> PyResult<serde_json::Value>
     }
 }
 
-/// Python wrapper for BufferedMetadataProvider.
+/// A mutable metadata store for setting encoding hints and format fields.
 ///
-/// This class extends MetadataProvider and provides a mutable metadata provider 
-/// for setting encoding hints and other metadata values programmatically.
+/// ``BufferedMetadataProvider`` is a subclass of :class:`MetadataProvider` that
+/// adds write operations (``set``, ``set_json``, ``get``, ``remove``, ``clear``)
+/// on top of the read-only :meth:`MetadataProvider.as_dict` interface. Use it to
+/// supply encoding hints — compression type, interleave mode, block dimensions,
+/// GeoTIFF projection parameters — when constructing images for writing. Because
+/// it inherits from :class:`MetadataProvider`, a ``BufferedMetadataProvider`` can
+/// be passed anywhere a :class:`MetadataProvider` is expected.
 ///
-/// Since BufferedMetadataProvider extends MetadataProvider, it can be used anywhere
-/// a MetadataProvider is expected.
+/// String values are stored with ``set`` and typed values (int, float, list, dict)
+/// are stored with ``set_json``. Use ``set`` for NITF header fields that are
+/// always ASCII strings, and ``set_json`` for GeoTIFF tags that require numeric
+/// or array values.
 ///
-/// # Example
+/// Example::
 ///
-/// ```python
-/// from aws.osml.io import BufferedMetadataProvider
+///     from aws.osml.io import BufferedMetadataProvider
 ///
-/// # Create empty provider
-/// provider = BufferedMetadataProvider()
+///     # Create an empty provider and populate encoding hints
+///     metadata = BufferedMetadataProvider()
+///     metadata.set("IC", "NC")
+///     metadata.set("IMODE", "B")
+///     metadata.set("NPPBH", "256")
+///     metadata.set("NPPBV", "256")
 ///
-/// # Set encoding hints (lowercase field names match .ksy parser output)
-/// provider.set("imode", "B")
-/// provider.set("nppbh", "256")
-/// provider.set("nppbv", "256")
+///     # Retrieve a value
+///     imode = metadata.get("IMODE")  # "B"
 ///
-/// # Get values
-/// imode = provider.get("imode")  # Returns "B"
+///     # View all entries as a dict (inherited from MetadataProvider)
+///     all_fields = metadata.as_dict()
 ///
-/// # Get all as dict (inherited from MetadataProvider)
-/// metadata = provider.as_dict()  # Returns {"imode": "B", "nppbh": "256", "nppbv": "256"}
-///
-/// # Can be used anywhere MetadataProvider is expected
-/// writer.set_metadata(provider)
-/// ```
+///     # Use set_json for GeoTIFF tags that need typed values
+///     metadata.set_json("33550", [0.5, 0.5, 0.0])  # ModelPixelScale
+///     metadata.set_json("GeoProjectedCRS", 32618)
 #[pyclass(name = "BufferedMetadataProvider", extends = PyMetadataProvider)]
 pub struct PyBufferedMetadataProvider {
     inner: Arc<BufferedMetadataProvider>,
@@ -114,26 +119,21 @@ impl PyBufferedMetadataProvider {
 
 #[pymethods]
 impl PyBufferedMetadataProvider {
-    /// Create a new BufferedMetadataProvider.
+    /// Create a new ``BufferedMetadataProvider``.
     ///
-    /// # Arguments
+    /// :param source: An existing :class:`MetadataProvider` to copy entries from.
+    ///     If provided, all key-value pairs are copied into the new provider.
+    /// :type source: MetadataProvider or None
+    /// :returns: A new ``BufferedMetadataProvider`` instance.
+    /// :rtype: BufferedMetadataProvider
     ///
-    /// * `source` - Optional existing MetadataProvider to copy from.
-    ///   If provided, all key-value pairs from the source will be copied to the new provider.
+    /// Example::
     ///
-    /// # Returns
+    ///     # Create an empty provider
+    ///     provider = BufferedMetadataProvider()
     ///
-    /// A new BufferedMetadataProvider instance.
-    ///
-    /// # Example
-    ///
-    /// ```python
-    /// # Create empty provider
-    /// provider = BufferedMetadataProvider()
-    ///
-    /// # Create from existing provider (copies all metadata)
-    /// copied = BufferedMetadataProvider(source=existing_provider)
-    /// ```
+    ///     # Create from an existing provider (copies all metadata)
+    ///     copied = BufferedMetadataProvider(source=existing_provider)
     #[new]
     #[pyo3(signature = (source=None))]
     fn py_new(source: Option<PyRef<'_, PyMetadataProvider>>) -> (Self, PyMetadataProvider) {
@@ -149,94 +149,88 @@ impl PyBufferedMetadataProvider {
         (Self { inner }, base)
     }
 
-    /// Set a string value for the given key.
+    /// Store a string value for the given key.
     ///
-    /// If the key already exists, its value is replaced.
+    /// If the key already exists, its value is replaced. Use this method for
+    /// NITF header fields and other metadata stored as plain strings. For
+    /// values that need to preserve a numeric or structured type, use
+    /// :meth:`set_json` instead.
     ///
-    /// # Arguments
+    /// :param key: The metadata field name.
+    /// :type key: str
+    /// :param value: The string value to store.
+    /// :type value: str
     ///
-    /// * `key` - The metadata field name.
-    /// * `value` - The value to store.
+    /// Example::
     ///
-    /// # Example
-    ///
-    /// ```python
-    /// provider.set("IMODE", "B")
-    /// provider.set("NPPBH", "256")
-    /// ```
+    ///     metadata = BufferedMetadataProvider()
+    ///     metadata.set("IC", "NC")
+    ///     metadata.set("IMODE", "B")
+    ///     metadata.set("NPPBH", "256")
     fn set(&self, key: &str, value: &str) {
         self.inner.set(key, value);
     }
 
-    /// Set a JSON value for the given key.
+    /// Store a typed value for the given key.
     ///
-    /// Unlike [`set`], which always stores a string, this method accepts any
-    /// JSON-compatible Python value (int, float, list, dict, bool, None, str)
-    /// and preserves its type. This is needed for GeoTIFF encoding hints that
-    /// require numeric or array values.
+    /// Unlike :meth:`set`, which always stores a string, this method accepts
+    /// any JSON-compatible Python value (int, float, list, dict, bool, None,
+    /// str) and preserves its type. Use ``set_json`` for GeoTIFF encoding
+    /// hints that require numeric or array values — for example, pixel scale
+    /// or projection parameters.
     ///
-    /// # Arguments
+    /// :param key: The metadata field name.
+    /// :type key: str
+    /// :param value: A Python value to store (int, float, list, dict, str,
+    ///     bool, or None).
+    /// :type value: object
+    /// :raises ValueError: If the value cannot be represented as JSON
+    ///     (e.g. ``float('nan')``).
     ///
-    /// * `key` - The metadata field name.
-    /// * `value` - A Python value to store as JSON (int, float, list, str, etc.).
+    /// Example::
     ///
-    /// # Example
-    ///
-    /// ```python
-    /// provider.set_json("GeoProjectedCRS", 32618)
-    /// provider.set_json("GeoPixelScale", [0.5, 0.5, 0.0])
-    /// ```
+    ///     metadata = BufferedMetadataProvider()
+    ///     metadata.set_json("GeoProjectedCRS", 32618)
+    ///     metadata.set_json("33550", [0.5, 0.5, 0.0])  # ModelPixelScale
     fn set_json(&self, py: Python<'_>, key: &str, value: PyObject) -> PyResult<()> {
         let json_val = python_to_json(py, &value)?;
         self.inner.set_json(key, json_val);
         Ok(())
     }
 
-    /// Get the value for the given key, if it exists.
+    /// Retrieve the value for the given key, if it exists.
     ///
-    /// # Arguments
+    /// :param key: The metadata field name to look up.
+    /// :type key: str
+    /// :returns: The value as a string, or ``None`` if the key is not present.
+    /// :rtype: str or None
     ///
-    /// * `key` - The metadata field name to retrieve.
+    /// Example::
     ///
-    /// # Returns
-    ///
-    /// The value as a string if the key exists, or None if it doesn't.
-    ///
-    /// # Example
-    ///
-    /// ```python
-    /// imode = provider.get("IMODE")  # Returns "B" or None
-    /// ```
+    ///     imode = metadata.get("IMODE")  # "B" or None
     fn get(&self, key: &str) -> Option<String> {
         self.inner.get(key)
     }
 
-    /// Remove a key-value pair.
+    /// Remove a key-value pair from the store.
     ///
-    /// # Arguments
+    /// :param key: The metadata field name to remove.
+    /// :type key: str
+    /// :returns: The previous value if the key existed, or ``None`` otherwise.
+    /// :rtype: str or None
     ///
-    /// * `key` - The metadata field name to remove.
+    /// Example::
     ///
-    /// # Returns
-    ///
-    /// The previous value if the key existed, or None if it didn't.
-    ///
-    /// # Example
-    ///
-    /// ```python
-    /// old_value = provider.remove("IMODE")  # Returns previous value or None
-    /// ```
+    ///     old_value = metadata.remove("IMODE")  # previous value or None
     fn remove(&self, key: &str) -> Option<String> {
         self.inner.remove(key)
     }
 
-    /// Clear all stored metadata.
+    /// Remove all key-value pairs from the store.
     ///
-    /// # Example
+    /// Example::
     ///
-    /// ```python
-    /// provider.clear()  # Removes all key-value pairs
-    /// ```
+    ///     metadata.clear()
     fn clear(&self) {
         self.inner.clear();
     }

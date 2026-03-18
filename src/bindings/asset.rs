@@ -15,21 +15,39 @@ use crate::error::CodecError;
 use crate::traits::{AssetProvider, MetadataProvider};
 use crate::types::AssetType;
 
-/// Python wrapper for AssetProvider trait objects.
+/// Base class for all asset types within a dataset.
 ///
-/// This class provides access to asset properties and content.
+/// An ``AssetProvider`` represents a single named asset inside a geospatial
+/// dataset. Every dataset opened through :class:`IO` contains one or more
+/// assets, each identified by a unique key and categorised as image, text,
+/// data, or graphics. This class exposes the common properties shared by all
+/// asset types — key, title, description, MIME type, roles, and raw bytes —
+/// while specialised subclasses such as :class:`ImageAssetProvider`,
+/// :class:`TextAssetProvider`, :class:`DataAssetProvider`, and
+/// :class:`GraphicsAssetProvider` add format-specific access methods.
+///
+/// You typically obtain an ``AssetProvider`` by calling
+/// :meth:`DatasetReader.get_asset`. To create an asset from raw bytes for
+/// writing, use the :meth:`AssetProvider.from_bytes` static method.
+///
+/// Example::
+///
+///     from aws.osml.io import IO
+///
+///     with IO.open(["image.ntf"], "r") as dataset:
+///         keys = dataset.get_asset_keys(asset_type="image")
+///         asset = dataset.get_asset(keys[0])
+///         print(asset.key, asset.title, asset.asset_type)
 #[pyclass(name = "AssetProvider")]
 pub struct PyAssetProvider {
     inner: Arc<dyn AssetProvider>,
 }
 
 impl PyAssetProvider {
-    /// Creates a new PyAssetProvider wrapping the given trait object.
     pub fn new(inner: Arc<dyn AssetProvider>) -> Self {
         Self { inner }
     }
 
-    /// Returns a reference to the inner AssetProvider.
     pub fn inner(&self) -> &Arc<dyn AssetProvider> {
         &self.inner
     }
@@ -37,47 +55,52 @@ impl PyAssetProvider {
 
 #[pymethods]
 impl PyAssetProvider {
-    /// Returns the unique identifier for this asset within the dataset.
+    /// Unique identifier for this asset within the dataset.
     #[getter]
     fn key(&self) -> &str {
         self.inner.key()
     }
 
-    /// Returns a human-readable title for the asset.
+    /// Human-readable title for the asset.
     #[getter]
     fn title(&self) -> &str {
         self.inner.title()
     }
 
-    /// Returns a detailed description of the asset.
+    /// Detailed description of the asset.
     #[getter]
     fn description(&self) -> &str {
         self.inner.description()
     }
 
-    /// Returns the MIME type of the asset content.
+    /// MIME type of the asset content (e.g. ``"application/vnd.nitf.image"``).
     #[getter]
     fn media_type(&self) -> &str {
         self.inner.media_type()
     }
 
-    /// Returns the semantic roles for this asset.
+    /// Semantic roles assigned to this asset (e.g. ``["data"]``, ``["thumbnail"]``).
     #[getter]
     fn roles(&self) -> Vec<String> {
         self.inner.roles().to_vec()
     }
 
-    /// Returns the asset category.
+    /// Category of this asset: image, text, data, or graphics.
     #[getter]
     fn asset_type(&self) -> AssetType {
         self.inner.asset_type()
     }
 
-    /// Returns the raw asset bytes as a BytesIO object.
+    /// Return the raw asset bytes wrapped in a ``BytesIO`` object.
     ///
-    /// # Errors
+    /// :returns: The raw bytes of the asset content.
+    /// :rtype: io.BytesIO
+    /// :raises IOError: If the asset data cannot be read.
     ///
-    /// Raises an IOError if the asset data cannot be read.
+    /// Example::
+    ///
+    ///     raw = asset.get_raw_asset()
+    ///     data = raw.read()
     fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let bytes = self.inner.raw_asset()?;
         let py_bytes = PyBytes::new_bound(py, &bytes);
@@ -90,29 +113,43 @@ impl PyAssetProvider {
         Ok(bytes_io.into())
     }
 
-    /// Returns the asset-level metadata provider.
+    /// Return the :class:`MetadataProvider` for this asset's metadata.
     fn get_metadata(&self) -> PyMetadataProvider {
         PyMetadataProvider::new(self.inner.metadata())
     }
 
-    /// Creates a new AssetProvider from raw bytes.
+    /// Create a new ``AssetProvider`` from raw bytes.
     ///
-    /// This allows Python users to create assets from raw data for use with
-    /// DatasetWriter.add_asset().
+    /// Use this factory when you need to build an asset in memory for writing
+    /// to a dataset via :meth:`DatasetWriter.add_asset`.
     ///
-    /// # Arguments
+    /// :param key: Unique identifier for the asset.
+    /// :type key: str
+    /// :param data: Raw bytes of the asset content.
+    /// :type data: bytes
+    /// :param asset_type: The type of asset (Image, Text, Graphics, Data).
+    /// :type asset_type: AssetType
+    /// :param title: Human-readable title. Defaults to *key* when omitted.
+    /// :type title: str, optional
+    /// :param description: Detailed description. Defaults to empty.
+    /// :type description: str, optional
+    /// :param roles: Semantic roles. Defaults to ``["data"]``.
+    /// :type roles: list[str], optional
+    /// :param media_type: MIME type. Auto-detected from *asset_type* when omitted.
+    /// :type media_type: str, optional
+    /// :returns: A new asset that can be passed to :meth:`DatasetWriter.add_asset`.
+    /// :rtype: AssetProvider
     ///
-    /// * `key` - Unique identifier for the asset
-    /// * `data` - Raw bytes of the asset content
-    /// * `asset_type` - The type of asset (Image, Text, Graphics, Data)
-    /// * `title` - Human-readable title (optional, defaults to key)
-    /// * `description` - Detailed description (optional, defaults to empty)
-    /// * `roles` - Semantic roles (optional, defaults to ["data"])
-    /// * `media_type` - MIME type (optional, auto-detected from asset_type)
+    /// Example::
     ///
-    /// # Returns
+    ///     from aws.osml.io import AssetProvider, AssetType
     ///
-    /// A new AssetProvider that can be passed to DatasetWriter.add_asset()
+    ///     asset = AssetProvider.from_bytes(
+    ///         key="my_text",
+    ///         data=b"Hello, world!",
+    ///         asset_type=AssetType.Text,
+    ///         title="Greeting",
+    ///     )
     #[staticmethod]
     #[pyo3(signature = (key, data, asset_type, title=None, description=None, roles=None, media_type=None))]
     fn from_bytes(

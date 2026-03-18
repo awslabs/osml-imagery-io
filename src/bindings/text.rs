@@ -12,9 +12,25 @@ use crate::bindings::PyMetadataProvider;
 use crate::traits::TextAssetProvider;
 use crate::types::AssetType;
 
-/// Python wrapper for TextAssetProvider trait objects.
+/// Provides access to text content stored within a geospatial dataset.
 ///
-/// This class provides access to text asset properties and content.
+/// Geospatial datasets can embed plain text alongside imagery — mission
+/// reports, processing notes, annotations, and similar human-readable data.
+/// ``TextAssetProvider`` exposes the decoded text through the :attr:`text`
+/// property, along with the character :attr:`encoding` and :attr:`format`
+/// metadata. Use :meth:`DatasetReader.get_asset` to obtain an instance for
+/// a specific text asset in the dataset.
+///
+/// Example::
+///
+///     from aws.osml.io import IO
+///
+///     with IO.open(["image.ntf"], "r") as dataset:
+///         for key in dataset.get_asset_keys(asset_type="text"):
+///             text_asset = dataset.get_asset(key)
+///             print(f"Encoding: {text_asset.encoding}")
+///             print(f"Format:   {text_asset.format}")
+///             print(f"Text:     {text_asset.text[:200]}...")
 #[pyclass(name = "TextAssetProvider")]
 pub struct PyTextAssetProvider {
     inner: Arc<dyn TextAssetProvider>,
@@ -36,43 +52,43 @@ impl PyTextAssetProvider {
 impl PyTextAssetProvider {
     // AssetProvider methods
 
-    /// Returns the unique identifier for this asset within the dataset.
+    /// The unique identifier for this asset within the dataset.
     #[getter]
     fn key(&self) -> &str {
         self.inner.key()
     }
 
-    /// Returns a human-readable title for the asset.
+    /// A human-readable title for the asset.
     #[getter]
     fn title(&self) -> &str {
         self.inner.title()
     }
 
-    /// Returns a detailed description of the asset.
+    /// A detailed description of the asset.
     #[getter]
     fn description(&self) -> &str {
         self.inner.description()
     }
 
-    /// Returns the MIME type of the asset content.
+    /// The MIME type of the asset content.
     #[getter]
     fn media_type(&self) -> &str {
         self.inner.media_type()
     }
 
-    /// Returns the semantic roles for this asset.
+    /// The semantic roles for this asset.
     #[getter]
     fn roles(&self) -> Vec<String> {
         self.inner.roles().to_vec()
     }
 
-    /// Returns the asset category.
+    /// The asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
         self.inner.asset_type()
     }
 
-    /// Returns the raw asset bytes as a BytesIO object.
+    /// The raw asset bytes as a ``BytesIO`` object.
     fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let bytes = self.inner.raw_asset()?;
         let py_bytes = PyBytes::new_bound(py, &bytes);
@@ -84,30 +100,29 @@ impl PyTextAssetProvider {
         Ok(bytes_io.into())
     }
 
-    /// Returns the asset-level metadata provider.
+    /// The asset-level :class:`MetadataProvider`.
     fn get_metadata(&self) -> PyMetadataProvider {
         PyMetadataProvider::new(self.inner.metadata())
     }
 
     // TextAssetProvider-specific methods
 
-    /// Returns the decoded text content as a string.
+    /// The decoded text content as a string.
     ///
-    /// # Errors
-    ///
-    /// Raises a ValueError if the text cannot be decoded.
+    /// :raises ValueError: If the text cannot be decoded using the asset's
+    ///     character encoding.
     #[getter]
     fn text(&self) -> PyResult<String> {
         Ok(self.inner.text()?)
     }
 
-    /// Returns the character encoding (e.g., "UTF-8", "ASCII").
+    /// The character encoding of the text content (e.g., ``"UTF-8"``, ``"ASCII"``).
     #[getter]
     fn encoding(&self) -> &str {
         self.inner.encoding()
     }
 
-    /// Returns the text format identifier.
+    /// The text format identifier.
     #[getter]
     fn format(&self) -> &str {
         self.inner.format()

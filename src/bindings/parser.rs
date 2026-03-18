@@ -1,8 +1,10 @@
-//! Python bindings for the data-driven binary parser.
+//! Data-driven binary structure parsing and encoding.
 //!
-//! This module provides PyO3 wrappers for the parser infrastructure,
-//! exposing StructureRegistry, StructureAccessor, StructureWriter, and Value
-//! to Python with Pythonic interfaces.
+//! This module provides classes for reading and writing binary data according
+//! to declarative YAML-based structure definitions (``.ksy`` files). Use
+//! :class:`StructureRegistry` to load definitions, :class:`StructureAccessor`
+//! to read fields from binary data, :class:`StructureWriter` to encode values,
+//! and :class:`Value` to interpret parsed field values.
 
 use std::sync::Arc;
 
@@ -65,10 +67,21 @@ impl From<WriteError> for PyErr {
 
 // ==================== PyValue ====================
 
-/// Python wrapper for parsed field values.
+/// Represents a parsed field value from binary structure data.
 ///
-/// Provides type conversion methods for interpreting ASCII-encoded
-/// numeric fields as integers or floats.
+/// A ``Value`` is returned by :class:`StructureAccessor` when you access a
+/// field. It holds the raw parsed content and provides type conversion methods
+/// — ``as_str()``, ``as_int()``, ``as_float()``, and ``as_bytes()`` — for
+/// interpreting ASCII-encoded fields as native Python types. Most binary
+/// format fields (e.g. NITF header fields) are stored as fixed-width ASCII
+/// strings, so these converters handle trimming and numeric parsing
+/// automatically.
+///
+/// Example::
+///
+///     value = accessor["NROWS"]
+///     num_rows = value.as_int()
+///     print(value.as_str())
 #[pyclass(name = "Value")]
 pub struct PyValue {
     /// The underlying value (owned for Python lifetime management)
@@ -111,13 +124,11 @@ impl PyValue {
 
 #[pymethods]
 impl PyValue {
-    /// Get the value as a string, trimming trailing padding.
+    /// Return the value as a string, trimming trailing padding.
     ///
-    /// Returns:
-    ///     str: The string value with trailing spaces removed.
-    ///
-    /// Raises:
-    ///     TypeError: If the value cannot be converted to a string.
+    /// :returns: The string value with trailing spaces removed.
+    /// :rtype: str
+    /// :raises TypeError: If the value cannot be converted to a string.
     fn as_str(&self) -> PyResult<String> {
         match &self.inner {
             OwnedValue::String(s) => Ok(s.trim_end_matches(' ').to_string()),
@@ -133,11 +144,11 @@ impl PyValue {
 
     /// Parse the value as a signed integer.
     ///
-    /// Returns:
-    ///     int: The parsed integer value.
+    /// Blank or whitespace-only strings are parsed as ``0``.
     ///
-    /// Raises:
-    ///     TypeError: If the value cannot be converted to an integer.
+    /// :returns: The parsed integer value.
+    /// :rtype: int
+    /// :raises TypeError: If the value cannot be converted to an integer.
     fn as_int(&self) -> PyResult<i64> {
         match &self.inner {
             OwnedValue::String(s) => {
@@ -171,11 +182,11 @@ impl PyValue {
 
     /// Parse the value as a floating-point number.
     ///
-    /// Returns:
-    ///     float: The parsed floating-point value.
+    /// Blank or whitespace-only strings are parsed as ``0.0``.
     ///
-    /// Raises:
-    ///     TypeError: If the value cannot be converted to a float.
+    /// :returns: The parsed floating-point value.
+    /// :rtype: float
+    /// :raises TypeError: If the value cannot be converted to a float.
     fn as_float(&self) -> PyResult<f64> {
         match &self.inner {
             OwnedValue::String(s) => {
@@ -201,10 +212,10 @@ impl PyValue {
         }
     }
 
-    /// Get the raw bytes of the value.
+    /// Return the raw bytes of the value.
     ///
-    /// Returns:
-    ///     bytes: The raw byte representation.
+    /// :returns: The raw byte representation.
+    /// :rtype: bytes
     fn as_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         match &self.inner {
             OwnedValue::String(s) => Ok(PyBytes::new_bound(py, s.as_bytes())),
@@ -241,18 +252,24 @@ impl PyValue {
 
 // ==================== PyStructureRegistry ====================
 
-/// Registry for structure definitions with search path resolution.
+/// Manages loading, caching, and lookup of structure definitions.
 ///
-/// The registry manages loading, caching, and lookup of structure definitions
-/// from multiple search paths. Definitions can be loaded from KSY files on disk
-/// or registered at runtime.
+/// The registry discovers ``.ksy`` structure definition files from one or more
+/// search paths and makes them available by name. Built-in definitions for NITF
+/// headers, image subheaders, and common TREs are loaded automatically. You can
+/// extend the registry by adding custom search paths or registering definitions
+/// at runtime. Use :meth:`get` to obtain a :class:`StructureDefinition` for use
+/// with :class:`StructureAccessor` or :class:`StructureWriter`.
 ///
-/// Example:
-///     >>> registry = StructureRegistry()
-///     >>> registry.add_search_path("/custom/structures")
-///     >>> definition = registry.get("NITF_02.10_FileHeader")
-///     >>> for name in registry.list():
-///     ...     print(name)
+/// Example::
+///
+///     from aws.osml.io import StructureRegistry
+///
+///     registry = StructureRegistry()
+///     registry.add_search_path("/path/to/my/structures")
+///     definition = registry.get("TRE_GEOLOB")
+///     for name in registry.list():
+///         print(name)
 #[pyclass(name = "StructureRegistry")]
 pub struct PyStructureRegistry {
     inner: StructureRegistry,
@@ -262,9 +279,9 @@ pub struct PyStructureRegistry {
 impl PyStructureRegistry {
     /// Create a new registry with default search paths.
     ///
-    /// Default search paths include:
-    /// - Package data directory (data/structures/)
-    /// - Paths from OSML_IO_STRUCTURE_PATH environment variable
+    /// Default search paths include the package data directory
+    /// (``data/structures/``) and any paths listed in the
+    /// ``OSML_IO_STRUCTURE_PATH`` environment variable.
     #[new]
     fn new() -> Self {
         Self {
@@ -272,59 +289,62 @@ impl PyStructureRegistry {
         }
     }
 
-    /// Add a search path (higher priority than existing paths).
+    /// Add a search path with higher priority than existing paths.
     ///
-    /// Args:
-    ///     path: The directory path to add to the search paths.
+    /// :param path: Directory path to add to the search paths.
+    /// :type path: str
     fn add_search_path(&mut self, path: &str) {
         self.inner.add_search_path(path);
     }
 
-    /// Get a structure definition by name.
+    /// Retrieve a structure definition by name.
     ///
-    /// Args:
-    ///     name: The structure name (e.g., "NITF_02.10_FileHeader", "TRE_GEOLOB").
-    ///
-    /// Returns:
-    ///     The structure definition, or None if not found.
+    /// :param name: The structure name (e.g., ``"NITF_02.10_FileHeader"``,
+    ///     ``"TRE_GEOLOB"``).
+    /// :type name: str
+    /// :returns: The :class:`StructureDefinition`, or ``None`` if not found.
+    /// :rtype: StructureDefinition or None
     fn get(&mut self, name: &str) -> Option<PyStructureDefinition> {
         self.inner.get_mut(name).map(PyStructureDefinition::new)
     }
 
-    /// List all available structure names.
+    /// List all available structure definition names.
     ///
-    /// Returns:
-    ///     A list of all structure names that can be retrieved via get().
+    /// :returns: Names that can be passed to :meth:`get`.
+    /// :rtype: list[str]
     fn list(&self) -> Vec<String> {
         self.inner.list()
     }
 
     /// Reload all definitions from disk.
     ///
-    /// Clears the file cache and re-scans search paths.
-    /// Runtime-registered definitions are preserved.
+    /// Clears the file cache and re-scans search paths. Definitions
+    /// registered at runtime via :meth:`register` are preserved.
+    ///
+    /// :raises RuntimeError: If a search path cannot be read.
     fn reload(&mut self) -> PyResult<()> {
         self.inner.reload().map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
-    /// Register a definition at runtime (highest priority).
+    /// Register a definition at runtime with highest priority.
     ///
     /// Runtime-registered definitions take priority over file-based
     /// definitions with the same name.
     ///
-    /// Args:
-    ///     name: The name to register the definition under.
-    ///     definition: The structure definition to register.
+    /// :param name: The name to register the definition under.
+    /// :type name: str
+    /// :param definition: The :class:`StructureDefinition` to register.
+    /// :type definition: StructureDefinition
     fn register(&mut self, name: &str, definition: &PyStructureDefinition) {
         // Clone the definition from the Arc
         let def = (*definition.inner).clone();
         self.inner.register(name, def);
     }
 
-    /// Get the current search paths.
+    /// Return the current search paths.
     ///
-    /// Returns:
-    ///     A list of directory paths being searched.
+    /// :returns: Directory paths being searched for ``.ksy`` files.
+    /// :rtype: list[str]
     fn search_paths(&self) -> Vec<String> {
         self.inner
             .search_paths()
@@ -344,9 +364,17 @@ impl PyStructureRegistry {
 
 // ==================== PyStructureDefinition ====================
 
-/// A structure definition parsed from a KSY file.
+/// A read-only structure definition parsed from a ``.ksy`` file.
 ///
-/// This is a read-only wrapper around the internal StructureDefinition.
+/// Contains field names and layout information used by
+/// :class:`StructureAccessor` and :class:`StructureWriter` to read and write
+/// binary data. Obtain instances from :class:`StructureRegistry` via
+/// :meth:`StructureRegistry.get`.
+///
+/// Example::
+///
+///     definition = registry.get("TRE_GEOLOB")
+///     print(definition.id, definition.field_names)
 #[pyclass(name = "StructureDefinition")]
 pub struct PyStructureDefinition {
     inner: Arc<StructureDefinition>,
@@ -360,19 +388,19 @@ impl PyStructureDefinition {
 
 #[pymethods]
 impl PyStructureDefinition {
-    /// The unique identifier for this structure.
+    /// The unique identifier for this structure (e.g., ``"TRE_GEOLOB"``).
     #[getter]
     fn id(&self) -> &str {
         &self.inner.id
     }
 
-    /// Human-readable title (if available).
+    /// Human-readable title from the definition, or ``None`` if not set.
     #[getter]
     fn title(&self) -> Option<&str> {
         self.inner.title.as_deref()
     }
 
-    /// List of field names in this structure.
+    /// Ordered list of field names defined in this structure.
     #[getter]
     fn field_names(&self) -> Vec<String> {
         self.inner.fields.iter().map(|f| f.id.clone()).collect()
@@ -395,18 +423,26 @@ impl PyStructureDefinition {
 
 // ==================== PyStructureAccessor ====================
 
-/// Lazy accessor for reading structure fields from binary data.
+/// Provides lazy, dict-like read access to fields in binary data.
 ///
-/// Provides dict-like access to parsed field values. Fields are parsed
-/// on-demand when accessed, with computed offsets cached for efficiency.
+/// A ``StructureAccessor`` parses fields on demand according to a
+/// :class:`StructureDefinition`, caching computed offsets for efficiency.
+/// Access fields with bracket notation (``accessor["field_name"]``), use
+/// dot-notation paths for nested fields (``"parent.child"``), check for
+/// conditional fields with :meth:`has` or the ``in`` operator, and iterate
+/// over all accessible paths with :meth:`fields`. Each field access returns
+/// a :class:`Value` object.
 ///
-/// Example:
-///     >>> accessor = StructureAccessor(definition, data)
-///     >>> value = accessor["field_name"]
-///     >>> if accessor.has("optional_field"):
-///     ...     print(accessor["optional_field"].as_str())
-///     >>> for path in accessor.fields():
-///     ...     print(path, accessor[path])
+/// Example::
+///
+///     from aws.osml.io import StructureAccessor
+///
+///     accessor = StructureAccessor(definition, data)
+///     value = accessor["field_name"]
+///     if accessor.has("optional_field"):
+///         print(accessor["optional_field"].as_str())
+///     for path in accessor.fields():
+///         print(path, accessor[path])
 #[pyclass(name = "StructureAccessor")]
 pub struct PyStructureAccessor {
     /// The structure definition
@@ -431,17 +467,15 @@ impl PyStructureAccessor {
 impl PyStructureAccessor {
     /// Create a new accessor from a definition and data buffer.
     ///
-    /// Args:
-    ///     definition: The structure definition to use for parsing.
-    ///     data: The binary data to parse. Accepts bytes, bytearray, memoryview,
-    ///           or any object supporting the buffer protocol (including mmap).
+    /// The data is copied into the accessor for safe access. For very large
+    /// datasets, consider using memory-mapped files (``mmap``) as input.
     ///
-    /// Returns:
-    ///     A new StructureAccessor instance.
-    ///
-    /// Note:
-    ///     The data is copied into the accessor for safe access. For very large
-    ///     files, consider using memory-mapped files (mmap) as input.
+    /// :param definition: The :class:`StructureDefinition` to use for parsing.
+    /// :type definition: StructureDefinition
+    /// :param data: The binary data to parse. Accepts ``bytes``, ``bytearray``,
+    ///     ``memoryview``, or any object supporting the buffer protocol
+    ///     (including ``mmap``).
+    /// :type data: bytes-like
     #[new]
     fn py_new(definition: &PyStructureDefinition, data: &Bound<'_, PyAny>) -> PyResult<Self> {
         // Extract bytes from various Python buffer types
@@ -466,14 +500,20 @@ impl PyStructureAccessor {
 
     /// Access a field by path using bracket notation.
     ///
-    /// Args:
-    ///     path: Field path using dot notation (e.g., "parent.child" or "items_0.value").
+    /// Supports dot-notation paths for nested fields (e.g.,
+    /// ``"parent.child"`` or ``"items_0.value"``).
     ///
-    /// Returns:
-    ///     The parsed Value for the field.
+    /// :param path: Field path to access.
+    /// :type path: str
+    /// :returns: The parsed field value.
+    /// :rtype: Value
+    /// :raises KeyError: If the field path does not exist.
     ///
-    /// Raises:
-    ///     KeyError: If the field path does not exist.
+    /// Example::
+    ///
+    ///     value = accessor["NROWS"]
+    ///     num_rows = value.as_int()
+    ///     nested = accessor["parent.child"]
     fn __getitem__(&self, path: &str) -> PyResult<PyValue> {
         let accessor = self.get_accessor()?;
         let value = accessor.get(path)?;
@@ -482,76 +522,68 @@ impl PyStructureAccessor {
 
     /// Check if a field exists and is accessible.
     ///
-    /// Args:
-    ///     path: The field path to check.
+    /// Returns ``False`` for conditional fields whose condition is not met.
     ///
-    /// Returns:
-    ///     True if the field exists and is accessible, False otherwise.
+    /// :param path: The field path to check.
+    /// :type path: str
+    /// :returns: ``True`` if the field exists and is accessible.
+    /// :rtype: bool
     fn has(&self, path: &str) -> PyResult<bool> {
         let accessor = self.get_accessor()?;
         Ok(accessor.has(path))
     }
 
-    /// Check if a field exists (for 'in' operator).
+    /// Check if a field exists (supports the ``in`` operator).
     fn __contains__(&self, path: &str) -> PyResult<bool> {
         self.has(path)
     }
 
-    /// Iterate over all accessible field paths.
+    /// List all accessible field paths.
     ///
-    /// Returns:
-    ///     A list of all field paths that can be accessed.
+    /// :returns: Field paths that can be passed to bracket notation.
+    /// :rtype: list[str]
     fn fields(&self) -> PyResult<Vec<String>> {
         let accessor = self.get_accessor()?;
         Ok(accessor.fields().collect())
     }
 
-    /// Get raw byte slice for a field.
+    /// Return the raw bytes for a field without interpretation.
     ///
-    /// Returns the raw bytes for a field without interpretation. This is useful
-    /// for passing binary data to external decoders.
+    /// Useful for passing binary data to external decoders. For zero-copy
+    /// access, use :meth:`field_byte_range` to get the offset and length,
+    /// then slice the original data directly.
     ///
-    /// Args:
-    ///     path: The field path.
-    ///
-    /// Returns:
-    ///     bytes: The raw bytes for the field.
-    ///
-    /// Raises:
-    ///     KeyError: If the field does not exist.
-    ///     RuntimeError: If the field is not contiguous in memory (e.g., arrays).
-    ///
-    /// Note:
-    ///     For zero-copy access to the underlying buffer, use field_byte_range()
-    ///     to get the offset and length, then slice the original data directly.
+    /// :param path: The field path.
+    /// :type path: str
+    /// :returns: The raw bytes for the field.
+    /// :rtype: bytes
+    /// :raises KeyError: If the field does not exist.
+    /// :raises RuntimeError: If the field is not contiguous in memory.
     fn raw_view<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyBytes>> {
         let accessor = self.get_accessor()?;
         let slice = accessor.raw_slice(path)?;
         Ok(PyBytes::new_bound(py, slice))
     }
 
-    /// Get byte offset and length for a field.
+    /// Return the byte offset and length for a field.
     ///
-    /// Args:
-    ///     path: The field path.
-    ///
-    /// Returns:
-    ///     A tuple of (offset, length) for the field.
-    ///
-    /// Raises:
-    ///     KeyError: If the field does not exist.
+    /// :param path: The field path.
+    /// :type path: str
+    /// :returns: A tuple of ``(offset, length)`` within the data buffer.
+    /// :rtype: tuple[int, int]
+    /// :raises KeyError: If the field does not exist.
     fn field_byte_range(&self, path: &str) -> PyResult<(usize, usize)> {
         let accessor = self.get_accessor()?;
         Ok(accessor.field_byte_range(path)?)
     }
 
-    /// Get the underlying data buffer.
+    /// The underlying binary data buffer.
     #[getter]
     fn data<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new_bound(py, &self.data)
     }
 
-    /// Get the structure definition.
+    /// The :class:`StructureDefinition` used by this accessor.
     #[getter]
     fn definition(&self) -> PyStructureDefinition {
         PyStructureDefinition::new(Arc::clone(&self.definition))
@@ -576,16 +608,24 @@ impl PyStructureAccessor {
 
 // ==================== PyStructureWriter ====================
 
-/// Writer for encoding values according to a structure definition.
+/// Encodes values into binary data according to a :class:`StructureDefinition`.
 ///
-/// Supports both fixed-size mode (out-of-order writes) and streaming mode
-/// (sequential writes).
+/// A ``StructureWriter`` serializes field values into the correct binary layout
+/// defined by a ``.ksy`` structure definition. Two modes are available:
+/// fixed-size mode (via :meth:`new_fixed`) allows fields to be written in any
+/// order, while streaming mode (via :meth:`new_streaming`) requires fields in
+/// definition order. Call :meth:`finish` to retrieve the final encoded bytes.
+/// Field values are set using bracket notation or the :meth:`set` method, and
+/// accepted types include ``str``, ``int``, ``float``, and ``bytes``.
 ///
-/// Example:
-///     >>> writer = StructureWriter.new_fixed(definition)
-///     >>> writer["field1"] = "value1"
-///     >>> writer["field2"] = 42
-///     >>> data = writer.finish()
+/// Example::
+///
+///     from aws.osml.io import StructureWriter
+///
+///     writer = StructureWriter.new_fixed(definition)
+///     writer["field1"] = "value1"
+///     writer["field2"] = 42
+///     data = writer.finish()
 #[pyclass(name = "StructureWriter")]
 pub struct PyStructureWriter {
     inner: Option<StructureWriter>,
@@ -609,14 +649,14 @@ impl PyStructureWriter {
 impl PyStructureWriter {
     /// Create a writer for fixed-size structures.
     ///
-    /// Pre-allocates a buffer of the correct size. Fields can be written
+    /// Pre-allocates a buffer of the correct size so fields can be written
     /// in any order.
     ///
-    /// Args:
-    ///     definition: The structure definition.
-    ///
-    /// Returns:
-    ///     A new StructureWriter in fixed-size mode.
+    /// :param definition: The :class:`StructureDefinition` to encode against.
+    /// :type definition: StructureDefinition
+    /// :returns: A new writer in fixed-size mode.
+    /// :rtype: StructureWriter
+    /// :raises ValueError: If the definition has variable-length fields.
     #[staticmethod]
     fn new_fixed(definition: &PyStructureDefinition) -> PyResult<Self> {
         let writer = StructureWriter::new_fixed(Arc::clone(&definition.inner))?;
@@ -629,11 +669,10 @@ impl PyStructureWriter {
     ///
     /// Fields must be written in definition order.
     ///
-    /// Args:
-    ///     definition: The structure definition.
-    ///
-    /// Returns:
-    ///     A new StructureWriter in streaming mode.
+    /// :param definition: The :class:`StructureDefinition` to encode against.
+    /// :type definition: StructureDefinition
+    /// :returns: A new writer in streaming mode.
+    /// :rtype: StructureWriter
     #[staticmethod]
     fn new_streaming(definition: &PyStructureDefinition) -> Self {
         let writer = StructureWriter::new_streaming(Arc::clone(&definition.inner));
@@ -644,13 +683,11 @@ impl PyStructureWriter {
 
     /// Write a value to a field using bracket notation.
     ///
-    /// Args:
-    ///     path: The field path.
-    ///     value: The value to write (str, bytes, int, or float).
-    ///
-    /// Raises:
-    ///     ValueError: If the value is invalid for the field.
-    ///     RuntimeError: If the writer has been finalized.
+    /// :param path: The field path.
+    /// :type path: str
+    /// :param value: The value to write (``str``, ``bytes``, ``int``, or ``float``).
+    /// :raises ValueError: If the value is invalid for the field.
+    /// :raises RuntimeError: If the writer has been finalized.
     fn __setitem__(&mut self, path: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let writer = self.get_inner_mut()?;
         let write_value = python_to_write_value(value)?;
@@ -658,35 +695,42 @@ impl PyStructureWriter {
         Ok(())
     }
 
-    /// Write a value to a field.
+    /// Write a value to a field by path.
     ///
-    /// Args:
-    ///     path: The field path.
-    ///     value: The value to write.
+    /// :param path: The field path.
+    /// :type path: str
+    /// :param value: The value to write.
     fn set(&mut self, path: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         self.__setitem__(path, value)
     }
 
     /// Check if a field has been written.
     ///
-    /// Args:
-    ///     path: The field path.
-    ///
-    /// Returns:
-    ///     True if the field has been written, False otherwise.
+    /// :param path: The field path.
+    /// :type path: str
+    /// :returns: ``True`` if the field has been written.
+    /// :rtype: bool
     fn is_set(&self, path: &str) -> PyResult<bool> {
         let writer = self.get_inner()?;
         Ok(writer.is_set(path))
     }
 
-    /// Finalize and return the encoded bytes.
+    /// Finalize the writer and return the encoded bytes.
     ///
-    /// Returns:
-    ///     The encoded binary data.
+    /// After calling ``finish()``, the writer is consumed and cannot be
+    /// used again.
     ///
-    /// Raises:
-    ///     ValueError: If required fields have not been written.
-    ///     RuntimeError: If the writer has already been finalized.
+    /// :returns: The encoded binary data.
+    /// :rtype: bytes
+    /// :raises ValueError: If required fields have not been written.
+    /// :raises RuntimeError: If the writer has already been finalized.
+    ///
+    /// Example::
+    ///
+    ///     writer = StructureWriter.new_fixed(definition)
+    ///     writer["FHDR"] = "NITF"
+    ///     writer["FVER"] = "02.10"
+    ///     data = writer.finish()
     fn finish<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let writer = self
             .inner
@@ -696,12 +740,12 @@ impl PyStructureWriter {
         Ok(PyBytes::new_bound(py, &bytes))
     }
 
-    /// Get the current buffer contents without validation.
+    /// Return the current buffer contents without validation.
     ///
-    /// This is useful for debugging or inspecting partial writes.
+    /// Useful for debugging or inspecting partial writes.
     ///
-    /// Returns:
-    ///     The current buffer contents.
+    /// :returns: The current buffer contents.
+    /// :rtype: bytes
     fn buffer<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let writer = self.get_inner()?;
         Ok(PyBytes::new_bound(py, writer.buffer()))

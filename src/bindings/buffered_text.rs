@@ -12,38 +12,43 @@ use crate::buffered::BufferedTextAssetProvider;
 use crate::traits::{AssetProvider, TextAssetProvider};
 use crate::types::AssetType;
 
-/// Python wrapper for BufferedTextAssetProvider.
+/// Constructs text assets entirely in memory.
 ///
-/// This class allows creating text segments in memory with configurable
-/// content and encoding.
+/// Use ``BufferedTextAssetProvider`` to create text content for inclusion in a
+/// dataset — mission reports, annotations, processing notes, and similar
+/// human-readable data. The provider implements the same interface as
+/// :class:`TextAssetProvider`, so in-memory text assets can be passed to any
+/// API that accepts a text asset, including :class:`DatasetWriter`.
 ///
-/// # Example
+/// Supported character encodings are ``"UTF-8"``, ``"ASCII"``, ``"ECS"``,
+/// and ``"MTF"``. You can optionally attach a title, description, and
+/// semantic roles to describe the text asset's purpose within the dataset.
 ///
-/// ```python
-/// from aws.osml.io import BufferedTextAssetProvider
+/// Example::
 ///
-/// # Create a UTF-8 text segment
-/// provider = BufferedTextAssetProvider.create(
-///     key="text_0",
-///     text_content="Hello, World!",
-///     encoding="UTF-8",
-/// )
+///     from aws.osml.io import BufferedTextAssetProvider
 ///
-/// # Access text content
-/// print(provider.text)  # "Hello, World!"
-/// print(provider.encoding)  # "UTF-8"
-/// print(provider.format)  # "U8S"
+///     # Create a UTF-8 text asset
+///     provider = BufferedTextAssetProvider.create(
+///         key="text_0",
+///         text_content="Hello, World!",
+///         encoding="UTF-8",
+///     )
 ///
-/// # Set optional properties
-/// provider = BufferedTextAssetProvider.create(
-///     key="text_1",
-///     text_content="Sample text",
-///     encoding="ASCII",
-///     title="My Text Segment",
-///     description="A sample text segment",
-///     roles=["annotation", "metadata"],
-/// )
-/// ```
+///     # Access text content and metadata
+///     print(provider.text)      # "Hello, World!"
+///     print(provider.encoding)  # "UTF-8"
+///     print(provider.format)    # "U8S"
+///
+///     # Create a text asset with title, description, and roles
+///     provider = BufferedTextAssetProvider.create(
+///         key="text_segment_0",
+///         text_content="Mission report content...",
+///         encoding="UTF-8",
+///         title="Mission Report",
+///         description="Operational text",
+///         roles=["data", "annotation"],
+///     )
 #[pyclass(name = "BufferedTextAssetProvider")]
 pub struct PyBufferedTextAssetProvider {
     inner: Arc<BufferedTextAssetProvider>,
@@ -63,35 +68,38 @@ impl PyBufferedTextAssetProvider {
 
 #[pymethods]
 impl PyBufferedTextAssetProvider {
-    /// Create a new BufferedTextAssetProvider with the specified parameters.
+    /// Create a new in-memory text asset with the specified content and encoding.
     ///
-    /// # Arguments
+    /// :param key: Unique identifier for this asset.
+    /// :type key: str
+    /// :param text_content: The text content as a string.
+    /// :type text_content: str
+    /// :param encoding: Character encoding. Supported values are ``"UTF-8"``,
+    ///     ``"ASCII"``, ``"ECS"``, and ``"MTF"``. Defaults to ``"UTF-8"``.
+    /// :type encoding: str, optional
+    /// :param title: Human-readable title for the asset.
+    /// :type title: str, optional
+    /// :param description: Detailed description of the asset.
+    /// :type description: str, optional
+    /// :param roles: Semantic roles describing the asset's purpose. Defaults
+    ///     to ``["data"]`` if not specified.
+    /// :type roles: list[str], optional
+    /// :param metadata: Additional metadata to attach to the asset.
+    /// :type metadata: MetadataProvider, optional
+    /// :returns: A new in-memory text asset.
+    /// :rtype: BufferedTextAssetProvider
     ///
-    /// * `key` - Unique identifier for this asset
-    /// * `text_content` - The text content as a string
-    /// * `encoding` - Character encoding: "ASCII", "UTF-8", "ECS", or "MTF" (default: "UTF-8")
-    /// * `title` - Human-readable title (optional)
-    /// * `description` - Detailed description (optional)
-    /// * `roles` - Semantic roles (optional, defaults to ["data"])
-    /// * `metadata` - Optional MetadataProvider for additional metadata
+    /// Example::
     ///
-    /// # Returns
+    ///     from aws.osml.io import BufferedTextAssetProvider
     ///
-    /// A new BufferedTextAssetProvider instance.
-    ///
-    /// # Example
-    ///
-    /// ```python
-    /// from aws.osml.io import BufferedTextAssetProvider
-    ///
-    /// provider = BufferedTextAssetProvider.create(
-    ///     key="text_0",
-    ///     text_content="Hello, World!",
-    ///     encoding="UTF-8",
-    ///     title="Sample Text",
-    ///     description="A sample text segment",
-    /// )
-    /// ```
+    ///     provider = BufferedTextAssetProvider.create(
+    ///         key="text_0",
+    ///         text_content="Hello, World!",
+    ///         encoding="UTF-8",
+    ///         title="Sample Text",
+    ///         description="A sample text asset",
+    ///     )
     #[staticmethod]
     #[pyo3(signature = (
         key,
@@ -138,43 +146,43 @@ impl PyBufferedTextAssetProvider {
 
     // ========== AssetProvider properties ==========
 
-    /// Returns the unique identifier for this asset.
+    /// Unique identifier for this asset within the dataset.
     #[getter]
     fn key(&self) -> &str {
         self.inner.key()
     }
 
-    /// Returns a human-readable title for the asset.
+    /// Human-readable title for the asset.
     #[getter]
     fn title(&self) -> &str {
         self.inner.title()
     }
 
-    /// Returns a detailed description of the asset.
+    /// Detailed description of the asset.
     #[getter]
     fn description(&self) -> &str {
         self.inner.description()
     }
 
-    /// Returns the MIME type of the asset content.
+    /// MIME type of the asset content.
     #[getter]
     fn media_type(&self) -> &str {
         self.inner.media_type()
     }
 
-    /// Returns the semantic roles for this asset.
+    /// Semantic roles for this asset.
     #[getter]
     fn roles(&self) -> Vec<String> {
         self.inner.roles().to_vec()
     }
 
-    /// Returns the asset category.
+    /// Asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
         self.inner.asset_type()
     }
 
-    /// Returns the raw asset bytes as a BytesIO object.
+    /// Raw asset bytes as a ``BytesIO`` object.
     ///
     /// The raw bytes have CR/LF line delimiters as required by NITF.
     fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
@@ -188,26 +196,26 @@ impl PyBufferedTextAssetProvider {
         Ok(bytes_io.into())
     }
 
-    /// Returns the asset-level metadata provider.
+    /// Asset-level metadata as a :class:`MetadataProvider`.
     fn get_metadata(&self) -> PyMetadataProvider {
         PyMetadataProvider::new(self.inner.metadata())
     }
 
     // ========== TextAssetProvider properties ==========
 
-    /// Returns the decoded text content as a string.
+    /// The decoded text content as a string.
     #[getter]
     fn text(&self) -> PyResult<String> {
         Ok(self.inner.text()?)
     }
 
-    /// Returns the character encoding (e.g., "UTF-8", "ASCII").
+    /// The character encoding of the text content (e.g., ``"UTF-8"``, ``"ASCII"``).
     #[getter]
     fn encoding(&self) -> &str {
         self.inner.encoding()
     }
 
-    /// Returns the text format identifier (e.g., "U8S", "STA").
+    /// The text format identifier (e.g., ``"U8S"``, ``"STA"``).
     #[getter]
     fn format(&self) -> &str {
         self.inner.format()

@@ -1,6 +1,22 @@
-//! PyO3 Python bindings for the image IO API.
+//! High-performance reading and writing of geospatial imagery datasets.
 //!
-//! This module contains wrapper types that expose Rust traits to Python.
+//! The ``aws.osml.io`` package provides access to NITF, GeoTIFF, and other
+//! geospatial formats through a unified Python API. Open a dataset with
+//! :class:`IO`, then retrieve individual assets — images, metadata, text,
+//! structured data, or vector graphics — through a :class:`DatasetReader` or
+//! :class:`DatasetWriter` context manager.
+//!
+//! Key classes:
+//!
+//! * :class:`IO` — factory for opening datasets in read or write mode.
+//! * :class:`DatasetReader` — read access to an existing dataset (context manager).
+//! * :class:`DatasetWriter` — write access to a new or existing dataset (context manager).
+//! * :class:`ImageAssetProvider` — blocked/tiled image access returning NumPy arrays.
+//! * :class:`MetadataProvider` — key-value metadata access.
+//! * :class:`TextAssetProvider` — text asset access.
+//! * :class:`DataAssetProvider` — structured data (XML/JSON) access.
+//! * :class:`GraphicsAssetProvider` — vector graphics (CGM) access.
+//! * :class:`StructureRegistry`, :class:`StructureAccessor`, :class:`StructureWriter` — binary structure parsing and encoding.
 
 pub mod asset;
 pub mod buffered_image;

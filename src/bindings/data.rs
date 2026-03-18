@@ -12,9 +12,32 @@ use crate::bindings::PyMetadataProvider;
 use crate::traits::DataAssetProvider;
 use crate::types::AssetType;
 
-/// Python wrapper for DataAssetProvider trait objects.
+/// Provides access to structured data stored within a geospatial dataset.
 ///
-/// This class provides access to data asset properties and parsing methods.
+/// Geospatial datasets can embed structured payloads alongside imagery —
+/// XML metadata (such as SICD/SIDD), JSON configuration, overflow TREs,
+/// and application-specific data. ``DataAssetProvider`` exposes the raw
+/// bytes through :meth:`get_raw_asset` and offers convenience methods to
+/// parse the content directly as XML (:meth:`parse_as_xml`) or JSON
+/// (:meth:`parse_as_json`). The :attr:`mime_type` property indicates the
+/// content format. Use :meth:`DatasetReader.get_asset` to obtain an
+/// instance for a specific data asset in the dataset.
+///
+/// Example::
+///
+///     from aws.osml.io import IO
+///
+///     with IO.open(["sicd_image.ntf"], "r") as dataset:
+///         for key in dataset.get_asset_keys(asset_type="data"):
+///             data = dataset.get_asset(key)
+///             print(f"Data '{key}': mime_type={data.mime_type}")
+///
+///             if data.mime_type == "application/xml":
+///                 xml_tree = data.parse_as_xml()
+///                 print(f"XML root tag: {xml_tree.tag}")
+///             elif data.mime_type == "application/json":
+///                 obj = data.parse_as_json()
+///                 print(f"JSON keys: {list(obj.keys())}")
 #[pyclass(name = "DataAssetProvider")]
 pub struct PyDataAssetProvider {
     inner: Arc<dyn DataAssetProvider>,
@@ -36,43 +59,43 @@ impl PyDataAssetProvider {
 impl PyDataAssetProvider {
     // AssetProvider methods
 
-    /// Returns the unique identifier for this asset within the dataset.
+    /// The unique identifier for this asset within the dataset.
     #[getter]
     fn key(&self) -> &str {
         self.inner.key()
     }
 
-    /// Returns a human-readable title for the asset.
+    /// A human-readable title for the asset.
     #[getter]
     fn title(&self) -> &str {
         self.inner.title()
     }
 
-    /// Returns a detailed description of the asset.
+    /// A detailed description of the asset.
     #[getter]
     fn description(&self) -> &str {
         self.inner.description()
     }
 
-    /// Returns the MIME type of the asset content.
+    /// The MIME type of the asset content.
     #[getter]
     fn media_type(&self) -> &str {
         self.inner.media_type()
     }
 
-    /// Returns the semantic roles for this asset.
+    /// The semantic roles for this asset.
     #[getter]
     fn roles(&self) -> Vec<String> {
         self.inner.roles().to_vec()
     }
 
-    /// Returns the asset category.
+    /// The asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
         self.inner.asset_type()
     }
 
-    /// Returns the raw asset bytes as a BytesIO object.
+    /// The raw asset bytes as a ``BytesIO`` object.
     fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let bytes = self.inner.raw_asset()?;
         let py_bytes = PyBytes::new_bound(py, &bytes);
@@ -84,24 +107,37 @@ impl PyDataAssetProvider {
         Ok(bytes_io.into())
     }
 
-    /// Returns the asset-level metadata provider.
+    /// The asset-level :class:`MetadataProvider`.
     fn get_metadata(&self) -> PyMetadataProvider {
         PyMetadataProvider::new(self.inner.metadata())
     }
 
     // DataAssetProvider-specific methods
 
-    /// Returns the MIME type of the data.
+    /// The MIME type of the data content (e.g., ``"application/xml"``, ``"application/json"``).
     #[getter]
     fn mime_type(&self) -> &str {
         self.inner.mime_type()
     }
 
-    /// Parses the content as XML and returns an ElementTree Element object.
+    /// Parse the data content as XML and return an ``ElementTree`` ``Element``.
     ///
-    /// # Errors
+    /// Decodes the raw bytes and parses them as XML using Python's
+    /// ``xml.etree.ElementTree`` module. This is useful for reading
+    /// SICD/SIDD metadata or other XML payloads embedded in the dataset.
     ///
-    /// Raises a ValueError if the content is not valid XML.
+    /// :returns: The root element of the parsed XML document.
+    /// :rtype: xml.etree.ElementTree.Element
+    /// :raises ValueError: If the content is not valid XML.
+    ///
+    /// Example::
+    ///
+    ///     data = dataset.get_asset(key)
+    ///     if data.mime_type == "application/xml":
+    ///         root = data.parse_as_xml()
+    ///         print(f"XML root tag: {root.tag}")
+    ///         for child in root:
+    ///             print(f"  {child.tag}")
     fn parse_as_xml(&self, py: Python<'_>) -> PyResult<PyObject> {
         let xml_string = self.inner.parse_as_xml()?;
         
@@ -113,11 +149,22 @@ impl PyDataAssetProvider {
         Ok(element.into())
     }
 
-    /// Parses the content as JSON and returns a Python dictionary.
+    /// Parse the data content as JSON and return a Python object.
     ///
-    /// # Errors
+    /// Decodes the raw bytes and parses them as JSON. The returned value
+    /// is a native Python object — typically a ``dict`` for JSON objects
+    /// or a ``list`` for JSON arrays.
     ///
-    /// Raises a ValueError if the content is not valid JSON.
+    /// :returns: The parsed JSON content as a native Python object.
+    /// :rtype: dict or list
+    /// :raises ValueError: If the content is not valid JSON.
+    ///
+    /// Example::
+    ///
+    ///     data = dataset.get_asset(key)
+    ///     if data.mime_type == "application/json":
+    ///         obj = data.parse_as_json()
+    ///         print(f"Keys: {list(obj.keys())}")
     fn parse_as_json(&self, py: Python<'_>) -> PyResult<PyObject> {
         let json_value = self.inner.parse_as_json()?;
         serde_json_value_to_pyobject(py, &json_value)

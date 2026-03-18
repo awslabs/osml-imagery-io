@@ -57,56 +57,66 @@ impl ParsedUri {
     }
 }
 
-/// Factory class for opening geospatial datasets.
+/// Entry point for opening geospatial datasets for reading or writing.
 ///
-/// The IO class provides a simple factory function to open datasets for reading
-/// or writing. It automatically detects the file format from the file extension
-/// and magic bytes, and returns the appropriate reader or writer implementation.
+/// The ``IO`` class provides a single static method, ``open``, that accepts one
+/// or more file paths (or URIs) and returns either a :class:`DatasetReader` or a
+/// :class:`DatasetWriter` depending on the requested mode. The file format is
+/// auto-detected from the extension and file header bytes when reading; supported
+/// formats include NITF 2.0/2.1, NSIF 1.0, and TIFF/GeoTIFF. Both local file
+/// paths and ``file://`` URIs are supported.
 ///
-/// # Example
+/// Example::
 ///
-/// ```python
-/// from aws.osml.io import IO
+///     from aws.osml.io import IO
 ///
-/// # Open for reading
-/// with IO.open("image.ntf", "r") as reader:
-///     keys = reader.get_asset_keys()
-///     asset = reader.get_asset(keys[0])
+///     # Read mode — returns a DatasetReader (format auto-detected)
+///     with IO.open(["image.ntf"], "r") as dataset:
+///         keys = dataset.get_asset_keys()
+///         asset = dataset.get_asset(keys[0])
 ///
-/// # Open for writing
-/// with IO.open("output.ntf", "w") as writer:
-///     writer.add_asset("image", provider, "Title", "Description", ["data"])
-/// ```
+///     # Write mode — returns a DatasetWriter
+///     with IO.open(["output.ntf"], "w", "nitf") as writer:
+///         writer.add_asset("image", provider, "Title", "Description", ["data"])
 #[pyclass(name = "IO")]
 pub struct IO;
 
 #[pymethods]
 impl IO {
-    /// Opens a dataset for reading or writing.
+    /// Open a dataset for reading or writing.
     ///
-    /// # Arguments
+    /// The format is auto-detected from the file extension when reading. When
+    /// writing, a format string must be provided. Use a context manager (``with``
+    /// statement) on the returned object to ensure file handles are released.
     ///
-    /// * `paths` - A list of URIs or paths to the dataset. For single-file formats,
-    ///   only the first path is used. Supports:
-    ///   - Local file paths (e.g., ["image.ntf"], ["/path/to/image.tif"])
-    ///   - File URIs (e.g., ["file:///path/to/image.ntf"])
-    ///   - S3 URIs (e.g., ["s3://bucket/key/image.ntf"])
+    /// :param paths: One or more URIs or file paths to the dataset. For
+    ///     single-file formats only the first path is used. Accepts local paths
+    ///     (``["image.ntf"]``), ``file://`` URIs, and ``s3://`` URIs.
+    /// :type paths: list[str]
+    /// :param mode: ``"r"`` for reading or ``"w"`` for writing. Defaults to
+    ///     ``"r"``.
+    /// :type mode: str
+    /// :param format: Format identifier required when *mode* is ``"w"``
+    ///     (e.g., ``"nitf"``, ``"geotiff"``). Ignored when reading.
+    /// :type format: str or None
+    /// :returns: A :class:`DatasetReader` when *mode* is ``"r"``, or a
+    ///     :class:`DatasetWriter` when *mode* is ``"w"``.
+    /// :rtype: DatasetReader or DatasetWriter
+    /// :raises ValueError: If *paths* is empty, the mode is invalid, or the
+    ///     file format is not supported.
+    /// :raises IOError: If the file cannot be opened.
     ///
-    /// * `mode` - The access mode:
-    ///   - "r" for reading (returns DatasetReader)
-    ///   - "w" for writing (returns DatasetWriter)
+    /// Example::
     ///
-    /// * `format` - Optional format specification for writing (e.g., "nitf", "nsif").
-    ///   Required when mode is "w". Ignored when mode is "r".
+    ///     from aws.osml.io import IO
     ///
-    /// # Returns
+    ///     # Read mode — format auto-detected from extension
+    ///     with IO.open(["image.ntf"], "r") as dataset:
+    ///         print(type(dataset))  # DatasetReader
     ///
-    /// A DatasetReader when mode is "r", or a DatasetWriter when mode is "w".
-    ///
-    /// # Raises
-    ///
-    /// * ValueError - If paths is empty, the mode is invalid, or the file format is not supported.
-    /// * IOError - If the file cannot be opened.
+    ///     # Write mode — format must be specified
+    ///     with IO.open(["output.ntf"], "w", "nitf") as writer:
+    ///         print(type(writer))  # DatasetWriter
     #[staticmethod]
     #[pyo3(signature = (paths, mode="r", format=None))]
     fn open(

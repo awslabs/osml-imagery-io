@@ -11,13 +11,28 @@ use crate::bindings::{PyAssetProvider, PyBufferedImageAssetProvider, PyMetadataP
 use crate::error::CodecError;
 use crate::traits::{AssetProvider, DatasetWriter};
 
-/// Python wrapper for DatasetWriter trait objects.
+/// Provides write access to geospatial datasets.
 ///
-/// This class provides the ability to write geospatial datasets through a unified
-/// interface, allowing creation of imagery files without knowing format-specific
-/// encoding details.
+/// A :class:`DatasetWriter` creates a new geospatial dataset (NITF, GeoTIFF,
+/// etc.) and populates it with assets and metadata. Use :meth:`IO.open` with
+/// mode ``"w"`` and a format name to obtain an instance. The writer handles
+/// format-specific encoding details so you can focus on the content. It
+/// supports the Python context manager protocol, so resources are flushed and
+/// released automatically when the ``with`` block exits.
 ///
-/// Supports Python context manager protocol via `__enter__` and `__exit__` methods.
+/// Example::
+///
+///     from aws.osml.io import IO, BufferedMetadataProvider
+///
+///     metadata = BufferedMetadataProvider()
+///     metadata.set("IC", "NC")
+///
+///     with IO.open(["output.ntf"], "w", "nitf") as writer:
+///         writer.metadata = metadata
+///         writer.add_asset(
+///             "image_segment_0", image_provider,
+///             "Primary Image", "RGB scene", ["data"],
+///         )
 #[pyclass(name = "DatasetWriter")]
 pub struct PyDatasetWriter {
     inner: Option<Box<dyn DatasetWriter>>,
@@ -45,21 +60,31 @@ impl PyDatasetWriter {
 
 #[pymethods]
 impl PyDatasetWriter {
-    /// Adds an asset to the dataset.
+    /// Add an asset to the dataset.
     ///
-    /// # Arguments
+    /// Each asset is identified by a unique key and backed by an
+    /// :class:`AssetProvider` (or any subtype such as
+    /// :class:`BufferedImageAssetProvider`).
     ///
-    /// * `key` - The unique string identifier for the asset.
-    /// * `provider` - The AssetProvider containing the asset data. Can be any AssetProvider
-    ///   subtype including AssetProvider, BufferedImageAssetProvider, etc.
-    /// * `title` - A human-readable title for the asset.
-    /// * `description` - A detailed description of the asset.
-    /// * `roles` - Semantic roles for the asset (e.g., "data", "thumbnail", "metadata").
+    /// :param key: Unique string identifier for the asset.
+    /// :type key: str
+    /// :param provider: The asset data to add.
+    /// :type provider: AssetProvider | BufferedImageAssetProvider
+    /// :param title: Human-readable title for the asset.
+    /// :type title: str
+    /// :param description: Detailed description of the asset.
+    /// :type description: str
+    /// :param roles: Semantic roles (e.g., ``"data"``, ``"thumbnail"``).
+    /// :type roles: list[str]
+    /// :raises ValueError: If an asset with the given key already exists.
+    /// :raises TypeError: If *provider* is not a valid asset provider type.
     ///
-    /// # Raises
+    /// Example::
     ///
-    /// * ValueError - If an asset with the given key already exists.
-    /// * TypeError - If provider is not a valid AssetProvider type.
+    ///     writer.add_asset(
+    ///         "image_segment_0", image_provider,
+    ///         "Primary Image", "RGB scene", ["data"],
+    ///     )
     #[pyo3(signature = (key, provider, title, description, roles))]
     fn add_asset(
         &mut self,
@@ -92,17 +117,12 @@ impl PyDatasetWriter {
         ))
     }
 
-    /// Sets the dataset-level metadata.
+    /// Set the dataset-level metadata.
     ///
-    /// This property allows setting metadata for the dataset using a MetadataProvider.
+    /// Assign a :class:`MetadataProvider` (or :class:`BufferedMetadataProvider`)
+    /// containing encoding hints and format fields for the output file.
     ///
-    /// # Arguments
-    ///
-    /// * `metadata` - The MetadataProvider containing the metadata to set.
-    ///
-    /// # Raises
-    ///
-    /// * IOError - If the metadata cannot be set.
+    /// :raises IOError: If the metadata cannot be applied to the dataset.
     #[setter]
     fn metadata(&mut self, metadata: &PyMetadataProvider) -> PyResult<()> {
         let inner = self.get_inner_mut()?;
@@ -111,10 +131,13 @@ impl PyDatasetWriter {
         Ok(())
     }
 
-    /// Finalizes the dataset and releases all resources.
+    /// Flush pending data and release all resources.
     ///
-    /// This method flushes all pending data to storage and closes the dataset.
-    /// After calling this method, the writer should not be used.
+    /// After calling this method the writer should not be used. When using
+    /// the context manager (``with`` statement), ``close`` is called
+    /// automatically on exit.
+    ///
+    /// :raises IOError: If flushing data to storage fails.
     fn close(&mut self) -> PyResult<()> {
         if let Some(mut inner) = self.inner.take() {
             inner.close()?;

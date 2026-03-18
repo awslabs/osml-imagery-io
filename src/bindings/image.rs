@@ -13,9 +13,40 @@ use crate::bindings::PyMetadataProvider;
 use crate::traits::ImageAssetProvider;
 use crate::types::{AssetType, PixelType};
 
-/// Python wrapper for ImageAssetProvider trait objects.
+/// Provides blocked (tiled) access to the pixel data of an image asset.
 ///
-/// This class provides blocked/tiled access to large imagery with numpy array support.
+/// Large geospatial images are divided into a regular grid of fixed-size
+/// rectangular blocks. ``ImageAssetProvider`` lets you read individual blocks
+/// as NumPy arrays without loading the entire image into memory. Use
+/// :meth:`DatasetReader.get_asset` to obtain an instance for a specific image
+/// asset in the dataset.
+///
+/// All arrays returned by :meth:`get_block` use a channels-first (CHW) layout
+/// with shape ``(bands, rows, cols)``. This matches the convention used by
+/// PyTorch and many deep learning pipelines. To convert to the channels-last
+/// (HWC) layout expected by OpenCV or Pillow, use
+/// ``np.transpose(block, (1, 2, 0))``.
+///
+/// Example::
+///
+///     import numpy as np
+///     from aws.osml.io import IO
+///
+///     with IO.open(["image.ntf"], "r") as dataset:
+///         image = dataset.get_asset("image_segment_0")
+///
+///         # Read an RGB composite from a multispectral image
+///         rgb = image.get_block(0, 0, resolution_level=0, bands=[3, 2, 1])
+///
+///         # Convert CHW to HWC for display with matplotlib or Pillow
+///         rgb_hwc = np.transpose(rgb, (1, 2, 0))
+///
+///         # Iterate over all blocks, skipping masked regions
+///         grid_rows, grid_cols = image.block_grid_size
+///         for row in range(grid_rows):
+///             for col in range(grid_cols):
+///                 if image.has_block(row, col, resolution_level=0):
+///                     block = image.get_block(row, col, resolution_level=0)
 #[pyclass(name = "ImageAssetProvider")]
 pub struct PyImageAssetProvider {
     inner: Arc<dyn ImageAssetProvider>,
@@ -37,43 +68,43 @@ impl PyImageAssetProvider {
 impl PyImageAssetProvider {
     // ========== AssetProvider properties ==========
 
-    /// Returns the unique identifier for this asset within the dataset.
+    /// Unique identifier for this asset within the dataset.
     #[getter]
     fn key(&self) -> &str {
         self.inner.key()
     }
 
-    /// Returns a human-readable title for the asset.
+    /// Human-readable title for the asset.
     #[getter]
     fn title(&self) -> &str {
         self.inner.title()
     }
 
-    /// Returns a detailed description of the asset.
+    /// Detailed description of the asset.
     #[getter]
     fn description(&self) -> &str {
         self.inner.description()
     }
 
-    /// Returns the MIME type of the asset content.
+    /// MIME type of the asset content.
     #[getter]
     fn media_type(&self) -> &str {
         self.inner.media_type()
     }
 
-    /// Returns the semantic roles for this asset.
+    /// Semantic roles for this asset.
     #[getter]
     fn roles(&self) -> Vec<String> {
         self.inner.roles().to_vec()
     }
 
-    /// Returns the asset category.
+    /// Asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
         self.inner.asset_type()
     }
 
-    /// Returns the raw asset bytes as a BytesIO object.
+    /// Raw asset bytes as a ``BytesIO`` object.
     fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let bytes = self.inner.raw_asset()?;
         let py_bytes = PyBytes::new_bound(py, &bytes);
@@ -85,86 +116,86 @@ impl PyImageAssetProvider {
         Ok(bytes_io.into())
     }
 
-    /// Returns the asset-level metadata provider.
+    /// Asset-level metadata as a :class:`MetadataProvider`.
     fn get_metadata(&self) -> PyMetadataProvider {
         PyMetadataProvider::new(self.inner.metadata())
     }
 
     // ========== ImageAssetProvider properties ==========
 
-    /// Returns the number of resolution levels in the image pyramid.
+    /// Number of resolution levels in the image pyramid.
     #[getter]
     fn num_resolution_levels(&self) -> u32 {
         self.inner.num_resolution_levels()
     }
 
-    /// Returns the number of spectral bands.
+    /// Number of spectral bands.
     #[getter]
     fn num_bands(&self) -> u32 {
         self.inner.num_bands()
     }
 
-    /// Returns the image height at full resolution in pixels.
+    /// Image height at full resolution in pixels.
     #[getter]
     fn num_rows(&self) -> u32 {
         self.inner.num_rows()
     }
 
-    /// Returns the image width at full resolution in pixels.
+    /// Image width at full resolution in pixels.
     #[getter]
     fn num_columns(&self) -> u32 {
         self.inner.num_columns()
     }
 
-    /// Returns the block width in pixels.
+    /// Block width in pixels.
     #[getter]
     fn num_pixels_per_block_horizontal(&self) -> u32 {
         self.inner.num_pixels_per_block_horizontal()
     }
 
-    /// Returns the block height in pixels.
+    /// Block height in pixels.
     #[getter]
     fn num_pixels_per_block_vertical(&self) -> u32 {
         self.inner.num_pixels_per_block_vertical()
     }
 
-    /// Returns the nominal bits per pixel.
+    /// Nominal bits per pixel.
     #[getter]
     fn num_bits_per_pixel(&self) -> u32 {
         self.inner.num_bits_per_pixel()
     }
 
-    /// Returns the actual bits per pixel.
+    /// Actual bits per pixel.
     #[getter]
     fn actual_bits_per_pixel(&self) -> u32 {
         self.inner.actual_bits_per_pixel()
     }
 
-    /// Returns the pixel data type.
+    /// Pixel data type.
     #[getter]
     fn pixel_value_type(&self) -> PixelType {
         self.inner.pixel_value_type()
     }
 
-    /// Returns the value used for padding incomplete edge blocks.
+    /// Value used for padding incomplete edge blocks.
     #[getter]
     fn pad_pixel_value(&self) -> f64 {
         self.inner.pad_pixel_value()
     }
 
-    /// Returns the image dimensions as (bands, rows, columns) - CHW format.
+    /// Image dimensions as ``(bands, rows, columns)`` in CHW format.
     #[getter]
     fn image_shape(&self) -> (u32, u32, u32) {
         self.inner.image_shape()
     }
 
-    /// Returns the block dimensions as (bands, rows, columns) - CHW format.
+    /// Block dimensions as ``(bands, rows, columns)`` in CHW format.
     #[getter]
     fn block_shape(&self) -> (u32, u32, u32) {
         self.inner.block_shape()
     }
 
-    /// Returns the number of blocks in each dimension as (rows, cols).
+    /// Number of blocks in each dimension as ``(rows, cols)``.
     #[getter]
     fn block_grid_size(&self) -> (u32, u32) {
         self.inner.block_grid_size()
@@ -172,38 +203,62 @@ impl PyImageAssetProvider {
 
     // ========== ImageAssetProvider methods ==========
 
-    /// Check if a block exists at the given coordinates.
+    /// Check whether a block exists at the given grid coordinates.
     ///
-    /// # Arguments
+    /// Some formats (notably NITF) support masked (sparse) images where not
+    /// every position in the block grid contains data. Use this method to
+    /// skip empty regions when iterating over blocks.
     ///
-    /// * `block_row` - Row index of the block in the block grid
-    /// * `block_col` - Column index of the block in the block grid
-    /// * `resolution_level` - Resolution level (0 = full resolution)
+    /// :param block_row: Row index in the block grid.
+    /// :type block_row: int
+    /// :param block_col: Column index in the block grid.
+    /// :type block_col: int
+    /// :param resolution_level: Resolution level (0 = full resolution).
+    /// :type resolution_level: int
+    /// :returns: ``True`` if the block contains data, ``False`` otherwise.
+    /// :rtype: bool
     ///
-    /// # Returns
+    /// Example::
     ///
-    /// True if the block exists, False otherwise.
+    ///     grid_rows, grid_cols = image.block_grid_size
+    ///     for row in range(grid_rows):
+    ///         for col in range(grid_cols):
+    ///             if image.has_block(row, col, resolution_level=0):
+    ///                 block = image.get_block(row, col, resolution_level=0)
     fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
         self.inner.has_block(block_row, block_col, resolution_level)
     }
 
-    /// Retrieve block data as a numpy ndarray.
+    /// Read a block of pixel data as a NumPy array.
     ///
-    /// # Arguments
+    /// Returns an ``ndarray`` with shape ``(bands, rows, cols)`` in
+    /// channels-first (CHW) format. The NumPy dtype is selected
+    /// automatically based on the image's ``pixel_value_type``.
     ///
-    /// * `block_row` - Row index of the block in the block grid
-    /// * `block_col` - Column index of the block in the block grid
-    /// * `resolution_level` - Resolution level (0 = full resolution)
-    /// * `bands` - Optional list of band indices to retrieve. If None, all bands are returned.
+    /// :param block_row: Row index in the block grid.
+    /// :type block_row: int
+    /// :param block_col: Column index in the block grid.
+    /// :type block_col: int
+    /// :param resolution_level: Resolution level (0 = full resolution).
+    /// :type resolution_level: int
+    /// :param bands: Zero-based band indices to retrieve. If ``None``,
+    ///     all bands are returned.
+    /// :type bands: list[int], optional
+    /// :returns: Pixel data with shape ``(bands, rows, cols)``.
+    /// :rtype: numpy.ndarray
+    /// :raises IndexError: If the block coordinates are out of bounds.
+    /// :raises ValueError: If the resolution level is invalid.
     ///
-    /// # Returns
+    /// Example::
     ///
-    /// A numpy ndarray with shape (bands, rows, cols) - CHW format - containing the block data.
+    ///     # All bands at full resolution
+    ///     block = image.get_block(0, 0, resolution_level=0)
     ///
-    /// # Raises
+    ///     # Natural color from a multispectral image (R, G, B)
+    ///     rgb = image.get_block(0, 0, resolution_level=0, bands=[3, 2, 1])
     ///
-    /// * IndexError - If the block coordinates are out of bounds
-    /// * ValueError - If the resolution level is invalid
+    ///     # Near-infrared band for vegetation analysis
+    ///     nir = image.get_block(0, 0, resolution_level=0, bands=[4])
     #[pyo3(signature = (block_row, block_col, resolution_level, bands=None))]
     fn get_block<'py>(
         &self,

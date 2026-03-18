@@ -37,45 +37,51 @@ impl PyGraphicsAssetProvider {
 impl PyGraphicsAssetProvider {
     // AssetProvider methods
 
-    /// Returns the unique identifier for this asset within the dataset.
+    /// The unique identifier for this asset within the dataset.
     #[getter]
     fn key(&self) -> &str {
         self.inner.key()
     }
 
-    /// Returns a human-readable title for the asset.
+    /// A human-readable title for the asset.
     #[getter]
     fn title(&self) -> &str {
         self.inner.title()
     }
 
-    /// Returns a detailed description of the asset.
+    /// A detailed description of the asset.
     #[getter]
     fn description(&self) -> &str {
         self.inner.description()
     }
 
-    /// Returns the MIME type of the asset content.
+    /// The MIME type of the asset content.
     #[getter]
     fn media_type(&self) -> &str {
         self.inner.media_type()
     }
 
-    /// Returns the semantic roles for this asset.
+    /// The semantic roles for this asset.
     #[getter]
     fn roles(&self) -> Vec<String> {
         self.inner.roles().to_vec()
     }
 
-    /// Returns the asset category.
+    /// The asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
         self.inner.asset_type()
     }
 
-    /// Returns the raw asset bytes as a BytesIO object.
+    /// The raw graphics bytes as a ``BytesIO`` object.
     ///
-    /// This is the primary method for accessing graphics data.
+    /// Returns the complete vector graphics payload (typically CGM format)
+    /// wrapped in a ``BytesIO`` stream. Read the returned object to access
+    /// the raw bytes for further processing or rendering.
+    ///
+    /// :returns: A seekable stream containing the raw graphics bytes.
+    /// :rtype: io.BytesIO
+    /// :raises IOError: If the graphics data cannot be read from the dataset.
     fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let bytes = self.inner.raw_asset()?;
         let py_bytes = PyBytes::new_bound(py, &bytes);
@@ -87,7 +93,7 @@ impl PyGraphicsAssetProvider {
         Ok(bytes_io.into())
     }
 
-    /// Returns the asset-level metadata provider.
+    /// The asset-level :class:`MetadataProvider`.
     fn get_metadata(&self) -> PyMetadataProvider {
         PyMetadataProvider::new(self.inner.metadata())
     }

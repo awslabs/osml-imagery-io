@@ -94,51 +94,55 @@ fn extract_array_bytes(py: Python<'_>, data: &PyObject) -> PyResult<Vec<u8>> {
     }
 }
 
-/// Python wrapper for BufferedImageAssetProvider.
+/// Constructs image assets entirely in memory.
 ///
-/// This class allows creating synthetic images in memory with configurable
-/// dimensions, tile sizes, pixel types, and band configurations.
+/// Use ``BufferedImageAssetProvider`` to create synthetic test data, assemble
+/// mosaics, or build images from processed results. The provider implements
+/// the same interface as :class:`ImageAssetProvider`, so in-memory images can
+/// be passed to any API that accepts an image asset, including
+/// :class:`DatasetWriter`.
 ///
-/// # Array Format
+/// All pixel arrays use a channels-first (CHW) layout with shape
+/// ``(bands, rows, cols)``. This matches the convention used by PyTorch and
+/// many deep learning pipelines. To convert to the channels-last (HWC) layout
+/// expected by OpenCV or Pillow, use ``np.transpose(array, (1, 2, 0))``.
+/// To convert from HWC back to CHW, use ``np.transpose(array, (2, 0, 1))``.
 ///
-/// All image data uses band-sequential (BSQ) ordering, also known as
-/// "channels first" or CHW format. NumPy arrays should have shape
-/// `(bands, rows, cols)`. This matches PyTorch's tensor format and
-/// provides natural support for per-band operations common in remote sensing.
+/// You can populate the image all at once with :meth:`set_full_image` or set
+/// individual blocks with :meth:`set_block` for large or sparse images.
+/// Optionally attach a :class:`BufferedMetadataProvider` to supply encoding
+/// hints such as compression type (``IC``) and interleave mode (``IMODE``).
 ///
-/// For interoperability with OpenCV or Pillow (which use HWC format),
-/// use `np.transpose(array, (1, 2, 0))` to convert from CHW to HWC,
-/// or `np.transpose(array, (2, 0, 1))` to convert from HWC to CHW.
+/// Example::
 ///
-/// # Example
+///     import numpy as np
+///     from aws.osml.io import BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 ///
-/// ```python
-/// from aws.osml.io import BufferedImageAssetProvider, PixelType
-/// import numpy as np
+///     metadata = BufferedMetadataProvider()
+///     metadata.set("IC", "NC")
+///     metadata.set("IMODE", "B")
 ///
-/// # Create a 512x512 RGB image with 256x256 tiles
-/// provider = BufferedImageAssetProvider.create(
-///     key="synthetic_image",
-///     num_columns=512,
-///     num_rows=512,
-///     num_bands=3,
-///     block_width=256,
-///     block_height=256,
-///     pixel_type=PixelType.UInt8,
-/// )
+///     # Create a 512x512 RGB image with 256x256 blocks
+///     provider = BufferedImageAssetProvider.create(
+///         key="synthetic_image",
+///         num_columns=512,
+///         num_rows=512,
+///         num_bands=3,
+///         block_width=256,
+///         block_height=256,
+///         pixel_type=PixelType.UInt8,
+///         metadata=metadata,
+///     )
 ///
-/// # Set the full image data - shape is (bands, rows, cols)
-/// image_data = np.zeros((3, 512, 512), dtype=np.uint8)
-/// provider.set_full_image(image_data)
+///     # Populate the full image at once
+///     image_data = np.random.randint(0, 255, (3, 512, 512), dtype=np.uint8)
+///     provider.set_full_image(image_data)
 ///
-/// # Set a single block - shape is (bands, block_rows, block_cols)
-/// block_data = np.ones((3, 256, 256), dtype=np.uint8) * 128
-/// provider.set_block(0, 0, block_data)
-///
-/// # Get a block back - returns shape (bands, block_rows, block_cols)
-/// result = provider.get_block(0, 0, 0)
-/// assert result.shape == (3, 256, 256)
-/// ```
+///     # Or set blocks individually for large/sparse images
+///     for row in range(2):
+///         for col in range(2):
+///             block = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
+///             provider.set_block(row, col, block)
 #[pyclass(name = "BufferedImageAssetProvider")]
 pub struct PyBufferedImageAssetProvider {
     inner: Arc<BufferedImageAssetProvider>,
@@ -158,43 +162,51 @@ impl PyBufferedImageAssetProvider {
 
 #[pymethods]
 impl PyBufferedImageAssetProvider {
-    /// Create a new BufferedImageAssetProvider with the specified parameters.
+    /// Create a new in-memory image asset with the specified dimensions and pixel format.
     ///
-    /// # Arguments
+    /// :param key: Unique identifier for this asset.
+    /// :type key: str
+    /// :param num_columns: Image width in pixels.
+    /// :type num_columns: int, optional
+    /// :param num_rows: Image height in pixels.
+    /// :type num_rows: int, optional
+    /// :param num_bands: Number of spectral bands.
+    /// :type num_bands: int, optional
+    /// :param block_width: Block width in pixels.
+    /// :type block_width: int, optional
+    /// :param block_height: Block height in pixels.
+    /// :type block_height: int, optional
+    /// :param pixel_type: Pixel data type.
+    /// :type pixel_type: PixelType, optional
+    /// :param actual_bits_per_pixel: Actual bits per pixel, may be less than
+    ///     the nominal size. ``None`` uses the full range for the pixel type.
+    /// :type actual_bits_per_pixel: int, optional
+    /// :param metadata: Encoding hints such as compression type (``IC``) and
+    ///     interleave mode (``IMODE``). See :class:`BufferedMetadataProvider`.
+    /// :type metadata: MetadataProvider, optional
+    /// :param title: Human-readable title. Auto-generated if omitted.
+    /// :type title: str, optional
+    /// :param description: Detailed description. Auto-generated if omitted.
+    /// :type description: str, optional
+    /// :returns: A new in-memory image asset.
+    /// :rtype: BufferedImageAssetProvider
     ///
-    /// * `key` - Unique identifier for this asset
-    /// * `num_columns` - Image width in pixels (default: 512)
-    /// * `num_rows` - Image height in pixels (default: 512)
-    /// * `num_bands` - Number of spectral bands (default: 1)
-    /// * `block_width` - Block/tile width in pixels (default: 256)
-    /// * `block_height` - Block/tile height in pixels (default: 256)
-    /// * `pixel_type` - Pixel data type (default: UInt8)
-    /// * `actual_bits_per_pixel` - Actual bits per pixel, may be less than nominal (default: None, uses full range)
-    /// * `metadata` - Optional MetadataProvider for encoding hints (IMODE, IC, NPPBH, etc.)
-    /// * `title` - Human-readable title (default: auto-generated)
-    /// * `description` - Detailed description (default: auto-generated)
+    /// Example::
     ///
-    /// # Returns
+    ///     from aws.osml.io import BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
     ///
-    /// A new BufferedImageAssetProvider instance.
+    ///     metadata = BufferedMetadataProvider()
+    ///     metadata.set("IC", "NC")
+    ///     metadata.set("IMODE", "B")
     ///
-    /// # Example
-    ///
-    /// ```python
-    /// from aws.osml.io import BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
-    ///
-    /// # Create with encoding hints (lowercase field names match .ksy parser output)
-    /// metadata = BufferedMetadataProvider()
-    /// metadata.set("imode", "P")  # Pixel interleave mode
-    /// metadata.set("nppbh", "256")  # Block width
-    ///
-    /// provider = BufferedImageAssetProvider.create(
-    ///     key="synthetic_image",
-    ///     num_columns=512,
-    ///     num_rows=512,
-    ///     metadata=metadata,
-    /// )
-    /// ```
+    ///     provider = BufferedImageAssetProvider.create(
+    ///         key="synthetic_image",
+    ///         num_columns=512,
+    ///         num_rows=512,
+    ///         num_bands=3,
+    ///         pixel_type=PixelType.UInt8,
+    ///         metadata=metadata,
+    ///     )
     #[staticmethod]
     #[pyo3(signature = (
         key,
@@ -254,66 +266,63 @@ impl PyBufferedImageAssetProvider {
         }
     }
 
-    /// Set the full image data from a numpy array.
+    /// Set the full image data from a NumPy array.
     ///
-    /// The array must be in band-sequential (BSQ) format, also known as
-    /// "channels first" or CHW format, with shape `(bands, rows, cols)`.
+    /// The array must use channels-first (CHW) layout with shape
+    /// ``(bands, rows, cols)``. The dimensions must match the values
+    /// specified when the provider was created.
     ///
-    /// # Arguments
+    /// :param data: Pixel data with shape ``(bands, rows, cols)``. Supported
+    ///     dtypes: ``uint8``, ``int8``, ``uint16``, ``int16``, ``uint32``,
+    ///     ``int32``, ``float32``, ``float64``. The dtype should match the
+    ///     provider's ``pixel_type``.
+    /// :type data: numpy.ndarray
+    /// :raises ValueError: If the array size does not match the image
+    ///     configuration (expected size = bands x rows x cols x bytes_per_pixel).
+    /// :raises TypeError: If the array dtype is not supported.
     ///
-    /// * `data` - NumPy array with shape `(bands, rows, cols)`. Supported dtypes:
-    ///   uint8, int8, uint16, int16, uint32, int32, float32, float64.
-    ///   The dtype should match the provider's `pixel_type` configuration.
+    /// Example::
     ///
-    /// # Raises
+    ///     import numpy as np
     ///
-    /// * `ValueError` - If the array size doesn't match the image configuration
-    ///   (expected size = bands × rows × cols × bytes_per_pixel)
-    /// * `TypeError` - If the array dtype is not supported
-    ///
-    /// # Example
-    ///
-    /// ```python
-    /// import numpy as np
-    ///
-    /// # Create RGB image data in CHW format: (3, 512, 512)
-    /// image_data = np.zeros((3, 512, 512), dtype=np.uint8)
-    /// image_data[0, :, :] = 255  # Red channel
-    /// provider.set_full_image(image_data)
-    /// ```
+    ///     # Create RGB image data in CHW format
+    ///     image_data = np.zeros((3, 512, 512), dtype=np.uint8)
+    ///     image_data[0, :, :] = 255  # Red channel
+    ///     provider.set_full_image(image_data)
     fn set_full_image(&self, py: Python<'_>, data: PyObject) -> PyResult<()> {
         let bytes = extract_array_bytes(py, &data)?;
         self.inner.set_full_image(&bytes)?;
         Ok(())
     }
 
-    /// Set block data at the given coordinates.
+    /// Set pixel data for a single block at the given grid coordinates.
     ///
-    /// The array must be in band-sequential (BSQ) format, also known as
-    /// "channels first" or CHW format, with shape `(bands, block_rows, block_cols)`.
+    /// The array must use channels-first (CHW) layout with shape
+    /// ``(bands, block_rows, block_cols)``. For large or sparse images,
+    /// setting blocks individually avoids loading the full image into memory.
     ///
-    /// # Arguments
+    /// :param block_row: Row index in the block grid (0-indexed).
+    /// :type block_row: int
+    /// :param block_col: Column index in the block grid (0-indexed).
+    /// :type block_col: int
+    /// :param data: Pixel data with shape ``(bands, block_rows, block_cols)``.
+    ///     Supported dtypes: ``uint8``, ``int8``, ``uint16``, ``int16``,
+    ///     ``uint32``, ``int32``, ``float32``, ``float64``. The dtype should
+    ///     match the provider's ``pixel_type``.
+    /// :type data: numpy.ndarray
+    /// :raises ValueError: If the array is not contiguous or block coordinates
+    ///     are out of range.
+    /// :raises TypeError: If the array dtype is not supported.
     ///
-    /// * `block_row` - Row index of the block in the block grid (0-indexed)
-    /// * `block_col` - Column index of the block in the block grid (0-indexed)
-    /// * `data` - NumPy array with shape `(bands, block_rows, block_cols)`. Supported
-    ///   dtypes: uint8, int8, uint16, int16, uint32, int32, float32, float64.
-    ///   The dtype should match the provider's `pixel_type` configuration.
+    /// Example::
     ///
-    /// # Raises
+    ///     import numpy as np
     ///
-    /// * `ValueError` - If the array is not contiguous or block coordinates are invalid
-    /// * `TypeError` - If the array dtype is not supported
-    ///
-    /// # Example
-    ///
-    /// ```python
-    /// import numpy as np
-    ///
-    /// # Create block data in CHW format: (3, 256, 256)
-    /// block_data = np.ones((3, 256, 256), dtype=np.uint8) * 128
-    /// provider.set_block(0, 0, block_data)  # Set top-left block
-    /// ```
+    ///     # Set blocks individually for a 1024x1024 image with 256x256 blocks
+    ///     for row in range(4):
+    ///         for col in range(4):
+    ///             block = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
+    ///             provider.set_block(row, col, block)
     fn set_block(&self, py: Python<'_>, block_row: u32, block_col: u32, data: PyObject) -> PyResult<()> {
         let bytes = extract_array_bytes(py, &data)?;
         self.inner.set_block(block_row, block_col, &bytes)?;
@@ -322,43 +331,43 @@ impl PyBufferedImageAssetProvider {
 
     // ========== AssetProvider properties ==========
 
-    /// Returns the unique identifier for this asset.
+    /// Unique identifier for this asset within the dataset.
     #[getter]
     fn key(&self) -> &str {
         self.inner.key()
     }
 
-    /// Returns a human-readable title for the asset.
+    /// Human-readable title for the asset.
     #[getter]
     fn title(&self) -> &str {
         self.inner.title()
     }
 
-    /// Returns a detailed description of the asset.
+    /// Detailed description of the asset.
     #[getter]
     fn description(&self) -> &str {
         self.inner.description()
     }
 
-    /// Returns the MIME type of the asset content.
+    /// MIME type of the asset content.
     #[getter]
     fn media_type(&self) -> &str {
         self.inner.media_type()
     }
 
-    /// Returns the semantic roles for this asset.
+    /// Semantic roles for this asset.
     #[getter]
     fn roles(&self) -> Vec<String> {
         self.inner.roles().to_vec()
     }
 
-    /// Returns the asset category.
+    /// Asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
         self.inner.asset_type()
     }
 
-    /// Returns the raw asset bytes as a BytesIO object.
+    /// Raw asset bytes as a ``BytesIO`` object.
     fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let bytes = self.inner.raw_asset()?;
         let py_bytes = PyBytes::new_bound(py, &bytes);
@@ -370,92 +379,92 @@ impl PyBufferedImageAssetProvider {
         Ok(bytes_io.into())
     }
 
-    /// Returns the asset-level metadata provider.
+    /// Asset-level metadata as a :class:`MetadataProvider`.
     fn get_metadata(&self) -> PyMetadataProvider {
         PyMetadataProvider::new(self.inner.metadata())
     }
 
     // ========== ImageAssetProvider properties ==========
 
-    /// Returns the number of resolution levels in the image pyramid.
+    /// Number of resolution levels in the image pyramid.
     #[getter]
     fn num_resolution_levels(&self) -> u32 {
         self.inner.num_resolution_levels()
     }
 
-    /// Returns the number of spectral bands.
+    /// Number of spectral bands.
     #[getter]
     fn num_bands(&self) -> u32 {
         self.inner.num_bands()
     }
 
-    /// Returns the image height at full resolution in pixels.
+    /// Image height at full resolution in pixels.
     #[getter]
     fn num_rows(&self) -> u32 {
         self.inner.num_rows()
     }
 
-    /// Returns the image width at full resolution in pixels.
+    /// Image width at full resolution in pixels.
     #[getter]
     fn num_columns(&self) -> u32 {
         self.inner.num_columns()
     }
 
-    /// Returns the block width in pixels.
+    /// Block width in pixels.
     #[getter]
     fn num_pixels_per_block_horizontal(&self) -> u32 {
         self.inner.num_pixels_per_block_horizontal()
     }
 
-    /// Returns the block height in pixels.
+    /// Block height in pixels.
     #[getter]
     fn num_pixels_per_block_vertical(&self) -> u32 {
         self.inner.num_pixels_per_block_vertical()
     }
 
-    /// Returns the nominal bits per pixel.
+    /// Nominal bits per pixel.
     #[getter]
     fn num_bits_per_pixel(&self) -> u32 {
         self.inner.num_bits_per_pixel()
     }
 
-    /// Returns the actual bits per pixel.
+    /// Actual bits per pixel.
     #[getter]
     fn actual_bits_per_pixel(&self) -> u32 {
         self.inner.actual_bits_per_pixel()
     }
 
-    /// Returns the pixel data type.
+    /// Pixel data type.
     #[getter]
     fn pixel_value_type(&self) -> PixelType {
         self.inner.pixel_value_type()
     }
 
-    /// Returns the value used for padding incomplete edge blocks.
+    /// Value used for padding incomplete edge blocks.
     #[getter]
     fn pad_pixel_value(&self) -> f64 {
         self.inner.pad_pixel_value()
     }
 
-    /// Returns the image dimensions as (bands, rows, columns) - CHW format.
+    /// Image dimensions as ``(bands, rows, columns)`` in CHW format.
     #[getter]
     fn image_shape(&self) -> (u32, u32, u32) {
         self.inner.image_shape()
     }
 
-    /// Returns the block dimensions as (bands, rows, columns) - CHW format.
+    /// Block dimensions as ``(bands, rows, columns)`` in CHW format.
     #[getter]
     fn block_shape(&self) -> (u32, u32, u32) {
         self.inner.block_shape()
     }
 
-    /// Returns the number of blocks in each dimension as (rows, cols).
+    /// Number of blocks in each dimension as ``(rows, cols)``.
     #[getter]
     fn block_grid_size(&self) -> (u32, u32) {
         self.inner.block_grid_size()
     }
 
-    /// Returns the image representation (MONO, RGB, MULTI, etc.).
+    /// Image representation (MONO, RGB, MULTI, etc.).
     #[getter]
     fn irep(&self) -> String {
         self.inner.config().irep.clone()
@@ -463,39 +472,49 @@ impl PyBufferedImageAssetProvider {
 
     // ========== ImageAssetProvider methods ==========
 
-    /// Check if a block exists at the given coordinates.
+    /// Check whether a block exists at the given grid coordinates.
+    ///
+    /// :param block_row: Row index in the block grid.
+    /// :type block_row: int
+    /// :param block_col: Column index in the block grid.
+    /// :type block_col: int
+    /// :param resolution_level: Resolution level (0 = full resolution).
+    /// :type resolution_level: int
+    /// :returns: ``True`` if the block contains data, ``False`` otherwise.
+    /// :rtype: bool
     fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
         self.inner.has_block(block_row, block_col, resolution_level)
     }
 
-    /// Retrieve block data as a numpy ndarray.
+    /// Read a block of pixel data as a NumPy array.
     ///
-    /// Returns the block in band-sequential (BSQ) format, also known as
-    /// "channels first" or CHW format, with shape `(bands, rows, cols)`.
+    /// Returns an ``ndarray`` with shape ``(bands, rows, cols)`` in
+    /// channels-first (CHW) format. The NumPy dtype is selected
+    /// automatically based on the image's ``pixel_value_type``.
     ///
-    /// # Arguments
+    /// :param block_row: Row index in the block grid.
+    /// :type block_row: int
+    /// :param block_col: Column index in the block grid.
+    /// :type block_col: int
+    /// :param resolution_level: Resolution level (0 = full resolution).
+    /// :type resolution_level: int
+    /// :param bands: Zero-based band indices to retrieve. If ``None``,
+    ///     all bands are returned.
+    /// :type bands: list[int], optional
+    /// :returns: Pixel data with shape ``(bands, rows, cols)``.
+    /// :rtype: numpy.ndarray
+    /// :raises IndexError: If the block coordinates are out of bounds.
+    /// :raises ValueError: If the resolution level is invalid.
     ///
-    /// * `block_row` - Row index of the block in the block grid (0-indexed)
-    /// * `block_col` - Column index of the block in the block grid (0-indexed)
-    /// * `resolution_level` - Resolution level (0 = full resolution)
-    /// * `bands` - Optional list of band indices to retrieve (None = all bands)
+    /// Example::
     ///
-    /// # Returns
+    ///     # Get full block with all bands
+    ///     block = provider.get_block(0, 0, 0)
+    ///     print(block.shape)  # (3, 256, 256) for RGB with 256x256 blocks
     ///
-    /// NumPy array with shape `(bands, rows, cols)` in CHW format.
-    /// The dtype matches the provider's `pixel_type` configuration.
-    ///
-    /// # Example
-    ///
-    /// ```python
-    /// # Get full block with all bands
-    /// block = provider.get_block(0, 0, 0)
-    /// print(block.shape)  # (3, 256, 256) for RGB with 256x256 blocks
-    ///
-    /// # Get only the red channel (band 0)
-    /// red_band = provider.get_block(0, 0, 0, bands=[0])
-    /// print(red_band.shape)  # (1, 256, 256)
-    /// ```
+    ///     # Get only the red channel (band 0)
+    ///     red_band = provider.get_block(0, 0, 0, bands=[0])
+    ///     print(red_band.shape)  # (1, 256, 256)
     #[pyo3(signature = (block_row, block_col, resolution_level, bands=None))]
     fn get_block<'py>(
         &self,
