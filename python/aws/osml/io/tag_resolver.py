@@ -139,8 +139,14 @@ class TagNameResolver:
         return self._tag_dict[key]
 
     def __iter__(self) -> Iterator[Tuple[str, Any]]:
-        """Iterate over all (key, value) pairs in the underlying Tag_Dictionary."""
-        return iter(self._tag_dict.items())
+        """Iterate over all (resolved_name, value) pairs.
+
+        Keys are resolved to human-readable tag names when a mapping exists.
+        Tags without a known name are yielded with their numeric string key.
+        """
+        reverse = {str(v): k for k, v in self._mapping.items()}
+        for key, value in self._tag_dict.items():
+            yield (reverse.get(key, key), value)
 
     def __len__(self) -> int:
         """Return the number of entries in the underlying Tag_Dictionary."""

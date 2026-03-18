@@ -180,15 +180,39 @@ class TestContains:
 
 
 class TestIteration:
-    """Test iteration yields all entries from the underlying dict."""
+    """Test iteration resolves tag names and falls back to numeric keys."""
+
+    def test_iter_resolves_known_names(self):
+        resolver = TagNameResolver(SAMPLE_TAG_DICT)
+        items = dict(resolver)
+        assert items["ImageWidth"] == 512
+        assert items["ImageLength"] == 512
+        assert items["BitsPerSample"] == 8
+        assert items["Compression"] == 1
+        assert items["SamplesPerPixel"] == 3
+        assert items["ModelPixelScale"] == [0.5, 0.5, 0.0]
+        assert items["GeoKeyDirectory"] == [1, 1, 1, 2, 1024, 0, 1, 1, 3072, 0, 1, 32618]
+        assert items["GDALNoData"] == "nan"
+
+    def test_iter_falls_back_to_numeric_for_unknown_tags(self):
+        tag_dict = {"256": 512, "99999": "mystery"}
+        resolver = TagNameResolver(tag_dict)
+        items = dict(resolver)
+        assert items["ImageWidth"] == 512
+        assert items["99999"] == "mystery"
+
+    def test_iter_custom_mapping_resolves(self):
+        custom = {"MyTag": 50000}
+        tag_dict = {"50000": "val", "256": 512}
+        resolver = TagNameResolver(tag_dict, custom_mapping=custom)
+        items = dict(resolver)
+        assert items["MyTag"] == "val"
+        assert items["ImageWidth"] == 512
 
     def test_iter_yields_all_pairs(self):
         resolver = TagNameResolver(SAMPLE_TAG_DICT)
         items = list(resolver)
         assert len(items) == len(SAMPLE_TAG_DICT)
-        for key, value in items:
-            assert key in SAMPLE_TAG_DICT
-            assert SAMPLE_TAG_DICT[key] == value
 
     def test_iter_empty_dict(self):
         resolver = TagNameResolver({})
