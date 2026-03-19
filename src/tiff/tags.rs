@@ -60,6 +60,10 @@ pub const SAMPLE_FORMAT: u32 = 339;
 /// Tag 317: Predictor for compression pre-filtering.
 pub const PREDICTOR: u32 = 317;
 
+/// Tag 530: YCbCrSubSampling — chroma subsampling factors [horiz, vert].
+/// Default is [2, 2]. Only meaningful when PhotometricInterpretation = YCbCr (6).
+pub const YCBCR_SUB_SAMPLING: u32 = 530;
+
 
 // =============================================================================
 // Compression Constants
@@ -77,8 +81,28 @@ pub const COMPRESSION_DEFLATE: u16 = 8;
 /// PackBits compression (Macintosh RLE).
 pub const COMPRESSION_PACKBITS: u16 = 32773;
 
+/// JPEG compression (TIFF Technical Note 2).
+pub const COMPRESSION_JPEG: u16 = 7;
+
 /// Adobe Deflate compression (older registration, same algorithm as DEFLATE).
 pub const COMPRESSION_ADOBE_DEFLATE: u16 = 32946;
+
+// =============================================================================
+// libtiff Pseudo-Tags
+// =============================================================================
+
+/// Pseudo-tag for JPEG quality (1–100). Not a real TIFF tag — libtiff intercepts it.
+pub const TIFFTAG_JPEGQUALITY: u32 = 65537;
+
+/// Pseudo-tag for JPEG color mode. Controls YCbCr↔RGB conversion in libtiff.
+pub const TIFFTAG_JPEGCOLORMODE: u32 = 65538;
+
+/// JPEGCOLORMODE value: return raw colorspace data (no conversion).
+#[allow(dead_code)]
+pub const JPEGCOLORMODE_RAW: u32 = 0;
+
+/// JPEGCOLORMODE value: convert YCbCr to RGB on read, RGB to YCbCr on write.
+pub const JPEGCOLORMODE_RGB: u32 = 1;
 
 // =============================================================================
 // Sample Format Constants
@@ -105,6 +129,9 @@ pub const PHOTOMETRIC_RGB: u16 = 2;
 
 /// Palette color (indexed via color map).
 pub const PHOTOMETRIC_PALETTE: u16 = 3;
+
+/// YCbCr color space, required for JPEG-in-TIFF with RGB data.
+pub const PHOTOMETRIC_YCBCR: u16 = 6;
 
 // =============================================================================
 // Planar Configuration Constants

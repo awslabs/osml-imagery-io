@@ -112,6 +112,63 @@ for row in range(4):
         provider.set_block(row, col, block)
 ```
 
+## JPEG Color Space Handling in TIFF
+
+TIFF files compressed with JPEG (compression code 7) store RGB pixel data internally
+as YCbCr. This is a requirement of the JPEG-in-TIFF specification (TIFF Technical
+Note 2) — libtiff sets `PhotometricInterpretation` to YCbCr (6) for images with 3 or
+more bands and performs the RGB-to-YCbCr conversion automatically during encoding.
+
+On the read side, libtiff converts YCbCr back to RGB during decoding. The pixel data
+returned by `get_block()` is always RGB, and the `PhotometricInterpretation` reported
+in metadata reflects the decoded color space (RGB), not the on-disk storage format.
+Callers never need to handle YCbCr data directly.
+
+On the write side, callers provide standard RGB pixel data and select JPEG compression
+by setting encoding hint `"259"` to `7`. libtiff handles the RGB-to-YCbCr conversion
+as part of JPEG encoding. JPEG quality is configurable via encoding hint `"65537"`
+(values 1–100, default 75).
+
+For single-band (grayscale) images, JPEG compression uses `PhotometricInterpretation`
+MinIsBlack (1) and no color space conversion occurs.
+
+The YCbCr conversion is an internal codec detail, similar to JPEG quantization. It is
+lossy — writing and reading back a JPEG-compressed TIFF will not produce an exact pixel
+match. Use PSNR or similar metrics to evaluate fidelity rather than exact comparison.
+
+```python
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
+import numpy as np
+
+# Write a JPEG-compressed TIFF
+metadata = BufferedMetadataProvider()
+metadata.set_json("259", 7)       # JPEG compression
+metadata.set_json("65537", 85)    # Quality 85
+
+image_data = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
+provider = BufferedImageAssetProvider.create(
+    key="rgb_image",
+    num_columns=256,
+    num_rows=256,
+    num_bands=3,
+    block_width=256,
+    block_height=256,
+    pixel_type=PixelType.UInt8,
+    metadata=metadata,
+)
+provider.set_full_image(image_data)
+
+with IO.open(["output.tif"], "w", "tiff") as writer:
+    writer.add_asset(provider)
+
+# Read it back — pixels are RGB, not YCbCr
+with IO.open(["output.tif"], "r") as reader:
+    image = reader.get_asset("image_segment_0")
+    block = image.get_block(0, 0, resolution_level=0)
+    print(block.dtype)   # uint8
+    print(block.shape)   # (3, 256, 256) — RGB channels
+```
+
 ## Indexed (Palette Color) Images
 
 Some image formats store pixel values as indices into a color lookup table rather than

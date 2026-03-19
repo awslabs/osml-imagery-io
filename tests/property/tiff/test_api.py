@@ -405,8 +405,8 @@ def _write_tiff_with_metadata(path, metadata_dict):
     meta = BufferedMetadataProvider()
     meta.set("322", "256")   # TileWidth
     meta.set("323", "256")   # TileLength
-    meta.set("259", "None")  # Compression
-    meta.set("284", "Chunky")  # PlanarConfiguration
+    meta.set_json("259", 1)  # Compression (None)
+    meta.set_json("284", 1)  # PlanarConfiguration (Chunky)
 
     for k, v in metadata_dict.items():
         meta.set_json(k, v)

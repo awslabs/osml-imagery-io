@@ -162,7 +162,8 @@ def write_and_read_tiff(
         num_bands: Number of bands.
         num_rows: Number of rows.
         num_cols: Number of columns.
-        hints: Dict of encoding hint strings (e.g. Compression, TileWidth, …).
+        hints: Dict of encoding hints. String values are set via ``set()``,
+            non-string values (ints) via ``set_json()``.
 
     Returns:
         Decoded image array in BSQ format (bands, rows, cols).
@@ -173,7 +174,10 @@ def write_and_read_tiff(
     try:
         metadata = BufferedMetadataProvider()
         for k, v in hints.items():
-            metadata.set(k, v)
+            if isinstance(v, str):
+                metadata.set(k, v)
+            else:
+                metadata.set_json(k, v)
 
         tile_w = int(hints.get("322", "256"))   # TileWidth
         tile_h = int(hints.get("323", "256"))   # TileLength

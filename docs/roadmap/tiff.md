@@ -2,7 +2,7 @@
 
 This roadmap describes the plan for adding GeoTIFF support to osml-imagery-io. Cloud Optimized GeoTIFF (COG) support is covered in a separate roadmap ({doc}`cog`) since it depends on both this work and the cross-format image pyramid support ({doc}`image-pyramid`). The implementation follows the same patterns established by the JBP format: a third-party C library (libtiff) handles the heavy lifting, we integrate it through custom FFI bindings, and expose it through the existing Dataset API so users can read and write pixels without caring about the underlying format.
 
-**Status**: Phases 1–3 (TIFF reading, writing, and GeoTIFF metadata) are complete. COG support is tracked separately.
+**Status**: Phases 1–4 (TIFF reading, writing, GeoTIFF metadata, and JPEG compression) are complete. COG support is tracked separately.
 
 ## Design Principles
 
@@ -90,6 +90,7 @@ src/tiff/
 **Supported compressions** (handled by libtiff internally):
 - None (uncompressed)
 - LZW
+- JPEG (code 7)
 - Deflate/ZLib
 - PackBits
 
@@ -200,6 +201,43 @@ with IO.open(["image.tif"], "r") as reader:
 - [x] Add GeoTIFF tag writing to `TIFFDatasetWriter`
 - [x] Add unit tests with GeoTIFF test files
 - [x] Add integration tests with real-world GeoTIFF files in `data/integration/`
+
+## Phase 4: JPEG Compression (Code 7)
+
+**Objective**: Read and write JPEG-compressed TIFFs through the existing Dataset API, with configurable quality.
+
+**Scope**:
+- `tags.rs` — New constants: `COMPRESSION_JPEG` (7), `TIFFTAG_JPEGQUALITY` (65537), `PHOTOMETRIC_YCBCR` (6)
+- `reader.rs` — Add `COMPRESSION_JPEG` to `SUPPORTED_COMPRESSIONS`; validate 8-bit sample depth for JPEG IFDs
+- `writer.rs` — JPEG-specific logic in `TiffEncodingHints` and `write_image_ifd`:
+  - Accept compression code `7` in encoding hints
+  - Force predictor to 1 (None) for JPEG — predictor is incompatible
+  - Set `PhotometricInterpretation` to YCbCr (6) for ≥3 bands, MinIsBlack (1) for <3 bands
+  - Set `TIFFTAG_JPEGQUALITY` pseudo-tag before writing tiles (default quality 75, configurable via key `"65537"`)
+  - Reject non-8-bit pixel types with `CodecError::InvalidFormat`
+- Encoding hints migration — Tags 259, 317, and 284 now accept only numeric values (e.g. `7` instead of `"JPEG"`). Human-readable name resolution is handled by the Python `TagNameResolver` before values reach Rust.
+
+**Encoding hints** (JPEG-specific):
+
+| Key | Description | Valid Values | Default |
+|-----|-------------|-------------|---------|
+| `"259"` | Compression | `7` (JPEG) | — |
+| `"65537"` | JPEG quality | `1`–`100` | `75` |
+
+**Constraints**:
+- JPEG compression requires 8-bit samples (`BitsPerSample = 8`)
+- Predictor is always forced to 1 (None) regardless of metadata
+- Band count must be 1 or ≥3 for JPEG
+
+**Tasks**:
+- [x] Add `COMPRESSION_JPEG`, `TIFFTAG_JPEGQUALITY`, `PHOTOMETRIC_YCBCR` constants to `tags.rs`
+- [x] Migrate encoding hints parser from string to numeric values
+- [x] Add JPEG writer logic (photometric, quality, predictor override, 8-bit validation)
+- [x] Add `COMPRESSION_JPEG` to reader's `SUPPORTED_COMPRESSIONS`
+- [x] Add 8-bit sample depth validation for JPEG in reader
+- [x] Update Python test strategies and existing tests to use numeric values
+- [x] Add JPEG roundtrip property tests with PSNR ≥ 30 dB fidelity check
+- [x] Update documentation
 
 ## Testing Plan
 

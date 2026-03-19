@@ -36,6 +36,12 @@ struct TiffEncodingHints {
     compression: u16,
     predictor: u16,
     planar_config: u16,
+    /// JPEG quality (1–100). Only used when compression is JPEG (7).
+    jpeg_quality: u32,
+    /// JPEG color mode. When set to `JPEGCOLORMODE_RGB` (1), libtiff accepts
+    /// RGB input and converts to YCbCr internally on write. When `None`,
+    /// libtiff expects raw YCbCr input for JPEG-compressed ≥3-band images.
+    jpeg_color_mode: Option<u32>,
     /// Whether tile_width was explicitly set via metadata (tag 322).
     tile_width_explicit: bool,
     /// Whether tile_height was explicitly set via metadata (tag 323).
@@ -50,6 +56,8 @@ impl Default for TiffEncodingHints {
             compression: tags::COMPRESSION_DEFLATE,
             predictor: 2, // Horizontal predictor for Deflate
             planar_config: tags::PLANAR_CONFIG_CONTIG,
+            jpeg_quality: 75,
+            jpeg_color_mode: None,
             tile_width_explicit: false,
             tile_height_explicit: false,
         }
@@ -67,9 +75,15 @@ impl TiffEncodingHints {
     /// Recognized tags:
     /// - `"322"` (TileWidth) — tile width in pixels
     /// - `"323"` (TileLength) — tile height in pixels
-    /// - `"259"` (Compression) — compression scheme: `"None"`, `"LZW"`, or `"Deflate"`
-    /// - `"317"` (Predictor) — predictor: `"None"` or `"Horizontal"`
-    /// - `"284"` (PlanarConfiguration) — `"Chunky"` or `"Planar"`
+    /// - `"259"` (Compression) — integer: `1` (None), `5` (LZW), `7` (JPEG), `8` (Deflate), `32773` (PackBits), `32946` (Adobe Deflate)
+    /// - `"317"` (Predictor) — integer: `1` (None), `2` (Horizontal)
+    /// - `"284"` (PlanarConfiguration) — integer: `1` (Chunky), `2` (Planar)
+    /// - `"65537"` (JPEG Quality) — integer in [1, 100]; default 75 when absent
+    /// - `"65538"` (JPEG Color Mode) — integer: `0` (raw YCbCr), `1` (RGB↔YCbCr conversion); absent by default
+    ///
+    /// String values for tags 259, 317, and 284 are rejected with
+    /// `CodecError::InvalidFormat`. Use the Python `TagNameResolver` to
+    /// convert human-readable names to numeric values before reaching Rust.
     fn from_metadata(metadata: &dyn MetadataProvider) -> Result<Self, CodecError> {
         let dict = metadata.as_dict(None);
         let mut hints = TiffEncodingHints::default();
@@ -88,34 +102,46 @@ impl TiffEncodingHints {
             hints.tile_height_explicit = true;
         }
 
-        // Tag 259: Compression
+        // Tag 259: Compression (integer only)
         let compression_key = tags::COMPRESSION.to_string();
         if let Some(val) = dict.get(&compression_key) {
-            let s = json_to_string(val, "Compression (259)")?;
-            hints.compression = match s.as_str() {
-                "None" => tags::COMPRESSION_NONE,
-                "LZW" => tags::COMPRESSION_LZW,
-                "Deflate" => tags::COMPRESSION_DEFLATE,
+            if val.is_string() {
+                return Err(CodecError::InvalidFormat(format!(
+                    "Compression (259) must be an integer, not a string. Got {:?}. \
+                     Use the Python TagNameResolver to convert names to numeric values.",
+                    val
+                )));
+            }
+            let n = parse_u32_from_json(val, "Compression (259)")? as u16;
+            hints.compression = match n {
+                1 | 5 | 7 | 8 | 32773 => n,
+                32946 => n,
                 other => {
                     return Err(CodecError::InvalidFormat(format!(
-                        "Unknown Compression value: '{}'. Expected None, LZW, or Deflate",
+                        "Unknown Compression value: {}. Expected 1, 5, 7, 8, 32773, or 32946",
                         other
                     )));
                 }
             };
         }
 
-        // Tag 317: Predictor
+        // Tag 317: Predictor (integer only)
         let predictor_key = tags::PREDICTOR.to_string();
         let explicit_predictor = dict.contains_key(&predictor_key);
         if let Some(val) = dict.get(&predictor_key) {
-            let s = json_to_string(val, "Predictor (317)")?;
-            hints.predictor = match s.as_str() {
-                "None" => 1,
-                "Horizontal" => 2,
+            if val.is_string() {
+                return Err(CodecError::InvalidFormat(format!(
+                    "Predictor (317) must be an integer, not a string. Got {:?}. \
+                     Use the Python TagNameResolver to convert names to numeric values.",
+                    val
+                )));
+            }
+            let n = parse_u32_from_json(val, "Predictor (317)")? as u16;
+            hints.predictor = match n {
+                1 | 2 => n,
                 other => {
                     return Err(CodecError::InvalidFormat(format!(
-                        "Unknown Predictor value: '{}'. Expected None or Horizontal",
+                        "Unknown Predictor value: {}. Expected 1 or 2",
                         other
                     )));
                 }
@@ -130,20 +156,59 @@ impl TiffEncodingHints {
             };
         }
 
-        // Tag 284: PlanarConfiguration
+        // JPEG compression is incompatible with the Predictor tag — force to 1
+        if hints.compression == tags::COMPRESSION_JPEG {
+            hints.predictor = 1;
+        }
+
+        // Tag 284: PlanarConfiguration (integer only)
         let planar_key = tags::PLANAR_CONFIGURATION.to_string();
         if let Some(val) = dict.get(&planar_key) {
-            let s = json_to_string(val, "PlanarConfiguration (284)")?;
-            hints.planar_config = match s.as_str() {
-                "Chunky" => tags::PLANAR_CONFIG_CONTIG,
-                "Planar" => tags::PLANAR_CONFIG_SEPARATE,
+            if val.is_string() {
+                return Err(CodecError::InvalidFormat(format!(
+                    "PlanarConfiguration (284) must be an integer, not a string. Got {:?}. \
+                     Use the Python TagNameResolver to convert names to numeric values.",
+                    val
+                )));
+            }
+            let n = parse_u32_from_json(val, "PlanarConfiguration (284)")? as u16;
+            hints.planar_config = match n {
+                1 | 2 => n,
                 other => {
                     return Err(CodecError::InvalidFormat(format!(
-                        "Unknown PlanarConfiguration value: '{}'. Expected Chunky or Planar",
+                        "Unknown PlanarConfiguration value: {}. Expected 1 or 2",
                         other
                     )));
                 }
             };
+        }
+
+        // Pseudo-tag 65537: JPEG quality (integer only, 1–100)
+        let jpeg_quality_key = tags::TIFFTAG_JPEGQUALITY.to_string();
+        if let Some(val) = dict.get(&jpeg_quality_key) {
+            let q = parse_u32_from_json(val, "JPEG quality (65537)")?;
+            if q < 1 || q > 100 {
+                return Err(CodecError::InvalidFormat(format!(
+                    "JPEG quality must be between 1 and 100, got {}",
+                    q
+                )));
+            }
+            hints.jpeg_quality = q;
+        }
+
+        // Pseudo-tag 65538: JPEG color mode (0 = raw, 1 = RGB↔YCbCr conversion)
+        let jpeg_colormode_key = tags::TIFFTAG_JPEGCOLORMODE.to_string();
+        if let Some(val) = dict.get(&jpeg_colormode_key) {
+            let m = parse_u32_from_json(val, "JPEG color mode (65538)")?;
+            match m {
+                0 | 1 => hints.jpeg_color_mode = Some(m),
+                other => {
+                    return Err(CodecError::InvalidFormat(format!(
+                        "JPEG color mode must be 0 (raw) or 1 (RGB), got {}",
+                        other
+                    )));
+                }
+            }
         }
 
         Ok(hints)
@@ -179,17 +244,6 @@ fn parse_u32_from_json(val: &serde_json::Value, field: &str) -> Result<u32, Code
     }
     Err(CodecError::InvalidFormat(format!(
         "Expected integer or string for {}, got {:?}",
-        field, val
-    )))
-}
-
-/// Extract a string from a serde_json::Value.
-fn json_to_string(val: &serde_json::Value, field: &str) -> Result<String, CodecError> {
-    if let Some(s) = val.as_str() {
-        return Ok(s.to_string());
-    }
-    Err(CodecError::InvalidFormat(format!(
-        "Expected string for {}, got {:?}",
         field, val
     )))
 }
@@ -678,6 +732,13 @@ impl TIFFDatasetWriter {
         let pixel_type = image.pixel_value_type();
         let bytes_per_sample = pixel_type.bytes_per_pixel() as u32;
 
+        // JPEG compression requires 8-bit samples
+        if hints.compression == tags::COMPRESSION_JPEG && bits_per_sample != 8 {
+            return Err(CodecError::InvalidFormat(
+                "JPEG compression requires 8-bit samples".into(),
+            ));
+        }
+
         // Use tile dimensions directly from hints. The TIFF spec requires
         // tile dimensions to be multiples of 16, which is guaranteed by
         // apply_provider_defaults() (rounds up) and the encoding hint
@@ -692,19 +753,37 @@ impl TIFFDatasetWriter {
         handle.set_field_u16(tags::BITS_PER_SAMPLE, bits_per_sample as u16)?;
         handle.set_field_u16(tags::SAMPLES_PER_PIXEL, num_bands as u16)?;
         handle.set_field_u16(tags::SAMPLE_FORMAT, Self::sample_format(pixel_type))?;
-        handle.set_field_u16(
-            tags::PHOTOMETRIC_INTERPRETATION,
-            Self::photometric_interpretation(num_bands),
-        )?;
+        // JPEG-in-TIFF requires YCbCr for ≥3 bands; non-JPEG uses the standard logic.
+        let photometric = if hints.compression == tags::COMPRESSION_JPEG {
+            if num_bands >= 3 {
+                tags::PHOTOMETRIC_YCBCR
+            } else {
+                tags::PHOTOMETRIC_MINISBLACK
+            }
+        } else {
+            Self::photometric_interpretation(num_bands)
+        };
+        handle.set_field_u16(tags::PHOTOMETRIC_INTERPRETATION, photometric)?;
         handle.set_field_u32(tags::TILE_WIDTH, tile_width)?;
         handle.set_field_u32(tags::TILE_LENGTH, tile_height)?;
         handle.set_field_u16(tags::COMPRESSION, hints.compression)?;
         // Only set Predictor tag for compressions that support it (LZW, Deflate).
-        // libtiff rejects the Predictor tag for uncompressed images.
+        // libtiff rejects the Predictor tag for uncompressed and JPEG images.
         if hints.compression == tags::COMPRESSION_LZW
             || hints.compression == tags::COMPRESSION_DEFLATE
         {
             handle.set_field_u16(tags::PREDICTOR, hints.predictor)?;
+        }
+        // Set JPEG quality pseudo-tag before writing tile data
+        if hints.compression == tags::COMPRESSION_JPEG {
+            handle.set_field_u32(tags::TIFFTAG_JPEGQUALITY, hints.jpeg_quality)?;
+            // Apply caller-specified JPEG color mode if provided.
+            // JPEGCOLORMODE_RGB (1) tells libtiff to accept RGB input and
+            // convert to YCbCr internally. Without this, libtiff expects
+            // raw YCbCr data for ≥3-band JPEG images.
+            if let Some(mode) = hints.jpeg_color_mode {
+                handle.set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, mode)?;
+            }
         }
         handle.set_field_u16(tags::PLANAR_CONFIGURATION, hints.planar_config)?;
 
@@ -820,6 +899,9 @@ impl TIFFDatasetWriter {
                 tags::GEO_KEY_DIRECTORY_TAG,
                 tags::GEO_DOUBLE_PARAMS_TAG,
                 tags::GEO_ASCII_PARAMS_TAG,
+                // libtiff pseudo-tags handled as encoding hints above
+                tags::TIFFTAG_JPEGQUALITY,
+                tags::TIFFTAG_JPEGCOLORMODE,
             ]
             .into_iter()
             .collect();
@@ -1134,7 +1216,7 @@ mod tests {
     #[test]
     fn writer_parse_compression_none() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("259", "None"); // Tag 259 = Compression
+        meta.set_json("259", serde_json::json!(1)); // Tag 259 = Compression
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.compression, tags::COMPRESSION_NONE);
     }
@@ -1142,7 +1224,7 @@ mod tests {
     #[test]
     fn writer_parse_compression_lzw() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("259", "LZW"); // Tag 259 = Compression
+        meta.set_json("259", serde_json::json!(5)); // Tag 259 = Compression
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.compression, tags::COMPRESSION_LZW);
     }
@@ -1150,7 +1232,7 @@ mod tests {
     #[test]
     fn writer_parse_compression_deflate() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("259", "Deflate"); // Tag 259 = Compression
+        meta.set_json("259", serde_json::json!(8)); // Tag 259 = Compression
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.compression, tags::COMPRESSION_DEFLATE);
     }
@@ -1158,7 +1240,7 @@ mod tests {
     #[test]
     fn writer_parse_predictor_horizontal() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("317", "Horizontal"); // Tag 317 = Predictor
+        meta.set_json("317", serde_json::json!(2)); // Tag 317 = Predictor
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 2);
     }
@@ -1166,7 +1248,7 @@ mod tests {
     #[test]
     fn writer_parse_predictor_none() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("317", "None"); // Tag 317 = Predictor
+        meta.set_json("317", serde_json::json!(1)); // Tag 317 = Predictor
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 1);
     }
@@ -1174,7 +1256,7 @@ mod tests {
     #[test]
     fn writer_predictor_default_with_lzw_compression() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("259", "LZW"); // Tag 259 = Compression
+        meta.set_json("259", serde_json::json!(5)); // Tag 259 = LZW
         // No explicit Predictor → should default to Horizontal (2)
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 2);
@@ -1183,7 +1265,7 @@ mod tests {
     #[test]
     fn writer_predictor_default_with_deflate_compression() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("259", "Deflate"); // Tag 259 = Compression
+        meta.set_json("259", serde_json::json!(8)); // Tag 259 = Deflate
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 2);
     }
@@ -1191,7 +1273,7 @@ mod tests {
     #[test]
     fn writer_predictor_default_without_compression() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("259", "None"); // Tag 259 = Compression
+        meta.set_json("259", serde_json::json!(1)); // Tag 259 = None
         // No explicit Predictor + no compression → should default to None (1)
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 1);
@@ -1210,7 +1292,7 @@ mod tests {
     #[test]
     fn writer_parse_planar_configuration_chunky() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("284", "Chunky"); // Tag 284 = PlanarConfiguration
+        meta.set_json("284", serde_json::json!(1)); // Tag 284 = PlanarConfiguration
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.planar_config, tags::PLANAR_CONFIG_CONTIG);
     }
@@ -1218,7 +1300,7 @@ mod tests {
     #[test]
     fn writer_parse_planar_configuration_planar() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("284", "Planar"); // Tag 284 = PlanarConfiguration
+        meta.set_json("284", serde_json::json!(2)); // Tag 284 = PlanarConfiguration
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.planar_config, tags::PLANAR_CONFIG_SEPARATE);
     }
@@ -1226,7 +1308,7 @@ mod tests {
     #[test]
     fn writer_parse_invalid_compression_returns_error() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("259", "JPEG"); // Tag 259 = Compression
+        meta.set("259", "JPEG"); // String values should be rejected
         let result = TiffEncodingHints::from_metadata(&meta);
         assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
     }
@@ -1234,7 +1316,31 @@ mod tests {
     #[test]
     fn writer_parse_invalid_predictor_returns_error() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("317", "FloatingPoint"); // Tag 317 = Predictor
+        meta.set("317", "FloatingPoint"); // String values should be rejected
+        let result = TiffEncodingHints::from_metadata(&meta);
+        assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
+    }
+
+    #[test]
+    fn writer_parse_string_compression_rejected() {
+        let meta = BufferedMetadataProvider::new();
+        meta.set("259", "Deflate"); // String "Deflate" should be rejected
+        let result = TiffEncodingHints::from_metadata(&meta);
+        assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
+    }
+
+    #[test]
+    fn writer_parse_string_predictor_rejected() {
+        let meta = BufferedMetadataProvider::new();
+        meta.set("317", "Horizontal"); // String "Horizontal" should be rejected
+        let result = TiffEncodingHints::from_metadata(&meta);
+        assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
+    }
+
+    #[test]
+    fn writer_parse_string_planar_config_rejected() {
+        let meta = BufferedMetadataProvider::new();
+        meta.set("284", "Chunky"); // String "Chunky" should be rejected
         let result = TiffEncodingHints::from_metadata(&meta);
         assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
     }

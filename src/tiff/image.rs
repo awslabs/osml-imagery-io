@@ -76,6 +76,8 @@ pub(crate) struct TIFFImageAssetProvider {
     block_height: u32,
     /// Planar configuration: CONTIG (1) or SEPARATE (2)
     planar_config: u16,
+    /// Compression type (tag 259)
+    compression: u16,
     /// Shared libtiff handle (Arc for thread-safe sharing between providers)
     handle: Arc<Mutex<TiffHandle>>,
     /// Per-IFD metadata
@@ -111,6 +113,10 @@ impl TIFFImageAssetProvider {
             .get_field_u16(tags::PLANAR_CONFIGURATION)
             .unwrap_or(tags::PLANAR_CONFIG_CONTIG);
 
+        let compression = guard
+            .get_field_u16(tags::COMPRESSION)
+            .unwrap_or(tags::COMPRESSION_NONE);
+
         let is_tiled = guard.is_tiled();
 
         let (block_width, block_height) = if is_tiled {
@@ -136,6 +142,7 @@ impl TIFFImageAssetProvider {
             block_width,
             block_height,
             planar_config,
+            compression,
             handle,
             metadata,
         })
@@ -310,6 +317,13 @@ impl TIFFImageAssetProvider {
         })?;
         guard.set_directory(self.ifd_index)?;
 
+        // For JPEG-compressed YCbCr images, tell libtiff to convert to RGB
+        // on decode. This treats the YCbCr↔RGB conversion as an internal
+        // codec detail — callers always see RGB pixels.
+        if self.compression == tags::COMPRESSION_JPEG && self.bands >= 3 {
+            guard.set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, tags::JPEGCOLORMODE_RGB as u32)?;
+        }
+
         let requested_bands = self.resolve_bands(bands);
         let num_out_bands = requested_bands.len() as u32;
 
@@ -380,6 +394,13 @@ impl TIFFImageAssetProvider {
             CodecError::Decode(format!("Failed to acquire TIFF handle lock: {}", e))
         })?;
         guard.set_directory(self.ifd_index)?;
+
+        // For JPEG-compressed YCbCr images, tell libtiff to convert to RGB
+        // on decode. This treats the YCbCr↔RGB conversion as an internal
+        // codec detail — callers always see RGB pixels.
+        if self.compression == tags::COMPRESSION_JPEG && self.bands >= 3 {
+            guard.set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, tags::JPEGCOLORMODE_RGB as u32)?;
+        }
 
         let requested_bands = self.resolve_bands(bands);
         let num_out_bands = requested_bands.len() as u32;

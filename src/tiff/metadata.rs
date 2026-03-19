@@ -59,6 +59,14 @@ impl TIFFMetadataProvider {
         })
     }
 
+    /// Override a tag value in the metadata dictionary.
+    ///
+    /// Used by the reader to fix up metadata that doesn't match the actual
+    /// pixel data returned by libtiff (e.g. JPEG YCbCr→RGB conversion).
+    pub fn set_tag(&mut self, tag: u32, value: Value) {
+        self.tags.insert(tag.to_string(), value);
+    }
+
     /// Create a dataset-level metadata provider with file-level information only.
     ///
     /// - `byte_order`: `"LittleEndian"` or `"BigEndian"` (detected from TIFF magic bytes)

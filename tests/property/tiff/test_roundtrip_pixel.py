@@ -16,7 +16,7 @@ from hypothesis import assume, given
 from PIL import Image
 
 from ..conftest import pbt_settings
-from ..helpers import assert_lossless_match, read_full_image, write_and_read_tiff
+from ..helpers import assert_lossless_match, assert_lossy_quality, read_full_image, write_and_read_tiff
 from ..strategies import (
     get_numpy_dtype,
     tiff_image_config,
@@ -140,6 +140,38 @@ class TestTiffLosslessPixelRoundtrip:
         array, pixel_type, num_bands, num_rows, num_cols, hints = image_tuple
         decoded = write_and_read_tiff(array, pixel_type, num_bands, num_rows, num_cols, hints)
         assert_lossless_match(array, decoded)
+
+
+# =============================================================================
+# JPEG lossy pixel roundtrip (our writer → our reader)
+# =============================================================================
+
+
+@pytest.mark.property
+class TestTiffJpegPixelRoundtrip:
+    """TIFF pixel roundtrip including JPEG compression.
+
+    Feature: tiff-jpeg-compression, Property 7: JPEG roundtrip fidelity
+
+    For any valid image and compression setting drawn from the full set
+    (including JPEG), writing via TIFFDatasetWriter and reading back
+    produces faithful pixel data: exact match for lossless codecs,
+    PSNR ≥ 30 dB for JPEG.
+    """
+
+    @given(tiff_writable_image(min_size=16, max_size=64, min_bands=1, max_bands=4, include_jpeg=True))
+    @pbt_settings
+    def test_pixel_roundtrip_with_jpeg(self, image_tuple):
+        """Pixel data survives a write-read cycle for all compressions including JPEG."""
+        array, pixel_type, num_bands, num_rows, num_cols, hints = image_tuple
+        decoded = write_and_read_tiff(array, pixel_type, num_bands, num_rows, num_cols, hints)
+
+        if hints["259"] == 7:
+            # JPEG is lossy — verify quality bounds
+            assert_lossy_quality(array, decoded)
+        else:
+            # Lossless codecs — exact match
+            assert_lossless_match(array, decoded)
 
 
 # =============================================================================

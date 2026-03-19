@@ -25,10 +25,11 @@ from ..strategies import (
     tiff_writable_image,
 )
 
-# Mapping from hint strings to expected TIFF tag integer values
-_COMPRESSION_TAG = {"None": 1, "LZW": 5, "Deflate": 8}
-_PREDICTOR_TAG = {"None": 1, "Horizontal": 2}
-_PLANAR_TAG = {"Chunky": 1, "Planar": 2}
+# Mapping is no longer needed — hints are already numeric integers.
+# Kept as identity maps for minimal diff in assertions.
+_COMPRESSION_TAG = {1: 1, 5: 5, 7: 7, 8: 8}
+_PREDICTOR_TAG = {1: 1, 2: 2}
+_PLANAR_TAG = {1: 1, 2: 2}
 
 _SAMPLE_FORMAT = {
     int(PixelType.UInt8): 1, int(PixelType.UInt16): 1, int(PixelType.UInt32): 1,
@@ -41,7 +42,10 @@ def _write_tiff(path, array, pixel_type, num_bands, num_rows, num_cols, hints):
     """Write a TIFF file using TIFFDatasetWriter via IO.open."""
     metadata = BufferedMetadataProvider()
     for k, v in hints.items():
-        metadata.set(k, v)
+        if isinstance(v, str):
+            metadata.set(k, v)
+        else:
+            metadata.set_json(k, v)
 
     tile_w = int(hints.get("322", "256"))   # TileWidth
     tile_h = int(hints.get("323", "256"))   # TileLength
@@ -120,6 +124,9 @@ class TestTiffMetadataRoundtrip:
                 assert sf == expected_sf
 
             expected_photo = 2 if num_bands >= 3 else 1
+            # JPEG sets photometric to YCbCr (6) for ≥3 bands
+            if hints["259"] == 7:
+                expected_photo = 6 if num_bands >= 3 else 1
             assert meta["262"] == expected_photo
 
             assert meta["259"] == _COMPRESSION_TAG[hints["259"]]
@@ -130,7 +137,7 @@ class TestTiffMetadataRoundtrip:
             assert meta["322"] == int(hints["322"])
             assert meta["323"] == int(hints["323"])
 
-            if hints["317"] == "Horizontal" and hints["259"] != "None":
+            if hints["317"] == 2 and hints["259"] != 1:
                 assert meta.get("317") == _PREDICTOR_TAG[hints["317"]]
 
             assert meta["284"] == _PLANAR_TAG[hints["284"]]
@@ -151,8 +158,8 @@ def _write_tiff_with_metadata(path, metadata_dict):
     meta = BufferedMetadataProvider()
     meta.set("322", "256")   # TileWidth
     meta.set("323", "256")   # TileLength
-    meta.set("259", "None")  # Compression
-    meta.set("284", "Chunky")  # PlanarConfiguration
+    meta.set_json("259", 1)  # Compression (None)
+    meta.set_json("284", 1)  # PlanarConfiguration (Chunky)
 
     for k, v in metadata_dict.items():
         meta.set_json(k, v)

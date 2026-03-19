@@ -7,6 +7,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use serde_json;
+
 use crate::error::CodecError;
 use crate::tiff::ffi::TiffHandle;
 use crate::tiff::image::TIFFImageAssetProvider;
@@ -22,6 +24,7 @@ use crate::types::AssetType;
 const SUPPORTED_COMPRESSIONS: &[u16] = &[
     tags::COMPRESSION_NONE,
     tags::COMPRESSION_LZW,
+    tags::COMPRESSION_JPEG,
     tags::COMPRESSION_DEFLATE,
     tags::COMPRESSION_PACKBITS,
     tags::COMPRESSION_ADOBE_DEFLATE,
@@ -112,10 +115,20 @@ impl TIFFDatasetReader {
                 .unwrap_or(tags::COMPRESSION_NONE);
             if !SUPPORTED_COMPRESSIONS.contains(&compression) {
                 return Err(CodecError::Unsupported(format!(
-                    "Unsupported TIFF compression type: {} (code {}). Supported: None (1), LZW (5), Deflate (8), PackBits (32773), Adobe Deflate (32946)",
+                    "Unsupported TIFF compression type: {} (code {}). Supported: None (1), LZW (5), JPEG (7), Deflate (8), PackBits (32773), Adobe Deflate (32946)",
                     compression_name(compression),
                     compression,
                 )));
+            }
+
+            // JPEG compression requires 8-bit samples
+            if compression == tags::COMPRESSION_JPEG {
+                let bps = guard.get_field_u16(tags::BITS_PER_SAMPLE).unwrap_or(8);
+                if bps != 8 {
+                    return Err(CodecError::Unsupported(
+                        "JPEG compression requires 8-bit samples".to_string(),
+                    ));
+                }
             }
 
             // Classify by NewSubfileType
@@ -135,8 +148,25 @@ impl TIFFDatasetReader {
                         e
                     ))
                 })?;
-                let metadata =
-                    Arc::new(TIFFMetadataProvider::from_handle(&guard, ifd_index)?);
+                let mut metadata =
+                    TIFFMetadataProvider::from_handle(&guard, ifd_index)?;
+
+                // JPEG YCbCr fixup: libtiff's default JPEGCOLORMODE_RGB converts
+                // YCbCr→RGB on decode, so the pixels we return are RGB. Update
+                // the metadata to match the actual pixel data.
+                if compression == tags::COMPRESSION_JPEG {
+                    let photometric = guard
+                        .get_field_u16(tags::PHOTOMETRIC_INTERPRETATION)
+                        .unwrap_or(tags::PHOTOMETRIC_RGB);
+                    if photometric == tags::PHOTOMETRIC_YCBCR {
+                        metadata.set_tag(
+                            tags::PHOTOMETRIC_INTERPRETATION as u32,
+                            serde_json::Value::from(tags::PHOTOMETRIC_RGB as i64),
+                        );
+                    }
+                }
+
+                let metadata = Arc::new(metadata);
                 drop(guard);
 
                 let provider = TIFFImageAssetProvider::new(
@@ -450,9 +480,15 @@ mod tests {
     fn test_compression_name_helper() {
         assert_eq!(compression_name(1), "None");
         assert_eq!(compression_name(5), "LZW");
+        assert_eq!(compression_name(7), "JPEG");
         assert_eq!(compression_name(8), "Deflate");
         assert_eq!(compression_name(32773), "PackBits");
         assert_eq!(compression_name(32946), "Adobe Deflate");
         assert_eq!(compression_name(9999), "Unknown");
+    }
+
+    #[test]
+    fn test_compression_name_jpeg() {
+        assert_eq!(compression_name(7), "JPEG");
     }
 }

@@ -53,7 +53,7 @@ def _write_geotiff(path, hints):
     # TIFF encoding hints (tile layout) — use numeric tag IDs
     metadata.set("322", "64")    # TileWidth
     metadata.set("323", "64")    # TileLength
-    metadata.set("259", "None")  # Compression
+    metadata.set_json("259", 1)  # Compression (None)
 
     # GeoTIFF encoding hints (raw numeric tags)
     for key, value in hints.items():

@@ -1171,14 +1171,20 @@ TIFF_WRITER_PIXEL_TYPES = [
     PixelType.Float64,
 ]
 
-# Writer-supported lossless compressions (no PackBits — writer doesn't support it)
-TIFF_WRITER_COMPRESSIONS = ["None", "LZW", "Deflate"]
+# Writer-supported compressions as numeric TIFF tag 259 values.
+# 1=None, 5=LZW, 7=JPEG, 8=Deflate.  No PackBits — writer doesn't support it.
+TIFF_WRITER_COMPRESSIONS = [1, 5, 7, 8]
 
-# Writer-supported predictor values
-TIFF_WRITER_PREDICTORS = ["None", "Horizontal"]
+# Lossless-only subset (excludes JPEG) for strategies that need exact roundtrip.
+TIFF_WRITER_LOSSLESS_COMPRESSIONS = [1, 5, 8]
 
-# Writer-supported planar configurations
-TIFF_WRITER_PLANAR_CONFIGS = ["Chunky", "Planar"]
+# Writer-supported predictor values (numeric TIFF tag 317).
+# 1=None, 2=Horizontal differencing.
+TIFF_WRITER_PREDICTORS = [1, 2]
+
+# Writer-supported planar configurations (numeric TIFF tag 284).
+# 1=Chunky, 2=Planar.
+TIFF_WRITER_PLANAR_CONFIGS = [1, 2]
 
 # Tile sizes that are multiples of 16 (TIFF spec requirement)
 TIFF_TILE_SIZES = [64, 128, 256]
@@ -1192,47 +1198,90 @@ def tiff_writer_pixel_types() -> st.SearchStrategy[PixelType]:
     return st.sampled_from(TIFF_WRITER_PIXEL_TYPES)
 
 
-def tiff_writer_compression() -> st.SearchStrategy[str]:
-    """Strategy for compression types supported by TIFFDatasetWriter.
+def tiff_writer_compression() -> st.SearchStrategy[int]:
+    """Strategy for lossless compression types supported by TIFFDatasetWriter.
 
-    Returns one of: None, LZW, Deflate.
+    Returns one of: 1 (None), 5 (LZW), 8 (Deflate).
+    Use ``tiff_writer_all_compression`` to include JPEG (7).
+    """
+    return st.sampled_from(TIFF_WRITER_LOSSLESS_COMPRESSIONS)
+
+
+def tiff_writer_all_compression() -> st.SearchStrategy[int]:
+    """Strategy for all compression types supported by TIFFDatasetWriter.
+
+    Returns one of: 1 (None), 5 (LZW), 7 (JPEG), 8 (Deflate).
     """
     return st.sampled_from(TIFF_WRITER_COMPRESSIONS)
 
 
 @st.composite
-def tiff_encoding_hints(draw) -> dict:
+def tiff_encoding_hints(draw, include_jpeg: bool = False) -> dict:
     """Strategy generating TIFF encoding hint key-value pairs.
 
     Produces a dict with numeric TIFF tag IDs as keys (matching the TIFF 6.0
-    specification) suitable for passing to ``BufferedMetadataProvider.set()``.
+    specification) suitable for passing to ``BufferedMetadataProvider``.
 
     Keys: "322" (TileWidth), "323" (TileLength), "259" (Compression),
     "317" (Predictor), "284" (PlanarConfiguration).
+    When JPEG is selected, also includes "65537" (JPEG quality).
+
+    Values for tags 259, 317, and 284 are integers (TIFF-spec numeric codes).
+    Tile dimensions remain strings (they are always parsed as strings).
 
     The predictor is chosen consistently with the compression: Horizontal
     is only meaningful for LZW/Deflate; None is always valid.
+    JPEG forces predictor to 1 and planar config to 1.
+
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        include_jpeg: If True, include JPEG (7) in compression choices.
+            Default False for backward compatibility with lossless tests.
 
     Returns:
-        Dict of numeric tag ID string → string value.
+        Dict of numeric tag ID string → value (str for tile dims, int for
+        compression/predictor/planar/quality).
     """
     tile_w = draw(st.sampled_from(TIFF_TILE_SIZES))
     tile_h = draw(st.sampled_from(TIFF_TILE_SIZES))
-    compression = draw(tiff_writer_compression())
-    planar = draw(st.sampled_from(TIFF_WRITER_PLANAR_CONFIGS))
 
-    if compression == "None":
-        predictor = "None"
+    if include_jpeg:
+        compression = draw(tiff_writer_all_compression())
     else:
-        predictor = draw(st.sampled_from(TIFF_WRITER_PREDICTORS))
+        compression = draw(tiff_writer_compression())
 
-    return {
+    if compression == 7:
+        # JPEG: predictor must be 1, planar must be 1
+        predictor = 1
+        planar = 1
+        quality = draw(st.integers(min_value=50, max_value=95))
+        # JPEGCOLORMODE_RGB: tell libtiff to accept RGB input and handle
+        # the RGB↔YCbCr conversion internally as part of JPEG encoding.
+        jpeg_color_mode = 1
+    else:
+        planar = draw(st.sampled_from(TIFF_WRITER_PLANAR_CONFIGS))
+        if compression == 1:
+            predictor = 1
+        else:
+            predictor = draw(st.sampled_from(TIFF_WRITER_PREDICTORS))
+        quality = None
+        jpeg_color_mode = None
+
+    hints = {
         "322": str(tile_w),       # TileWidth
         "323": str(tile_h),       # TileLength
-        "259": compression,       # Compression
-        "317": predictor,         # Predictor
-        "284": planar,            # PlanarConfiguration
+        "259": compression,       # Compression (int)
+        "317": predictor,         # Predictor (int)
+        "284": planar,            # PlanarConfiguration (int)
     }
+
+    if quality is not None:
+        hints["65537"] = quality   # JPEG quality (int)
+
+    if jpeg_color_mode is not None:
+        hints["65538"] = jpeg_color_mode  # JPEG color mode (int)
+
+    return hints
 
 
 @st.composite
@@ -1242,6 +1291,7 @@ def tiff_writable_image(
     max_size: int = 128,
     min_bands: int = 1,
     max_bands: int = 4,
+    include_jpeg: bool = False,
 ) -> Tuple[np.ndarray, PixelType, int, int, int, dict]:
     """Composite strategy for a writable TIFF image with encoding hints.
 
@@ -1249,23 +1299,41 @@ def tiff_writable_image(
     and a matching set of TIFF encoding hints suitable for
     ``BufferedMetadataProvider``.
 
+    When ``include_jpeg`` is True, JPEG compression (7) may be drawn.
+    JPEG constrains pixel type to UInt8 and bands to {1, 3}, and generates
+    gradient-based images for meaningful PSNR comparison.
+
     Args:
         draw: Hypothesis draw function
         min_size: Minimum image dimension (default 16)
         max_size: Maximum image dimension (default 128)
         min_bands: Minimum band count (default 1)
         max_bands: Maximum band count (default 4)
+        include_jpeg: If True, include JPEG in compression choices.
 
     Returns:
         Tuple of (array, pixel_type, num_bands, num_rows, num_cols, hints)
-        where *hints* is a dict of encoding hint strings.
+        where *hints* is a dict of encoding hint values.
     """
-    pixel_type = draw(tiff_writer_pixel_types())
-    num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
-    num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
-    hints = draw(tiff_encoding_hints())
+    hints = draw(tiff_encoding_hints(include_jpeg=include_jpeg))
+    is_jpeg = hints["259"] == 7
 
-    array = draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
+    if is_jpeg:
+        # JPEG: constrain to UInt8 and {1, 3} bands; use gradient images
+        jpeg_bands = draw(st.sampled_from([b for b in [1, 3] if min_bands <= b <= max_bands]))
+        array, pixel_type, num_bands, num_rows, num_cols = draw(
+            jpeg_image_for_compression(
+                min_size=max(min_size, 32),
+                max_size=max_size,
+                min_bands=jpeg_bands,
+                max_bands=jpeg_bands,
+            )
+        )
+    else:
+        pixel_type = draw(tiff_writer_pixel_types())
+        num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
+        num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
+        array = draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
 
     return (array, pixel_type, num_bands, num_rows, num_cols, hints)
 
