@@ -21,5 +21,6 @@ getting-started
 user-guide/index
 design/index
 api/index
+performance
 roadmap/index
 ```

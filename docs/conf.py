@@ -36,8 +36,8 @@ html_theme = "furo"
 # Static files (images, custom CSS, etc.)
 html_static_path = ["_static"]
 
-# Exclude internal working notes from the published site
-exclude_patterns = ["internal"]
+# Exclude internal working notes and included fragments from the published site
+exclude_patterns = ["internal", "_benchmark_results.md"]
 
 # Suppress warnings from PyO3-generated docstrings (RST formatting issues
 # in Rust doc comments that we cannot easily fix at the source).
