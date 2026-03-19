@@ -175,18 +175,20 @@ class TestIOOpenWithFormat:
 class TestIOCreate:
     """Tests for IO.open() with write mode."""
 
-    def test_create_with_nitf_format(self, tmp_path):
-        """Test IO.open() with 'w' mode and 'nitf' format."""
+    @pytest.mark.parametrize("fmt", ["nitf", "nitf21"])
+    def test_create_with_nitf_format(self, tmp_path, fmt):
+        """Test IO.open() with 'w' mode and NITF format aliases."""
         output_path = tmp_path / "output.ntf"
 
-        writer = IO.open([str(output_path)], "w", "nitf")
+        writer = IO.open([str(output_path)], "w", fmt)
         assert writer is not None
 
-    def test_create_with_nsif_format(self, tmp_path):
-        """Test IO.open() with 'w' mode and 'nsif' format."""
+    @pytest.mark.parametrize("fmt", ["nsif", "nsif10"])
+    def test_create_with_nsif_format(self, tmp_path, fmt):
+        """Test IO.open() with 'w' mode and NSIF format aliases."""
         output_path = tmp_path / "output.nsif"
 
-        writer = IO.open([str(output_path)], "w", "nsif")
+        writer = IO.open([str(output_path)], "w", fmt)
         assert writer is not None
 
     def test_create_rejects_jbp_format(self, tmp_path):

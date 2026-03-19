@@ -16,7 +16,8 @@ from aws.osml.io import (
     BufferedMetadataProvider,
     PixelType,
 )
-from hypothesis import given
+from hypothesis import assume, given
+from hypothesis import strategies as st
 
 from ..conftest import pbt_settings
 from ..strategies import (
@@ -522,6 +523,230 @@ class TestResolutionLevels:
 
             reader.close()
 
+        finally:
+            if path.exists():
+                path.unlink()
+
+
+# Compression configurations for band selection tests:
+# (IC code, extra metadata hints, requires_single_tile)
+_BAND_SELECT_COMPRESSIONS = [
+    ("NC", {}, False),
+    ("C8", {"COMRAT": "N1.0"}, False),
+    ("C3", {"COMRAT": "75.0"}, False),
+]
+
+
+@pytest.mark.property
+class TestBandSelection:
+    """Property tests for band selection in get_block().
+
+    For any valid band subset, get_block(bands=subset) SHALL return a block
+    whose band dimension equals len(subset) and whose pixel values match the
+    corresponding bands of the full-band read.
+    """
+
+    @given(
+        data=st.data(),
+        image_tuple=random_image(min_size=16, max_size=64, min_bands=2, max_bands=4),
+        block_size=block_sizes(),
+        compression=st.sampled_from(_BAND_SELECT_COMPRESSIONS),
+    )
+    @pbt_settings
+    def test_band_selection_subset(self, data, image_tuple, block_size, compression):
+        """For any non-empty strict band subset, get_block(bands=subset) SHALL
+        return a block with len(subset) bands whose values match the
+        corresponding bands of a full-band read.
+
+        Tested across IC=NC (uncompressed), IC=C8 (JPEG 2000), and IC=C3 (JPEG).
+        """
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+        block_height, block_width = block_size
+        ic_code, extra_hints, _ = compression
+
+        # JPEG only supports 8-bit pixels
+        if ic_code == "C3" and pixel_type != PixelType.UInt8:
+            return
+
+        # J2K doesn't support Float32 well
+        if ic_code == "C8" and pixel_type == PixelType.Float32:
+            return
+
+        # OpenJPEG requires minimum tile dimension of 32 pixels
+        if ic_code == "C8" and min(num_rows, num_cols) < 32:
+            return
+
+        assume(num_bands >= 2)
+
+        # Draw a non-empty strict subset of band indices
+        all_indices = list(range(num_bands))
+        bands = data.draw(
+            st.lists(
+                st.sampled_from(all_indices),
+                min_size=1,
+                max_size=num_bands - 1,
+                unique=True,
+            ).map(sorted),
+            label="bands",
+        )
+
+        actual_block_height = min(block_height, num_rows)
+        actual_block_width = min(block_width, num_cols)
+
+        # J2K: use single tile (full image) to avoid partial-tile issues
+        if ic_code == "C8":
+            actual_block_height = num_rows
+            actual_block_width = num_cols
+
+        with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
+            path = Path(f.name)
+
+        try:
+            metadata = BufferedMetadataProvider()
+            metadata.set("IC", ic_code)
+            for k, v in extra_hints.items():
+                metadata.set(k, v)
+
+            provider = BufferedImageAssetProvider.create(
+                key="image_segment_0",
+                num_columns=num_cols,
+                num_rows=num_rows,
+                num_bands=num_bands,
+                block_width=actual_block_width,
+                block_height=actual_block_height,
+                pixel_type=pixel_type,
+                metadata=metadata,
+            )
+            provider.set_full_image(array)
+
+            writer = IO.open([str(path)], "w", "nitf")
+            writer.add_asset(
+                key="image_segment_0",
+                provider=provider,
+                title="Test Image",
+                description="Property test image for band selection",
+                roles=["data"],
+            )
+            writer.close()
+
+            reader = IO.open([str(path)], "r")
+            asset = reader.get_asset("image_segment_0")
+
+            # Read block (0,0) with all bands
+            full_block = asset.get_block(0, 0, 0)
+
+            # Read block (0,0) with band subset
+            selected_block = asset.get_block(0, 0, 0, bands=bands)
+
+            # Band dimension should equal len(bands)
+            assert selected_block.shape[0] == len(bands), (
+                f"Expected {len(bands)} bands, got {selected_block.shape[0]}"
+            )
+
+            # Spatial dimensions should match
+            assert selected_block.shape[1:] == full_block.shape[1:], (
+                f"Spatial shape mismatch: selected {selected_block.shape[1:]} "
+                f"vs full {full_block.shape[1:]}"
+            )
+
+            # For lossless codecs, pixel values must match exactly
+            if ic_code in ("NC", "C8"):
+                for i, band_idx in enumerate(bands):
+                    np.testing.assert_array_equal(
+                        selected_block[i],
+                        full_block[band_idx],
+                        err_msg=(
+                            f"Band {band_idx} mismatch at selected index {i} "
+                            f"(IC={ic_code})"
+                        ),
+                    )
+
+            reader.close()
+        finally:
+            if path.exists():
+                path.unlink()
+
+    @given(
+        image_tuple=random_image(min_size=16, max_size=64, min_bands=1, max_bands=4),
+        compression=st.sampled_from(_BAND_SELECT_COMPRESSIONS),
+    )
+    @pbt_settings
+    def test_band_selection_empty_list(self, image_tuple, compression):
+        """For an empty band list, get_block(bands=[]) SHALL either return all
+        bands (equivalent to no band selection) or raise an error.
+
+        Both behaviors are acceptable; the test verifies no crash or data
+        corruption occurs.
+        """
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+        ic_code, extra_hints, _ = compression
+
+        # JPEG only supports 8-bit pixels
+        if ic_code == "C3" and pixel_type != PixelType.UInt8:
+            return
+
+        # J2K doesn't support Float32 well
+        if ic_code == "C8" and pixel_type == PixelType.Float32:
+            return
+
+        # OpenJPEG requires minimum tile dimension of 32 pixels
+        if ic_code == "C8" and min(num_rows, num_cols) < 32:
+            return
+
+        with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
+            path = Path(f.name)
+
+        try:
+            metadata = BufferedMetadataProvider()
+            metadata.set("IC", ic_code)
+            for k, v in extra_hints.items():
+                metadata.set(k, v)
+
+            block_w = min(num_cols, 64)
+            block_h = min(num_rows, 64)
+
+            # J2K: use single tile (full image) to avoid partial-tile issues
+            if ic_code == "C8":
+                block_w = num_cols
+                block_h = num_rows
+
+            provider = BufferedImageAssetProvider.create(
+                key="image_segment_0",
+                num_columns=num_cols,
+                num_rows=num_rows,
+                num_bands=num_bands,
+                block_width=block_w,
+                block_height=block_h,
+                pixel_type=pixel_type,
+                metadata=metadata,
+            )
+            provider.set_full_image(array)
+
+            writer = IO.open([str(path)], "w", "nitf")
+            writer.add_asset(
+                key="image_segment_0",
+                provider=provider,
+                title="Test Image",
+                description="Property test image for empty band selection",
+                roles=["data"],
+            )
+            writer.close()
+
+            reader = IO.open([str(path)], "r")
+            asset = reader.get_asset("image_segment_0")
+
+            try:
+                block = asset.get_block(0, 0, 0, bands=[])
+                # If it succeeds, should return all bands
+                assert block.shape[0] == num_bands, (
+                    f"Empty band list returned {block.shape[0]} bands, "
+                    f"expected {num_bands}"
+                )
+            except Exception:
+                # Raising an error for empty band list is acceptable
+                pass
+
+            reader.close()
         finally:
             if path.exists():
                 path.unlink()

@@ -250,6 +250,34 @@ pytest -m property -v
 pytest -m property --durations=0
 ```
 
+### Integration Tests
+
+Integration tests are manifest-driven. Test entries are defined in `data/integration/manifest.yaml`, each with a `path`, `label`, `tags`, and optional `expected_exception`/`expected_message` fields. Tests are parametrized from the manifest at collection time.
+
+```bash
+# Run all integration tests
+pytest tests/integration/ -m integration
+
+# Run with verbose output
+pytest tests/integration/ -v -m integration
+
+# Exclude entries tagged "slow"
+pytest tests/integration/ -m integration --exclude-tags slow
+
+# Exclude multiple tags
+pytest tests/integration/ -m integration --exclude-tags slow,sicd
+
+# Run only entries with a specific tag
+pytest tests/integration/ -m integration --include-tags sidd
+
+# Combine include and exclude
+pytest tests/integration/ -m integration --include-tags sidd --exclude-tags slow
+```
+
+Tag filtering is done via `--exclude-tags` and `--include-tags` CLI options registered in `tests/integration/conftest.py`. Both accept comma-separated tag names and filter manifest entries before parametrization. Tags are freeform strings defined per entry in the manifest YAML.
+
+Integration test data lives in `data/integration/` (gitignored). Override the location with the `OSML_IO_INTEGRATION_DATA` environment variable.
+
 ### Hypothesis Profiles
 
 Property tests use hypothesis profiles defined in `tests/property/conftest.py`:

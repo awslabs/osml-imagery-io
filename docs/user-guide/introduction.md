@@ -50,7 +50,8 @@ its robust NITF implementation. The sensor independent XML metadata is available
 |--------|------|-------|--------|
 | NITF 2.1 (JBP) | ✅ | ✅ | Primary implementation |
 | NSIF 1.0 | ✅ | ✅ | Structurally identical to NITF 2.1 |
-| NITF 2.0 | ✅ | ❌ | Read-only; legacy format |
+| NITF 2.0 | 🚧 | ❌ | In progress; legacy format |
+| NSIF 1.1 | 🚧 | ❌ | In progress |
 | SICD (via NITF) | ✅ | ✅ | Complex SAR data; pixel access and DES extraction for XML metadata |
 | SIDD (via NITF) | ✅ | ✅ | Derived SAR products; pixel access and DES extraction for XML metadata |
 | TIFF | ✅ | ✅ | Tiled and stripped; LZW, Deflate, PackBits, uncompressed |
@@ -64,9 +65,9 @@ its robust NITF implementation. The sensor independent XML metadata is available
 | NC / NM | Uncompressed | ✅ | ✅ | All pixel types, all interleave modes (B, P, R, S). NM adds block mask and pad pixel support |
 | C8 / M8 | JPEG 2000 | ✅ | ✅ | Lossy and lossless; multi-resolution decode; 1-38 bit depth; via OpenJPEG |
 | CD / MD | HTJ2K (JPEG 2000 Part 15) | ✅ | ✅ | High-Throughput JPEG 2000; same capabilities as C8/M8 |
-| C3 / M3 | JPEG DCT | ✅ | ✅ | 8-bit lossy; mono, RGB, YCbCr601. No 12-bit support (use C8 for >8-bit) |
+| C3 / M3 | JPEG DCT | ✅ | ✅ | 8-bit lossy only; mono, RGB, YCbCr601. 12-bit JPEG is not supported (requires libjpeg12; use C8 for >8-bit) |
 | I1 | JPEG downsampled | ✅ | ✅ | Single-block thumbnail; 2048×2048 max dimension |
-| C4 / M4 | Vector Quantization (VQ) | ❌ | ❌ | On roadmap. Legacy codebook-based compression |
+| C4 / M4 | Vector Quantization (VQ) | ❌ | ❌ | On roadmap. Legacy codebook-based compression (MIL-STD-188-199) |
 | CC / MC | ZLIB/DEFLATE | ❌ | ❌ | On roadmap. Used for floating-point scientific data |
 | C5 / M5 | JPEG Lossless | ❌ | ❌ | On roadmap. Predictive coding, 2-16 bit |
 | C1 / M1 | Bi-Level (Group 3 fax) | ❌ | ❌ | On roadmap. 1-bit imagery for maps and line drawings |

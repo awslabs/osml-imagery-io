@@ -187,3 +187,75 @@ class TestMetadataRoundtrip:
         finally:
             if path.exists():
                 path.unlink()
+
+
+@pytest.mark.property
+class TestMetadataRawBytes:
+    """Property tests for metadata raw byte access.
+
+    For any NITF image segment, metadata.raw SHALL return bytes whose first
+    two characters are the segment identifier "IM" (the NITF image subheader
+    marker).
+    """
+
+    @given(
+        image_tuple=random_image(min_size=16, max_size=64, min_bands=1, max_bands=3),
+    )
+    @pbt_settings
+    def test_metadata_raw_starts_with_im(self, image_tuple):
+        """For any NITF image segment, metadata.raw SHALL return bytes starting
+        with b"IM" (the image subheader identifier).
+        """
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+
+        with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
+            path = Path(f.name)
+
+        try:
+            metadata = BufferedMetadataProvider()
+            metadata.set("IC", "NC")
+
+            provider = BufferedImageAssetProvider.create(
+                key="image_segment_0",
+                num_columns=num_cols,
+                num_rows=num_rows,
+                num_bands=num_bands,
+                block_width=min(num_cols, 64),
+                block_height=min(num_rows, 64),
+                pixel_type=pixel_type,
+                metadata=metadata,
+            )
+            provider.set_full_image(array)
+
+            writer = IO.open([str(path)], "w", "nitf")
+            writer.add_asset(
+                key="image_segment_0",
+                provider=provider,
+                title="Test Image",
+                description="Property test image for metadata raw bytes",
+                roles=["data"],
+            )
+            writer.close()
+
+            reader = IO.open([str(path)], "r")
+            asset = reader.get_asset("image_segment_0")
+
+            raw_metadata = asset.get_metadata()
+            raw_io = raw_metadata.raw
+            raw_bytes = raw_io.read()
+
+            assert isinstance(raw_bytes, bytes), (
+                f"Expected bytes, got {type(raw_bytes)}"
+            )
+            assert len(raw_bytes) > 2, (
+                f"Raw metadata too short: {len(raw_bytes)} bytes"
+            )
+            assert raw_bytes[:2] == b"IM", (
+                f"Expected raw metadata to start with b'IM', "
+                f"got {raw_bytes[:2]!r}"
+            )
+
+            reader.close()
+        finally:
+            if path.exists():
+                path.unlink()
