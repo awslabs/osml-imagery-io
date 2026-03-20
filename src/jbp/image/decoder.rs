@@ -27,11 +27,14 @@
 //! let (block_data, shape) = decoder.decode_block(0, 0, 0, None)?;
 //! ```
 
-use std::sync::Arc;
+use std::borrow::Cow;
+use std::sync::{Arc, Mutex};
 
 use crate::error::CodecError;
 use crate::jbp::image::facade::ImageSubheaderFacade;
-use crate::jbp::image::interleave::to_band_sequential;
+use crate::jbp::image::interleave::{
+    fused_bip_to_bsq_swap, fused_bip_to_bsq_swap_parallel, to_band_sequential,
+};
 use crate::jbp::image::types::{InterleaveMode, PixelJustification, PixelValueType};
 
 #[cfg(feature = "openjpeg")]
@@ -40,7 +43,15 @@ use crate::jbp::j2k::{get_j2k_codec, Jpeg2000BlockDecoder};
 #[cfg(feature = "libjpeg-turbo")]
 use crate::jbp::jpeg::{JpegBlockDecoder, JpegColorSpace};
 
-/// Convert a byte buffer from big-endian to native-endian in place.
+/// Default tile height in rows for the tiled BIP→BSQ transpose.
+/// Chosen so that one tile's worth of destination writes fits in L2 cache.
+const DEFAULT_TILE_ROWS: usize = 64;
+
+/// Minimum block data size (in bytes) to trigger Rayon parallelism.
+/// Below this threshold, single-threaded execution avoids thread-pool overhead.
+const PARALLEL_THRESHOLD: usize = 4 * 1024 * 1024; // 4 MB
+
+/// Convert a byte buffer from big-endian to native-endian.
 ///
 /// NITF mandates big-endian for uncompressed multi-byte pixel data
 /// (JBP Section 4.6.2, requirement JBP-2021.2-013). This function converts
@@ -49,7 +60,7 @@ use crate::jbp::jpeg::{JpegBlockDecoder, JpegColorSpace};
 ///
 /// For single-byte data (`bytes_per_pixel == 1`) this is a no-op.
 #[inline]
-fn swap_be_to_ne(data: &[u8], bytes_per_pixel: usize) -> Vec<u8> {
+pub fn swap_be_to_ne(data: &[u8], bytes_per_pixel: usize) -> Vec<u8> {
     if cfg!(target_endian = "big") || bytes_per_pixel <= 1 {
         return data.to_vec();
     }
@@ -270,6 +281,8 @@ pub struct UncompressedBlockDecoder {
     imode: InterleaveMode,
     /// Compression type (NC or NM)
     ic: String,
+    /// Reusable scratch buffer for decode output, protected by Mutex for thread safety.
+    scratch: Mutex<Vec<u8>>,
 }
 
 impl UncompressedBlockDecoder {
@@ -315,7 +328,47 @@ impl UncompressedBlockDecoder {
             pjust,
             imode,
             ic,
+            scratch: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Create a decoder from raw parameters (for benchmarks and testing).
+    ///
+    /// This bypasses subheader parsing and constructs the decoder directly.
+    #[doc(hidden)]
+    pub fn from_raw_params(
+        image_data: Arc<[u8]>,
+        nrows: u32,
+        ncols: u32,
+        nbpr: u32,
+        nbpc: u32,
+        nppbh: u32,
+        nppbv: u32,
+        nbands: u32,
+        nbpp: u8,
+        abpp: u8,
+        pvtype: PixelValueType,
+        pjust: PixelJustification,
+        imode: InterleaveMode,
+        ic: String,
+    ) -> Self {
+        Self {
+            image_data,
+            nrows,
+            ncols,
+            nbpr,
+            nbpc,
+            nppbh,
+            nppbv,
+            nbands,
+            nbpp,
+            abpp,
+            pvtype,
+            pjust,
+            imode,
+            ic,
+            scratch: Mutex::new(Vec::new()),
+        }
     }
 
     /// Calculate the number of bytes per pixel.
@@ -327,6 +380,28 @@ impl UncompressedBlockDecoder {
     fn block_size_bytes(&self) -> usize {
         let bpp = self.bytes_per_pixel();
         (self.nppbh as usize) * (self.nppbv as usize) * (self.nbands as usize) * bpp
+    }
+
+    /// Lock the scratch buffer and ensure it has at least `required` bytes of capacity.
+    ///
+    /// Returns a `MutexGuard` over the scratch `Vec<u8>`, resized to exactly `required`
+    /// bytes (zero-filled). Returns `CodecError::Decode` if the mutex is poisoned or
+    /// if memory allocation fails.
+    fn lock_scratch(
+        &self,
+        required: usize,
+    ) -> Result<std::sync::MutexGuard<'_, Vec<u8>>, CodecError> {
+        let mut buf = self.scratch.lock().map_err(|_| {
+            CodecError::Decode("Failed to acquire scratch buffer lock".into())
+        })?;
+        if buf.len() < required {
+            let additional = required - buf.len();
+            buf.try_reserve(additional).map_err(|e| {
+                CodecError::Decode(format!("Scratch buffer allocation failed: {e}"))
+            })?;
+            buf.resize(required, 0);
+        }
+        Ok(buf)
     }
 
     /// Calculate the byte offset for a block based on IMODE.
@@ -445,12 +520,12 @@ impl UncompressedBlockDecoder {
         block_col: u32,
         actual_rows: u32,
         actual_cols: u32,
-    ) -> Result<Vec<u8>, CodecError> {
+    ) -> Result<Cow<'_, [u8]>, CodecError> {
         let bpp = self.bytes_per_pixel();
         let offset = self.block_offset(block_row, block_col) as usize;
         let nominal_block_size = self.block_size_bytes();
 
-        // For full blocks, we can read directly
+        // For full blocks, borrow directly from the Arc — zero-copy
         if actual_rows == self.nppbv && actual_cols == self.nppbh {
             if offset + nominal_block_size > self.image_data.len() {
                 return Err(CodecError::Decode(format!(
@@ -460,7 +535,7 @@ impl UncompressedBlockDecoder {
                     self.image_data.len()
                 )));
             }
-            return Ok(self.image_data[offset..offset + nominal_block_size].to_vec());
+            return Ok(Cow::Borrowed(&self.image_data[offset..offset + nominal_block_size]));
         }
 
         // For edge blocks, we need to extract only the valid pixels
@@ -540,7 +615,7 @@ impl UncompressedBlockDecoder {
             InterleaveMode::S => unreachable!("IMODE S handled separately"),
         }
 
-        Ok(output)
+        Ok(Cow::Owned(output))
     }
 
     /// Apply band selection to block data.
@@ -618,47 +693,106 @@ impl BlockDecoder for UncompressedBlockDecoder {
 
         // Calculate actual block dimensions (handle edge blocks)
         let (actual_rows, actual_cols) = self.actual_block_dimensions(block_row, block_col);
+        let bpp = self.bytes_per_pixel();
+        let pixels_per_band = (actual_rows as usize) * (actual_cols as usize);
 
-        // Read raw block data based on IMODE
-        let raw_data = match self.imode {
-            InterleaveMode::S => {
-                self.read_block_mode_s(block_row, block_col, actual_rows, actual_cols)?
+        match self.imode {
+            // ── IMODE=P: fused BIP→BSQ + endian swap (+ optional band selection) ──
+            InterleaveMode::P => {
+                let raw_data = self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?;
+
+                let out_bands = match bands {
+                    Some(b) if !b.is_empty() => b.len(),
+                    _ => self.nbands as usize,
+                };
+                let output_size = pixels_per_band * out_bands * bpp;
+                let data_size = raw_data.len();
+
+                let mut scratch = self.lock_scratch(output_size)?;
+
+                let band_arg = match bands {
+                    Some(b) if !b.is_empty() => Some(b),
+                    _ => None,
+                };
+
+                if data_size >= PARALLEL_THRESHOLD {
+                    fused_bip_to_bsq_swap_parallel(
+                        &raw_data,
+                        &mut scratch[..output_size],
+                        actual_rows as usize,
+                        actual_cols as usize,
+                        self.nbands as usize,
+                        bpp,
+                        band_arg,
+                        DEFAULT_TILE_ROWS,
+                    )?;
+                } else {
+                    fused_bip_to_bsq_swap(
+                        &raw_data,
+                        &mut scratch[..output_size],
+                        actual_rows as usize,
+                        actual_cols as usize,
+                        self.nbands as usize,
+                        bpp,
+                        band_arg,
+                        DEFAULT_TILE_ROWS,
+                    )?;
+                }
+
+                let result = scratch[..output_size].to_vec();
+                drop(scratch);
+                Ok((result, [out_bands as u32, actual_rows, actual_cols]))
             }
-            _ => self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?,
-        };
 
-        // Convert to band-sequential format if needed
-        let bsq_data = if self.imode == InterleaveMode::S || self.imode == InterleaveMode::B {
-            // Already in band-sequential format (S and B have same layout for single block)
-            raw_data
-        } else {
-            // Convert from P or R to band-sequential
-            to_band_sequential(
-                &raw_data,
-                self.imode,
-                actual_rows,
-                actual_cols,
-                self.nbands,
-                self.bytes_per_pixel(),
-            )?
-        };
+            // ── IMODE=S/B: already BSQ → swap into scratch, then band-select ──
+            InterleaveMode::S | InterleaveMode::B => {
+                let raw_data: Cow<'_, [u8]> = match self.imode {
+                    InterleaveMode::S => {
+                        Cow::Owned(self.read_block_mode_s(block_row, block_col, actual_rows, actual_cols)?)
+                    }
+                    _ => self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?,
+                };
 
-        // Apply band selection if specified
-        let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
-        let selected_data = match bands {
-            Some(band_indices) if !band_indices.is_empty() => {
-                self.apply_band_selection(&bsq_data, actual_rows, actual_cols, band_indices)?
+                // Swap big-endian → native-endian into scratch
+                let swapped = swap_be_to_ne(&raw_data, bpp);
+
+                // Apply band selection if specified
+                let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
+                let final_data = match bands {
+                    Some(band_indices) if !band_indices.is_empty() => {
+                        self.apply_band_selection(&swapped, actual_rows, actual_cols, band_indices)?
+                    }
+                    _ => swapped,
+                };
+
+                Ok((final_data, [num_bands, actual_rows, actual_cols]))
             }
-            _ => bsq_data,
-        };
 
-        // NITF mandates big-endian for uncompressed multi-byte pixel data (JBP-2021.2-013).
-        // Convert to native-endian so the internal Vec<u8> contract is native throughout,
-        // consistent with what 3rd-party codecs (OpenJPEG, libjpeg-turbo) produce.
-        let final_data = swap_be_to_ne(&selected_data, self.bytes_per_pixel());
+            // ── IMODE=R: existing path (not on hot path) ──
+            InterleaveMode::R => {
+                let raw_data = self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?;
 
-        // Return shape as [bands, rows, cols] (CHW format)
-        Ok((final_data, [num_bands, actual_rows, actual_cols]))
+                let bsq_data = to_band_sequential(
+                    &raw_data,
+                    self.imode,
+                    actual_rows,
+                    actual_cols,
+                    self.nbands,
+                    bpp,
+                )?;
+
+                let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
+                let selected_data = match bands {
+                    Some(band_indices) if !band_indices.is_empty() => {
+                        self.apply_band_selection(&bsq_data, actual_rows, actual_cols, band_indices)?
+                    }
+                    _ => bsq_data,
+                };
+
+                let final_data = swap_be_to_ne(&selected_data, bpp);
+                Ok((final_data, [num_bands, actual_rows, actual_cols]))
+            }
+        }
     }
 
     fn has_block(&self, block_row: u32, block_col: u32) -> bool {
@@ -713,39 +847,94 @@ impl BlockDecoder for UncompressedBlockDecoder {
             )));
         }
 
-        // Read raw block data at the specified offset
-        let raw_data = self.image_data[offset_usize..offset_usize + block_size].to_vec();
+        // Borrow directly from the Arc — zero-copy
+        let raw_data: &[u8] = &self.image_data[offset_usize..offset_usize + block_size];
+        let pixels_per_band = (actual_rows as usize) * (actual_cols as usize);
 
-        // Convert to band-sequential format if needed (same as decode_block)
-        let bsq_data = if self.imode == InterleaveMode::S || self.imode == InterleaveMode::B {
-            // Already in band-sequential format (S and B have same layout for single block)
-            raw_data
-        } else {
-            // Convert from P or R to band-sequential
-            to_band_sequential(
-                &raw_data,
-                self.imode,
-                actual_rows,
-                actual_cols,
-                self.nbands,
-                bpp,
-            )?
-        };
+        match self.imode {
+            // ── IMODE=P: fused BIP→BSQ + endian swap (+ optional band selection) ──
+            InterleaveMode::P => {
+                let out_bands = match bands {
+                    Some(b) if !b.is_empty() => b.len(),
+                    _ => self.nbands as usize,
+                };
+                let output_size = pixels_per_band * out_bands * bpp;
+                let data_size = raw_data.len();
 
-        // Apply band selection if specified
-        let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
-        let selected_data = match bands {
-            Some(band_indices) if !band_indices.is_empty() => {
-                self.apply_band_selection(&bsq_data, actual_rows, actual_cols, band_indices)?
+                let mut scratch = self.lock_scratch(output_size)?;
+
+                let band_arg = match bands {
+                    Some(b) if !b.is_empty() => Some(b),
+                    _ => None,
+                };
+
+                if data_size >= PARALLEL_THRESHOLD {
+                    fused_bip_to_bsq_swap_parallel(
+                        raw_data,
+                        &mut scratch[..output_size],
+                        actual_rows as usize,
+                        actual_cols as usize,
+                        self.nbands as usize,
+                        bpp,
+                        band_arg,
+                        DEFAULT_TILE_ROWS,
+                    )?;
+                } else {
+                    fused_bip_to_bsq_swap(
+                        raw_data,
+                        &mut scratch[..output_size],
+                        actual_rows as usize,
+                        actual_cols as usize,
+                        self.nbands as usize,
+                        bpp,
+                        band_arg,
+                        DEFAULT_TILE_ROWS,
+                    )?;
+                }
+
+                let result = scratch[..output_size].to_vec();
+                drop(scratch);
+                Ok((result, [out_bands as u32, actual_rows, actual_cols]))
             }
-            _ => bsq_data,
-        };
 
-        // Convert from big-endian (NITF on-disk) to native-endian (internal contract)
-        let final_data = swap_be_to_ne(&selected_data, bpp);
+            // ── IMODE=S/B: already BSQ → swap, then band-select ──
+            InterleaveMode::S | InterleaveMode::B => {
+                let swapped = swap_be_to_ne(raw_data, bpp);
 
-        // Return shape as [bands, rows, cols] (CHW format)
-        Ok((final_data, [num_bands, actual_rows, actual_cols]))
+                let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
+                let final_data = match bands {
+                    Some(band_indices) if !band_indices.is_empty() => {
+                        self.apply_band_selection(&swapped, actual_rows, actual_cols, band_indices)?
+                    }
+                    _ => swapped,
+                };
+
+                Ok((final_data, [num_bands, actual_rows, actual_cols]))
+            }
+
+            // ── IMODE=R: existing path (not on hot path) ──
+            InterleaveMode::R => {
+                let bsq_data = to_band_sequential(
+                    raw_data,
+                    self.imode,
+                    actual_rows,
+                    actual_cols,
+                    self.nbands,
+                    bpp,
+                )?;
+
+                let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
+                let selected_data = match bands {
+                    Some(band_indices) if !band_indices.is_empty() => {
+                        self.apply_band_selection(&bsq_data, actual_rows, actual_cols, band_indices)?
+                    }
+                    _ => bsq_data,
+                };
+
+                let final_data = swap_be_to_ne(&selected_data, bpp);
+                Ok((final_data, [num_bands, actual_rows, actual_cols]))
+            }
+        }
     }
 }
 
@@ -1272,6 +1461,7 @@ mod tests {
             pjust: PixelJustification::Right,
             imode,
             ic: "NC".to_string(),
+            scratch: Mutex::new(Vec::new()),
         }
     }
 
@@ -1824,6 +2014,7 @@ mod property_tests {
             pjust: PixelJustification::Right,
             imode,
             ic: "NC".to_string(),
+            scratch: Mutex::new(Vec::new()),
         };
 
         (decoder, expected)

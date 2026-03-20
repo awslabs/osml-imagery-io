@@ -307,6 +307,279 @@ fn from_bsq_to_bil(
     Ok(output)
 }
 
+/// Fused BIP→BSQ interleave conversion with endian swap and optional band selection.
+///
+/// Performs the BIP→BSQ transpose and big-endian to native-endian byte swap in a
+/// single pass over the data, using a tiled access pattern for cache friendliness.
+/// When `bands` is `Some(subset)`, only the selected bands are written to `dst`,
+/// reducing both computation and memory usage.
+///
+/// # Arguments
+/// * `src` - Source data in BIP (Band Interleaved by Pixel) layout, big-endian
+/// * `dst` - Destination buffer for BSQ (Band Sequential) layout, native-endian.
+///   Must be pre-allocated to the correct size.
+/// * `nrows` - Number of rows in the image
+/// * `ncols` - Number of columns in the image
+/// * `nbands` - Total number of bands in the source data
+/// * `bytes_per_pixel` - Bytes per pixel sample (1, 2, 4, or 8)
+/// * `bands` - Optional subset of band indices to extract. `None` means all bands.
+/// * `tile_rows` - Number of rows per tile for cache-friendly processing
+///
+/// # Errors
+/// Returns `CodecError::Decode` if input/output sizes don't match expected dimensions,
+/// or if any band index in `bands` is out of range.
+pub fn fused_bip_to_bsq_swap(
+    src: &[u8],
+    dst: &mut [u8],
+    nrows: usize,
+    ncols: usize,
+    nbands: usize,
+    bytes_per_pixel: usize,
+    bands: Option<&[u32]>,
+    tile_rows: usize,
+) -> Result<(), CodecError> {
+    let pixels_per_band = nrows * ncols;
+    let expected_src = pixels_per_band * nbands * bytes_per_pixel;
+
+    if src.len() != expected_src {
+        return Err(CodecError::Decode(format!(
+            "Data size mismatch: expected {} bytes for {}x{}x{} image with {} bytes/pixel, got {}",
+            expected_src, nrows, ncols, nbands, bytes_per_pixel, src.len()
+        )));
+    }
+
+    let out_bands = match bands {
+        Some(subset) => {
+            for &b in subset {
+                if (b as usize) >= nbands {
+                    return Err(CodecError::Decode(format!(
+                        "Band index {} out of range for image with {} bands",
+                        b, nbands
+                    )));
+                }
+            }
+            subset.len()
+        }
+        None => nbands,
+    };
+
+    let expected_dst = pixels_per_band * out_bands * bytes_per_pixel;
+    if dst.len() != expected_dst {
+        return Err(CodecError::Decode(format!(
+            "Destination size mismatch: expected {} bytes for {}x{}x{} output with {} bytes/pixel, got {}",
+            expected_dst, nrows, ncols, out_bands, bytes_per_pixel, dst.len()
+        )));
+    }
+
+    let tile_rows = tile_rows.max(1);
+    let bip_pixel_stride = nbands * bytes_per_pixel;
+    let dst_band_size = pixels_per_band * bytes_per_pixel;
+
+    // Process in tiles of `tile_rows` rows for cache locality
+    let mut tile_start = 0;
+    while tile_start < nrows {
+        let tile_end = (tile_start + tile_rows).min(nrows);
+
+        for row in tile_start..tile_end {
+            let row_pixel_base = row * ncols;
+
+            for col in 0..ncols {
+                let pixel_idx = row_pixel_base + col;
+                let src_pixel_offset = pixel_idx * bip_pixel_stride;
+
+                match bands {
+                    Some(subset) => {
+                        for (dst_band_idx, &src_band) in subset.iter().enumerate() {
+                            let src_off =
+                                src_pixel_offset + (src_band as usize) * bytes_per_pixel;
+                            let dst_off =
+                                dst_band_idx * dst_band_size + pixel_idx * bytes_per_pixel;
+                            swap_copy(src, dst, src_off, dst_off, bytes_per_pixel);
+                        }
+                    }
+                    None => {
+                        for band in 0..nbands {
+                            let src_off = src_pixel_offset + band * bytes_per_pixel;
+                            let dst_off = band * dst_band_size + pixel_idx * bytes_per_pixel;
+                            swap_copy(src, dst, src_off, dst_off, bytes_per_pixel);
+                        }
+                    }
+                }
+            }
+        }
+
+        tile_start = tile_end;
+    }
+
+    Ok(())
+}
+
+/// Rayon-parallelized variant of [`fused_bip_to_bsq_swap`].
+///
+/// Same semantics as the single-threaded version, but dispatches tile groups to
+/// the Rayon thread pool using [`rayon::scope`]. Each thread processes a disjoint
+/// range of rows, reading from the shared `src` slice and writing to non-overlapping
+/// regions of `dst`.
+///
+/// # Safety contract (upheld via safe code)
+///
+/// Each spawned task writes only to the BSQ positions corresponding to its assigned
+/// row range. Because BSQ layout stores pixels for a given row contiguously within
+/// each band plane, and row ranges are disjoint, no two tasks write to the same byte.
+/// The `src` slice is shared immutably across all tasks.
+pub fn fused_bip_to_bsq_swap_parallel(
+    src: &[u8],
+    dst: &mut [u8],
+    nrows: usize,
+    ncols: usize,
+    nbands: usize,
+    bytes_per_pixel: usize,
+    bands: Option<&[u32]>,
+    tile_rows: usize,
+) -> Result<(), CodecError> {
+    let pixels_per_band = nrows * ncols;
+    let expected_src = pixels_per_band * nbands * bytes_per_pixel;
+
+    if src.len() != expected_src {
+        return Err(CodecError::Decode(format!(
+            "Data size mismatch: expected {} bytes for {}x{}x{} image with {} bytes/pixel, got {}",
+            expected_src, nrows, ncols, nbands, bytes_per_pixel, src.len()
+        )));
+    }
+
+    let out_bands = match bands {
+        Some(subset) => {
+            for &b in subset {
+                if (b as usize) >= nbands {
+                    return Err(CodecError::Decode(format!(
+                        "Band index {} out of range for image with {} bands",
+                        b, nbands
+                    )));
+                }
+            }
+            subset.len()
+        }
+        None => nbands,
+    };
+
+    let expected_dst = pixels_per_band * out_bands * bytes_per_pixel;
+    if dst.len() != expected_dst {
+        return Err(CodecError::Decode(format!(
+            "Destination size mismatch: expected {} bytes for {}x{}x{} output with {} bytes/pixel, got {}",
+            expected_dst, nrows, ncols, out_bands, bytes_per_pixel, dst.len()
+        )));
+    }
+
+    let tile_rows = tile_rows.max(1);
+    let bip_pixel_stride = nbands * bytes_per_pixel;
+    let dst_band_size = pixels_per_band * bytes_per_pixel;
+
+    // Wrapper to send a raw pointer across thread boundaries.
+    // SAFETY: we guarantee disjoint access — each tile group writes to a unique set
+    // of row positions within each band plane, so no two threads touch the same byte.
+    struct SendPtr(*mut u8);
+    unsafe impl Send for SendPtr {}
+    unsafe impl Sync for SendPtr {}
+
+    let dst_ptr = SendPtr(dst.as_mut_ptr());
+    let dst_len = dst.len();
+
+    // Build the list of tile row-ranges up front.
+    let mut tile_ranges: Vec<(usize, usize)> = Vec::new();
+    let mut tile_start = 0;
+    while tile_start < nrows {
+        let tile_end = (tile_start + tile_rows).min(nrows);
+        tile_ranges.push((tile_start, tile_end));
+        tile_start = tile_end;
+    }
+
+    // Dispatch tile groups to Rayon.
+    rayon::scope(|s| {
+        for &(tile_start, tile_end) in &tile_ranges {
+            let src = src;
+            let bands = bands;
+            let dst_ptr = &dst_ptr;
+
+            s.spawn(move |_| {
+                // SAFETY: tile row ranges are disjoint, so each task writes to unique offsets.
+                let dst_slice =
+                    unsafe { std::slice::from_raw_parts_mut(dst_ptr.0, dst_len) };
+
+                for row in tile_start..tile_end {
+                    let row_pixel_base = row * ncols;
+
+                    for col in 0..ncols {
+                        let pixel_idx = row_pixel_base + col;
+                        let src_pixel_offset = pixel_idx * bip_pixel_stride;
+
+                        match bands {
+                            Some(subset) => {
+                                for (dst_band_idx, &src_band) in subset.iter().enumerate() {
+                                    let src_off =
+                                        src_pixel_offset + (src_band as usize) * bytes_per_pixel;
+                                    let dst_off =
+                                        dst_band_idx * dst_band_size + pixel_idx * bytes_per_pixel;
+                                    swap_copy(src, dst_slice, src_off, dst_off, bytes_per_pixel);
+                                }
+                            }
+                            None => {
+                                for band in 0..nbands {
+                                    let src_off = src_pixel_offset + band * bytes_per_pixel;
+                                    let dst_off =
+                                        band * dst_band_size + pixel_idx * bytes_per_pixel;
+                                    swap_copy(src, dst_slice, src_off, dst_off, bytes_per_pixel);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    Ok(())
+}
+
+/// Copy a single pixel sample from `src` to `dst`, swapping from big-endian to
+/// native-endian. For single-byte data, this is a plain copy.
+#[inline(always)]
+fn swap_copy(src: &[u8], dst: &mut [u8], src_off: usize, dst_off: usize, bpp: usize) {
+    if cfg!(target_endian = "big") || bpp == 1 {
+        dst[dst_off..dst_off + bpp].copy_from_slice(&src[src_off..src_off + bpp]);
+        return;
+    }
+    match bpp {
+        2 => {
+            let val = u16::from_be_bytes([src[src_off], src[src_off + 1]]);
+            dst[dst_off..dst_off + 2].copy_from_slice(&val.to_ne_bytes());
+        }
+        4 => {
+            let val = u32::from_be_bytes([
+                src[src_off],
+                src[src_off + 1],
+                src[src_off + 2],
+                src[src_off + 3],
+            ]);
+            dst[dst_off..dst_off + 4].copy_from_slice(&val.to_ne_bytes());
+        }
+        8 => {
+            let val = u64::from_be_bytes([
+                src[src_off],
+                src[src_off + 1],
+                src[src_off + 2],
+                src[src_off + 3],
+                src[src_off + 4],
+                src[src_off + 5],
+                src[src_off + 6],
+                src[src_off + 7],
+            ]);
+            dst[dst_off..dst_off + 8].copy_from_slice(&val.to_ne_bytes());
+        }
+        _ => {
+            dst[dst_off..dst_off + bpp].copy_from_slice(&src[src_off..src_off + bpp]);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -480,6 +753,183 @@ mod tests {
         fn data_size_mismatch_error() {
             let data = vec![1, 2, 3]; // Too small for 2x2x3
             let result = from_band_sequential(&data, InterleaveMode::P, 2, 2, 3, 1);
+            assert!(result.is_err());
+        }
+    }
+
+    mod fused_bip_to_bsq_swap {
+        use super::*;
+        use crate::jbp::image::decoder::swap_be_to_ne;
+
+        /// Reference implementation: from_bip_to_bsq then swap_be_to_ne
+        fn reference_bip_to_bsq_swap(
+            data: &[u8],
+            nrows: usize,
+            ncols: usize,
+            nbands: usize,
+            bpp: usize,
+        ) -> Vec<u8> {
+            let bsq = from_bip_to_bsq(data, nrows, ncols, nbands, bpp).unwrap();
+            swap_be_to_ne(&bsq, bpp)
+        }
+
+        #[test]
+        fn basic_2x2x3_1bpp() {
+            // 1-byte pixels: no swap, just transpose
+            let bip = vec![
+                1, 2, 3, // pixel (0,0)
+                4, 5, 6, // pixel (0,1)
+                7, 8, 9, // pixel (1,0)
+                10, 11, 12, // pixel (1,1)
+            ];
+            let expected = reference_bip_to_bsq_swap(&bip, 2, 2, 3, 1);
+            let mut dst = vec![0u8; bip.len()];
+            fused_bip_to_bsq_swap(&bip, &mut dst, 2, 2, 3, 1, None, 64).unwrap();
+            assert_eq!(dst, expected);
+        }
+
+        #[test]
+        fn basic_2x2x3_2bpp() {
+            // 2-byte pixels: transpose + endian swap
+            let bip: Vec<u8> = (0..24).map(|i| (i * 7 + 3) as u8).collect();
+            let expected = reference_bip_to_bsq_swap(&bip, 2, 2, 3, 2);
+            let mut dst = vec![0u8; bip.len()];
+            fused_bip_to_bsq_swap(&bip, &mut dst, 2, 2, 3, 2, None, 64).unwrap();
+            assert_eq!(dst, expected);
+        }
+
+        #[test]
+        fn basic_4bpp() {
+            let bip: Vec<u8> = (0..48).map(|i| (i * 13 + 5) as u8).collect();
+            let expected = reference_bip_to_bsq_swap(&bip, 2, 2, 3, 4);
+            let mut dst = vec![0u8; bip.len()];
+            fused_bip_to_bsq_swap(&bip, &mut dst, 2, 2, 3, 4, None, 64).unwrap();
+            assert_eq!(dst, expected);
+        }
+
+        #[test]
+        fn basic_8bpp() {
+            let bip: Vec<u8> = (0..96).map(|i| (i * 17 + 11) as u8).collect();
+            let expected = reference_bip_to_bsq_swap(&bip, 2, 2, 3, 8);
+            let mut dst = vec![0u8; bip.len()];
+            fused_bip_to_bsq_swap(&bip, &mut dst, 2, 2, 3, 8, None, 64).unwrap();
+            assert_eq!(dst, expected);
+        }
+
+        #[test]
+        fn partial_tile_rows() {
+            // 5 rows with tile_rows=2 → tiles of [2, 2, 1]
+            let nrows = 5;
+            let ncols = 3;
+            let nbands = 2;
+            let bpp = 2;
+            let size = nrows * ncols * nbands * bpp;
+            let bip: Vec<u8> = (0..size).map(|i| (i * 7) as u8).collect();
+            let expected = reference_bip_to_bsq_swap(&bip, nrows, ncols, nbands, bpp);
+            let mut dst = vec![0u8; size];
+            fused_bip_to_bsq_swap(&bip, &mut dst, nrows, ncols, nbands, bpp, None, 2).unwrap();
+            assert_eq!(dst, expected);
+        }
+
+        #[test]
+        fn tile_rows_1() {
+            // Degenerate tile size of 1 row
+            let nrows = 4;
+            let ncols = 4;
+            let nbands = 3;
+            let bpp = 2;
+            let size = nrows * ncols * nbands * bpp;
+            let bip: Vec<u8> = (0..size).map(|i| (i * 11) as u8).collect();
+            let expected = reference_bip_to_bsq_swap(&bip, nrows, ncols, nbands, bpp);
+            let mut dst = vec![0u8; size];
+            fused_bip_to_bsq_swap(&bip, &mut dst, nrows, ncols, nbands, bpp, None, 1).unwrap();
+            assert_eq!(dst, expected);
+        }
+
+        #[test]
+        fn band_selection_subset() {
+            // Select bands 0 and 2 from a 3-band image
+            let nrows = 2;
+            let ncols = 2;
+            let nbands = 3;
+            let bpp = 2;
+            let src_size = nrows * ncols * nbands * bpp;
+            let bip: Vec<u8> = (0..src_size).map(|i| (i * 7 + 3) as u8).collect();
+
+            let bands = [0u32, 2];
+            let out_bands = bands.len();
+            let dst_size = nrows * ncols * out_bands * bpp;
+
+            // Reference: full fused then extract selected bands
+            let full = reference_bip_to_bsq_swap(&bip, nrows, ncols, nbands, bpp);
+            let pixels_per_band = nrows * ncols;
+            let band_size = pixels_per_band * bpp;
+            let mut expected = vec![0u8; dst_size];
+            for (dst_idx, &src_band) in bands.iter().enumerate() {
+                let src_start = (src_band as usize) * band_size;
+                let dst_start = dst_idx * band_size;
+                expected[dst_start..dst_start + band_size]
+                    .copy_from_slice(&full[src_start..src_start + band_size]);
+            }
+
+            let mut dst = vec![0u8; dst_size];
+            fused_bip_to_bsq_swap(&bip, &mut dst, nrows, ncols, nbands, bpp, Some(&bands), 64)
+                .unwrap();
+            assert_eq!(dst, expected);
+        }
+
+        #[test]
+        fn band_selection_none_equals_all() {
+            let nrows = 3;
+            let ncols = 3;
+            let nbands = 4;
+            let bpp = 2;
+            let size = nrows * ncols * nbands * bpp;
+            let bip: Vec<u8> = (0..size).map(|i| (i * 13) as u8).collect();
+
+            let mut dst_none = vec![0u8; size];
+            fused_bip_to_bsq_swap(&bip, &mut dst_none, nrows, ncols, nbands, bpp, None, 64)
+                .unwrap();
+
+            let all_bands: Vec<u32> = (0..nbands as u32).collect();
+            let mut dst_all = vec![0u8; size];
+            fused_bip_to_bsq_swap(
+                &bip,
+                &mut dst_all,
+                nrows,
+                ncols,
+                nbands,
+                bpp,
+                Some(&all_bands),
+                64,
+            )
+            .unwrap();
+
+            assert_eq!(dst_none, dst_all);
+        }
+
+        #[test]
+        fn src_size_mismatch_error() {
+            let src = vec![0u8; 10]; // wrong size for 2x2x3x1
+            let mut dst = vec![0u8; 12];
+            let result = fused_bip_to_bsq_swap(&src, &mut dst, 2, 2, 3, 1, None, 64);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn dst_size_mismatch_error() {
+            let src = vec![0u8; 12]; // correct for 2x2x3x1
+            let mut dst = vec![0u8; 10]; // wrong
+            let result = fused_bip_to_bsq_swap(&src, &mut dst, 2, 2, 3, 1, None, 64);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn band_index_out_of_range_error() {
+            let src = vec![0u8; 12]; // 2x2x3x1
+            let mut dst = vec![0u8; 4]; // 2x2x1x1
+            let bands = [5u32]; // out of range
+            let result = fused_bip_to_bsq_swap(&src, &mut dst, 2, 2, 3, 1, Some(&bands), 64);
             assert!(result.is_err());
         }
     }

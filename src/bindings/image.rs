@@ -269,9 +269,10 @@ impl PyImageAssetProvider {
         bands: Option<Vec<u32>>,
     ) -> PyResult<PyObject> {
         let bands_slice = bands.as_deref();
-        let (data, shape) = self
-            .inner
-            .get_block(block_row, block_col, resolution_level, bands_slice)?;
+        let inner = Arc::clone(&self.inner);
+        let (data, shape) = py.allow_threads(|| {
+            inner.get_block(block_row, block_col, resolution_level, bands_slice)
+        })?;
 
         let pixel_type = self.inner.pixel_value_type();
         let array = create_numpy_array(py, &data, shape, pixel_type)?;

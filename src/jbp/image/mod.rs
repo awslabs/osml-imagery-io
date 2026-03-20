@@ -26,7 +26,7 @@ pub mod types;
 pub mod validation;
 
 pub use builder::{BandInfoBuilder, ImageSubheaderBuilder};
-pub use decoder::{create_block_decoder, BlockDecoder, UncompressedBlockDecoder};
+pub use decoder::{create_block_decoder, swap_be_to_ne, BlockDecoder, UncompressedBlockDecoder};
 #[cfg(feature = "libjpeg-turbo")]
 pub use decoder::JpegNitfBlockDecoder;
 pub use encoder::{create_block_encoder, swap_ne_to_be, BlockEncoder, TileAssembler};

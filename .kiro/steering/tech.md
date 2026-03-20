@@ -44,7 +44,9 @@ OpenJPEG (libopenjp2) is BSD-2-Clause licensed, which is compatible. However, so
 - numpy - NumPy array interop
 - thiserror - Error handling
 - serde_json - JSON serialization
+- rayon - Work-stealing thread pool for data parallelism
 - proptest - Property-based testing framework (dev dependency)
+- criterion - Rust micro-benchmark framework (dev dependency)
 
 ### Python
 - pytest - Testing framework
@@ -286,3 +288,49 @@ Property tests use hypothesis profiles defined in `tests/property/conftest.py`:
 - `ci`: 100 examples, full shrink phase — thorough coverage
 
 Set the profile via the `HYPOTHESIS_PROFILE` environment variable. CI should set `HYPOTHESIS_PROFILE=ci`.
+
+## Benchmarking
+
+This project uses two distinct benchmarking tiers:
+
+### Rust Micro-Benchmarks (Criterion)
+
+Criterion benchmarks live in `benches/` and measure isolated Rust functions (e.g., interleave kernels, endian swap, block decode). These are useful for profiling and optimizing internal hot paths without the overhead of Python bindings or end-to-end I/O.
+
+```bash
+# Run all Criterion benchmarks
+cargo bench
+
+# Run a specific benchmark by name
+cargo bench --bench nc_decode
+
+# Compile benchmarks without running (useful for CI)
+cargo bench --no-run
+```
+
+When optimizing a code path:
+1. Write the Criterion benchmark first, before making changes
+2. Run it to establish a baseline on the unmodified code
+3. Make the optimization
+4. Re-run the benchmark to measure improvement
+5. At each checkpoint, re-run to confirm cumulative gains
+
+Criterion stores results in `target/criterion/` and automatically compares against the previous run, reporting percentage change.
+
+### Python End-to-End Benchmarks (pytest-benchmark)
+
+Python benchmarks use the `pytest -m benchmark` marker and exercise the full pipeline through the Python bindings (file open → decode → NumPy array). These measure real-world throughput including PyO3 overhead, GIL interactions, and memory copies into NumPy.
+
+```bash
+# Run Python benchmark tests
+pytest -m benchmark
+
+# Run with benchmark comparison
+pytest -m benchmark --benchmark-compare
+```
+
+### When to Use Which
+
+- Use Criterion when optimizing a specific Rust function or comparing algorithm variants (e.g., tiled vs naive transpose, serial vs parallel). No conda environment needed.
+- Use pytest benchmarks when measuring user-visible performance through the Python API. Requires conda environment and `maturin develop`.
+- For optimization work, always establish Criterion baselines before changes and re-run at checkpoints to validate incremental improvements.
