@@ -1111,13 +1111,47 @@ impl BlockEncoder for JpegNitfBlockEncoder {
             )));
         }
 
+        // For edge blocks that are smaller than the full block size, zero-pad
+        // to full block dimensions. JPEG requires fixed-size input matching the
+        // encoder's configured block dimensions (JBP-2021.2-063, JBP-2021.2-064).
+        let padded_buf;
+        let data_to_encode = if actual_rows < self.nppbv || actual_cols < self.nppbh {
+            let full_h = self.nppbv as usize;
+            let full_w = self.nppbh as usize;
+            let act_h = actual_rows as usize;
+            let act_w = actual_cols as usize;
+            let nbands = self.nbands as usize;
+            let bpp = self.bytes_per_pixel;
+
+            let full_band_size = full_h * full_w * bpp;
+            let act_band_size = act_h * act_w * bpp;
+            // Zero-initialized: extra rows/cols are already zero-filled
+            padded_buf = {
+                let mut buf = vec![0u8; nbands * full_band_size];
+                for band in 0..nbands {
+                    let src_offset = band * act_band_size;
+                    let dst_offset = band * full_band_size;
+                    for row in 0..act_h {
+                        let src_start = src_offset + row * act_w * bpp;
+                        let dst_start = dst_offset + row * full_w * bpp;
+                        buf[dst_start..dst_start + act_w * bpp]
+                            .copy_from_slice(&data[src_start..src_start + act_w * bpp]);
+                    }
+                }
+                buf
+            };
+            &padded_buf
+        } else {
+            data
+        };
+
         // Encode the block using the JPEG encoder
         let jpeg_data = if self.nbands > 1 && self.imode != InterleaveMode::P {
             // Multiband with IMODE=B or S - encode each band separately
-            self.jpeg_encoder.encode_multiband_block(data)?
+            self.jpeg_encoder.encode_multiband_block(data_to_encode)?
         } else {
             // Single band or pixel-interleaved RGB
-            self.jpeg_encoder.encode_block(data)?
+            self.jpeg_encoder.encode_block(data_to_encode)?
         };
 
         // Append the JPEG data to the output buffer

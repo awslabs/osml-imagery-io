@@ -916,6 +916,11 @@ impl JpegNitfBlockDecoder {
             offsets.push((0, self.image_data.len()));
             return offsets;
         }
+
+        // Determine if blocks contain multiple length-prefixed JPEG streams
+        // (multiband with IMODE=B or S, excluding 3-band RGB/YCbCr with IMODE=P)
+        let is_multiband_separate = self.nbands > 1
+            && !(self.nbands == 3 && self.imode == InterleaveMode::P);
         
         // Scan through the data to find JPEG stream boundaries
         let mut current_offset = 0;
@@ -926,18 +931,43 @@ impl JpegNitfBlockDecoder {
                 offsets.push((current_offset, current_offset));
                 continue;
             }
-            
-            let remaining_data = &self.image_data[current_offset..];
-            
-            // Find the end of this JPEG stream (EOI marker)
-            if let Some(jpeg_len) = find_jpeg_end(remaining_data) {
-                let end_offset = current_offset + jpeg_len;
-                offsets.push((current_offset, end_offset));
-                current_offset = end_offset;
+
+            if is_multiband_separate {
+                // Each block has N length-prefixed JPEG streams:
+                // [4-byte len BE][JPEG stream] repeated per band
+                let block_start = current_offset;
+                for band in 0..self.nbands {
+                    if current_offset + 4 > self.image_data.len() {
+                        break;
+                    }
+                    let length = u32::from_be_bytes([
+                        self.image_data[current_offset],
+                        self.image_data[current_offset + 1],
+                        self.image_data[current_offset + 2],
+                        self.image_data[current_offset + 3],
+                    ]) as usize;
+                    current_offset += 4 + length;
+                    if current_offset > self.image_data.len() {
+                        // Truncated stream — clamp to data length
+                        current_offset = self.image_data.len();
+                        break;
+                    }
+                    let _ = band; // suppress unused warning
+                }
+                offsets.push((block_start, current_offset));
             } else {
-                // No EOI found - use remaining data as the last block
-                offsets.push((current_offset, self.image_data.len()));
-                current_offset = self.image_data.len();
+                let remaining_data = &self.image_data[current_offset..];
+                
+                // Find the end of this JPEG stream (EOI marker)
+                if let Some(jpeg_len) = find_jpeg_end(remaining_data) {
+                    let end_offset = current_offset + jpeg_len;
+                    offsets.push((current_offset, end_offset));
+                    current_offset = end_offset;
+                } else {
+                    // No EOI found - use remaining data as the last block
+                    offsets.push((current_offset, self.image_data.len()));
+                    current_offset = self.image_data.len();
+                }
             }
         }
         
@@ -1046,13 +1076,37 @@ impl BlockDecoder for JpegNitfBlockDecoder {
             self.jpeg_decoder.decode_multiband_block(block_jpeg_data)?
         };
 
+        // For edge blocks, the JPEG was encoded at full block dimensions
+        // (zero-padded per JBP-2021.2-063/064). Crop back to actual dimensions.
+        let cropped = if actual_rows < self.nppbv || actual_cols < self.nppbh {
+            let full_w = self.nppbh as usize;
+            let act_h = actual_rows as usize;
+            let act_w = actual_cols as usize;
+            let nbands = self.nbands as usize;
+            let bpp = if self.nbpp == 12 { 2 } else { 1 };
+            let full_band_size = (self.nppbv as usize) * full_w * bpp;
+            let act_band_size = act_h * act_w * bpp;
+
+            let mut out = Vec::with_capacity(nbands * act_band_size);
+            for band in 0..nbands {
+                let src_offset = band * full_band_size;
+                for row in 0..act_h {
+                    let src_start = src_offset + row * full_w * bpp;
+                    out.extend_from_slice(&decoded[src_start..src_start + act_w * bpp]);
+                }
+            }
+            out
+        } else {
+            decoded
+        };
+
         // Apply band selection if specified
         let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
         let final_data = match bands {
             Some(band_indices) if !band_indices.is_empty() => {
-                self.apply_band_selection(&decoded, actual_rows, actual_cols, band_indices)?
+                self.apply_band_selection(&cropped, actual_rows, actual_cols, band_indices)?
             }
-            _ => decoded,
+            _ => cropped,
         };
 
         // Return shape as [bands, rows, cols] (CHW format)
@@ -1123,13 +1177,37 @@ impl BlockDecoder for JpegNitfBlockDecoder {
             self.jpeg_decoder.decode_multiband_block(block_jpeg)?
         };
 
+        // For edge blocks, the JPEG was encoded at full block dimensions
+        // (zero-padded per JBP-2021.2-063/064). Crop back to actual dimensions.
+        let cropped = if actual_rows < self.nppbv || actual_cols < self.nppbh {
+            let full_w = self.nppbh as usize;
+            let act_h = actual_rows as usize;
+            let act_w = actual_cols as usize;
+            let nbands = self.nbands as usize;
+            let bpp = if self.nbpp == 12 { 2 } else { 1 };
+            let full_band_size = (self.nppbv as usize) * full_w * bpp;
+            let act_band_size = act_h * act_w * bpp;
+
+            let mut out = Vec::with_capacity(nbands * act_band_size);
+            for band in 0..nbands {
+                let src_offset = band * full_band_size;
+                for row in 0..act_h {
+                    let src_start = src_offset + row * full_w * bpp;
+                    out.extend_from_slice(&decoded[src_start..src_start + act_w * bpp]);
+                }
+            }
+            out
+        } else {
+            decoded
+        };
+
         // Apply band selection if specified
         let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
         let final_data = match bands {
             Some(band_indices) if !band_indices.is_empty() => {
-                self.apply_band_selection(&decoded, actual_rows, actual_cols, band_indices)?
+                self.apply_band_selection(&cropped, actual_rows, actual_cols, band_indices)?
             }
-            _ => decoded,
+            _ => cropped,
         };
 
         // Return shape as [bands, rows, cols] (CHW format)
