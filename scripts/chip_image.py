@@ -2,10 +2,12 @@
 """Extract a chip (region) from an image and save it as PNG.
 
 This script demonstrates using the IO DatasetReader to extract a rectangular
-region from a source image and save it using PIL/Pillow.
+region from a source image and save it using PIL/Pillow. Supports any format
+the IO library can read, including NITF (.ntf) and TIFF/GeoTIFF (.tif, .tiff).
 
 Usage:
     python scripts/chip_image.py input.ntf output.png --bbox 0 0 512 512
+    python scripts/chip_image.py input.tif output.png --bbox 0 0 512 512
     python scripts/chip_image.py input.ntf output.png --bbox 100 200 300 400 --asset image_segment_0
 
 The bounding box is specified as: x_min y_min x_max y_max (column/row coordinates)
@@ -259,13 +261,16 @@ Examples:
     # Extract a 512x512 chip from the top-left corner
     python scripts/chip_image.py input.ntf output.png --bbox 0 0 512 512
 
+    # Extract a chip from a GeoTIFF file
+    python scripts/chip_image.py input.tif output.png --bbox 0 0 512 512
+
     # Extract a region from a specific asset
     python scripts/chip_image.py input.ntf output.png --bbox 100 200 400 500 --asset image_segment_1
 """
     )
     parser.add_argument(
         "input",
-        help="Path to the input image file (NITF, etc.)"
+        help="Path to the input image file (NITF, TIFF/GeoTIFF)"
     )
     parser.add_argument(
         "output",

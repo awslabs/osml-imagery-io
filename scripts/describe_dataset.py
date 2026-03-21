@@ -2,11 +2,12 @@
 """Describe a dataset file and its contents.
 
 This script uses the IO/DatasetReader APIs to dump information about
-a dataset file, including overall dataset info and each asset.
+a dataset file, including overall dataset info and each asset. Supports
+NITF (.ntf, .nitf, .nsf) and TIFF/GeoTIFF (.tif, .tiff) formats.
 
 Usage:
-    python scripts/describe_dataset.py <path_to_file>
-    python scripts/describe_dataset.py <path_to_file> --metadata
+    python scripts/describe_dataset.py image.ntf
+    python scripts/describe_dataset.py image.tif --metadata
 """
 
 import argparse
@@ -262,11 +263,20 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Describe a dataset file and its contents."
+        description="Describe a dataset file and its contents.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    # Describe a NITF file
+    python scripts/describe_dataset.py image.ntf
+
+    # Describe a GeoTIFF file with full metadata
+    python scripts/describe_dataset.py image.tif --metadata
+"""
     )
     parser.add_argument(
         "path",
-        help="Path to the dataset file"
+        help="Path to the dataset file (NITF, TIFF/GeoTIFF)"
     )
     parser.add_argument(
         "--metadata", "-m",

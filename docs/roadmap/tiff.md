@@ -287,31 +287,31 @@ Extend the existing property test suite under `tests/property/`:
 
 Already format-agnostic — uses `IO.open()` and iterates assets by type. Changes needed:
 
-- [ ] Update help text and examples to mention TIFF/GeoTIFF files
-- [ ] Add GeoTIFF-specific metadata display (CRS, pixel scale, transform) when detected
-- [ ] Handle the single-image-segment model gracefully (no text/graphic/data sections to report)
-- [ ] Add example usage: `python scripts/describe_dataset.py image.tif --metadata`
+- [x] Update help text and examples to mention TIFF/GeoTIFF files
+- [x] Add GeoTIFF-specific metadata display (CRS, pixel scale, transform) when detected
+- [x] Handle the single-image-segment model gracefully (no text/graphic/data sections to report)
+- [x] Add example usage: `python scripts/describe_dataset.py image.tif --metadata`
 
 ### `scripts/chip_image.py`
 
 Already format-agnostic — reads blocks from any `ImageAssetProvider`. Changes needed:
 
-- [ ] Update help text and examples to mention TIFF input files
-- [ ] No code changes expected — the chip extraction logic works against the abstract `ImageAssetProvider` interface
-- [ ] Add example usage: `python scripts/chip_image.py input.tif output.png --bbox 0 0 512 512`
-- [ ] Test with GeoTIFF inputs to verify end-to-end
+- [x] Update help text and examples to mention TIFF input files
+- [x] No code changes expected — the chip extraction logic works against the abstract `ImageAssetProvider` interface
+- [x] Add example usage: `python scripts/chip_image.py input.tif output.png --bbox 0 0 512 512`
+- [x] Test with GeoTIFF inputs to verify end-to-end
 
 ### `scripts/generate_synthetic_image.py`
 
 Currently generates NITF files only. Changes needed:
 
-- [ ] Add `--format` argument: `nitf` (default) or `tiff`
-- [ ] When format is `tiff`, use `IO.open(paths, "w", "tiff")` instead of `"nitf"`
-- [ ] Set TIFF-specific encoding hints on `BufferedMetadataProvider` (`Compression`, `TileWidth`, `TileHeight`) instead of NITF hints (`IC`, `IMODE`, `NPPBH`, `NPPBV`)
-- [ ] Add `--compression` choices for TIFF: `None`, `LZW`, `Deflate`
+- [x] Add `--format` argument: `nitf` (default) or `tiff`
+- [x] When format is `tiff`, use `IO.open(paths, "w", "tiff")` instead of `"nitf"`
+- [x] Set TIFF-specific encoding hints on `BufferedMetadataProvider` (`Compression`, `TileWidth`, `TileHeight`) instead of NITF hints (`IC`, `IMODE`, `NPPBH`, `NPPBV`)
+- [x] Add `--compression` choices for TIFF: `None`, `LZW`, `Deflate`
 - [ ] Optionally accept `--crs` / `--pixel-scale` / `--origin` to write GeoTIFF metadata on synthetic images
-- [ ] Add example usage: `python scripts/generate_synthetic_image.py output.tif --format tiff --bands 3 --compression Deflate`
-- [ ] Masked images are not applicable for TIFF — skip `--masked` when format is `tiff`
+- [x] Add example usage: `python scripts/generate_synthetic_image.py output.tif --format tiff --bands 3 --compression Deflate`
+- [x] Masked images are not applicable for TIFF — skip `--masked` when format is `tiff`
 
 ## Future Consideration: Palette Color (Indexed Color) Expansion
 
