@@ -50,8 +50,9 @@ pub struct FieldInfo {
 
 /// Lazy accessor for reading structure fields from binary data.
 ///
-/// Fields are parsed on-demand when accessed, with computed offsets cached
-/// for repeated access efficiency.
+/// Fields are parsed on first access via a single O(n) pass through the
+/// structure definition. This pass populates both the offset cache and
+/// evaluation context, making all subsequent field accesses O(1) lookups.
 pub struct StructureAccessor<'a> {
     /// The structure definition
     pub(crate) definition: Arc<StructureDefinition>,
@@ -59,6 +60,8 @@ pub struct StructureAccessor<'a> {
     data: &'a [u8],
     /// Cached field offsets: path -> (offset, size)
     offset_cache: RefCell<HashMap<String, (usize, usize)>>,
+    /// Cached evaluation context from single-pass parse (None = not yet parsed)
+    parsed_context: RefCell<Option<EvalContext>>,
     /// Expression evaluator
     pub(crate) evaluator: ExpressionEvaluator,
     /// Parent accessor for nested structures
@@ -76,6 +79,7 @@ impl<'a> StructureAccessor<'a> {
             definition,
             data,
             offset_cache: RefCell::new(HashMap::new()),
+            parsed_context: RefCell::new(None),
             evaluator: ExpressionEvaluator::new(),
             parent: None,
             base_offset: 0,
@@ -93,6 +97,7 @@ impl<'a> StructureAccessor<'a> {
             definition,
             data,
             offset_cache: RefCell::new(HashMap::new()),
+            parsed_context: RefCell::new(None),
             evaluator: ExpressionEvaluator::new(),
             parent: Some(parent),
             base_offset,
@@ -107,6 +112,190 @@ impl<'a> StructureAccessor<'a> {
     /// Get the underlying data buffer.
     pub fn data(&self) -> &'a [u8] {
         self.data
+    }
+
+    /// Perform a single O(n) pass through all fields, populating the offset cache
+    /// and evaluation context. After this call, all `get()` and `build_eval_context()`
+    /// calls become O(1) lookups.
+    ///
+    /// This is called automatically on first field access. It eliminates the O(n²)
+    /// behavior that occurred when each `get()` call walked from the start of the
+    /// definition to compute offsets.
+    fn ensure_parsed(&self) -> Result<(), AccessError> {
+        // Already parsed — nothing to do
+        if self.parsed_context.borrow().is_some() {
+            return Ok(());
+        }
+
+        let mut ctx = EvalContext::new();
+        let mut current_offset = 0;
+
+        for field in &self.definition.fields {
+            // Check if this field is conditional and not present
+            if let Some(ref condition) = field.condition {
+                let result = self.evaluator.evaluate(condition, &ctx);
+                if let Ok(EvalResult::Boolean(false)) = result {
+                    continue;
+                }
+            }
+
+            // Get single-element size
+            let size = match context::get_simple_field_size(
+                field,
+                &ctx,
+                &self.evaluator,
+                &self.definition,
+                self.data,
+                current_offset,
+            ) {
+                Ok(s) => s,
+                Err(_) => {
+                    // Can't determine this field's size — we can't compute correct
+                    // offsets for any subsequent fields, so stop parsing here.
+                    break;
+                }
+            };
+
+            // Handle repeated fields — cache every element's offset
+            if let Some(ref repeat) = field.repeat {
+                let count = match repeat {
+                    RepeatSpec::Count(n) => *n,
+                    RepeatSpec::Expression(expr) => {
+                        match self.evaluator.evaluate(expr, &ctx) {
+                            Ok(EvalResult::Integer(n)) if n >= 0 => n as usize,
+                            _ => 0,
+                        }
+                    }
+                    RepeatSpec::Until(_) | RepeatSpec::Eos => {
+                        // For until/eos we need to parse element-by-element below
+                        0
+                    }
+                };
+
+                match repeat {
+                    RepeatSpec::Count(_) | RepeatSpec::Expression(_) => {
+                        let mut elem_offset = current_offset;
+                        for i in 0..count {
+                            let elem_size = match &field.field_type {
+                                FieldType::TypeRef(type_name) => {
+                                    self.get_type_size(type_name, elem_offset).unwrap_or(size)
+                                }
+                                _ => size,
+                            };
+                            let cache_key = format!("{}_{}", field.id, i);
+                            self.offset_cache
+                                .borrow_mut()
+                                .insert(cache_key, (elem_offset, elem_size));
+
+                            // Read element value and add to context (for the field name,
+                            // only the last element matters for expression evaluation,
+                            // but we need to read each to advance the offset)
+                            if elem_offset + elem_size <= self.data.len() {
+                                if let Ok(value) =
+                                    self.read_field_value(field, elem_offset, elem_size)
+                                {
+                                    let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
+                                }
+                            }
+                            elem_offset += elem_size;
+                        }
+                        // Cache the base field offset (no index) pointing to first element
+                        self.offset_cache
+                            .borrow_mut()
+                            .insert(field.id.clone(), (current_offset, size));
+                        current_offset = elem_offset;
+                    }
+                    RepeatSpec::Until(until_expr) => {
+                        // Parse element-by-element until condition is true
+                        let mut elem_offset = current_offset;
+                        let mut i = 0;
+                        loop {
+                            let elem_size = match &field.field_type {
+                                FieldType::TypeRef(type_name) => {
+                                    self.get_type_size(type_name, elem_offset).unwrap_or(size)
+                                }
+                                _ => size,
+                            };
+                            if elem_offset + elem_size > self.data.len() {
+                                break;
+                            }
+                            let cache_key = format!("{}_{}", field.id, i);
+                            self.offset_cache
+                                .borrow_mut()
+                                .insert(cache_key, (elem_offset, elem_size));
+
+                            let value = self.read_field_value(field, elem_offset, elem_size)?;
+                            let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
+
+                            // Check until condition
+                            let mut until_ctx = ctx.clone();
+                            until_ctx.index = Some(i);
+                            let _ = add_value_to_context_impl(&mut until_ctx, "_", &value);
+                            if let Ok(EvalResult::Boolean(true)) =
+                                self.evaluator.evaluate(until_expr, &until_ctx)
+                            {
+                                elem_offset += elem_size;
+                                break;
+                            }
+
+                            i += 1;
+                            elem_offset += elem_size;
+                        }
+                        self.offset_cache
+                            .borrow_mut()
+                            .insert(field.id.clone(), (current_offset, size));
+                        current_offset = elem_offset;
+                    }
+                    RepeatSpec::Eos => {
+                        // Parse until end of data
+                        let mut elem_offset = current_offset;
+                        let mut i = 0;
+                        loop {
+                            let elem_size = match &field.field_type {
+                                FieldType::TypeRef(type_name) => {
+                                    self.get_type_size(type_name, elem_offset).unwrap_or(size)
+                                }
+                                _ => size,
+                            };
+                            if elem_size == 0 || elem_offset + elem_size > self.data.len() {
+                                break;
+                            }
+                            let cache_key = format!("{}_{}", field.id, i);
+                            self.offset_cache
+                                .borrow_mut()
+                                .insert(cache_key, (elem_offset, elem_size));
+
+                            if let Ok(value) =
+                                self.read_field_value(field, elem_offset, elem_size)
+                            {
+                                let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
+                            }
+                            i += 1;
+                            elem_offset += elem_size;
+                        }
+                        self.offset_cache
+                            .borrow_mut()
+                            .insert(field.id.clone(), (current_offset, size));
+                        current_offset = elem_offset;
+                    }
+                }
+            } else {
+                // Non-repeated field — cache offset and read value into context
+                self.offset_cache
+                    .borrow_mut()
+                    .insert(field.id.clone(), (current_offset, size));
+
+                if current_offset + size <= self.data.len() {
+                    if let Ok(value) = self.read_field_value(field, current_offset, size) {
+                        let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
+                    }
+                }
+                current_offset += size;
+            }
+        }
+
+        *self.parsed_context.borrow_mut() = Some(ctx);
+        Ok(())
     }
 
 
@@ -355,110 +544,46 @@ impl<'a> StructureAccessor<'a> {
     }
 
     /// Calculate the offset and size for a field.
+    ///
+    /// On first call, triggers `ensure_parsed()` which does a single O(n) pass
+    /// through all fields, populating the offset cache. Subsequent calls are O(1).
     pub(crate) fn calculate_field_offset(
         &self,
         field_name: &str,
         index: Option<usize>,
     ) -> Result<(usize, usize), AccessError> {
-        // Check cache first
+        // Build cache key
         let cache_key = match index {
             Some(i) => format!("{}_{}", field_name, i),
             None => field_name.to_string(),
         };
 
+        // Fast path: already cached
         if let Some(&(offset, size)) = self.offset_cache.borrow().get(&cache_key) {
             return Ok((offset, size));
         }
 
-        // Calculate offset by iterating through fields
-        let mut current_offset = 0;
+        // Trigger single-pass parse to populate all caches
+        self.ensure_parsed()?;
 
-        for field in &self.definition.fields {
-            // Check if this field is conditional and not present
+        // Should be cached now
+        if let Some(&(offset, size)) = self.offset_cache.borrow().get(&cache_key) {
+            return Ok((offset, size));
+        }
+
+        // Field wasn't found during parsing — check if it's a conditional field
+        // that was skipped
+        if let Ok(field) = self.find_field(field_name) {
             if let Some(ref condition) = field.condition {
-                let ctx = self.build_eval_context_up_to(&field.id)?;
-                let result =
-                    self.evaluator
-                        .evaluate(condition, &ctx)
-                        .map_err(|e| AccessError::ExpressionError {
-                            path: field.id.clone(),
-                            message: e.to_string(),
-                        })?;
-
-                if let EvalResult::Boolean(false) = result {
-                    // Skip this field
-                    if field.id == field_name {
-                        return Err(AccessError::ConditionalNotPresent {
-                            path: field_name.to_string(),
-                            condition: format!("{:?}", condition),
-                        });
-                    }
-                    continue;
-                }
+                return Err(AccessError::ConditionalNotPresent {
+                    path: field_name.to_string(),
+                    condition: format!("{:?}", condition),
+                });
             }
-
-            if field.id == field_name {
-                // Found the field
-                let size = self.get_field_size(field, current_offset)?;
-
-                // Handle repeated fields
-                if let Some(ref repeat) = field.repeat {
-                    if let Some(idx) = index {
-                        // Calculate offset to specific element
-                        let mut elem_offset = current_offset;
-                        for i in 0..idx {
-                            let elem_size = self.get_element_size(field, elem_offset)?;
-                            elem_offset += elem_size;
-
-                            // Check until condition
-                            if let RepeatSpec::Until(ref until_expr) = repeat {
-                                let value =
-                                    self.read_field_value(field, elem_offset - elem_size, elem_size)?;
-                                let mut ctx = self.build_eval_context_up_to(&field.id)?;
-                                ctx.index = Some(i);
-                                self.add_value_to_context(&mut ctx, "_", &value)?;
-
-                                let result =
-                                    self.evaluator.evaluate(until_expr, &ctx).map_err(|e| {
-                                        AccessError::ExpressionError {
-                                            path: field_name.to_string(),
-                                            message: e.to_string(),
-                                        }
-                                    })?;
-
-                                if let EvalResult::Boolean(true) = result {
-                                    return Err(AccessError::UnknownField {
-                                        path: format!("{}_{}", field_name, idx),
-                                    });
-                                }
-                            }
-                        }
-                        let elem_size = self.get_element_size(field, elem_offset)?;
-
-                        // Cache the result
-                        self.offset_cache
-                            .borrow_mut()
-                            .insert(cache_key, (elem_offset, elem_size));
-
-                        return Ok((elem_offset, elem_size));
-                    }
-                }
-
-                // Cache the result
-                self.offset_cache
-                    .borrow_mut()
-                    .insert(cache_key, (current_offset, size));
-
-                return Ok((current_offset, size));
-            }
-
-            // Move past this field
-            let field_size = self.get_total_field_size(field, current_offset)?;
-            current_offset += field_size;
         }
 
         Err(AccessError::UnknownField {
-            path: field_name.to_string(),
+            path: cache_key,
         })
     }
 
@@ -511,54 +636,6 @@ impl<'a> StructureAccessor<'a> {
         offset: usize,
     ) -> Result<usize, AccessError> {
         self.get_field_size(field, offset)
-    }
-
-    /// Get the total size of a field including all repetitions.
-    fn get_total_field_size(
-        &self,
-        field: &FieldDefinition,
-        offset: usize,
-    ) -> Result<usize, AccessError> {
-        let element_size = self.get_field_size(field, offset)?;
-
-        match &field.repeat {
-            None => Ok(element_size),
-            Some(RepeatSpec::Count(n)) => Ok(element_size * n),
-            Some(RepeatSpec::Expression(expr)) => {
-                let ctx = self.build_eval_context()?;
-                let result =
-                    self.evaluator
-                        .evaluate(expr, &ctx)
-                        .map_err(|e| AccessError::ExpressionError {
-                            path: field.id.clone(),
-                            message: e.to_string(),
-                        })?;
-
-                match result {
-                    EvalResult::Integer(n) if n >= 0 => Ok(element_size * n as usize),
-                    _ => Err(AccessError::ExpressionError {
-                        path: field.id.clone(),
-                        message: "Repeat expression did not evaluate to positive integer"
-                            .to_string(),
-                    }),
-                }
-            }
-            Some(RepeatSpec::Until(_)) | Some(RepeatSpec::Eos) => {
-                // For until/eos, we need to actually parse to determine size
-                // This is expensive but necessary
-                let count = self.get_repeat_count(field.repeat.as_ref().unwrap(), &field.id)?;
-                let mut total_size = 0;
-                let mut current_offset = offset;
-
-                for _ in 0..count {
-                    let elem_size = self.get_element_size(field, current_offset)?;
-                    total_size += elem_size;
-                    current_offset += elem_size;
-                }
-
-                Ok(total_size)
-            }
-        }
     }
 
     /// Get the size of a nested type.
@@ -750,41 +827,6 @@ impl<'a> StructureAccessor<'a> {
     }
 
 
-    /// Get the repeat count for a repeated field.
-    fn get_repeat_count(&self, repeat: &RepeatSpec, field_name: &str) -> Result<usize, AccessError> {
-        match repeat {
-            RepeatSpec::Count(n) => Ok(*n),
-            RepeatSpec::Expression(expr) => {
-                let ctx = self.build_eval_context()?;
-                let result =
-                    self.evaluator
-                        .evaluate(expr, &ctx)
-                        .map_err(|e| AccessError::ExpressionError {
-                            path: field_name.to_string(),
-                            message: e.to_string(),
-                        })?;
-
-                match result {
-                    EvalResult::Integer(n) if n >= 0 => Ok(n as usize),
-                    _ => Err(AccessError::ExpressionError {
-                        path: field_name.to_string(),
-                        message: "Repeat expression did not evaluate to positive integer"
-                            .to_string(),
-                    }),
-                }
-            }
-            RepeatSpec::Until(_) => {
-                // For until, we need to count by parsing
-                // This is handled in the get method
-                Ok(usize::MAX) // Placeholder - actual count determined during parsing
-            }
-            RepeatSpec::Eos => {
-                // For eos, count is determined by remaining data
-                Ok(usize::MAX) // Placeholder - actual count determined during parsing
-            }
-        }
-    }
-
     /// Get the actual repeat count by parsing the data.
     pub(crate) fn get_actual_repeat_count(
         &self,
@@ -884,12 +926,27 @@ impl<'a> StructureAccessor<'a> {
     }
 
     /// Build evaluation context with all parsed fields.
+    ///
+    /// Returns the cached context if available (populated by `ensure_parsed`),
+    /// otherwise falls back to building from scratch.
     pub(crate) fn build_eval_context(&self) -> Result<EvalContext, AccessError> {
+        // Return cached context if we've already done the full parse
+        if let Some(ref ctx) = *self.parsed_context.borrow() {
+            return Ok(ctx.clone());
+        }
         self.build_eval_context_up_to("")
     }
 
     /// Build evaluation context with fields up to (but not including) the specified field.
+    ///
+    /// If the full context has been cached by `ensure_parsed`, returns a clone of it
+    /// (which is a superset of any partial context). For the "up to" case during
+    /// `ensure_parsed` itself, falls back to the uncached path.
     pub(crate) fn build_eval_context_up_to(&self, stop_at: &str) -> Result<EvalContext, AccessError> {
+        // If we have a full cached context, it's a superset of any partial context
+        if let Some(ref ctx) = *self.parsed_context.borrow() {
+            return Ok(ctx.clone());
+        }
         build_context_from_definition(
             &self.definition,
             self.data,

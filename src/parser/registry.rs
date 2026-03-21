@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use super::definition::DefinitionLoader;
 use super::error::LoadError;
@@ -59,8 +59,8 @@ const STRUCTURE_PATH_ENV: &str = "OSML_IO_STRUCTURE_PATH";
 pub struct StructureRegistry {
     /// Runtime-registered definitions (highest priority)
     runtime_definitions: HashMap<String, Arc<StructureDefinition>>,
-    /// Cached definitions loaded from files
-    file_cache: HashMap<String, Arc<StructureDefinition>>,
+    /// Cached definitions loaded from files (interior mutable for transparent caching)
+    file_cache: RwLock<HashMap<String, Arc<StructureDefinition>>>,
     /// Search paths in priority order (later overrides earlier)
     search_paths: Vec<PathBuf>,
 }
@@ -74,7 +74,7 @@ impl StructureRegistry {
     pub fn new() -> Self {
         let mut registry = Self {
             runtime_definitions: HashMap::new(),
-            file_cache: HashMap::new(),
+            file_cache: RwLock::new(HashMap::new()),
             search_paths: Vec::new(),
         };
 
@@ -131,15 +131,23 @@ impl StructureRegistry {
             return Some(Arc::clone(def));
         }
 
-        // Check file cache
-        if let Some(def) = self.file_cache.get(name) {
-            return Some(Arc::clone(def));
+        // Check file cache (read lock)
+        {
+            let cache = self.file_cache.read().unwrap();
+            if let Some(def) = cache.get(name) {
+                return Some(Arc::clone(def));
+            }
         }
 
         // Try to load from search paths
-        // Note: We need interior mutability for caching, but for now
-        // we'll just load without caching in the immutable get()
-        self.load_from_paths(name)
+        if let Some(def) = self.load_from_paths(name) {
+            // Cache under write lock (double-check to avoid duplicate inserts)
+            let mut cache = self.file_cache.write().unwrap();
+            let entry = cache.entry(name.to_string()).or_insert(def);
+            return Some(Arc::clone(entry));
+        }
+
+        None
     }
 
     /// Get a structure definition by name, loading and caching if necessary.
@@ -151,15 +159,25 @@ impl StructureRegistry {
             return Some(Arc::clone(def));
         }
 
+        // Direct HashMap access — &mut self guarantees exclusive access, no lock needed
+        let cache = self.file_cache.get_mut().unwrap();
+
         // Check file cache
-        if let Some(def) = self.file_cache.get(name) {
+        if let Some(def) = cache.get(name) {
             return Some(Arc::clone(def));
         }
 
-        // Try to load from search paths and cache
-        if let Some(def) = self.load_from_paths(name) {
-            self.file_cache.insert(name.to_string(), Arc::clone(&def));
-            return Some(def);
+        // Load from search paths — need to search manually to avoid borrowing self
+        let filename = Self::name_to_filename(name);
+        for path in self.search_paths.iter().rev() {
+            let full_path = path.join(&filename);
+            if full_path.exists() {
+                if let Ok(def) = DefinitionLoader::load_file(&full_path) {
+                    let arc = Arc::new(def);
+                    cache.insert(name.to_string(), Arc::clone(&arc));
+                    return Some(arc);
+                }
+            }
         }
 
         None
@@ -177,10 +195,13 @@ impl StructureRegistry {
         // Add runtime definitions
         names.extend(self.runtime_definitions.keys().cloned());
 
-        // Add cached definitions
-        for name in self.file_cache.keys() {
-            if !names.contains(name) {
-                names.push(name.clone());
+        // Add cached definitions (read lock)
+        {
+            let cache = self.file_cache.read().unwrap();
+            for name in cache.keys() {
+                if !names.contains(name) {
+                    names.push(name.clone());
+                }
             }
         }
 
@@ -204,7 +225,7 @@ impl StructureRegistry {
     /// Clears the file cache and re-scans search paths.
     /// Runtime-registered definitions are preserved.
     pub fn reload(&mut self) -> Result<(), LoadError> {
-        self.file_cache.clear();
+        self.file_cache.get_mut().unwrap().clear();
         Ok(())
     }
 
@@ -231,7 +252,7 @@ impl StructureRegistry {
 
     /// Clear the file cache.
     pub fn clear_cache(&mut self) {
-        self.file_cache.clear();
+        self.file_cache.get_mut().unwrap().clear();
     }
 
     /// Load a definition from search paths.
@@ -357,7 +378,7 @@ seq:
     fn new_creates_empty_registry() {
         let registry = StructureRegistry::new();
         assert!(registry.runtime_definitions.is_empty());
-        assert!(registry.file_cache.is_empty());
+        assert!(registry.file_cache.read().unwrap().is_empty());
     }
 
     #[test]
@@ -448,11 +469,13 @@ seq:
         let mut registry = StructureRegistry::new();
         registry
             .file_cache
+            .get_mut()
+            .unwrap()
             .insert("TEST".to_string(), Arc::new(StructureDefinition::new("test")));
-        assert!(!registry.file_cache.is_empty());
+        assert!(!registry.file_cache.get_mut().unwrap().is_empty());
 
         registry.reload().unwrap();
-        assert!(registry.file_cache.is_empty());
+        assert!(registry.file_cache.get_mut().unwrap().is_empty());
     }
 
     #[test]
@@ -468,9 +491,11 @@ seq:
         let mut registry = StructureRegistry::new();
         registry
             .file_cache
+            .get_mut()
+            .unwrap()
             .insert("TEST".to_string(), Arc::new(StructureDefinition::new("test")));
         registry.clear_cache();
-        assert!(registry.file_cache.is_empty());
+        assert!(registry.file_cache.get_mut().unwrap().is_empty());
     }
 
     // Naming convention tests
@@ -632,12 +657,12 @@ seq:
         let mut registry = StructureRegistry::new();
         registry.add_search_path(temp_dir.path());
 
-        assert!(registry.file_cache.is_empty());
+        assert!(registry.file_cache.read().unwrap().is_empty());
 
         // First call loads and caches
         let def1 = registry.get_mut("tre_geolob");
         assert!(def1.is_some());
-        assert!(registry.file_cache.contains_key("tre_geolob"));
+        assert!(registry.file_cache.get_mut().unwrap().contains_key("tre_geolob"));
 
         // Second call uses cache
         let def2 = registry.get_mut("tre_geolob");
