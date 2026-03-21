@@ -45,5 +45,5 @@ tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
-name = "nc_decode"
+name = "decode_benchmarks"
 harness = false

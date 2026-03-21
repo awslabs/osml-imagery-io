@@ -1,22 +1,25 @@
 //! Criterion benchmarks for the uncompressed (IC=NC) NITF decode pipeline.
 //!
-//! Measures:
-//! - `bench_decode_block_imode_p`: full `decode_block` on synthetic 15-band, 16-bit, 1024×1024 IMODE=P data
-//! - `bench_bip_to_bsq`: current `from_bip_to_bsq` via `to_band_sequential` in isolation
-//! - `bench_swap_be_to_ne`: current `swap_be_to_ne` in isolation
+//! Contains two groups:
+//! - `"nc_decode"`: migrated from `benches/nc_decode.rs` (15-band, 16-bit, 1024×1024 IMODE=P)
+//! - `"jbp_nc"`: new IMODE B/P/R/S benchmarks (3-band, 8-bit, 2048×2048)
 
 use std::sync::Arc;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput};
 
 use _io::jbp::image::decoder::{BlockDecoder, UncompressedBlockDecoder};
-use _io::jbp::image::interleave::{fused_bip_to_bsq_swap, fused_bip_to_bsq_swap_parallel, to_band_sequential};
-use _io::jbp::image::types::{InterleaveMode, PixelJustification, PixelValueType};
+use _io::jbp::image::interleave::{
+    fused_bip_to_bsq_swap, fused_bip_to_bsq_swap_parallel, to_band_sequential,
+};
 use _io::jbp::image::swap_be_to_ne;
+use _io::jbp::image::types::{InterleaveMode, PixelJustification, PixelValueType};
 
-// ---------------------------------------------------------------------------
-// Constants matching the target workload: 15-band, 16-bit, 1024×1024 IMODE=P
-// ---------------------------------------------------------------------------
+use super::super::common;
+
+// ===========================================================================
+// Migrated constants (15-band, 16-bit, 1024×1024 IMODE=P)
+// ===========================================================================
 const NROWS: u32 = 1024;
 const NCOLS: u32 = 1024;
 const NBANDS: u32 = 15;
@@ -29,8 +32,6 @@ const DATA_SIZE: usize = (NROWS as usize) * (NCOLS as usize) * (NBANDS as usize)
 /// Fills with a simple pattern so endian-swap has non-trivial work.
 fn generate_bip_data() -> Vec<u8> {
     let mut data = vec![0u8; DATA_SIZE];
-    // Fill with a repeating pattern that exercises byte-swap paths.
-    // Use 16-bit big-endian values: high byte != low byte.
     for (i, chunk) in data.chunks_exact_mut(2).enumerate() {
         let val = (i as u16).wrapping_mul(0x0101).wrapping_add(0x0A0B);
         chunk.copy_from_slice(&val.to_be_bytes());
@@ -44,13 +45,13 @@ fn create_imode_p_decoder(data: Arc<[u8]>) -> UncompressedBlockDecoder {
         data,
         NROWS,
         NCOLS,
-        1,    // nbpr: 1 block per row
-        1,    // nbpc: 1 block per column
+        1,
+        1,
         NCOLS,
         NROWS,
         NBANDS,
         NBPP,
-        NBPP, // abpp == nbpp
+        NBPP,
         PixelValueType::UnsignedInt,
         PixelJustification::Right,
         InterleaveMode::P,
@@ -58,11 +59,11 @@ fn create_imode_p_decoder(data: Arc<[u8]>) -> UncompressedBlockDecoder {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Benchmarks
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Migrated benchmarks (group: "nc_decode")
+// ===========================================================================
 
-fn bench_decode_block_imode_p(c: &mut Criterion) {
+pub fn bench_decode_block_imode_p(c: &mut Criterion) {
     let data = generate_bip_data();
     let arc_data: Arc<[u8]> = Arc::from(data);
     let decoder = create_imode_p_decoder(arc_data);
@@ -85,7 +86,7 @@ fn bench_decode_block_imode_p(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_bip_to_bsq(c: &mut Criterion) {
+pub fn bench_bip_to_bsq(c: &mut Criterion) {
     let data = generate_bip_data();
 
     let mut group = c.benchmark_group("nc_decode");
@@ -96,15 +97,8 @@ fn bench_bip_to_bsq(c: &mut Criterion) {
         BenchmarkId::new("bip_to_bsq", "1024x1024x15_u16"),
         |b| {
             b.iter(|| {
-                to_band_sequential(
-                    &data,
-                    InterleaveMode::P,
-                    NROWS,
-                    NCOLS,
-                    NBANDS,
-                    BPP,
-                )
-                .expect("to_band_sequential failed")
+                to_band_sequential(&data, InterleaveMode::P, NROWS, NCOLS, NBANDS, BPP)
+                    .expect("to_band_sequential failed")
             });
         },
     );
@@ -112,18 +106,11 @@ fn bench_bip_to_bsq(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_swap_be_to_ne(c: &mut Criterion) {
-    // Pre-convert to BSQ so we benchmark only the swap, not the interleave.
+pub fn bench_swap_be_to_ne(c: &mut Criterion) {
     let bip_data = generate_bip_data();
-    let bsq_data = to_band_sequential(
-        &bip_data,
-        InterleaveMode::P,
-        NROWS,
-        NCOLS,
-        NBANDS,
-        BPP,
-    )
-    .expect("to_band_sequential failed");
+    let bsq_data =
+        to_band_sequential(&bip_data, InterleaveMode::P, NROWS, NCOLS, NBANDS, BPP)
+            .expect("to_band_sequential failed");
 
     let mut group = c.benchmark_group("nc_decode");
     group.throughput(Throughput::Bytes(DATA_SIZE as u64));
@@ -139,7 +126,7 @@ fn bench_swap_be_to_ne(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_fused_bip_to_bsq_swap(c: &mut Criterion) {
+pub fn bench_fused_bip_to_bsq_swap(c: &mut Criterion) {
     let bip_data = generate_bip_data();
     let mut dst = vec![0u8; DATA_SIZE];
 
@@ -169,7 +156,7 @@ fn bench_fused_bip_to_bsq_swap(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_fused_parallel_vs_serial(c: &mut Criterion) {
+pub fn bench_fused_parallel_vs_serial(c: &mut Criterion) {
     let bip_data = generate_bip_data();
 
     let mut group = c.benchmark_group("nc_decode");
@@ -219,7 +206,7 @@ fn bench_fused_parallel_vs_serial(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_tiled_transpose_tile_sizes(c: &mut Criterion) {
+pub fn bench_tiled_transpose_tile_sizes(c: &mut Criterion) {
     let bip_data = generate_bip_data();
 
     let mut group = c.benchmark_group("nc_decode");
@@ -251,13 +238,103 @@ fn bench_tiled_transpose_tile_sizes(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_decode_block_imode_p,
-    bench_bip_to_bsq,
-    bench_swap_be_to_ne,
-    bench_fused_bip_to_bsq_swap,
-    bench_fused_parallel_vs_serial,
-    bench_tiled_transpose_tile_sizes,
-);
-criterion_main!(benches);
+// ===========================================================================
+// New IMODE benchmarks (group: "jbp_nc", 2048×2048×3, 8-bit)
+// ===========================================================================
+
+/// Helper: build an `UncompressedBlockDecoder` for a single 2048×2048×3 block
+/// with the given interleave mode and 8-bit unsigned pixels.
+fn create_imode_decoder(data: Arc<[u8]>, imode: InterleaveMode) -> UncompressedBlockDecoder {
+    UncompressedBlockDecoder::from_raw_params(
+        data,
+        common::NROWS,
+        common::NCOLS,
+        1,             // nbpr
+        1,             // nbpc
+        common::NCOLS, // nppbh
+        common::NROWS, // nppbv
+        common::NBANDS,
+        common::NBPP,
+        common::NBPP, // abpp == nbpp
+        PixelValueType::UnsignedInt,
+        PixelJustification::Right,
+        imode,
+        "NC".to_string(),
+    )
+}
+
+pub fn bench_nc_imode_b(c: &mut Criterion) {
+    let pixels = common::generate_synthetic_pixels(common::DATA_SIZE);
+    let decoder = create_imode_decoder(Arc::from(pixels.as_slice()), InterleaveMode::B);
+
+    let mut group = c.benchmark_group("jbp_nc");
+    group.throughput(Throughput::Bytes(common::DATA_SIZE as u64));
+    group.sample_size(common::SAMPLE_SIZE);
+
+    group.bench_function(BenchmarkId::new("imode_b", "2048x2048x3_u8"), |b| {
+        b.iter(|| {
+            decoder
+                .decode_block(0, 0, 0, None)
+                .expect("decode_block IMODE=B failed")
+        });
+    });
+
+    group.finish();
+}
+
+pub fn bench_nc_imode_p(c: &mut Criterion) {
+    let pixels = common::generate_synthetic_pixels(common::DATA_SIZE);
+    let decoder = create_imode_decoder(Arc::from(pixels.as_slice()), InterleaveMode::P);
+
+    let mut group = c.benchmark_group("jbp_nc");
+    group.throughput(Throughput::Bytes(common::DATA_SIZE as u64));
+    group.sample_size(common::SAMPLE_SIZE);
+
+    group.bench_function(BenchmarkId::new("imode_p", "2048x2048x3_u8"), |b| {
+        b.iter(|| {
+            decoder
+                .decode_block(0, 0, 0, None)
+                .expect("decode_block IMODE=P failed")
+        });
+    });
+
+    group.finish();
+}
+
+pub fn bench_nc_imode_r(c: &mut Criterion) {
+    let pixels = common::generate_synthetic_pixels(common::DATA_SIZE);
+    let decoder = create_imode_decoder(Arc::from(pixels.as_slice()), InterleaveMode::R);
+
+    let mut group = c.benchmark_group("jbp_nc");
+    group.throughput(Throughput::Bytes(common::DATA_SIZE as u64));
+    group.sample_size(common::SAMPLE_SIZE);
+
+    group.bench_function(BenchmarkId::new("imode_r", "2048x2048x3_u8"), |b| {
+        b.iter(|| {
+            decoder
+                .decode_block(0, 0, 0, None)
+                .expect("decode_block IMODE=R failed")
+        });
+    });
+
+    group.finish();
+}
+
+pub fn bench_nc_imode_s(c: &mut Criterion) {
+    let pixels = common::generate_synthetic_pixels(common::DATA_SIZE);
+    let decoder = create_imode_decoder(Arc::from(pixels.as_slice()), InterleaveMode::S);
+
+    let mut group = c.benchmark_group("jbp_nc");
+    group.throughput(Throughput::Bytes(common::DATA_SIZE as u64));
+    group.sample_size(common::SAMPLE_SIZE);
+
+    group.bench_function(BenchmarkId::new("imode_s", "2048x2048x3_u8"), |b| {
+        b.iter(|| {
+            decoder
+                .decode_block(0, 0, 0, None)
+                .expect("decode_block IMODE=S failed")
+        });
+    });
+
+    group.finish();
+}

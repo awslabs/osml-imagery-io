@@ -11,4 +11,4 @@ mod writer;
 
 pub use reader::TIFFDatasetReader;
 pub use writer::TIFFDatasetWriter;
-pub(crate) use image::TIFFImageAssetProvider;
+pub use image::TIFFImageAssetProvider;

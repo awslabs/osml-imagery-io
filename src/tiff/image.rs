@@ -53,7 +53,7 @@ pub(crate) fn map_pixel_type(
 /// Provides blocked/tiled access to pixel data through the `ImageAssetProvider`
 /// trait. Supports both tiled and stripped TIFF layouts, chunky-to-BSQ
 /// deinterleaving, and band subsetting.
-pub(crate) struct TIFFImageAssetProvider {
+pub struct TIFFImageAssetProvider {
     /// Unique key identifying this asset (e.g., "image_segment_0")
     key: String,
     /// IFD index within the TIFF file
