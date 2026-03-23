@@ -86,6 +86,12 @@ pub enum BinaryOperator {
     // Logical
     And,
     Or,
+    // Bitwise
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    ShiftLeft,
+    ShiftRight,
 }
 
 /// Unary operators.
@@ -93,6 +99,7 @@ pub enum BinaryOperator {
 pub enum UnaryOperator {
     Not,
     Neg,
+    BitwiseNot,
 }
 
 /// Special variables available in expressions.

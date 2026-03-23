@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 
 use super::ops::{
-    eval_add, eval_compare, eval_div, eval_logical_and, eval_logical_or, eval_mod, eval_mul,
+    eval_add, eval_bitwise_and, eval_bitwise_or, eval_bitwise_xor, eval_compare, eval_div,
+    eval_logical_and, eval_logical_or, eval_mod, eval_mul, eval_shift_left, eval_shift_right,
     eval_sub, values_equal,
 };
 use super::parser::Parser;
@@ -151,6 +152,12 @@ impl ExpressionEvaluator {
             // Logical operators
             BinaryOperator::And => eval_logical_and(left, right),
             BinaryOperator::Or => eval_logical_or(left, right),
+            // Bitwise operators
+            BinaryOperator::BitwiseAnd => eval_bitwise_and(left, right),
+            BinaryOperator::BitwiseOr => eval_bitwise_or(left, right),
+            BinaryOperator::BitwiseXor => eval_bitwise_xor(left, right),
+            BinaryOperator::ShiftLeft => eval_shift_left(left, right),
+            BinaryOperator::ShiftRight => eval_shift_right(left, right),
         }
     }
 
@@ -172,6 +179,13 @@ impl ExpressionEvaluator {
                 EvalResult::Float(f) => Ok(EvalResult::Float(-f)),
                 v => Err(ExpressionError::TypeError {
                     operator: "-".to_string(),
+                    operand_type: format!("{:?}", v),
+                }),
+            },
+            UnaryOperator::BitwiseNot => match val {
+                EvalResult::Integer(n) => Ok(EvalResult::Integer(!n)),
+                v => Err(ExpressionError::TypeError {
+                    operator: "~".to_string(),
                     operand_type: format!("{:?}", v),
                 }),
             },

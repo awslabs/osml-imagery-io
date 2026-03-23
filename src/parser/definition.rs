@@ -216,6 +216,7 @@ impl DefinitionLoader {
             None | Some("str") | Some("strz") => Ok(FieldType::String),
             Some("u1") => Ok(FieldType::UnsignedInt(1)),
             Some("u2") | Some("u2be") | Some("u2le") => Ok(FieldType::UnsignedInt(2)),
+            Some("u3") | Some("u3be") => Ok(FieldType::UnsignedInt(3)),
             Some("u4") | Some("u4be") | Some("u4le") => Ok(FieldType::UnsignedInt(4)),
             Some("u8") | Some("u8be") | Some("u8le") => Ok(FieldType::UnsignedInt(8)),
             Some("s1") => Ok(FieldType::SignedInt(1)),

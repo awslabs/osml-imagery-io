@@ -10,21 +10,33 @@ doc: |
   Contains information about natural and artificial illumination relevant
   at the time and location of data collection for electro-optical imagery.
   
-  ILLUMB extends ILLUMA with:
-  - Multiple illumination condition sets (varying by time, location, wavelength)
-  - Target location (latitude, longitude, height)
-  - Sensor azimuth and elevation angles
-  - Sun and Moon glint locations
-  - Camera-to-target-to-Sun (CATS) and Camera-to-target-to-Moon (CATM) angles
-  - Other natural light sources (e.g., Venus, Aurora)
-  - Per-band illumination values
+  Uses a 24-bit EXISTENCE_MASK field (u3) to control which conditional
+  fields are present within each illumination set.
   
-  Uses an EXISTENCE_MASK field to control which conditional fields are present.
+  Bit definitions (bit 23 = MSB of 24-bit field):
+    b23: RAD_QUANTITY (40 ECS-A), RADQ_UNIT (40 ECS-A)
+    b22: SUN_AZIMUTHn (5), SUN_ELEVn (5) per set
+    b21: MOON_AZIMUTHn (5), MOON_ELEVn (5) per set
+    b20: MOON_PHASE_ANGLEn (6) per set
+    b19: MOON_ILLUM_PERCENTn (3) per set
+    b18: OTHER_AZIMUTHnj (5), OTHER_ELEVnj (5) per set per other
+    b17: SENSOR_AZIMUTHn (5), SENSOR_ELEVn (5) per set
+    b16: CATS_ANGLEn (5) per set
+    b15: SUN_GLINT_LATn (10), SUN_GLINT_LONn (11) per set
+    b14: CATM_ANGLEn (5) per set
+    b13: MOON_GLINT_LATn (10), MOON_GLINT_LONn (11) per set
+    b12: SUN_ILLUM_METHODnb (1), SUN_ILLUMnb (16) per set per band
+    b11: MOON_ILLUM_METHODnb (1), MOON_ILLUMnb (16) per set per band
+    b10: SOL_LUN_DIST_ADJUSTn (7), TOT_SUNMOON_ILLUMnb (16) per set per band
+    b9:  OTHER_ILLUM_METHODnbj (1), OTHER_ILLUMnbj (16) per set per band per other
+    b8:  ART_ILLUM_METHODnb (1), ART_ILLUM_MINnb (16), ART_ILLUM_MAXnb (16) per set per band
+    b7-b0: Reserved (always 0)
   
-  NOTE: This is a simplified definition that captures the fixed header fields.
-  The full TRE has complex conditional logic based on existence_mask bits
-  that requires runtime bitwise evaluation. Conditional fields are captured
-  as raw bytes in the conditional_data field.
+  The header fields, EXISTENCE_MASK, and top-level conditional fields
+  (RAD_QUANTITY, RADQ_UNIT) are fully parsed. The illumination set loop
+  data is captured as raw bytes because the per-set conditional fields
+  reference EXISTENCE_MASK, NUM_BANDS, and NUM_OTHERS from the parent
+  scope, which requires _parent resolution not supported by the KSY parser.
   
   Reference: STDI-0002 Volume 1, Appendix AL - ILLUMA-ILLUMB
 
@@ -33,37 +45,25 @@ seq:
     type: str
     size: 4
     encoding: BCS-N
-    doc: |
-      Number of Bands (NUM_BANDS)
-      Number of bands for which illumination conditions are provided.
-      4 BCS-N characters, range 0001-9999.
+    doc: "Number of bands. Range: 0001-9999."
 
   - id: BAND_UNIT
     type: str
     size: 40
     encoding: ECS-A
-    doc: |
-      Band Unit of Measure (BAND_UNIT)
-      Unit of measure for band lower/upper bounds.
-      Values: "μm" (wavelength), "1/cm" (wavenumber), "Hz" (frequency).
-      40 ECS-A characters.
+    doc: "Band unit of measure. Values: um, 1/cm, Hz."
 
   - id: BANDS
     type: band_bounds
     repeat: expr
     repeat-expr: NUM_BANDS.to_i
-    doc: |
-      Band lower and upper bounds.
-      Repeated NUM_BANDS times.
+    doc: "Band lower and upper bounds, repeated NUM_BANDS times."
 
   - id: NUM_OTHERS
     type: str
     size: 2
     encoding: BCS-N
-    doc: |
-      Number of Other Natural Light Sources (NUM_OTHERS)
-      Number of natural light sources besides the Sun and Moon.
-      2 BCS-N characters, range 00-99.
+    doc: "Number of other natural light sources. Range: 00-99."
 
   - id: OTHER_NAMES
     type: str
@@ -71,19 +71,13 @@ seq:
     encoding: ECS-A
     repeat: expr
     repeat-expr: NUM_OTHERS.to_i
-    doc: |
-      Name of Other Natural Light Source (OTHER_NAME)
-      Values: "VENUS", "AURORA", etc.
-      40 ECS-A characters per source.
-      Repeated NUM_OTHERS times.
+    doc: "Name of other natural light source (e.g. VENUS, AURORA)."
 
   - id: NUM_COMS
     type: str
     size: 1
     encoding: BCS-N
-    doc: |
-      Number of ILLUMB Comments (NUM_COMS)
-      1 BCS-N character, range 0-9.
+    doc: "Number of ILLUMB comments. Range: 0-9."
 
   - id: COMMENTS
     type: str
@@ -91,110 +85,99 @@ seq:
     encoding: ECS-A
     repeat: expr
     repeat-expr: NUM_COMS.to_i
-    doc: |
-      Comment (COMMENT)
-      Free-form ECS text. Classified comments preceded by classification.
-      80 ECS-A characters per comment.
-      Repeated NUM_COMS times.
+    doc: "Free-form comment. Repeated NUM_COMS times."
 
   - id: GEO_DATUM
     type: str
     size: 80
     encoding: BCS-A
-    doc: |
-      Geodetic Datum Name (GEO_DATUM)
-      Name of geodetic datum for TARGET_LAT and TARGET_LON.
-      Default: "World Geodetic System 1984".
-      80 BCS-A characters.
+    doc: "Geodetic datum name. Default: World Geodetic System 1984."
 
   - id: GEO_DATUM_CODE
     type: str
     size: 4
     encoding: BCS-A
-    doc: |
-      Geodetic Datum Code (GEO_DATUM_CODE)
-      Code of geodetic datum. Default: "WGE" (WGS 84).
-      4 BCS-A characters.
+    doc: "Geodetic datum code. Default: WGE (WGS 84)."
 
   - id: ELLIPSOID_NAME
     type: str
     size: 80
     encoding: BCS-A
-    doc: |
-      Ellipsoid Name (ELLIPSOID_NAME)
-      Name of ellipsoid for TARGET fields.
-      Default: "World Geodetic System 1984".
-      80 BCS-A characters.
+    doc: "Ellipsoid name. Default: World Geodetic System 1984."
 
   - id: ELLIPSOID_CODE
     type: str
     size: 3
     encoding: BCS-A
-    doc: |
-      Ellipsoid Code (ELLIPSOID_CODE)
-      Code of ellipsoid. Default: "WE" (WGS 84).
-      3 BCS-A characters.
+    doc: "Ellipsoid code. Default: WE (WGS 84)."
 
   - id: VERTICAL_DATUM_REF
     type: str
     size: 80
     encoding: BCS-A
-    doc: |
-      Vertical Datum Reference (VERTICAL_DATUM_REF)
-      Name of vertical datum for TARGET_HGT.
-      Default: "Geodetic". BCS spaces if TARGET_HGT not populated.
-      80 BCS-A characters.
+    doc: "Vertical datum reference. Default: Geodetic."
 
   - id: VERTICAL_REF_CODE
     type: str
     size: 4
     encoding: BCS-A
-    doc: |
-      Vertical Reference Code (VERTICAL_REF_CODE)
-      Code of vertical reference. "GEOD" (geodetic) or "MSL" (mean sea level).
-      BCS spaces if TARGET_HGT not populated.
-      4 BCS-A characters.
+    doc: "Vertical reference code. GEOD or MSL."
 
   - id: EXISTENCE_MASK
-    size: 3
+    type: u3
     doc: |
-      Existence Mask (EXISTENCE_MASK)
-      24-bit field controlling presence of conditional fields.
-      Bit 23: RAD_QUANTITY, RADQ_UNIT
-      Bit 22: SUN_AZIMUTH, SUN_ELEV
-      Bit 21: MOON_AZIMUTH, MOON_ELEV
-      Bit 20: MOON_PHASE_ANGLE
-      Bit 19: MOON_ILLUM_PERCENT
-      Bit 18: OTHER_AZIMUTH, OTHER_ELEV
-      Bit 17: SENSOR_AZIMUTH, SENSOR_ELEV
-      Bit 16: CATS_ANGLE
-      Bit 15: SUN_GLINT_LAT, SUN_GLINT_LON
-      Bit 14: CATM_ANGLE
-      Bit 13: MOON_GLINT_LAT, MOON_GLINT_LON
-      Bit 12: SUN_ILLUM_METHOD, SUN_ILLUM
-      Bit 11: MOON_ILLUM_METHOD, MOON_ILLUM
-      Bit 10: SOL_LUN_DIST_ADJUST, TOT_SUNMOON_ILLUM
-      Bit 9: OTHER_ILLUM_METHOD, OTHER_ILLUM
-      Bit 8: ART_ILLUM_METHOD, ART_ILLUM_MIN, ART_ILLUM_MAX
-      Bits 0-7: Reserved (always 0)
-      3 bytes (unsigned integer).
+      24-bit existence mask controlling conditional fields.
+      Bits 23-8 control field presence; bits 7-0 reserved (always 0).
+
+  # --- Bit 23 (0x800000): RAD_QUANTITY, RADQ_UNIT ---
+  - id: RAD_QUANTITY
+    type: str
+    size: 40
+    encoding: ECS-A
+    if: "EXISTENCE_MASK & 0x800000 != 0"
+    doc: "Radiometric quantity for illumination values."
+
+  - id: RADQ_UNIT
+    type: str
+    size: 40
+    encoding: ECS-A
+    if: "EXISTENCE_MASK & 0x800000 != 0"
+    doc: "Radiometric quantity unit of measure."
 
   - id: NUM_ILLUM_SETS
     type: str
     size: 3
     encoding: BCS-N
-    doc: |
-      Number of Sets of Illumination Conditions (NUM_ILLUM_SETS)
-      3 BCS-N characters, range 001-999.
+    doc: "Number of illumination condition sets. Range: 001-999."
 
-  # Remaining data depends on existence_mask bits
-  # This simplified definition captures the raw remaining bytes
-  - id: CONDITIONAL_DATA
+  # Illumination set loop data captured as raw bytes.
+  # Each set contains required fields (DATETIME, TARGET_LAT/LON/HGT)
+  # plus conditional fields controlled by EXISTENCE_MASK bits 22-8,
+  # with nested per-band and per-other-source loops.
+  # Full parsing requires _parent references not supported by KSY parser.
+  - id: ILLUM_SET_DATA
     size-eos: true
     doc: |
-      Conditional fields based on existence_mask bits.
-      Includes illumination sets with per-band parameters.
-      Full parsing requires runtime bitwise evaluation.
+      Illumination set loop data (NUM_ILLUM_SETS iterations).
+      Each set contains:
+        Required: DATETIMEn (14), TARGET_LATn (10), TARGET_LONn (11), TARGET_HGTn (14)
+        b22: SUN_AZIMUTHn (5), SUN_ELEVn (5)
+        b21: MOON_AZIMUTHn (5), MOON_ELEVn (5)
+        b20: MOON_PHASE_ANGLEn (6)
+        b19: MOON_ILLUM_PERCENTn (3)
+        b18: OTHER_AZIMUTHnj (5), OTHER_ELEVnj (5) x NUM_OTHERS
+        b17: SENSOR_AZIMUTHn (5), SENSOR_ELEVn (5)
+        b16: CATS_ANGLEn (5)
+        b15: SUN_GLINT_LATn (10), SUN_GLINT_LONn (11)
+        b14: CATM_ANGLEn (5)
+        b13: MOON_GLINT_LATn (10), MOON_GLINT_LONn (11)
+        b10: SOL_LUN_DIST_ADJUSTn (7)
+        Per-band loop (NUM_BANDS iterations):
+          b12: SUN_ILLUM_METHODnb (1), SUN_ILLUMnb (16)
+          b11: MOON_ILLUM_METHODnb (1), MOON_ILLUMnb (16)
+          b10: TOT_SUNMOON_ILLUMnb (16)
+          b9: OTHER_ILLUM_METHODnbj (1), OTHER_ILLUMnbj (16) x NUM_OTHERS
+          b8: ART_ILLUM_METHODnb (1), ART_ILLUM_MINnb (16), ART_ILLUM_MAXnb (16)
 
 types:
   band_bounds:
@@ -203,16 +186,10 @@ types:
         type: str
         size: 16
         encoding: BCS-A
-        doc: |
-          Band Lower Bound (LBOUND)
-          Lower bound of electromagnetic spectrum for this band.
-          16 BCS-A characters in scientific notation.
+        doc: "Band lower bound in scientific notation."
 
       - id: UBOUND
         type: str
         size: 16
         encoding: BCS-A
-        doc: |
-          Band Upper Bound (UBOUND)
-          Upper bound of electromagnetic spectrum for this band.
-          16 BCS-A characters in scientific notation.
+        doc: "Band upper bound in scientific notation."

@@ -128,6 +128,9 @@ fn read_simple_value<'a>(field: &FieldDefinition, data: &'a [u8]) -> Result<Valu
             let n = match bytes {
                 1 => data.first().map(|&b| b as u64).unwrap_or(0),
                 2 if data.len() >= 2 => u16::from_be_bytes([data[0], data[1]]) as u64,
+                3 if data.len() >= 3 => {
+                    u32::from_be_bytes([0, data[0], data[1], data[2]]) as u64
+                }
                 4 if data.len() >= 4 => {
                     u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as u64
                 }

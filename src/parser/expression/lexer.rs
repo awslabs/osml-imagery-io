@@ -30,6 +30,13 @@ pub(crate) enum Token {
     And,
     Or,
     Not,
+    // Bitwise operators
+    Ampersand,  // &
+    Pipe,       // |
+    Caret,      // ^
+    Tilde,      // ~
+    ShiftLeft,  // <<
+    ShiftRight, // >>
     // Punctuation
     Dot,
     LParen,
@@ -75,6 +82,33 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_number(&mut self, first: char) -> Result<Token, ExpressionError> {
+        // Check for hex literal: 0x...
+        if first == '0' {
+            if let Some(p) = self.peek_char() {
+                if p == 'x' || p == 'X' {
+                    self.next_char(); // consume 'x'/'X'
+                    let mut hex_str = String::new();
+                    while let Some(c) = self.peek_char() {
+                        if c.is_ascii_hexdigit() {
+                            hex_str.push(self.next_char().unwrap());
+                        } else {
+                            break;
+                        }
+                    }
+                    if hex_str.is_empty() {
+                        return Err(ExpressionError::SyntaxError {
+                            message: "Invalid hex literal: no digits after 0x".to_string(),
+                        });
+                    }
+                    return i64::from_str_radix(&hex_str, 16)
+                        .map(Token::Integer)
+                        .map_err(|_| ExpressionError::SyntaxError {
+                            message: format!("Invalid hex literal: 0x{}", hex_str),
+                        });
+                }
+            }
+        }
+
         let mut num_str = String::new();
         num_str.push(first);
         let mut has_dot = false;
@@ -201,22 +235,32 @@ impl<'a> Lexer<'a> {
                         Ok(Token::Not)
                     }
                 }
-                '<' => {
-                    if self.peek_char() == Some('=') {
+                '&' => Ok(Token::Ampersand),
+                '|' => Ok(Token::Pipe),
+                '^' => Ok(Token::Caret),
+                '~' => Ok(Token::Tilde),
+                '<' => match self.peek_char() {
+                    Some('<') => {
+                        self.next_char();
+                        Ok(Token::ShiftLeft)
+                    }
+                    Some('=') => {
                         self.next_char();
                         Ok(Token::LtEq)
-                    } else {
-                        Ok(Token::Lt)
                     }
-                }
-                '>' => {
-                    if self.peek_char() == Some('=') {
+                    _ => Ok(Token::Lt),
+                },
+                '>' => match self.peek_char() {
+                    Some('>') => {
+                        self.next_char();
+                        Ok(Token::ShiftRight)
+                    }
+                    Some('=') => {
                         self.next_char();
                         Ok(Token::GtEq)
-                    } else {
-                        Ok(Token::Gt)
                     }
-                }
+                    _ => Ok(Token::Gt),
+                },
                 '"' | '\'' => self.read_string(c),
                 c if c.is_ascii_digit() => self.read_number(c),
                 c if c.is_alphabetic() || c == '_' => Ok(self.read_identifier(c)),

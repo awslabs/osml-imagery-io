@@ -169,3 +169,91 @@ pub(crate) fn eval_logical_or(
         }),
     }
 }
+
+/// Evaluate bitwise AND operation.
+pub(crate) fn eval_bitwise_and(
+    left: EvalResult,
+    right: EvalResult,
+) -> Result<EvalResult, ExpressionError> {
+    match (left, right) {
+        (EvalResult::Integer(a), EvalResult::Integer(b)) => Ok(EvalResult::Integer(a & b)),
+        (l, r) => Err(ExpressionError::TypeError {
+            operator: "&".to_string(),
+            operand_type: format!("{:?} and {:?}", l, r),
+        }),
+    }
+}
+
+/// Evaluate bitwise OR operation.
+pub(crate) fn eval_bitwise_or(
+    left: EvalResult,
+    right: EvalResult,
+) -> Result<EvalResult, ExpressionError> {
+    match (left, right) {
+        (EvalResult::Integer(a), EvalResult::Integer(b)) => Ok(EvalResult::Integer(a | b)),
+        (l, r) => Err(ExpressionError::TypeError {
+            operator: "|".to_string(),
+            operand_type: format!("{:?} and {:?}", l, r),
+        }),
+    }
+}
+
+/// Evaluate bitwise XOR operation.
+pub(crate) fn eval_bitwise_xor(
+    left: EvalResult,
+    right: EvalResult,
+) -> Result<EvalResult, ExpressionError> {
+    match (left, right) {
+        (EvalResult::Integer(a), EvalResult::Integer(b)) => Ok(EvalResult::Integer(a ^ b)),
+        (l, r) => Err(ExpressionError::TypeError {
+            operator: "^".to_string(),
+            operand_type: format!("{:?} and {:?}", l, r),
+        }),
+    }
+}
+
+/// Evaluate left shift operation.
+pub(crate) fn eval_shift_left(
+    left: EvalResult,
+    right: EvalResult,
+) -> Result<EvalResult, ExpressionError> {
+    match (left, right) {
+        (EvalResult::Integer(a), EvalResult::Integer(b)) => {
+            if b < 0 || b >= 64 {
+                Err(ExpressionError::TypeError {
+                    operator: "<<".to_string(),
+                    operand_type: format!("shift amount {} out of range 0..63", b),
+                })
+            } else {
+                Ok(EvalResult::Integer(a << b))
+            }
+        }
+        (l, r) => Err(ExpressionError::TypeError {
+            operator: "<<".to_string(),
+            operand_type: format!("{:?} and {:?}", l, r),
+        }),
+    }
+}
+
+/// Evaluate right shift operation.
+pub(crate) fn eval_shift_right(
+    left: EvalResult,
+    right: EvalResult,
+) -> Result<EvalResult, ExpressionError> {
+    match (left, right) {
+        (EvalResult::Integer(a), EvalResult::Integer(b)) => {
+            if b < 0 || b >= 64 {
+                Err(ExpressionError::TypeError {
+                    operator: ">>".to_string(),
+                    operand_type: format!("shift amount {} out of range 0..63", b),
+                })
+            } else {
+                Ok(EvalResult::Integer(a >> b))
+            }
+        }
+        (l, r) => Err(ExpressionError::TypeError {
+            operator: ">>".to_string(),
+            operand_type: format!("{:?} and {:?}", l, r),
+        }),
+    }
+}

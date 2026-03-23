@@ -17,6 +17,7 @@ pub fn encode_unsigned(
     let max_value = match byte_size {
         1 => u8::MAX as u64,
         2 => u16::MAX as u64,
+        3 => 0xFF_FFFF_u64,
         4 => u32::MAX as u64,
         8 => u64::MAX,
         _ => {
@@ -39,6 +40,14 @@ pub fn encode_unsigned(
         (1, _) => vec![n as u8],
         (2, Endian::Big) => (n as u16).to_be_bytes().to_vec(),
         (2, Endian::Little) => (n as u16).to_le_bytes().to_vec(),
+        (3, Endian::Big) => {
+            let b = (n as u32).to_be_bytes();
+            vec![b[1], b[2], b[3]]
+        }
+        (3, Endian::Little) => {
+            let b = (n as u32).to_le_bytes();
+            vec![b[0], b[1], b[2]]
+        }
         (4, Endian::Big) => (n as u32).to_be_bytes().to_vec(),
         (4, Endian::Little) => (n as u32).to_le_bytes().to_vec(),
         (8, Endian::Big) => n.to_be_bytes().to_vec(),

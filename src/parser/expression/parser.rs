@@ -73,7 +73,7 @@ impl<'a> Parser<'a> {
 
     /// Parse comparison: expr ('==' | '!=' | '<' | '>' | '<=' | '>=') expr
     fn parse_comparison(&mut self) -> Result<Expression, ExpressionError> {
-        let mut left = self.parse_additive()?;
+        let mut left = self.parse_bitwise_or()?;
         loop {
             let op = match &self.current {
                 Token::EqEq => BinaryOperator::Eq,
@@ -85,10 +85,55 @@ impl<'a> Parser<'a> {
                 _ => break,
             };
             self.advance()?;
-            let right = self.parse_additive()?;
+            let right = self.parse_bitwise_or()?;
             left = Expression::BinaryOp {
                 left: Box::new(left),
                 op,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    /// Parse bitwise OR: expr '|' expr
+    fn parse_bitwise_or(&mut self) -> Result<Expression, ExpressionError> {
+        let mut left = self.parse_bitwise_xor()?;
+        while self.current == Token::Pipe {
+            self.advance()?;
+            let right = self.parse_bitwise_xor()?;
+            left = Expression::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOperator::BitwiseOr,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    /// Parse bitwise XOR: expr '^' expr
+    fn parse_bitwise_xor(&mut self) -> Result<Expression, ExpressionError> {
+        let mut left = self.parse_bitwise_and()?;
+        while self.current == Token::Caret {
+            self.advance()?;
+            let right = self.parse_bitwise_and()?;
+            left = Expression::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOperator::BitwiseXor,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    /// Parse bitwise AND: expr '&' expr
+    fn parse_bitwise_and(&mut self) -> Result<Expression, ExpressionError> {
+        let mut left = self.parse_additive()?;
+        while self.current == Token::Ampersand {
+            self.advance()?;
+            let right = self.parse_additive()?;
+            left = Expression::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOperator::BitwiseAnd,
                 right: Box::new(right),
             };
         }
@@ -123,6 +168,8 @@ impl<'a> Parser<'a> {
                 Token::Star => BinaryOperator::Mul,
                 Token::Slash => BinaryOperator::Div,
                 Token::Percent => BinaryOperator::Mod,
+                Token::ShiftLeft => BinaryOperator::ShiftLeft,
+                Token::ShiftRight => BinaryOperator::ShiftRight,
                 _ => break,
             };
             self.advance()?;
@@ -136,7 +183,7 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    /// Parse unary: ('not' | '-') expr | postfix
+    /// Parse unary: ('not' | '-' | '~') expr | postfix
     fn parse_unary(&mut self) -> Result<Expression, ExpressionError> {
         match &self.current {
             Token::Not => {
@@ -152,6 +199,14 @@ impl<'a> Parser<'a> {
                 let operand = self.parse_unary()?;
                 Ok(Expression::UnaryOp {
                     op: UnaryOperator::Neg,
+                    operand: Box::new(operand),
+                })
+            }
+            Token::Tilde => {
+                self.advance()?;
+                let operand = self.parse_unary()?;
+                Ok(Expression::UnaryOp {
+                    op: UnaryOperator::BitwiseNot,
                     operand: Box::new(operand),
                 })
             }
