@@ -92,19 +92,29 @@ impl MetadataProvider for JBPFileMetadataProvider {
 
         // Create a temporary accessor to read values
         if let Ok(accessor) = StructureAccessor::new(self.definition.clone(), &self.raw_bytes) {
-            // Iterate over all accessible field paths
-            for field_path in accessor.fields() {
+            // Iterate definition fields directly for proper repeated field handling
+            for field in &self.definition.fields {
+                let field_id = &field.id;
+
                 // Apply prefix filter if specified
                 if let Some(prefix) = name {
-                    if !field_path.starts_with(prefix) {
+                    if !field_id.starts_with(prefix) {
                         continue;
                     }
                 }
 
-                // Try to get the field value and convert to JSON
-                if let Ok(value) = accessor.get(&field_path) {
-                    if let Some(json_value) = value_to_json(&value) {
-                        result.insert(field_path, json_value);
+                // Check field condition — skip if not present
+                if field.condition.is_some() && !accessor.has(field_id) {
+                    continue;
+                }
+
+                // Get the field value: repeated fields return Value::Array,
+                // scalar fields return their scalar Value variant
+                if let Ok(value) = accessor.get(field_id) {
+                    if let Some(json_value) =
+                        value_to_json(&value, None, Some(&self.definition))
+                    {
+                        result.insert(field_id.clone(), json_value);
                     }
                 }
             }
@@ -241,12 +251,16 @@ impl MetadataProvider for JBPSegmentMetadataProvider {
     ///
     /// # TRE Fields
     ///
-    /// When TRE support is enabled (via `with_tres()`), TRE fields are included
-    /// in the result with CETAG-prefixed keys (e.g., "GEOLOB.ARV"). The prefix
-    /// filter applies to TRE fields as well - for example, `as_dict(Some("GEOLOB"))`
-    /// returns only fields from the GEOLOB TRE.
+    /// When TRE support is enabled (via `with_tres()`), each TRE is included as
+    /// a top-level key (the CETAG) mapped to a nested dictionary of that TRE's
+    /// fields. For example, `{"GEOLOB": {"ARV": "...", "BRV": "..."}}`.
     ///
-    /// Unknown TREs (those without definitions in the registry) are skipped.
+    /// The prefix filter includes a CETAG entry if `tag.starts_with(prefix)` or
+    /// `prefix.starts_with(tag)`. For example, `as_dict(Some("GEOLOB"))` returns
+    /// the `"GEOLOB"` key with its nested dictionary.
+    ///
+    /// Unknown TREs (those without definitions in the registry) produce a raw
+    /// representation: `{"_raw": "<hex>", "_length": N}`.
     ///
     /// # Returns
     /// A HashMap of field names to JSON values.
@@ -255,19 +269,29 @@ impl MetadataProvider for JBPSegmentMetadataProvider {
 
         // Create a temporary accessor to read subheader values
         if let Ok(accessor) = StructureAccessor::new(self.definition.clone(), &self.raw_bytes) {
-            // Iterate over all accessible field paths
-            for field_path in accessor.fields() {
+            // Iterate definition fields directly for proper repeated field handling
+            for field in &self.definition.fields {
+                let field_id = &field.id;
+
                 // Apply prefix filter if specified
                 if let Some(prefix) = name {
-                    if !field_path.starts_with(prefix) {
+                    if !field_id.starts_with(prefix) {
                         continue;
                     }
                 }
 
-                // Try to get the field value and convert to JSON
-                if let Ok(value) = accessor.get(&field_path) {
-                    if let Some(json_value) = value_to_json(&value) {
-                        result.insert(field_path, json_value);
+                // Check field condition — skip if not present
+                if field.condition.is_some() && !accessor.has(field_id) {
+                    continue;
+                }
+
+                // Get the field value: repeated fields return Value::Array,
+                // scalar fields return their scalar Value variant
+                if let Ok(value) = accessor.get(field_id) {
+                    if let Some(json_value) =
+                        value_to_json(&value, self.registry.as_deref(), Some(&self.definition))
+                    {
+                        result.insert(field_id.clone(), json_value);
                     }
                 }
             }
@@ -281,38 +305,38 @@ impl MetadataProvider for JBPSegmentMetadataProvider {
 
                 // Skip if prefix filter doesn't match the CETAG
                 if let Some(prefix) = name {
-                    // Check if the prefix could match this TRE's fields
-                    // Either the prefix is the CETAG itself, or starts with "CETAG."
                     if !tag.starts_with(prefix) && !prefix.starts_with(tag) {
                         continue;
                     }
                 }
 
                 // Try to create an accessor for this TRE
-                if let Ok(Some(tre_accessor)) =
-                    tre_fields::create_accessor(registry, tag, &envelope.data)
-                {
-                    // Iterate over all TRE fields
-                    for field_path in tre_accessor.fields() {
-                        // Build the full path with CETAG prefix
-                        let full_path = format!("{}.{}", tag, field_path);
-
-                        // Apply prefix filter
-                        if let Some(prefix) = name {
-                            if !full_path.starts_with(prefix) {
-                                continue;
+                match tre_fields::create_accessor(registry, tag, &envelope.data) {
+                    Ok(Some(tre_accessor)) => {
+                        // Build a nested dict for this CETAG
+                        let tre_def = tre_accessor.definition.clone();
+                        let mut tre_dict = serde_json::Map::new();
+                        for field_path in tre_accessor.fields() {
+                            if let Ok(value) = tre_accessor.get(&field_path) {
+                                if let Some(json_value) =
+                                    value_to_json(&value, self.registry.as_deref(), Some(&tre_def))
+                                {
+                                    tre_dict.insert(field_path, json_value);
+                                }
                             }
                         }
-
-                        // Try to get the field value and convert to JSON
-                        if let Ok(value) = tre_accessor.get(&field_path) {
-                            if let Some(json_value) = value_to_json(&value) {
-                                result.insert(full_path, json_value);
-                            }
-                        }
+                        result.insert(tag.to_string(), serde_json::Value::Object(tre_dict));
+                    }
+                    Ok(None) | Err(_) => {
+                        // Unknown TRE (no definition in registry) or accessor creation
+                        // failed — produce raw representation
+                        let mut raw_dict = serde_json::Map::new();
+                        let hex: String = envelope.data.iter().map(|b| format!("{:02x}", b)).collect();
+                        raw_dict.insert("_raw".to_string(), serde_json::Value::String(hex));
+                        raw_dict.insert("_length".to_string(), serde_json::Value::Number(envelope.data.len().into()));
+                        result.insert(tag.to_string(), serde_json::Value::Object(raw_dict));
                     }
                 }
-                // Unknown TREs (no definition) are silently skipped
             }
         }
 
@@ -333,8 +357,20 @@ unsafe impl Sync for JBPSegmentMetadataProvider {}
 /// - Bytes → JSON string (hex-encoded if not valid UTF-8)
 /// - Unsigned → JSON number
 /// - Array → JSON array
-/// - Struct → JSON object with type_name and data fields
-fn value_to_json(value: &Value) -> Option<serde_json::Value> {
+/// - Struct → Resolves to a nested JSON object with named fields when the type
+///   can be found in the parent definition's local types, the global registry,
+///   or both. Falls back to `{"_type": "...", "_data": "..."}` otherwise.
+///
+/// # Arguments
+/// * `value` - The parsed Value to convert
+/// * `registry` - Optional structure registry for resolving Value::Struct types
+/// * `definition` - Optional parent structure definition whose `types` map
+///   contains local type definitions (e.g., `image_segment_info`, `band_info_type`)
+fn value_to_json(
+    value: &Value,
+    registry: Option<&StructureRegistry>,
+    definition: Option<&StructureDefinition>,
+) -> Option<serde_json::Value> {
     match value {
         Value::String(cow) => {
             // Trim trailing spaces (standard NITF padding)
@@ -354,12 +390,42 @@ fn value_to_json(value: &Value) -> Option<serde_json::Value> {
         }
         Value::Unsigned(n) => Some(serde_json::Value::Number((*n).into())),
         Value::Array(arr) => {
-            let json_arr: Vec<serde_json::Value> =
-                arr.iter().filter_map(value_to_json).collect();
+            let json_arr: Vec<serde_json::Value> = arr
+                .iter()
+                .filter_map(|v| value_to_json(v, registry, definition))
+                .collect();
             Some(serde_json::Value::Array(json_arr))
         }
         Value::Struct(struct_val) => {
-            // For nested structures, return an object with type info
+            // Try to resolve the struct type from local types first, then registry.
+            // Local types (definition.types) hold types like image_segment_info,
+            // band_info_type that are defined within the parent KSY structure.
+            let resolved_def: Option<Arc<StructureDefinition>> = definition
+                .and_then(|def| def.types.get(&struct_val.type_name))
+                .map(|local_def| Arc::new(local_def.clone()))
+                .or_else(|| {
+                    registry.and_then(|reg| reg.get(&struct_val.type_name))
+                });
+
+            if let Some(def) = resolved_def {
+                if let Ok(accessor) = StructureAccessor::new(Arc::clone(&def), &struct_val.data) {
+                    let mut obj = serde_json::Map::new();
+                    // Use the resolved definition as the new parent for nested structs
+                    for field_path in accessor.fields() {
+                        if let Ok(field_value) = accessor.get(&field_path) {
+                            if let Some(json_val) =
+                                value_to_json(&field_value, registry, Some(&def))
+                            {
+                                obj.insert(field_path, json_val);
+                            }
+                        }
+                    }
+                    return Some(serde_json::Value::Object(obj));
+                }
+            }
+
+            // Fall back to opaque representation when type not found
+            // or accessor creation fails
             let mut obj = serde_json::Map::new();
             obj.insert(
                 "_type".to_string(),
@@ -512,28 +578,28 @@ mod tests {
     #[test]
     fn value_to_json_string() {
         let value = Value::from_str("HELLO   ");
-        let json = value_to_json(&value).unwrap();
+        let json = value_to_json(&value, None, None).unwrap();
         assert_eq!(json, serde_json::json!("HELLO"));
     }
 
     #[test]
     fn value_to_json_unsigned() {
         let value = Value::from_unsigned(42);
-        let json = value_to_json(&value).unwrap();
+        let json = value_to_json(&value, None, None).unwrap();
         assert_eq!(json, serde_json::json!(42));
     }
 
     #[test]
     fn value_to_json_bytes_utf8() {
         let value = Value::from_bytes(b"WORLD   ");
-        let json = value_to_json(&value).unwrap();
+        let json = value_to_json(&value, None, None).unwrap();
         assert_eq!(json, serde_json::json!("WORLD"));
     }
 
     #[test]
     fn value_to_json_bytes_binary() {
         let value = Value::from_bytes(&[0xFF, 0x00, 0xAB]);
-        let json = value_to_json(&value).unwrap();
+        let json = value_to_json(&value, None, None).unwrap();
         assert_eq!(json, serde_json::json!("ff00ab"));
     }
 
@@ -544,18 +610,86 @@ mod tests {
             Value::from_unsigned(2),
             Value::from_unsigned(3),
         ]);
-        let json = value_to_json(&value).unwrap();
+        let json = value_to_json(&value, None, None).unwrap();
         assert_eq!(json, serde_json::json!([1, 2, 3]));
     }
 
     #[test]
     fn value_to_json_struct() {
         let value = Value::from_struct(b"data", "TestType");
-        let json = value_to_json(&value).unwrap();
+        let json = value_to_json(&value, None, None).unwrap();
         
         let obj = json.as_object().unwrap();
         assert_eq!(obj.get("_type"), Some(&serde_json::json!("TestType")));
         assert_eq!(obj.get("_data"), Some(&serde_json::json!("64617461")));
+    }
+
+    #[test]
+    fn value_to_json_struct_resolved_via_local_types() {
+        // Simulate a parent definition with a local type (like image_segment_info
+        // in the file header). The struct type is NOT in the registry — it's in
+        // the parent definition's `types` map.
+        let inner_def = StructureDefinition::new("my_inner_type")
+            .with_field(
+                FieldDefinition::new("ALPHA", FieldType::String)
+                    .with_size(SizeSpec::Fixed(3)),
+            )
+            .with_field(
+                FieldDefinition::new("BETA", FieldType::String)
+                    .with_size(SizeSpec::Fixed(4)),
+            );
+
+        let mut parent_def = StructureDefinition::new("ParentHeader");
+        parent_def.types.insert("my_inner_type".to_string(), inner_def);
+
+        // Build raw bytes for the inner struct: ALPHA(3) + BETA(4) = 7 bytes
+        let raw = b"ABCDEFG";
+        let value = Value::from_struct(raw.as_slice(), "my_inner_type");
+
+        // With no registry but with parent definition, should resolve via local types
+        let json = value_to_json(&value, None, Some(&parent_def)).unwrap();
+        let obj = json.as_object().unwrap();
+        assert_eq!(obj.get("ALPHA"), Some(&serde_json::json!("ABC")));
+        assert_eq!(obj.get("BETA"), Some(&serde_json::json!("DEFG")));
+        // Should NOT have _type/_data fallback keys
+        assert!(obj.get("_type").is_none());
+        assert!(obj.get("_data").is_none());
+    }
+
+    #[test]
+    fn value_to_json_array_of_structs_resolved_via_local_types() {
+        // Simulate repeated struct fields (like IMAGE_INFO array in file header)
+        let inner_def = StructureDefinition::new("segment_info")
+            .with_field(
+                FieldDefinition::new("SUBHDR_LEN", FieldType::String)
+                    .with_size(SizeSpec::Fixed(6)),
+            )
+            .with_field(
+                FieldDefinition::new("DATA_LEN", FieldType::String)
+                    .with_size(SizeSpec::Fixed(10)),
+            );
+
+        let mut parent_def = StructureDefinition::new("FileHeader");
+        parent_def.types.insert("segment_info".to_string(), inner_def);
+
+        // Build an array of 2 struct values, each 16 bytes
+        let arr = Value::from_array(vec![
+            Value::from_struct(b"000439000012345", "segment_info"),
+            Value::from_struct(b"000439000067890", "segment_info"),
+        ]);
+
+        let json = value_to_json(&arr, None, Some(&parent_def)).unwrap();
+        let json_arr = json.as_array().unwrap();
+        assert_eq!(json_arr.len(), 2);
+
+        // First element should be resolved
+        let first = json_arr[0].as_object().unwrap();
+        assert_eq!(first.get("SUBHDR_LEN"), Some(&serde_json::json!("000439")));
+        assert!(first.get("_type").is_none());
+
+        // Second element should also be resolved
+        let second = json_arr[1].as_object().unwrap();
+        assert_eq!(second.get("SUBHDR_LEN"), Some(&serde_json::json!("000439")));
     }
 
     // TRE support tests
@@ -609,11 +743,11 @@ mod tests {
         assert!(dict.contains_key("FHDR"));
         assert!(dict.contains_key("FVER"));
 
-        // Should have TRE fields with CETAG prefix
-        assert!(dict.contains_key("GEOLOB.arv"));
-        assert!(dict.contains_key("GEOLOB.brv"));
-        assert_eq!(dict.get("GEOLOB.arv"), Some(&serde_json::json!("000360000")));
-        assert_eq!(dict.get("GEOLOB.brv"), Some(&serde_json::json!("000360000")));
+        // Should have GEOLOB as a nested dictionary
+        assert!(dict.contains_key("GEOLOB"));
+        let geolob = dict.get("GEOLOB").unwrap().as_object().unwrap();
+        assert_eq!(geolob.get("arv"), Some(&serde_json::json!("000360000")));
+        assert_eq!(geolob.get("brv"), Some(&serde_json::json!("000360000")));
     }
 
     #[test]
@@ -637,14 +771,16 @@ mod tests {
             Arc::new(registry),
         );
 
-        // Filter by GEOLOB prefix - should only get TRE fields
+        // Filter by GEOLOB prefix - should only get TRE entry
         let dict = provider.as_dict(Some("GEOLOB"));
 
-        assert!(dict.contains_key("GEOLOB.arv"));
-        assert!(dict.contains_key("GEOLOB.brv"));
+        assert!(dict.contains_key("GEOLOB"));
+        let geolob = dict.get("GEOLOB").unwrap().as_object().unwrap();
+        assert!(geolob.contains_key("arv"));
+        assert!(geolob.contains_key("brv"));
         assert!(!dict.contains_key("FHDR"));
         assert!(!dict.contains_key("FVER"));
-        assert_eq!(dict.len(), 2);
+        assert_eq!(dict.len(), 1);
     }
 
     #[test]
@@ -670,13 +806,14 @@ mod tests {
 
         let dict = provider.as_dict(None);
 
-        // Should have subheader fields but no TRE fields
+        // Should have subheader fields
         assert!(dict.contains_key("FHDR"));
-        assert!(!dict.contains_key("UNKNWN."));
-        // No keys should start with UNKNWN
-        for key in dict.keys() {
-            assert!(!key.starts_with("UNKNWN"), "Unexpected TRE field: {}", key);
-        }
+
+        // Unknown TRE should have raw representation
+        assert!(dict.contains_key("UNKNWN"));
+        let unknwn = dict.get("UNKNWN").unwrap().as_object().unwrap();
+        assert_eq!(unknwn.get("_raw"), Some(&serde_json::json!("0102030405")));
+        assert_eq!(unknwn.get("_length"), Some(&serde_json::json!(5)));
     }
 
     #[test]
@@ -730,10 +867,15 @@ mod tests {
 
         let dict = provider.as_dict(None);
 
-        // Should have fields from both TREs
-        assert!(dict.contains_key("GEOLOB.arv"));
-        assert!(dict.contains_key("TEST.value"));
-        assert_eq!(dict.get("TEST.value"), Some(&serde_json::json!("HELLO")));
+        // Should have nested dicts for both TREs
+        assert!(dict.contains_key("GEOLOB"));
+        let geolob = dict.get("GEOLOB").unwrap().as_object().unwrap();
+        assert_eq!(geolob.get("arv"), Some(&serde_json::json!("000360000")));
+        assert_eq!(geolob.get("brv"), Some(&serde_json::json!("000360000")));
+
+        assert!(dict.contains_key("TEST"));
+        let test_tre = dict.get("TEST").unwrap().as_object().unwrap();
+        assert_eq!(test_tre.get("value"), Some(&serde_json::json!("HELLO")));
     }
 }
 
@@ -776,10 +918,12 @@ mod property_tests {
     /// Property 8: Metadata Prefix Filtering
     /// For any MetadataProvider and any prefix string, `as_dict(Some(prefix))` SHALL
     /// return only entries whose keys start with the given prefix, and `as_dict(None)`
-    /// SHALL return all entries.
-    /// **Validates: Requirements 5.2, 5.3, 6.5**
+    /// SHALL return all entries. TRE entries appear as nested dicts under their CETAG
+    /// key, and repeated fields appear as JSON arrays.
+    /// **Validates: Requirements 9.3, 9.4**
     mod prop_8_metadata_prefix_filtering {
         use super::*;
+        use crate::parser::{Encoding, RepeatSpec};
 
         proptest! {
             #![proptest_config(ProptestConfig::with_cases(100))]
@@ -936,6 +1080,166 @@ mod property_tests {
                     prop_assert!(name.starts_with("IM"));
                 }
             }
+
+            /// Feature: metadata-restructure, Property 8: Metadata Prefix Filtering
+            ///
+            /// Prefix filtering with TREs returns nested dicts for matching CETAGs.
+            /// TRE entries are top-level keys mapped to nested dicts, not dot-separated.
+            ///
+            /// **Validates: Requirements 9.3, 9.4**
+            #[test]
+            fn prefix_filter_returns_nested_tre_dicts(
+                field1_value in prop::collection::vec(
+                    prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), 8
+                ).prop_map(|c| c.into_iter().collect::<String>()),
+                field2_value in prop::collection::vec(
+                    prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), 6
+                ).prop_map(|c| c.into_iter().collect::<String>()),
+            ) {
+                // Create subheader with fields that don't start with "GEO"
+                let subheader_def = Arc::new(
+                    StructureDefinition::new("TestSubheader")
+                        .with_field(
+                            FieldDefinition::new("HEADER", FieldType::String)
+                                .with_size(SizeSpec::Fixed(10)),
+                        )
+                );
+                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+
+                // Create TRE definition and envelope
+                let tre_def = StructureDefinition::new("tre_geolob")
+                    .with_field(
+                        FieldDefinition::new("field1", FieldType::String)
+                            .with_size(SizeSpec::Fixed(8))
+                            .with_encoding(Encoding::BcsA),
+                    )
+                    .with_field(
+                        FieldDefinition::new("field2", FieldType::String)
+                            .with_size(SizeSpec::Fixed(6))
+                            .with_encoding(Encoding::BcsA),
+                    );
+
+                let mut cedata = Vec::new();
+                cedata.extend(field1_value.as_bytes());
+                cedata.extend(field2_value.as_bytes());
+
+                let tre_envelope = TreEnvelope {
+                    tag: "GEOLOB".to_string(),
+                    data: cedata,
+                };
+
+                let mut registry = StructureRegistry::new();
+                registry.register("tre_geolob", tre_def);
+
+                let provider = JBPSegmentMetadataProvider::with_tres(
+                    subheader_def,
+                    subheader_bytes,
+                    vec![tre_envelope],
+                    Arc::new(registry),
+                );
+
+                // Filter by "GEOLOB" — should return only the nested TRE dict
+                let dict = provider.as_dict(Some("GEOLOB"));
+
+                prop_assert_eq!(dict.len(), 1,
+                    "Should have exactly 1 entry for GEOLOB. Keys: {:?}",
+                    dict.keys().collect::<Vec<_>>());
+                prop_assert!(dict.contains_key("GEOLOB"),
+                    "Should contain 'GEOLOB' key");
+
+                let geolob = dict.get("GEOLOB").unwrap();
+                prop_assert!(geolob.is_object(),
+                    "GEOLOB should be a nested dict, got: {:?}", geolob);
+
+                let nested = geolob.as_object().unwrap();
+                prop_assert!(nested.contains_key("field1"),
+                    "Nested dict should contain 'field1'");
+                prop_assert!(nested.contains_key("field2"),
+                    "Nested dict should contain 'field2'");
+
+                // No dot-separated keys
+                for key in dict.keys() {
+                    prop_assert!(!key.contains('.'),
+                        "No dot-separated keys should appear, got: {}", key);
+                }
+            }
+
+            /// Feature: metadata-restructure, Property 8: Metadata Prefix Filtering
+            ///
+            /// Prefix filtering with repeated fields returns arrays under base name.
+            ///
+            /// **Validates: Requirements 9.3, 9.4**
+            #[test]
+            fn prefix_filter_returns_arrays_for_repeated_fields(
+                count in 1u8..5,
+                elem_values in prop::collection::vec(
+                    prop::collection::vec(
+                        prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), 5
+                    ).prop_map(|c| c.into_iter().collect::<String>()),
+                    5,
+                ),
+            ) {
+                let values: Vec<String> = elem_values.into_iter().take(count as usize).collect();
+                let elem_size = 5usize;
+
+                // Build a subheader with: HEADER(10) + NREP(1 byte uint) + ITEMS(repeated, 5 each)
+                let repeat_expr = crate::parser::ExpressionEvaluator::parse("NREP").unwrap();
+                let def = Arc::new(
+                    StructureDefinition::new("TestSubheaderRepeat")
+                        .with_field(
+                            FieldDefinition::new("HEADER", FieldType::String)
+                                .with_size(SizeSpec::Fixed(10)),
+                        )
+                        .with_field(
+                            FieldDefinition::new("NREP", FieldType::UnsignedInt(1))
+                                .with_size(SizeSpec::Fixed(1)),
+                        )
+                        .with_field(
+                            FieldDefinition::new("ITEMS", FieldType::String)
+                                .with_size(SizeSpec::Fixed(elem_size))
+                                .with_encoding(Encoding::BcsA)
+                                .with_repeat(RepeatSpec::Expression(repeat_expr)),
+                        )
+                );
+
+                // Build raw bytes
+                let mut bytes = Vec::new();
+                let mut header = b"TESTHEAD".to_vec();
+                header.resize(10, b' ');
+                bytes.extend_from_slice(&header);
+                bytes.push(count);
+                for val in &values {
+                    let mut elem = val.as_bytes().to_vec();
+                    elem.resize(elem_size, b' ');
+                    bytes.extend_from_slice(&elem);
+                }
+                let raw: Arc<[u8]> = Arc::from(bytes);
+
+                let provider = JBPSegmentMetadataProvider::from_definition(def, raw);
+
+                // Filter by "ITEMS" prefix — should return only the ITEMS array
+                let dict = provider.as_dict(Some("ITEMS"));
+
+                prop_assert_eq!(dict.len(), 1,
+                    "Should have exactly 1 entry for ITEMS. Keys: {:?}",
+                    dict.keys().collect::<Vec<_>>());
+                prop_assert!(dict.contains_key("ITEMS"),
+                    "Should contain 'ITEMS' key");
+
+                let items = dict.get("ITEMS").unwrap();
+                prop_assert!(items.is_array(),
+                    "ITEMS should be a JSON array, got: {:?}", items);
+
+                let arr = items.as_array().unwrap();
+                prop_assert_eq!(arr.len(), count as usize,
+                    "Array length should equal count {}", count);
+
+                // No _N-suffixed keys
+                for key in dict.keys() {
+                    prop_assert!(!key.starts_with("ITEMS_"),
+                        "No _N-suffixed keys should appear, got: {}", key);
+                }
+            }
         }
     }
 
@@ -1040,25 +1344,14 @@ mod property_tests {
     }
 
     /// Property 7: Metadata Interface TRE Access
-    /// For any segment with TREs, calling `as_dict(None)` SHALL return all TRE fields
-    /// with CETAG-prefixed keys, and calling `as_dict("GEOLOB")` SHALL return only
-    /// fields from the GEOLOB TRE.
-    /// **Validates: Requirements 18.1, 18.2, 18.3, 18.4**
+    /// For any segment with TREs, calling `as_dict(None)` SHALL return each CETAG
+    /// as a top-level key mapped to a nested dictionary of that TRE's fields.
+    /// Calling `as_dict("GEOLOB")` SHALL return only the `"GEOLOB"` key with its
+    /// nested dictionary. Unknown TREs SHALL get raw representation.
+    /// **Validates: Requirements 9.3, 9.4**
     mod prop_7_metadata_interface_tre_access {
         use super::*;
         use crate::parser::Encoding;
-
-        /// Strategy to generate valid CETAG strings (1-6 uppercase alphanumeric)
-        fn valid_cetag_strategy() -> impl Strategy<Value = String> {
-            prop::collection::vec(
-                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
-                1..=6,
-            )
-            .prop_map(|chars| {
-                let s: String = chars.into_iter().collect();
-                format!("{:<6}", s) // Pad to 6 chars with spaces
-            })
-        }
 
         /// Strategy to generate valid BCS-A field values (alphanumeric, fixed size)
         fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {
@@ -1098,13 +1391,13 @@ mod property_tests {
         proptest! {
             #![proptest_config(ProptestConfig::with_cases(100))]
 
-            /// Feature: tre-des-support, Property 7: Metadata Interface TRE Access
+            /// Feature: metadata-restructure, Property 7: Metadata Interface TRE Access
             ///
-            /// as_dict(None) returns all TRE fields with CETAG-prefixed keys
+            /// as_dict(None) returns TRE as nested dictionary under CETAG key
             ///
-            /// **Validates: Requirements 18.1, 18.2, 18.3, 18.4**
+            /// **Validates: Requirements 9.3, 9.4**
             #[test]
-            fn as_dict_none_includes_all_tre_fields(
+            fn as_dict_none_includes_tre_as_nested_dict(
                 field1_value in field_value_strategy(8),
                 field2_value in field_value_strategy(6),
             ) {
@@ -1141,32 +1434,42 @@ mod property_tests {
                 prop_assert!(dict.contains_key("HEADER"),
                     "Should contain subheader field HEADER");
 
-                // Should have TRE fields with CETAG prefix
-                prop_assert!(dict.contains_key("GEOLOB.field1"),
-                    "Should contain TRE field GEOLOB.field1");
-                prop_assert!(dict.contains_key("GEOLOB.field2"),
-                    "Should contain TRE field GEOLOB.field2");
+                // Should have GEOLOB as a top-level key mapped to a nested dict
+                prop_assert!(dict.contains_key("GEOLOB"),
+                    "Should contain GEOLOB as a top-level key");
 
-                // Verify TRE field values
+                let geolob = dict.get("GEOLOB").unwrap();
+                prop_assert!(geolob.is_object(),
+                    "GEOLOB should be a nested dictionary, got: {:?}", geolob);
+
+                let nested = geolob.as_object().unwrap();
+
+                // Verify nested dict contains field1 and field2 with correct values
                 prop_assert_eq!(
-                    dict.get("GEOLOB.field1"),
+                    nested.get("field1"),
                     Some(&serde_json::json!(field1_value)),
                     "GEOLOB.field1 should have correct value"
                 );
                 prop_assert_eq!(
-                    dict.get("GEOLOB.field2"),
+                    nested.get("field2"),
                     Some(&serde_json::json!(field2_value)),
                     "GEOLOB.field2 should have correct value"
                 );
+
+                // No dot-separated keys should appear
+                for key in dict.keys() {
+                    prop_assert!(!key.contains('.'),
+                        "No dot-separated keys should appear, got: {}", key);
+                }
             }
 
-            /// Feature: tre-des-support, Property 7: Metadata Interface TRE Access
+            /// Feature: metadata-restructure, Property 7: Metadata Interface TRE Access
             ///
-            /// as_dict(Some("CETAG")) returns only fields from that TRE
+            /// as_dict(Some("CETAG")) returns only that CETAG's nested dict
             ///
-            /// **Validates: Requirements 18.3, 18.4**
+            /// **Validates: Requirements 9.3, 9.4**
             #[test]
-            fn as_dict_with_cetag_prefix_filters_to_tre(
+            fn as_dict_with_cetag_prefix_filters_to_nested_dict(
                 field1_value in field_value_strategy(8),
                 field2_value in field_value_strategy(6),
             ) {
@@ -1204,24 +1507,30 @@ mod property_tests {
                 prop_assert!(!dict.contains_key("HEADER"),
                     "Should NOT contain subheader field when filtering by CETAG");
 
-                // Should have only TRE fields
-                prop_assert_eq!(dict.len(), 2,
-                    "Should have exactly 2 TRE fields");
+                // Should have exactly 1 entry: the GEOLOB nested dict
+                prop_assert_eq!(dict.len(), 1,
+                    "Should have exactly 1 entry (the GEOLOB nested dict)");
 
-                // All keys should start with GEOLOB
-                for key in dict.keys() {
-                    prop_assert!(key.starts_with("GEOLOB."),
-                        "All keys should start with 'GEOLOB.', got: {}", key);
-                }
+                // The GEOLOB key should map to a nested dict with field1 and field2
+                prop_assert!(dict.contains_key("GEOLOB"),
+                    "Should contain 'GEOLOB' key");
+                let geolob = dict.get("GEOLOB").unwrap();
+                prop_assert!(geolob.is_object(),
+                    "GEOLOB should be a nested dict");
+                let nested = geolob.as_object().unwrap();
+                prop_assert!(nested.contains_key("field1"),
+                    "Nested dict should contain 'field1'");
+                prop_assert!(nested.contains_key("field2"),
+                    "Nested dict should contain 'field2'");
             }
 
-            /// Feature: tre-des-support, Property 7: Metadata Interface TRE Access
+            /// Feature: metadata-restructure, Property 7: Metadata Interface TRE Access
             ///
-            /// Multiple TREs are all accessible and filterable
+            /// Multiple TREs appear as separate nested dicts and are filterable
             ///
-            /// **Validates: Requirements 18.1, 18.2, 18.3, 18.4**
+            /// **Validates: Requirements 9.3, 9.4**
             #[test]
-            fn multiple_tres_accessible_and_filterable(
+            fn multiple_tres_as_nested_dicts_and_filterable(
                 tre1_field1 in field_value_strategy(8),
                 tre1_field2 in field_value_strategy(6),
                 tre2_field1 in field_value_strategy(8),
@@ -1265,36 +1574,41 @@ mod property_tests {
                     Arc::new(registry),
                 );
 
-                // as_dict(None) should return all fields
+                // as_dict(None) should return subheader + 2 TRE nested dicts
                 let all_dict = provider.as_dict(None);
                 prop_assert!(all_dict.contains_key("HEADER"));
-                prop_assert!(all_dict.contains_key("GEOLOB.field1"));
-                prop_assert!(all_dict.contains_key("SENSRB.field1"));
-                prop_assert_eq!(all_dict.len(), 5, // 1 subheader + 2*2 TRE fields
-                    "Should have 5 total fields");
+                prop_assert!(all_dict.contains_key("GEOLOB"));
+                prop_assert!(all_dict.contains_key("SENSRB"));
+                prop_assert_eq!(all_dict.len(), 3, // 1 subheader + 2 TRE entries
+                    "Should have 3 total entries");
 
-                // as_dict(Some("GEOLOB")) should return only GEOLOB fields
+                // Each TRE entry is a nested dict
+                let geolob = all_dict.get("GEOLOB").unwrap().as_object().unwrap();
+                prop_assert_eq!(geolob.get("field1"), Some(&serde_json::json!(tre1_field1)));
+                prop_assert_eq!(geolob.get("field2"), Some(&serde_json::json!(tre1_field2)));
+
+                let sensrb = all_dict.get("SENSRB").unwrap().as_object().unwrap();
+                prop_assert_eq!(sensrb.get("field1"), Some(&serde_json::json!(tre2_field1)));
+                prop_assert_eq!(sensrb.get("field2"), Some(&serde_json::json!(tre2_field2)));
+
+                // as_dict(Some("GEOLOB")) should return only GEOLOB nested dict
                 let geolob_dict = provider.as_dict(Some("GEOLOB"));
-                prop_assert_eq!(geolob_dict.len(), 2);
-                for key in geolob_dict.keys() {
-                    prop_assert!(key.starts_with("GEOLOB."));
-                }
+                prop_assert_eq!(geolob_dict.len(), 1);
+                prop_assert!(geolob_dict.contains_key("GEOLOB"));
 
-                // as_dict(Some("SENSRB")) should return only SENSRB fields
+                // as_dict(Some("SENSRB")) should return only SENSRB nested dict
                 let sensrb_dict = provider.as_dict(Some("SENSRB"));
-                prop_assert_eq!(sensrb_dict.len(), 2);
-                for key in sensrb_dict.keys() {
-                    prop_assert!(key.starts_with("SENSRB."));
-                }
+                prop_assert_eq!(sensrb_dict.len(), 1);
+                prop_assert!(sensrb_dict.contains_key("SENSRB"));
             }
 
-            /// Feature: tre-des-support, Property 7: Metadata Interface TRE Access
+            /// Feature: metadata-restructure, Property 7: Metadata Interface TRE Access
             ///
-            /// Unknown TREs are skipped in metadata output
+            /// Unknown TREs get raw representation with _raw and _length
             ///
-            /// **Validates: Requirements 18.3, 18.4**
+            /// **Validates: Requirements 9.3, 9.4**
             #[test]
-            fn unknown_tres_skipped_in_output(
+            fn unknown_tres_get_raw_representation(
                 known_field1 in field_value_strategy(8),
                 known_field2 in field_value_strategy(6),
             ) {
@@ -1332,18 +1646,1450 @@ mod property_tests {
 
                 let dict = provider.as_dict(None);
 
-                // Should have known TRE fields
-                prop_assert!(dict.contains_key("GEOLOB.field1"));
-                prop_assert!(dict.contains_key("GEOLOB.field2"));
+                // Should have known TRE as nested dict
+                prop_assert!(dict.contains_key("GEOLOB"));
+                let geolob = dict.get("GEOLOB").unwrap().as_object().unwrap();
+                prop_assert!(geolob.contains_key("field1"));
+                prop_assert!(geolob.contains_key("field2"));
 
-                // Should NOT have unknown TRE fields
-                for key in dict.keys() {
-                    prop_assert!(!key.starts_with("UNKNWN"),
-                        "Should not contain unknown TRE fields, got: {}", key);
+                // Unknown TRE should have raw representation
+                prop_assert!(dict.contains_key("UNKNWN"),
+                    "Unknown TRE should be present with raw representation");
+                let unknwn = dict.get("UNKNWN").unwrap().as_object().unwrap();
+                prop_assert_eq!(unknwn.get("_raw"),
+                    Some(&serde_json::json!("0102030405")),
+                    "Unknown TRE should have _raw hex string");
+                prop_assert_eq!(unknwn.get("_length"),
+                    Some(&serde_json::json!(5)),
+                    "Unknown TRE should have _length matching data size");
+
+                // Total: 1 subheader + 1 known TRE nested dict + 1 unknown TRE raw = 3
+                prop_assert_eq!(dict.len(), 3);
+            }
+        }
+    }
+
+    /// Feature: metadata-restructure, Property 1: TRE Fields Appear as Nested Dictionaries
+    ///
+    /// For any JBPSegmentMetadataProvider with one or more TREs that have definitions
+    /// in the StructureRegistry, calling as_dict(None) shall produce a dictionary where
+    /// each CETAG is a top-level key mapped to a nested dictionary containing that TRE's
+    /// field names as keys and their parsed values as values. No dot-separated
+    /// "CETAG.field" keys shall appear.
+    ///
+    /// **Validates: Requirements 1.1, 1.2, 1.3**
+    mod prop_1_tre_fields_nested_dicts {
+        use super::*;
+        use crate::parser::Encoding;
+
+        /// Strategy to generate a unique uppercase CETAG (3-6 chars, letters only)
+        fn cetag_strategy() -> impl Strategy<Value = String> {
+            prop::collection::vec(
+                prop::char::ranges(vec!['A'..='Z'].into()),
+                3..=6,
+            )
+            .prop_map(|chars| chars.into_iter().collect::<String>())
+        }
+
+        /// Strategy to generate a lowercase field name (3-8 chars)
+        fn field_name_strategy() -> impl Strategy<Value = String> {
+            prop::collection::vec(
+                prop::char::ranges(vec!['a'..='z'].into()),
+                3..=8,
+            )
+            .prop_map(|chars| chars.into_iter().collect::<String>())
+        }
+
+        /// Strategy to generate a BCS-A field value of a given size
+        fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {
+            prop::collection::vec(
+                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
+                size,
+            )
+            .prop_map(|chars| chars.into_iter().collect::<String>())
+        }
+
+        /// Represents a single TRE with its definition and data for testing
+        #[derive(Debug, Clone)]
+        struct TestTre {
+            cetag: String,
+            field_names: Vec<String>,
+            field_values: Vec<String>,
+            field_size: usize,
+        }
+
+        /// Strategy to generate a single TRE with 2-5 unique fields
+        fn test_tre_strategy() -> impl Strategy<Value = TestTre> {
+            let field_size = 5usize;
+            (
+                cetag_strategy(),
+                prop::collection::vec(field_name_strategy(), 2..=5),
+            )
+                .prop_flat_map(move |(cetag, raw_names)| {
+                    // Deduplicate field names by appending index
+                    let field_names: Vec<String> = raw_names
+                        .iter()
+                        .enumerate()
+                        .map(|(i, n)| format!("{}_{}", n, i))
+                        .collect();
+                    let num_fields = field_names.len();
+                    let values = prop::collection::vec(
+                        field_value_strategy(field_size),
+                        num_fields,
+                    );
+                    (Just(cetag), Just(field_names), values)
+                })
+                .prop_map(move |(cetag, field_names, field_values)| TestTre {
+                    cetag,
+                    field_names,
+                    field_values,
+                    field_size,
+                })
+        }
+
+        /// Strategy to generate 1-3 TREs with unique CETAGs
+        fn test_tres_strategy() -> impl Strategy<Value = Vec<TestTre>> {
+            prop::collection::vec(test_tre_strategy(), 1..=3).prop_map(|tres| {
+                // Ensure unique CETAGs by appending index
+                tres.into_iter()
+                    .enumerate()
+                    .map(|(i, mut tre)| {
+                        tre.cetag = format!("{}{}", &tre.cetag[..tre.cetag.len().min(4)], i);
+                        tre
+                    })
+                    .collect()
+            })
+        }
+
+        /// Build a StructureDefinition for a TestTre
+        fn build_tre_definition(tre: &TestTre) -> StructureDefinition {
+            let mut def = StructureDefinition::new(format!(
+                "tre_{}",
+                tre.cetag.to_lowercase()
+            ));
+            for name in &tre.field_names {
+                def = def.with_field(
+                    FieldDefinition::new(name.clone(), FieldType::String)
+                        .with_size(SizeSpec::Fixed(tre.field_size))
+                        .with_encoding(Encoding::BcsA),
+                );
+            }
+            def
+        }
+
+        /// Build raw CEDATA bytes for a TestTre
+        fn build_tre_data(tre: &TestTre) -> Vec<u8> {
+            let mut data = Vec::new();
+            for value in &tre.field_values {
+                let mut field_bytes = value.as_bytes().to_vec();
+                field_bytes.resize(tre.field_size, b' ');
+                data.extend_from_slice(&field_bytes);
+            }
+            data
+        }
+
+        /// Create a minimal subheader definition and data
+        fn create_subheader() -> (Arc<StructureDefinition>, Arc<[u8]>) {
+            let def = Arc::new(
+                StructureDefinition::new("TestSubheader")
+                    .with_field(
+                        FieldDefinition::new("HEADER", FieldType::String)
+                            .with_size(SizeSpec::Fixed(10)),
+                    ),
+            );
+            let data: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+            (def, data)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(100))]
+
+            /// Feature: metadata-restructure, Property 1: TRE Fields Appear as Nested Dictionaries
+            ///
+            /// **Validates: Requirements 1.1, 1.2, 1.3**
+            #[test]
+            fn tre_fields_appear_as_nested_dicts(tres in test_tres_strategy()) {
+                let (subheader_def, subheader_bytes) = create_subheader();
+
+                // Build registry and envelopes from generated TREs
+                let mut registry = StructureRegistry::new();
+                let mut envelopes = Vec::new();
+
+                for tre in &tres {
+                    let def_name = format!("tre_{}", tre.cetag.to_lowercase());
+                    registry.register(&def_name, build_tre_definition(tre));
+
+                    envelopes.push(TreEnvelope {
+                        tag: tre.cetag.clone(),
+                        data: build_tre_data(tre),
+                    });
                 }
 
-                // Total should be 1 subheader + 2 known TRE fields = 3
-                prop_assert_eq!(dict.len(), 3);
+                let provider = JBPSegmentMetadataProvider::with_tres(
+                    subheader_def,
+                    subheader_bytes,
+                    envelopes,
+                    Arc::new(registry),
+                );
+
+                let dict = provider.as_dict(None);
+
+                // 1. Each CETAG is a top-level key
+                for tre in &tres {
+                    prop_assert!(
+                        dict.contains_key(&tre.cetag),
+                        "CETAG '{}' should be a top-level key in dict. Keys: {:?}",
+                        tre.cetag,
+                        dict.keys().collect::<Vec<_>>()
+                    );
+                }
+
+                // 2. Each CETAG maps to a nested dictionary (serde_json::Value::Object)
+                for tre in &tres {
+                    let value = dict.get(&tre.cetag).unwrap();
+                    prop_assert!(
+                        value.is_object(),
+                        "CETAG '{}' should map to a JSON object, got: {:?}",
+                        tre.cetag,
+                        value
+                    );
+
+                    // 3. The nested dict contains the TRE's field names as keys
+                    let nested = value.as_object().unwrap();
+                    for (i, field_name) in tre.field_names.iter().enumerate() {
+                        prop_assert!(
+                            nested.contains_key(field_name),
+                            "Nested dict for '{}' should contain field '{}'. Keys: {:?}",
+                            tre.cetag,
+                            field_name,
+                            nested.keys().collect::<Vec<_>>()
+                        );
+
+                        // Verify the value matches what we generated
+                        let expected_value = &tre.field_values[i];
+                        let actual = nested.get(field_name).unwrap();
+                        prop_assert_eq!(
+                            actual,
+                            &serde_json::json!(expected_value),
+                            "Field '{}.{}' value mismatch",
+                            tre.cetag,
+                            field_name
+                        );
+                    }
+                }
+
+                // 4. No dot-separated keys like "CETAG.field" appear in the top-level dict
+                for key in dict.keys() {
+                    for tre in &tres {
+                        let dot_prefix = format!("{}.", tre.cetag);
+                        prop_assert!(
+                            !key.starts_with(&dot_prefix),
+                            "Top-level dict should not contain dot-separated key '{}'. \
+                             TRE fields should be nested under the CETAG key.",
+                            key
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Feature: metadata-restructure, Property 2: Unknown TREs Get Raw Representation
+    ///
+    /// For any JBPSegmentMetadataProvider with TREs that have no definition in the
+    /// StructureRegistry, calling as_dict(None) shall produce a dictionary where each
+    /// unknown CETAG is a top-level key mapped to an object containing "_raw"
+    /// (hex-encoded bytes) and "_length" (byte count) fields, and _length shall equal
+    /// the actual byte length of the TRE data.
+    ///
+    /// **Validates: Requirements 1.5**
+    mod prop_2_unknown_tres_raw_representation {
+        use super::*;
+
+        /// Strategy to generate a unique uppercase CETAG for unknown TREs
+        fn unknown_cetag_strategy() -> impl Strategy<Value = String> {
+            (0u32..100).prop_map(|i| format!("UNKWN{}", i))
+        }
+
+        /// Strategy to generate 1-3 unknown TREs with unique CETAGs
+        fn unknown_tres_strategy() -> impl Strategy<Value = Vec<(String, Vec<u8>)>> {
+            prop::collection::vec(
+                (
+                    unknown_cetag_strategy(),
+                    prop::collection::vec(any::<u8>(), 1..=50),
+                ),
+                1..=3,
+            )
+            .prop_map(|tres| {
+                // Ensure unique CETAGs by appending index
+                tres.into_iter()
+                    .enumerate()
+                    .map(|(i, (_, data))| (format!("UNKW{:02}", i), data))
+                    .collect()
+            })
+        }
+
+        /// Create a minimal subheader definition and data
+        fn create_subheader() -> (Arc<StructureDefinition>, Arc<[u8]>) {
+            let def = Arc::new(
+                StructureDefinition::new("TestSubheader")
+                    .with_field(
+                        FieldDefinition::new("HEADER", FieldType::String)
+                            .with_size(SizeSpec::Fixed(10)),
+                    ),
+            );
+            let data: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+            (def, data)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(100))]
+
+            /// Feature: metadata-restructure, Property 2: Unknown TREs Get Raw Representation
+            ///
+            /// **Validates: Requirements 1.5**
+            #[test]
+            fn unknown_tres_get_raw_representation(tres in unknown_tres_strategy()) {
+                let (subheader_def, subheader_bytes) = create_subheader();
+
+                // Build envelopes from generated unknown TREs
+                let envelopes: Vec<TreEnvelope> = tres
+                    .iter()
+                    .map(|(tag, data)| TreEnvelope {
+                        tag: tag.clone(),
+                        data: data.clone(),
+                    })
+                    .collect();
+
+                // Use an empty registry — no TRE definitions registered,
+                // so all TREs are "unknown"
+                let registry = StructureRegistry::new();
+
+                let provider = JBPSegmentMetadataProvider::with_tres(
+                    subheader_def,
+                    subheader_bytes,
+                    envelopes,
+                    Arc::new(registry),
+                );
+
+                let dict = provider.as_dict(None);
+
+                for (tag, data) in &tres {
+                    // 1. Each unknown CETAG is a top-level key
+                    prop_assert!(
+                        dict.contains_key(tag),
+                        "Unknown CETAG '{}' should be a top-level key. Keys: {:?}",
+                        tag,
+                        dict.keys().collect::<Vec<_>>()
+                    );
+
+                    // 2. The value is a JSON object with "_raw" and "_length" keys
+                    let value = dict.get(tag).unwrap();
+                    prop_assert!(
+                        value.is_object(),
+                        "Unknown CETAG '{}' should map to a JSON object, got: {:?}",
+                        tag,
+                        value
+                    );
+
+                    let obj = value.as_object().unwrap();
+                    prop_assert!(
+                        obj.contains_key("_raw"),
+                        "Object for '{}' should contain '_raw' key. Keys: {:?}",
+                        tag,
+                        obj.keys().collect::<Vec<_>>()
+                    );
+                    prop_assert!(
+                        obj.contains_key("_length"),
+                        "Object for '{}' should contain '_length' key. Keys: {:?}",
+                        tag,
+                        obj.keys().collect::<Vec<_>>()
+                    );
+
+                    // 3. "_raw" is a hex string matching the input bytes
+                    let expected_hex: String =
+                        data.iter().map(|b| format!("{:02x}", b)).collect();
+                    let raw_value = obj.get("_raw").unwrap();
+                    prop_assert_eq!(
+                        raw_value,
+                        &serde_json::json!(expected_hex),
+                        "CETAG '{}' _raw mismatch",
+                        tag
+                    );
+
+                    // 4. "_length" is a number equal to the byte length of the TRE data
+                    let length_value = obj.get("_length").unwrap();
+                    prop_assert_eq!(
+                        length_value,
+                        &serde_json::json!(data.len()),
+                        "CETAG '{}' _length should equal {} but got {:?}",
+                        tag,
+                        data.len(),
+                        length_value
+                    );
+                }
+            }
+        }
+    }
+
+    /// Feature: metadata-restructure, Property 3: Repeated Fields Appear as JSON Arrays
+    ///
+    /// For any MetadataProvider whose underlying structure definition contains repeated
+    /// fields, calling as_dict() shall produce a dictionary where each repeated field
+    /// appears under its base name mapped to a JSON array of element values. No
+    /// _N-suffixed keys shall appear for repeated fields.
+    ///
+    /// **Validates: Requirements 2.1, 2.2, 2.4, 4.1, 4.2, 8.1, 8.2**
+    mod prop_3_repeated_fields_as_json_arrays {
+        use super::*;
+        use crate::parser::{Encoding, Expression, ExpressionEvaluator, RepeatSpec};
+
+        /// Strategy to generate BCS-A field values of a given size (uppercase + digits)
+        fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {
+            prop::collection::vec(
+                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
+                size,
+            )
+            .prop_map(|chars| chars.into_iter().collect::<String>())
+        }
+
+        /// Build a subheader definition with a count field and a repeated field.
+        /// The repeated field uses RepeatSpec::Expression referencing the count field.
+        fn create_subheader_with_repeated(
+            count_field: &str,
+            repeated_field: &str,
+            elem_size: usize,
+        ) -> StructureDefinition {
+            let repeat_expr = ExpressionEvaluator::parse(count_field).unwrap();
+
+            StructureDefinition::new("TestSubheaderRepeat")
+                .with_field(
+                    FieldDefinition::new("HEADER", FieldType::String)
+                        .with_size(SizeSpec::Fixed(10)),
+                )
+                .with_field(
+                    FieldDefinition::new(count_field, FieldType::UnsignedInt(1))
+                        .with_size(SizeSpec::Fixed(1)),
+                )
+                .with_field(
+                    FieldDefinition::new(repeated_field, FieldType::String)
+                        .with_size(SizeSpec::Fixed(elem_size))
+                        .with_encoding(Encoding::BcsA)
+                        .with_repeat(RepeatSpec::Expression(repeat_expr)),
+                )
+        }
+
+        /// Build raw bytes for a subheader with a count field and repeated string elements.
+        fn build_subheader_bytes(
+            header_value: &str,
+            count: u8,
+            elem_values: &[String],
+            elem_size: usize,
+        ) -> Arc<[u8]> {
+            let mut bytes = Vec::new();
+            // HEADER field: 10 bytes, space-padded
+            let mut header = header_value.as_bytes().to_vec();
+            header.resize(10, b' ');
+            bytes.extend_from_slice(&header);
+            // Count field: 1 byte unsigned int
+            bytes.push(count);
+            // Repeated elements: each elem_size bytes, space-padded
+            for val in elem_values {
+                let mut elem = val.as_bytes().to_vec();
+                elem.resize(elem_size, b' ');
+                bytes.extend_from_slice(&elem);
+            }
+            Arc::from(bytes)
+        }
+
+        /// Build a TRE definition with a count field (BCS-N string) and a repeated field.
+        fn create_tre_with_repeated(elem_size: usize) -> StructureDefinition {
+            let repeat_expr = Expression::MethodCall {
+                target: Box::new(Expression::FieldRef("count".to_string())),
+                method: "to_i".to_string(),
+            };
+
+            StructureDefinition::new("tre_reptest")
+                .with_field(
+                    FieldDefinition::new("scalar", FieldType::String)
+                        .with_size(SizeSpec::Fixed(4))
+                        .with_encoding(Encoding::BcsA),
+                )
+                .with_field(
+                    FieldDefinition::new("count", FieldType::String)
+                        .with_size(SizeSpec::Fixed(2))
+                        .with_encoding(Encoding::BcsN),
+                )
+                .with_field(
+                    FieldDefinition::new("items", FieldType::String)
+                        .with_size(SizeSpec::Fixed(elem_size))
+                        .with_encoding(Encoding::BcsA)
+                        .with_repeat(RepeatSpec::Expression(repeat_expr)),
+                )
+        }
+
+        /// Build raw CEDATA bytes for a TRE with scalar + count + repeated items.
+        fn build_tre_data(
+            scalar_value: &str,
+            count: usize,
+            elem_values: &[String],
+            elem_size: usize,
+        ) -> Vec<u8> {
+            let mut data = Vec::new();
+            // scalar: 4 bytes, space-padded
+            let mut scalar = scalar_value.as_bytes().to_vec();
+            scalar.resize(4, b' ');
+            data.extend_from_slice(&scalar);
+            // count: 2 bytes BCS-N
+            data.extend(format!("{:02}", count).as_bytes());
+            // repeated items
+            for val in elem_values {
+                let mut elem = val.as_bytes().to_vec();
+                elem.resize(elem_size, b' ');
+                data.extend_from_slice(&elem);
+            }
+            data
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(100))]
+
+            /// Feature: metadata-restructure, Property 3: Repeated Fields Appear as JSON Arrays
+            ///
+            /// Subheader repeated fields appear as JSON arrays under the base name
+            /// (JBPSegmentMetadataProvider).
+            ///
+            /// **Validates: Requirements 2.1, 2.2, 8.1**
+            #[test]
+            fn segment_subheader_repeated_fields_as_arrays(
+                count in 1u8..6,
+                elem_values in prop::collection::vec(field_value_strategy(5), 6),
+            ) {
+                let count = count;
+                let values: Vec<String> = elem_values.into_iter().take(count as usize).collect();
+                let elem_size = 5usize;
+
+                let def = Arc::new(create_subheader_with_repeated("NREP", "ITEMS", elem_size));
+                let raw = build_subheader_bytes("TESTHEAD", count, &values, elem_size);
+
+                let provider = JBPSegmentMetadataProvider::from_definition(def, raw);
+                let dict = provider.as_dict(None);
+
+                // 1. The repeated field appears under its base name
+                prop_assert!(
+                    dict.contains_key("ITEMS"),
+                    "Dict should contain 'ITEMS' key. Keys: {:?}",
+                    dict.keys().collect::<Vec<_>>()
+                );
+
+                // 2. The value is a JSON array
+                let items_value = dict.get("ITEMS").unwrap();
+                prop_assert!(
+                    items_value.is_array(),
+                    "'ITEMS' should be a JSON array, got: {:?}",
+                    items_value
+                );
+
+                // 3. The array length matches the count
+                let arr = items_value.as_array().unwrap();
+                prop_assert_eq!(
+                    arr.len(),
+                    count as usize,
+                    "Array length should equal count {}",
+                    count
+                );
+
+                // 4. Each element matches the generated value
+                for (i, expected) in values.iter().enumerate() {
+                    prop_assert_eq!(
+                        &arr[i],
+                        &serde_json::json!(expected),
+                        "ITEMS[{}] value mismatch",
+                        i
+                    );
+                }
+
+                // 5. No _N-suffixed keys appear
+                for key in dict.keys() {
+                    prop_assert!(
+                        !key.starts_with("ITEMS_"),
+                        "No _N-suffixed keys should appear, got: {}",
+                        key
+                    );
+                }
+            }
+
+            /// Feature: metadata-restructure, Property 3: Repeated Fields Appear as JSON Arrays
+            ///
+            /// File-header repeated fields appear as JSON arrays under the base name
+            /// (JBPFileMetadataProvider).
+            ///
+            /// **Validates: Requirements 2.1, 2.2, 8.2**
+            #[test]
+            fn file_header_repeated_fields_as_arrays(
+                count in 1u8..6,
+                elem_values in prop::collection::vec(field_value_strategy(5), 6),
+            ) {
+                let count = count;
+                let values: Vec<String> = elem_values.into_iter().take(count as usize).collect();
+                let elem_size = 5usize;
+
+                let def = Arc::new(create_subheader_with_repeated("NREP", "ITEMS", elem_size));
+                let raw = build_subheader_bytes("TESTHEAD", count, &values, elem_size);
+
+                let provider = JBPFileMetadataProvider::from_definition(def, raw);
+                let dict = provider.as_dict(None);
+
+                // 1. The repeated field appears under its base name as a JSON array
+                prop_assert!(
+                    dict.contains_key("ITEMS"),
+                    "Dict should contain 'ITEMS' key. Keys: {:?}",
+                    dict.keys().collect::<Vec<_>>()
+                );
+
+                let items_value = dict.get("ITEMS").unwrap();
+                prop_assert!(
+                    items_value.is_array(),
+                    "'ITEMS' should be a JSON array, got: {:?}",
+                    items_value
+                );
+
+                let arr = items_value.as_array().unwrap();
+                prop_assert_eq!(
+                    arr.len(),
+                    count as usize,
+                    "Array length should equal count {}",
+                    count
+                );
+
+                // 2. No _N-suffixed keys appear
+                for key in dict.keys() {
+                    prop_assert!(
+                        !key.starts_with("ITEMS_"),
+                        "No _N-suffixed keys should appear, got: {}",
+                        key
+                    );
+                }
+            }
+
+            /// Feature: metadata-restructure, Property 3: Repeated Fields Appear as JSON Arrays
+            ///
+            /// TRE repeated fields appear as JSON arrays within the nested TRE dictionary.
+            ///
+            /// **Validates: Requirements 2.4, 4.1, 4.2**
+            #[test]
+            fn tre_repeated_fields_as_arrays(
+                count in 1usize..6,
+                scalar_value in field_value_strategy(4),
+                elem_values in prop::collection::vec(field_value_strategy(5), 6),
+            ) {
+                let values: Vec<String> = elem_values.into_iter().take(count).collect();
+                let elem_size = 5usize;
+
+                // Build TRE definition with repeated field
+                let tre_def = create_tre_with_repeated(elem_size);
+                let cedata = build_tre_data(&scalar_value, count, &values, elem_size);
+
+                // Register the TRE definition
+                let mut registry = StructureRegistry::new();
+                registry.register("tre_reptest", tre_def);
+
+                // Create a minimal subheader
+                let subheader_def = Arc::new(
+                    StructureDefinition::new("TestSubheader")
+                        .with_field(
+                            FieldDefinition::new("HEADER", FieldType::String)
+                                .with_size(SizeSpec::Fixed(10)),
+                        ),
+                );
+                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+
+                let tre_envelope = TreEnvelope {
+                    tag: "REPTEST".to_string(),
+                    data: cedata,
+                };
+
+                let provider = JBPSegmentMetadataProvider::with_tres(
+                    subheader_def,
+                    subheader_bytes,
+                    vec![tre_envelope],
+                    Arc::new(registry),
+                );
+
+                let dict = provider.as_dict(None);
+
+                // 1. The CETAG is a top-level key mapped to a nested dict
+                prop_assert!(
+                    dict.contains_key("REPTEST"),
+                    "Dict should contain 'REPTEST' key. Keys: {:?}",
+                    dict.keys().collect::<Vec<_>>()
+                );
+
+                let tre_dict = dict.get("REPTEST").unwrap();
+                prop_assert!(
+                    tre_dict.is_object(),
+                    "'REPTEST' should be a JSON object, got: {:?}",
+                    tre_dict
+                );
+
+                let nested = tre_dict.as_object().unwrap();
+
+                // 2. The scalar field is present as a direct value
+                prop_assert!(
+                    nested.contains_key("scalar"),
+                    "Nested dict should contain 'scalar'. Keys: {:?}",
+                    nested.keys().collect::<Vec<_>>()
+                );
+                prop_assert_eq!(
+                    nested.get("scalar").unwrap(),
+                    &serde_json::json!(scalar_value),
+                    "scalar value mismatch"
+                );
+
+                // 3. The repeated field appears under its base name as a JSON array
+                prop_assert!(
+                    nested.contains_key("items"),
+                    "Nested dict should contain 'items'. Keys: {:?}",
+                    nested.keys().collect::<Vec<_>>()
+                );
+
+                let items_value = nested.get("items").unwrap();
+                prop_assert!(
+                    items_value.is_array(),
+                    "'items' should be a JSON array, got: {:?}",
+                    items_value
+                );
+
+                // 4. The array length matches the count
+                let arr = items_value.as_array().unwrap();
+                prop_assert_eq!(
+                    arr.len(),
+                    count,
+                    "Array length should equal count {}",
+                    count
+                );
+
+                // 5. Each element matches the generated value
+                for (i, expected) in values.iter().enumerate() {
+                    prop_assert_eq!(
+                        &arr[i],
+                        &serde_json::json!(expected),
+                        "items[{}] value mismatch",
+                        i
+                    );
+                }
+
+                // 6. No _N-suffixed keys appear in the nested TRE dict
+                for key in nested.keys() {
+                    prop_assert!(
+                        !key.starts_with("items_"),
+                        "No _N-suffixed keys should appear in TRE dict, got: {}",
+                        key
+                    );
+                }
+            }
+        }
+    }
+
+    /// Feature: metadata-restructure, Property 4: Prefix Filter Returns Only Matching Entries
+    ///
+    /// For any JBPSegmentMetadataProvider and any prefix string, as_dict(Some(prefix))
+    /// shall return only entries whose top-level keys start with the given prefix. For
+    /// TRE entries, the CETAG itself is the top-level key. For subheader fields, the
+    /// field name is the top-level key. A non-matching prefix shall produce an empty
+    /// dictionary.
+    ///
+    /// **Validates: Requirements 1.4, 7.1, 7.2, 7.3**
+    mod prop_4_prefix_filter_nested_output {
+        use super::*;
+        use crate::parser::Encoding;
+
+        /// Strategy to generate a BCS-A field value of a given size
+        fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {
+            prop::collection::vec(
+                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
+                size,
+            )
+            .prop_map(|chars| chars.into_iter().collect::<String>())
+        }
+
+        /// Create a simple TRE definition with two fixed-size string fields
+        fn create_tre_definition(name: &str) -> StructureDefinition {
+            StructureDefinition::new(name)
+                .with_field(
+                    FieldDefinition::new("field1", FieldType::String)
+                        .with_size(SizeSpec::Fixed(8))
+                        .with_encoding(Encoding::BcsA),
+                )
+                .with_field(
+                    FieldDefinition::new("field2", FieldType::String)
+                        .with_size(SizeSpec::Fixed(6))
+                        .with_encoding(Encoding::BcsA),
+                )
+        }
+
+        /// Create a subheader definition with fields that have distinct prefixes
+        fn create_subheader_definition() -> Arc<StructureDefinition> {
+            Arc::new(
+                StructureDefinition::new("TestSubheader")
+                    .with_field(
+                        FieldDefinition::new("HEADER", FieldType::String)
+                            .with_size(SizeSpec::Fixed(10)),
+                    )
+                    .with_field(
+                        FieldDefinition::new("HEADTYPE", FieldType::String)
+                            .with_size(SizeSpec::Fixed(4)),
+                    )
+                    .with_field(
+                        FieldDefinition::new("FSCLAS", FieldType::String)
+                            .with_size(SizeSpec::Fixed(1)),
+                    )
+                    .with_field(
+                        FieldDefinition::new("FSCLSY", FieldType::String)
+                            .with_size(SizeSpec::Fixed(2)),
+                    ),
+            )
+        }
+
+        /// Create subheader raw bytes matching the definition above
+        fn create_subheader_bytes() -> Arc<[u8]> {
+            // HEADER(10) + HEADTYPE(4) + FSCLAS(1) + FSCLSY(2) = 17 bytes
+            Arc::from(b"TESTHEAD  IMG U  ".as_slice())
+        }
+
+        /// Build a provider with subheader fields and two known TREs (GEOLOB, SENSRB)
+        fn build_provider(
+            geolob_f1: &str,
+            geolob_f2: &str,
+            sensrb_f1: &str,
+            sensrb_f2: &str,
+        ) -> JBPSegmentMetadataProvider {
+            let subheader_def = create_subheader_definition();
+            let subheader_bytes = create_subheader_bytes();
+
+            let mut registry = StructureRegistry::new();
+            registry.register("tre_geolob", create_tre_definition("tre_geolob"));
+            registry.register("tre_sensrb", create_tre_definition("tre_sensrb"));
+
+            let mut geolob_data = Vec::new();
+            let mut f1 = geolob_f1.as_bytes().to_vec();
+            f1.resize(8, b' ');
+            geolob_data.extend_from_slice(&f1);
+            let mut f2 = geolob_f2.as_bytes().to_vec();
+            f2.resize(6, b' ');
+            geolob_data.extend_from_slice(&f2);
+
+            let mut sensrb_data = Vec::new();
+            let mut sf1 = sensrb_f1.as_bytes().to_vec();
+            sf1.resize(8, b' ');
+            sensrb_data.extend_from_slice(&sf1);
+            let mut sf2 = sensrb_f2.as_bytes().to_vec();
+            sf2.resize(6, b' ');
+            sensrb_data.extend_from_slice(&sf2);
+
+            let envelopes = vec![
+                TreEnvelope {
+                    tag: "GEOLOB".to_string(),
+                    data: geolob_data,
+                },
+                TreEnvelope {
+                    tag: "SENSRB".to_string(),
+                    data: sensrb_data,
+                },
+            ];
+
+            JBPSegmentMetadataProvider::with_tres(
+                subheader_def,
+                subheader_bytes,
+                envelopes,
+                Arc::new(registry),
+            )
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(100))]
+
+            /// Feature: metadata-restructure, Property 4: Prefix Filter Returns Only Matching Entries
+            ///
+            /// Prefix matching a CETAG exactly returns only that TRE's nested dict.
+            ///
+            /// **Validates: Requirements 1.4, 7.1**
+            #[test]
+            fn prefix_matching_cetag_returns_nested_tre(
+                gf1 in field_value_strategy(8),
+                gf2 in field_value_strategy(6),
+                sf1 in field_value_strategy(8),
+                sf2 in field_value_strategy(6),
+            ) {
+                let provider = build_provider(&gf1, &gf2, &sf1, &sf2);
+
+                // Filter by exact CETAG "GEOLOB"
+                let dict = provider.as_dict(Some("GEOLOB"));
+
+                // Should contain the GEOLOB key with nested dict
+                prop_assert!(
+                    dict.contains_key("GEOLOB"),
+                    "Should contain 'GEOLOB' key. Keys: {:?}",
+                    dict.keys().collect::<Vec<_>>()
+                );
+
+                let geolob = dict.get("GEOLOB").unwrap();
+                prop_assert!(
+                    geolob.is_object(),
+                    "'GEOLOB' should be a nested dict, got: {:?}",
+                    geolob
+                );
+
+                // Should NOT contain SENSRB or subheader fields
+                prop_assert!(
+                    !dict.contains_key("SENSRB"),
+                    "Should not contain 'SENSRB' when filtering by 'GEOLOB'"
+                );
+                prop_assert!(
+                    !dict.contains_key("HEADER"),
+                    "Should not contain subheader field 'HEADER'"
+                );
+                prop_assert!(
+                    !dict.contains_key("FSCLAS"),
+                    "Should not contain subheader field 'FSCLAS'"
+                );
+            }
+
+            /// Feature: metadata-restructure, Property 4: Prefix Filter Returns Only Matching Entries
+            ///
+            /// Prefix matching subheader fields returns only those fields, no TREs.
+            ///
+            /// **Validates: Requirements 7.2**
+            #[test]
+            fn prefix_matching_subheader_fields_only(
+                gf1 in field_value_strategy(8),
+                gf2 in field_value_strategy(6),
+                sf1 in field_value_strategy(8),
+                sf2 in field_value_strategy(6),
+            ) {
+                let provider = build_provider(&gf1, &gf2, &sf1, &sf2);
+
+                // Filter by "FS" prefix — matches FSCLAS and FSCLSY
+                let dict = provider.as_dict(Some("FS"));
+
+                // Should contain only subheader fields starting with "FS"
+                prop_assert!(
+                    dict.contains_key("FSCLAS"),
+                    "Should contain 'FSCLAS'. Keys: {:?}",
+                    dict.keys().collect::<Vec<_>>()
+                );
+                prop_assert!(
+                    dict.contains_key("FSCLSY"),
+                    "Should contain 'FSCLSY'. Keys: {:?}",
+                    dict.keys().collect::<Vec<_>>()
+                );
+
+                // Should NOT contain TRE entries or non-matching subheader fields
+                prop_assert!(
+                    !dict.contains_key("GEOLOB"),
+                    "Should not contain TRE 'GEOLOB' when filtering by 'FS'"
+                );
+                prop_assert!(
+                    !dict.contains_key("SENSRB"),
+                    "Should not contain TRE 'SENSRB' when filtering by 'FS'"
+                );
+                prop_assert!(
+                    !dict.contains_key("HEADER"),
+                    "Should not contain 'HEADER' when filtering by 'FS'"
+                );
+
+                // All returned keys must start with "FS"
+                for key in dict.keys() {
+                    prop_assert!(
+                        key.starts_with("FS"),
+                        "All keys should start with 'FS', got: {}",
+                        key
+                    );
+                }
+            }
+
+            /// Feature: metadata-restructure, Property 4: Prefix Filter Returns Only Matching Entries
+            ///
+            /// Non-matching prefix returns an empty dictionary.
+            ///
+            /// **Validates: Requirements 7.3**
+            #[test]
+            fn nonmatching_prefix_returns_empty(
+                gf1 in field_value_strategy(8),
+                gf2 in field_value_strategy(6),
+                sf1 in field_value_strategy(8),
+                sf2 in field_value_strategy(6),
+            ) {
+                let provider = build_provider(&gf1, &gf2, &sf1, &sf2);
+
+                // Filter by prefix that matches nothing
+                let dict = provider.as_dict(Some("ZZZZZ"));
+
+                prop_assert!(
+                    dict.is_empty(),
+                    "Non-matching prefix should return empty dict, got {} entries: {:?}",
+                    dict.len(),
+                    dict.keys().collect::<Vec<_>>()
+                );
+            }
+
+            /// Feature: metadata-restructure, Property 4: Prefix Filter Returns Only Matching Entries
+            ///
+            /// A prefix that is a prefix of a CETAG includes that TRE entry because
+            /// tag.starts_with(prefix) is true (e.g., "GEO" matches "GEOLOB").
+            ///
+            /// **Validates: Requirements 1.4, 7.1**
+            #[test]
+            fn partial_prefix_of_cetag_includes_tre(
+                gf1 in field_value_strategy(8),
+                gf2 in field_value_strategy(6),
+                sf1 in field_value_strategy(8),
+                sf2 in field_value_strategy(6),
+            ) {
+                let provider = build_provider(&gf1, &gf2, &sf1, &sf2);
+
+                // "GEO" is a prefix of "GEOLOB" — tag.starts_with(prefix) is true
+                let dict = provider.as_dict(Some("GEO"));
+
+                prop_assert!(
+                    dict.contains_key("GEOLOB"),
+                    "'GEO' prefix should match 'GEOLOB' TRE. Keys: {:?}",
+                    dict.keys().collect::<Vec<_>>()
+                );
+
+                // SENSRB should not match "GEO"
+                prop_assert!(
+                    !dict.contains_key("SENSRB"),
+                    "'GEO' prefix should not match 'SENSRB'"
+                );
+
+                // Verify the GEOLOB entry is a nested dict with correct values
+                let geolob = dict.get("GEOLOB").unwrap();
+                prop_assert!(
+                    geolob.is_object(),
+                    "'GEOLOB' should be a nested dict"
+                );
+            }
+
+            /// Feature: metadata-restructure, Property 4: Prefix Filter Returns Only Matching Entries
+            ///
+            /// For any random prefix, all returned top-level keys satisfy the filter:
+            /// subheader fields start with the prefix, and TRE CETAGs satisfy
+            /// tag.starts_with(prefix) || prefix.starts_with(tag).
+            ///
+            /// **Validates: Requirements 1.4, 7.1, 7.2, 7.3**
+            #[test]
+            fn all_returned_keys_satisfy_prefix_filter(
+                gf1 in field_value_strategy(8),
+                gf2 in field_value_strategy(6),
+                sf1 in field_value_strategy(8),
+                sf2 in field_value_strategy(6),
+                prefix in "[A-Z]{1,8}",
+            ) {
+                let provider = build_provider(&gf1, &gf2, &sf1, &sf2);
+
+                let dict = provider.as_dict(Some(&prefix));
+
+                // Known CETAGs in this provider
+                let cetags = ["GEOLOB", "SENSRB"];
+
+                for key in dict.keys() {
+                    if cetags.contains(&key.as_str()) {
+                        // TRE key: must satisfy tag.starts_with(prefix) || prefix.starts_with(tag)
+                        prop_assert!(
+                            key.starts_with(&prefix) || prefix.starts_with(key.as_str()),
+                            "TRE key '{}' does not satisfy prefix filter for '{}'",
+                            key,
+                            prefix
+                        );
+                    } else {
+                        // Subheader field: must start with prefix
+                        prop_assert!(
+                            key.starts_with(&prefix),
+                            "Subheader key '{}' should start with prefix '{}'",
+                            key,
+                            prefix
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Feature: metadata-restructure, Property 6: Struct Resolution Produces Nested Dictionaries
+    ///
+    /// For any Value::Struct whose type_name exists in the StructureRegistry, calling
+    /// value_to_json(value, Some(registry)) shall produce a serde_json::Value::Object
+    /// with keys matching the field IDs from the type definition and values recursively
+    /// converted. Nested Value::Struct fields within the resolved struct shall also be
+    /// recursively resolved. Repeated fields within the resolved struct shall appear as
+    /// JSON arrays.
+    ///
+    /// **Validates: Requirements 3.1, 3.3, 3.4, 6.3**
+    mod prop_6_struct_resolution_nested_dicts {
+        use super::*;
+        use crate::parser::{Encoding, Expression, ExpressionEvaluator, RepeatSpec};
+
+        /// Strategy to generate a BCS-A field value of a given size (uppercase + digits)
+        fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {
+            prop::collection::vec(
+                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
+                size,
+            )
+            .prop_map(|chars| chars.into_iter().collect::<String>())
+        }
+
+        /// Build raw bytes for a flat struct with N string fields of given size.
+        fn build_flat_struct_bytes(values: &[String], field_size: usize) -> Vec<u8> {
+            let mut data = Vec::new();
+            for val in values {
+                let mut field_bytes = val.as_bytes().to_vec();
+                field_bytes.resize(field_size, b' ');
+                data.extend_from_slice(&field_bytes);
+            }
+            data
+        }
+
+        /// Build a StructureDefinition with N string fields of given size.
+        fn build_flat_struct_def(
+            type_id: &str,
+            field_names: &[&str],
+            field_size: usize,
+        ) -> StructureDefinition {
+            let mut def = StructureDefinition::new(type_id);
+            for name in field_names {
+                def = def.with_field(
+                    FieldDefinition::new(*name, FieldType::String)
+                        .with_size(SizeSpec::Fixed(field_size))
+                        .with_encoding(Encoding::BcsA),
+                );
+            }
+            def
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(100))]
+
+            /// Feature: metadata-restructure, Property 6: Struct Resolution Produces Nested Dictionaries
+            ///
+            /// A Value::Struct with a known type resolves to a JSON object with correct keys and values.
+            ///
+            /// **Validates: Requirements 3.1, 6.3**
+            #[test]
+            fn struct_resolves_to_nested_dict(
+                val_a in field_value_strategy(6),
+                val_b in field_value_strategy(6),
+                val_c in field_value_strategy(6),
+            ) {
+                let field_size = 6usize;
+                let field_names = ["alpha", "bravo", "charlie"];
+                let values = [val_a.clone(), val_b.clone(), val_c.clone()];
+
+                // Build the struct definition and register it
+                let def = build_flat_struct_def("my_struct_type", &field_names, field_size);
+                let mut registry = StructureRegistry::new();
+                registry.register("my_struct_type", def);
+
+                // Build raw data for the struct
+                let raw = build_flat_struct_bytes(&values, field_size);
+
+                // Create Value::Struct
+                let value = Value::from_struct(&raw, "my_struct_type");
+
+                // Call value_to_json with registry
+                let json = value_to_json(&value, Some(&registry), None);
+                prop_assert!(json.is_some(), "value_to_json should return Some");
+
+                let json = json.unwrap();
+
+                // 1. Returns serde_json::Value::Object
+                prop_assert!(
+                    json.is_object(),
+                    "Resolved struct should be a JSON object, got: {:?}",
+                    json
+                );
+
+                let obj = json.as_object().unwrap();
+
+                // 2. Object keys match field IDs from the type definition
+                for name in &field_names {
+                    prop_assert!(
+                        obj.contains_key(*name),
+                        "Object should contain key '{}'. Keys: {:?}",
+                        name,
+                        obj.keys().collect::<Vec<_>>()
+                    );
+                }
+
+                // 3. Values are correctly converted (strings trimmed)
+                for (i, name) in field_names.iter().enumerate() {
+                    prop_assert_eq!(
+                        obj.get(*name).unwrap(),
+                        &serde_json::json!(values[i]),
+                        "Field '{}' value mismatch",
+                        name
+                    );
+                }
+
+                // Should NOT have _type/_data fallback keys
+                prop_assert!(
+                    !obj.contains_key("_type"),
+                    "Resolved struct should not have '_type' key"
+                );
+                prop_assert!(
+                    !obj.contains_key("_data"),
+                    "Resolved struct should not have '_data' key"
+                );
+            }
+
+            /// Feature: metadata-restructure, Property 6: Struct Resolution Produces Nested Dictionaries
+            ///
+            /// Nested Value::Struct fields are recursively resolved when both types are in the registry.
+            ///
+            /// **Validates: Requirements 3.3, 6.3**
+            #[test]
+            fn nested_structs_recursively_resolved(
+                outer_val in field_value_strategy(5),
+                inner_val_a in field_value_strategy(4),
+                inner_val_b in field_value_strategy(4),
+            ) {
+                // Inner struct: two 4-byte string fields
+                let inner_def = build_flat_struct_def("inner_type", &["x", "y"], 4);
+                let inner_bytes = build_flat_struct_bytes(
+                    &[inner_val_a.clone(), inner_val_b.clone()],
+                    4,
+                );
+                let inner_size = inner_bytes.len(); // 8 bytes
+
+                // Outer struct: one 5-byte string field + one TypeRef field (inner struct)
+                let outer_def = StructureDefinition::new("outer_type")
+                    .with_field(
+                        FieldDefinition::new("label", FieldType::String)
+                            .with_size(SizeSpec::Fixed(5))
+                            .with_encoding(Encoding::BcsA),
+                    )
+                    .with_field(
+                        FieldDefinition::new("nested", FieldType::TypeRef("inner_type".to_string()))
+                            .with_size(SizeSpec::Fixed(inner_size)),
+                    );
+
+                let mut registry = StructureRegistry::new();
+                registry.register("inner_type", inner_def);
+                registry.register("outer_type", outer_def);
+
+                // Build outer raw bytes: label(5) + nested(inner_size)
+                let mut outer_bytes = Vec::new();
+                let mut label_bytes = outer_val.as_bytes().to_vec();
+                label_bytes.resize(5, b' ');
+                outer_bytes.extend_from_slice(&label_bytes);
+                outer_bytes.extend_from_slice(&inner_bytes);
+
+                let value = Value::from_struct(&outer_bytes, "outer_type");
+                let json = value_to_json(&value, Some(&registry), None);
+                prop_assert!(json.is_some(), "value_to_json should return Some");
+
+                let json = json.unwrap();
+                prop_assert!(json.is_object(), "Outer struct should be a JSON object");
+
+                let obj = json.as_object().unwrap();
+
+                // Outer label field is present and correct
+                prop_assert_eq!(
+                    obj.get("label").unwrap(),
+                    &serde_json::json!(outer_val),
+                    "Outer 'label' value mismatch"
+                );
+
+                // Nested field is present and is itself a JSON object (recursively resolved)
+                let nested = obj.get("nested");
+                prop_assert!(
+                    nested.is_some(),
+                    "Outer struct should contain 'nested' key"
+                );
+
+                let nested = nested.unwrap();
+                prop_assert!(
+                    nested.is_object(),
+                    "Nested struct should be a JSON object, got: {:?}",
+                    nested
+                );
+
+                let nested_obj = nested.as_object().unwrap();
+                prop_assert_eq!(
+                    nested_obj.get("x").unwrap(),
+                    &serde_json::json!(inner_val_a),
+                    "Nested field 'x' value mismatch"
+                );
+                prop_assert_eq!(
+                    nested_obj.get("y").unwrap(),
+                    &serde_json::json!(inner_val_b),
+                    "Nested field 'y' value mismatch"
+                );
+            }
+
+            /// Feature: metadata-restructure, Property 6: Struct Resolution Produces Nested Dictionaries
+            ///
+            /// Repeated fields within a resolved struct appear as JSON arrays.
+            ///
+            /// **Validates: Requirements 3.4, 6.3**
+            #[test]
+            fn struct_with_repeated_fields_produces_arrays(
+                scalar_val in field_value_strategy(4),
+                count in 1usize..5,
+                elem_values in prop::collection::vec(field_value_strategy(3), 5),
+            ) {
+                let elems: Vec<String> = elem_values.into_iter().take(count).collect();
+                let elem_size = 3usize;
+
+                // Build a struct definition with: scalar(4) + count(2 BCS-N) + items(repeated, 3 each)
+                let repeat_expr = Expression::MethodCall {
+                    target: Box::new(Expression::FieldRef("count".to_string())),
+                    method: "to_i".to_string(),
+                };
+
+                let struct_def = StructureDefinition::new("struct_with_repeat")
+                    .with_field(
+                        FieldDefinition::new("scalar", FieldType::String)
+                            .with_size(SizeSpec::Fixed(4))
+                            .with_encoding(Encoding::BcsA),
+                    )
+                    .with_field(
+                        FieldDefinition::new("count", FieldType::String)
+                            .with_size(SizeSpec::Fixed(2))
+                            .with_encoding(Encoding::BcsN),
+                    )
+                    .with_field(
+                        FieldDefinition::new("items", FieldType::String)
+                            .with_size(SizeSpec::Fixed(elem_size))
+                            .with_encoding(Encoding::BcsA)
+                            .with_repeat(RepeatSpec::Expression(repeat_expr)),
+                    );
+
+                let mut registry = StructureRegistry::new();
+                registry.register("struct_with_repeat", struct_def);
+
+                // Build raw bytes: scalar(4) + count(2) + items(count * elem_size)
+                let mut raw = Vec::new();
+                let mut scalar_bytes = scalar_val.as_bytes().to_vec();
+                scalar_bytes.resize(4, b' ');
+                raw.extend_from_slice(&scalar_bytes);
+                raw.extend(format!("{:02}", count).as_bytes());
+                for val in &elems {
+                    let mut elem_bytes = val.as_bytes().to_vec();
+                    elem_bytes.resize(elem_size, b' ');
+                    raw.extend_from_slice(&elem_bytes);
+                }
+
+                let value = Value::from_struct(&raw, "struct_with_repeat");
+                let json = value_to_json(&value, Some(&registry), None);
+                prop_assert!(json.is_some(), "value_to_json should return Some");
+
+                let json = json.unwrap();
+                prop_assert!(json.is_object(), "Struct should be a JSON object");
+
+                let obj = json.as_object().unwrap();
+
+                // Scalar field is present
+                prop_assert_eq!(
+                    obj.get("scalar").unwrap(),
+                    &serde_json::json!(scalar_val),
+                    "scalar value mismatch"
+                );
+
+                // Repeated field appears as a JSON array
+                let items = obj.get("items");
+                prop_assert!(
+                    items.is_some(),
+                    "Object should contain 'items' key. Keys: {:?}",
+                    obj.keys().collect::<Vec<_>>()
+                );
+
+                let items = items.unwrap();
+                prop_assert!(
+                    items.is_array(),
+                    "'items' should be a JSON array, got: {:?}",
+                    items
+                );
+
+                let arr = items.as_array().unwrap();
+                prop_assert_eq!(
+                    arr.len(),
+                    count,
+                    "Array length should equal count {}",
+                    count
+                );
+
+                for (i, expected) in elems.iter().enumerate() {
+                    prop_assert_eq!(
+                        &arr[i],
+                        &serde_json::json!(expected),
+                        "items[{}] value mismatch",
+                        i
+                    );
+                }
+            }
+
+            /// Feature: metadata-restructure, Property 6: Struct Resolution Produces Nested Dictionaries
+            ///
+            /// A Value::Struct whose type_name is NOT in the registry falls back to
+            /// {"_type": "...", "_data": "..."} representation.
+            ///
+            /// **Validates: Requirements 3.1, 6.3**
+            #[test]
+            fn unregistered_struct_falls_back_to_opaque(
+                data_bytes in prop::collection::vec(any::<u8>(), 1..=30),
+                type_name in "[a-z_]{3,12}",
+            ) {
+                // Empty registry — no types registered
+                let registry = StructureRegistry::new();
+
+                let value = Value::from_struct(&data_bytes, type_name.clone());
+                let json = value_to_json(&value, Some(&registry), None);
+                prop_assert!(json.is_some(), "value_to_json should return Some");
+
+                let json = json.unwrap();
+                prop_assert!(
+                    json.is_object(),
+                    "Fallback struct should be a JSON object, got: {:?}",
+                    json
+                );
+
+                let obj = json.as_object().unwrap();
+
+                // Should have _type and _data keys
+                prop_assert!(
+                    obj.contains_key("_type"),
+                    "Fallback should contain '_type' key. Keys: {:?}",
+                    obj.keys().collect::<Vec<_>>()
+                );
+                prop_assert!(
+                    obj.contains_key("_data"),
+                    "Fallback should contain '_data' key. Keys: {:?}",
+                    obj.keys().collect::<Vec<_>>()
+                );
+
+                // _type matches the type_name
+                prop_assert_eq!(
+                    obj.get("_type").unwrap(),
+                    &serde_json::json!(type_name),
+                    "_type should match the struct's type_name"
+                );
+
+                // _data is hex-encoded bytes
+                let expected_hex: String =
+                    data_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                prop_assert_eq!(
+                    obj.get("_data").unwrap(),
+                    &serde_json::json!(expected_hex),
+                    "_data should be hex-encoded bytes"
+                );
+
+                // Should NOT have resolved field keys
+                prop_assert!(
+                    !obj.keys().any(|k| k != "_type" && k != "_data"),
+                    "Fallback should only have '_type' and '_data' keys, got: {:?}",
+                    obj.keys().collect::<Vec<_>>()
+                );
             }
         }
     }

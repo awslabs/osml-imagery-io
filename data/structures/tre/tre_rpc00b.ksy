@@ -84,10 +84,10 @@ seq:
   - id: HEIGHT_OFF
     type: str
     size: 5
-    encoding: BCS-NPI
+    encoding: BCS-N
     doc: |
       Geodetic Height Offset
-      5 BCS-NPI integer representing height offset in meters.
+      5 BCS-N integer representing height offset in meters.
       Range: ±9999
 
   - id: LINE_SCALE
@@ -138,43 +138,43 @@ seq:
   - id: LINE_NUM_COEFF
     type: str
     size: 12
-    encoding: BCS-N
+    encoding: BCS-A
     repeat: expr
     repeat-expr: 20
     doc: |
       Line Numerator Coefficients
-      20 coefficients, each 12 BCS-N real numbers.
+      20 coefficients, each 12 BCS-A characters in scientific notation.
       Range: ±9.999999E±9
 
   - id: LINE_DEN_COEFF
     type: str
     size: 12
-    encoding: BCS-N
+    encoding: BCS-A
     repeat: expr
     repeat-expr: 20
     doc: |
       Line Denominator Coefficients
-      20 coefficients, each 12 BCS-N real numbers.
+      20 coefficients, each 12 BCS-A characters in scientific notation.
       Range: ±9.999999E±9
 
   - id: SAMP_NUM_COEFF
     type: str
     size: 12
-    encoding: BCS-N
+    encoding: BCS-A
     repeat: expr
     repeat-expr: 20
     doc: |
       Sample Numerator Coefficients
-      20 coefficients, each 12 BCS-N real numbers.
+      20 coefficients, each 12 BCS-A characters in scientific notation.
       Range: ±9.999999E±9
 
   - id: SAMP_DEN_COEFF
     type: str
     size: 12
-    encoding: BCS-N
+    encoding: BCS-A
     repeat: expr
     repeat-expr: 20
     doc: |
       Sample Denominator Coefficients
-      20 coefficients, each 12 BCS-N real numbers.
+      20 coefficients, each 12 BCS-A characters in scientific notation.
       Range: ±9.999999E±9

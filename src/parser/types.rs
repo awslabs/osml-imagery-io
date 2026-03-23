@@ -195,8 +195,10 @@ pub enum Encoding {
     Ascii,
     /// NITF Basic Character Set - Alphanumeric (ASCII 0x20-0x7E)
     BcsA,
-    /// NITF Basic Character Set - Numeric (digits 0-9 and space)
+    /// NITF Basic Character Set - Numeric (digits 0-9, plus, minus, decimal point, slash)
     BcsN,
+    /// NITF Basic Character Set - Numeric Positive Integer (digits 0-9 only)
+    BcsNPI,
     /// NITF Extended Character Set - Alphanumeric
     EcsA,
 }
@@ -206,7 +208,7 @@ impl Encoding {
     pub fn default_pad(&self) -> u8 {
         match self {
             Encoding::Ascii | Encoding::BcsA | Encoding::EcsA => 0x20, // space
-            Encoding::BcsN => 0x30,                                    // '0'
+            Encoding::BcsN | Encoding::BcsNPI => 0x30,                 // '0'
         }
     }
 
@@ -215,7 +217,19 @@ impl Encoding {
         match self {
             Encoding::Ascii => byte.is_ascii(),
             Encoding::BcsA => (0x20..=0x7E).contains(&byte),
-            Encoding::BcsN => (0x30..=0x39).contains(&byte) || byte == 0x20,
+            Encoding::BcsN => {
+                // Per JBP spec (page 25): digits 0-9, plus, minus, decimal point, slash, space
+                (0x30..=0x39).contains(&byte)
+                    || byte == 0x20 // space
+                    || byte == 0x2B // '+'
+                    || byte == 0x2D // '-'
+                    || byte == 0x2E // '.'
+                    || byte == 0x2F // '/'
+            }
+            Encoding::BcsNPI => {
+                // Positive integer subset: digits 0-9 and space only
+                (0x30..=0x39).contains(&byte) || byte == 0x20
+            }
             Encoding::EcsA => byte >= 0x20, // Extended allows broader range
         }
     }
@@ -384,6 +398,7 @@ mod tests {
         assert_eq!(Encoding::Ascii.default_pad(), 0x20);
         assert_eq!(Encoding::BcsA.default_pad(), 0x20);
         assert_eq!(Encoding::BcsN.default_pad(), 0x30);
+        assert_eq!(Encoding::BcsNPI.default_pad(), 0x30);
         assert_eq!(Encoding::EcsA.default_pad(), 0x20);
     }
 
@@ -402,16 +417,34 @@ mod tests {
 
     #[test]
     fn encoding_bcs_n_validation() {
-        // Valid BCS-N: digits 0-9 and space
+        // Valid BCS-N: digits 0-9, plus, minus, decimal point, slash, space
         assert!(Encoding::BcsN.is_valid_byte(0x30)); // '0'
         assert!(Encoding::BcsN.is_valid_byte(0x35)); // '5'
         assert!(Encoding::BcsN.is_valid_byte(0x39)); // '9'
         assert!(Encoding::BcsN.is_valid_byte(0x20)); // space
+        assert!(Encoding::BcsN.is_valid_byte(0x2B)); // '+'
+        assert!(Encoding::BcsN.is_valid_byte(0x2D)); // '-'
+        assert!(Encoding::BcsN.is_valid_byte(0x2E)); // '.'
+        assert!(Encoding::BcsN.is_valid_byte(0x2F)); // '/'
 
         // Invalid BCS-N
         assert!(!Encoding::BcsN.is_valid_byte(0x41)); // 'A'
-        assert!(!Encoding::BcsN.is_valid_byte(0x2F)); // '/'
         assert!(!Encoding::BcsN.is_valid_byte(0x3A)); // ':'
+    }
+
+    #[test]
+    fn encoding_bcs_npi_validation() {
+        // Valid BCS-NPI: digits 0-9 and space only
+        assert!(Encoding::BcsNPI.is_valid_byte(0x30)); // '0'
+        assert!(Encoding::BcsNPI.is_valid_byte(0x39)); // '9'
+        assert!(Encoding::BcsNPI.is_valid_byte(0x20)); // space
+
+        // Invalid BCS-NPI: plus, minus, decimal point, slash, letters
+        assert!(!Encoding::BcsNPI.is_valid_byte(0x2B)); // '+'
+        assert!(!Encoding::BcsNPI.is_valid_byte(0x2D)); // '-'
+        assert!(!Encoding::BcsNPI.is_valid_byte(0x2E)); // '.'
+        assert!(!Encoding::BcsNPI.is_valid_byte(0x2F)); // '/'
+        assert!(!Encoding::BcsNPI.is_valid_byte(0x41)); // 'A'
     }
 
     #[test]
@@ -421,7 +454,14 @@ mod tests {
 
         assert!(Encoding::BcsN.validate(b"12345"));
         assert!(Encoding::BcsN.validate(b"  123"));
+        assert!(Encoding::BcsN.validate(b"+12.34"));
+        assert!(Encoding::BcsN.validate(b"-99.99"));
         assert!(!Encoding::BcsN.validate(b"12A45"));
+
+        assert!(Encoding::BcsNPI.validate(b"12345"));
+        assert!(Encoding::BcsNPI.validate(b"  123"));
+        assert!(!Encoding::BcsNPI.validate(b"+1234"));
+        assert!(!Encoding::BcsNPI.validate(b"12.34"));
     }
 
     #[test]

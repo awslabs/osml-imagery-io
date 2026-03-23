@@ -190,6 +190,105 @@ class TestMetadataRoundtrip:
 
 
 @pytest.mark.property
+class TestMetadataStructure:
+    """Property tests for metadata output structure after restructuring.
+
+    Feature: metadata-restructure, Property 8: Metadata Round-Trip Preservation
+
+    For any valid NITF image, the decoded metadata dictionary SHALL contain:
+    - Scalar subheader fields as top-level string values
+    - Repeated fields (e.g. BAND_INFO) as lists
+    - User-settable fields preserved after encode/decode
+
+    Validates: Requirements 14.1, 14.2
+    """
+
+    @given(
+        image_tuple=random_image(min_size=16, max_size=64, min_bands=1, max_bands=3),
+        user_metadata=nitf_user_metadata(min_fields=1, max_fields=4),
+    )
+    @pbt_settings
+    def test_metadata_structure_after_roundtrip(self, image_tuple, user_metadata):
+        """Decoded metadata SHALL have nested structure: repeated fields as lists,
+        scalar fields as strings, and user-provided values preserved."""
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+        assume(len(user_metadata) > 0)
+
+        with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
+            path = Path(f.name)
+
+        try:
+            metadata = BufferedMetadataProvider()
+            metadata.set("IC", "NC")
+            for key, value in user_metadata.items():
+                metadata.set(key, value)
+
+            provider = BufferedImageAssetProvider.create(
+                key="image_segment_0",
+                num_columns=num_cols,
+                num_rows=num_rows,
+                num_bands=num_bands,
+                block_width=min(num_cols, 64),
+                block_height=min(num_rows, 64),
+                pixel_type=pixel_type,
+                metadata=metadata,
+            )
+            provider.set_full_image(array)
+
+            writer = IO.open([str(path)], "w", "nitf")
+            writer.add_asset(
+                key="image_segment_0",
+                provider=provider,
+                title="Test Image",
+                description="Property test for metadata structure",
+                roles=["data"],
+            )
+            writer.close()
+
+            reader = IO.open([str(path)], "r")
+            asset = reader.get_asset("image_segment_0")
+            decoded_dict = asset.get_metadata().as_dict()
+            reader.close()
+
+            # Verify BAND_INFO is a list (repeated field → array)
+            if "BAND_INFO" in decoded_dict:
+                assert isinstance(decoded_dict["BAND_INFO"], list), (
+                    f"BAND_INFO should be a list, got {type(decoded_dict['BAND_INFO'])}"
+                )
+                assert len(decoded_dict["BAND_INFO"]) == num_bands, (
+                    f"BAND_INFO length should match band count: "
+                    f"expected {num_bands}, got {len(decoded_dict['BAND_INFO'])}"
+                )
+                # Each element should be a dict with band fields
+                for i, band in enumerate(decoded_dict["BAND_INFO"]):
+                    assert isinstance(band, dict), (
+                        f"BAND_INFO[{i}] should be a dict, got {type(band)}"
+                    )
+
+            # Verify user-settable fields are preserved as top-level strings
+            for key, expected_value in user_metadata.items():
+                actual = decoded_dict.get(key)
+                if actual is not None:
+                    assert isinstance(actual, str), (
+                        f"Field '{key}' should be a string, got {type(actual)}"
+                    )
+                    assert actual.strip() == expected_value.strip(), (
+                        f"Field '{key}': expected '{expected_value.strip()}', "
+                        f"got '{actual.strip()}'"
+                    )
+
+            # Verify no dot-separated TRE keys exist (old format)
+            for key in decoded_dict:
+                assert "." not in key, (
+                    f"Found dot-separated key '{key}' — old flat format detected"
+                )
+
+        finally:
+            if path.exists():
+                path.unlink()
+
+
+@pytest.mark.property
 class TestMetadataRawBytes:
     """Property tests for metadata raw byte access.
 

@@ -299,6 +299,9 @@ impl DefinitionLoader {
             Some("BCS-N") | Some("bcs-n") | Some("BCS_N") | Some("bcs_n") => {
                 Ok(Some(Encoding::BcsN))
             }
+            Some("BCS-NPI") | Some("bcs-npi") | Some("BCS_NPI") | Some("bcs_npi") => {
+                Ok(Some(Encoding::BcsNPI))
+            }
             Some("ECS-A") | Some("ecs-a") | Some("ECS_A") | Some("ecs_a") => {
                 Ok(Some(Encoding::EcsA))
             }
@@ -316,7 +319,8 @@ impl DefinitionLoader {
                 // Default padding based on encoding
                 if let Some(enc) = raw.encoding.as_deref() {
                     match enc {
-                        "BCS-N" | "bcs-n" | "BCS_N" | "bcs_n" => Ok(Some(0x30)), // '0'
+                        "BCS-N" | "bcs-n" | "BCS_N" | "bcs_n"
+                        | "BCS-NPI" | "bcs-npi" | "BCS_NPI" | "bcs_npi" => Ok(Some(0x30)), // '0'
                         _ => Ok(Some(0x20)),                                      // space
                     }
                 } else {
@@ -915,6 +919,7 @@ mod proptests {
             Just("ASCII"),
             Just("BCS-A"),
             Just("BCS-N"),
+            Just("BCS-NPI"),
             Just("ECS-A"),
         ]
     }
@@ -993,6 +998,7 @@ mod proptests {
                             Encoding::Ascii => "ASCII",
                             Encoding::BcsA => "BCS-A",
                             Encoding::BcsN => "BCS-N",
+                            Encoding::BcsNPI => "BCS-NPI",
                             Encoding::EcsA => "ECS-A",
                         };
                         yaml.push_str(&format!("    encoding: {}\n", enc_str));
@@ -1076,6 +1082,7 @@ mod proptests {
                     "ASCII" => Some(Encoding::Ascii),
                     "BCS-A" => Some(Encoding::BcsA),
                     "BCS-N" => Some(Encoding::BcsN),
+                    "BCS-NPI" => Some(Encoding::BcsNPI),
                     "ECS-A" => Some(Encoding::EcsA),
                     _ => None,
                 };

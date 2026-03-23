@@ -683,12 +683,16 @@ mod prop_24_write_character_set_validation {
             .prop_map(|bytes| String::from_utf8(bytes).unwrap())
     }
 
-    /// Generate a valid BCS-N string (digits and spaces)
+    /// Generate a valid BCS-N string (digits, spaces, plus, minus, decimal, slash)
     fn valid_bcs_n_string(len: usize) -> impl Strategy<Value = String> {
         proptest::collection::vec(
             prop_oneof![
                 0x30u8..=0x39u8,  // digits
                 Just(0x20u8),      // space
+                Just(0x2Bu8),      // '+'
+                Just(0x2Du8),      // '-'
+                Just(0x2Eu8),      // '.'
+                Just(0x2Fu8),      // '/'
             ],
             len..=len
         ).prop_map(|bytes| String::from_utf8(bytes).unwrap())
@@ -702,11 +706,21 @@ mod prop_24_write_character_set_validation {
         ]
     }
 
-    /// Generate an invalid BCS-N byte (not digit or space)
+    /// Generate an invalid BCS-N byte (not digit, space, plus, minus, decimal, or slash)
     fn invalid_bcs_n_byte() -> impl Strategy<Value = u8> {
         prop_oneof![
-            0x21u8..0x30u8,  // punctuation before digits
-            0x3Au8..=0x7Eu8, // characters after digits
+            Just(0x21u8),        // '!'
+            Just(0x22u8),        // '"'
+            Just(0x23u8),        // '#'
+            Just(0x24u8),        // '$'
+            Just(0x25u8),        // '%'
+            Just(0x26u8),        // '&'
+            Just(0x27u8),        // '\''
+            Just(0x28u8),        // '('
+            Just(0x29u8),        // ')'
+            Just(0x2Au8),        // '*'
+            Just(0x2Cu8),        // ','
+            0x3Au8..=0x7Eu8,     // characters after '9' through '~'
         ]
     }
 
@@ -911,12 +925,16 @@ mod prop_2_binary_data_round_trip {
             .prop_map(|bytes| String::from_utf8(bytes).unwrap())
     }
 
-    /// Generate a valid BCS-N string of specified length (digits and spaces)
+    /// Generate a valid BCS-N string of specified length (digits, spaces, signs, decimal, slash)
     fn valid_bcs_n_string(len: usize) -> impl Strategy<Value = String> {
         proptest::collection::vec(
             prop_oneof![
                 0x30u8..=0x39u8,  // digits
                 Just(0x20u8),      // space
+                Just(0x2Bu8),      // '+'
+                Just(0x2Du8),      // '-'
+                Just(0x2Eu8),      // '.'
+                Just(0x2Fu8),      // '/'
             ],
             len..=len
         ).prop_map(|bytes| String::from_utf8(bytes).unwrap())
@@ -943,9 +961,23 @@ mod prop_2_binary_data_round_trip {
                 Value::Unsigned(n) => {
                     writer.set(&path, n)?;
                 }
-                Value::Array(_) => {
-                    // Arrays are handled by their indexed elements
-                    // which are already enumerated by fields()
+                Value::Array(elements) => {
+                    // Write each element with indexed path (writer uses _N internally)
+                    for (i, elem) in elements.iter().enumerate() {
+                        let indexed_path = format!("{}_{}", path, i);
+                        match elem {
+                            Value::String(cow) => {
+                                writer.set(&indexed_path, cow.to_string())?;
+                            }
+                            Value::Bytes(bytes) => {
+                                writer.set(&indexed_path, bytes.to_vec())?;
+                            }
+                            Value::Unsigned(n) => {
+                                writer.set(&indexed_path, *n)?;
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 Value::Struct(_) => {
                     // Nested structs would need recursive handling

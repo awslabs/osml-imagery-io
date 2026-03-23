@@ -8,7 +8,9 @@
 //! - [`JBPReaderOptions`] - Configuration options for the reader
 
 use crate::jbp::error::JBPError;
+use crate::parser::Value;
 use crate::parser::StructureAccessor;
+use std::sync::Arc;
 
 /// Detected NITF format variant.
 ///
@@ -213,11 +215,11 @@ impl SegmentOffsets {
     /// - `NUMT` - Number of Text Segments
     /// - `NUMDES` - Number of Data Extension Segments
     /// - `NUMRES` - Number of Reserved Extension Segments
-    /// - `IMAGE_INFO_{i}.LISH` / `IMAGE_INFO_{i}.LI` - Image segment subheader/data lengths
-    /// - `GRAPHIC_INFO_{i}.LSSH` / `GRAPHIC_INFO_{i}.LS` - Graphic segment subheader/data lengths
-    /// - `TEXT_INFO_{i}.LTSH` / `TEXT_INFO_{i}.LT` - Text segment subheader/data lengths
-    /// - `DES_INFO_{i}.LDSH` / `DES_INFO_{i}.LD` - DES subheader/data lengths
-    /// - `RES_INFO_{i}.LRESH` / `RES_INFO_{i}.LRE` - RES subheader/data lengths
+    /// - `IMAGE_INFO[i].LISH` / `IMAGE_INFO[i].LI` - Image segment subheader/data lengths
+    /// - `GRAPHIC_INFO[i].LSSH` / `GRAPHIC_INFO[i].LS` - Graphic segment subheader/data lengths
+    /// - `TEXT_INFO[i].LTSH` / `TEXT_INFO[i].LT` - Text segment subheader/data lengths
+    /// - `DES_INFO[i].LDSH` / `DES_INFO[i].LD` - DES subheader/data lengths
+    /// - `RES_INFO[i].LRESH` / `RES_INFO[i].LRE` - RES subheader/data lengths
     pub fn from_header(header: &StructureAccessor) -> Result<Self, JBPError> {
         // Get header length (HL field)
         let hl = Self::get_u64_field(header, "HL")?;
@@ -236,10 +238,11 @@ impl SegmentOffsets {
         let mut des = Vec::with_capacity(numdes);
         let mut res = Vec::with_capacity(numres);
 
-        // Calculate image segment offsets using nested type access (KSY file format)
-        for i in 0..numi {
-            let lish = Self::get_u64_field(header, &format!("IMAGE_INFO_{}.LISH", i))?;
-            let li = Self::get_u64_field(header, &format!("IMAGE_INFO_{}.LI", i))?;
+        // Calculate image segment offsets from IMAGE_INFO array
+        let image_info = Self::get_struct_array(header, "IMAGE_INFO", numi)?;
+        for (i, element) in image_info.iter().enumerate() {
+            let lish = Self::get_struct_u64(header, element, "LISH", "IMAGE_INFO", i)?;
+            let li = Self::get_struct_u64(header, element, "LI", "IMAGE_INFO", i)?;
 
             images.push(SegmentLocation {
                 subheader_offset: current_offset,
@@ -250,10 +253,11 @@ impl SegmentOffsets {
             current_offset += lish + li;
         }
 
-        // Calculate graphic segment offsets using nested type access
-        for i in 0..nums {
-            let lssh = Self::get_u64_field(header, &format!("GRAPHIC_INFO_{}.LSSH", i))?;
-            let ls = Self::get_u64_field(header, &format!("GRAPHIC_INFO_{}.LS", i))?;
+        // Calculate graphic segment offsets from GRAPHIC_INFO array
+        let graphic_info = Self::get_struct_array(header, "GRAPHIC_INFO", nums)?;
+        for (i, element) in graphic_info.iter().enumerate() {
+            let lssh = Self::get_struct_u64(header, element, "LSSH", "GRAPHIC_INFO", i)?;
+            let ls = Self::get_struct_u64(header, element, "LS", "GRAPHIC_INFO", i)?;
 
             graphics.push(SegmentLocation {
                 subheader_offset: current_offset,
@@ -264,10 +268,11 @@ impl SegmentOffsets {
             current_offset += lssh + ls;
         }
 
-        // Calculate text segment offsets using nested type access
-        for i in 0..numt {
-            let ltsh = Self::get_u64_field(header, &format!("TEXT_INFO_{}.LTSH", i))?;
-            let lt = Self::get_u64_field(header, &format!("TEXT_INFO_{}.LT", i))?;
+        // Calculate text segment offsets from TEXT_INFO array
+        let text_info = Self::get_struct_array(header, "TEXT_INFO", numt)?;
+        for (i, element) in text_info.iter().enumerate() {
+            let ltsh = Self::get_struct_u64(header, element, "LTSH", "TEXT_INFO", i)?;
+            let lt = Self::get_struct_u64(header, element, "LT", "TEXT_INFO", i)?;
 
             text.push(SegmentLocation {
                 subheader_offset: current_offset,
@@ -278,10 +283,11 @@ impl SegmentOffsets {
             current_offset += ltsh + lt;
         }
 
-        // Calculate DES segment offsets using nested type access
-        for i in 0..numdes {
-            let ldsh = Self::get_u64_field(header, &format!("DES_INFO_{}.LDSH", i))?;
-            let ld = Self::get_u64_field(header, &format!("DES_INFO_{}.LD", i))?;
+        // Calculate DES segment offsets from DES_INFO array
+        let des_info = Self::get_struct_array(header, "DES_INFO", numdes)?;
+        for (i, element) in des_info.iter().enumerate() {
+            let ldsh = Self::get_struct_u64(header, element, "LDSH", "DES_INFO", i)?;
+            let ld = Self::get_struct_u64(header, element, "LD", "DES_INFO", i)?;
 
             des.push(SegmentLocation {
                 subheader_offset: current_offset,
@@ -292,10 +298,11 @@ impl SegmentOffsets {
             current_offset += ldsh + ld;
         }
 
-        // Calculate RES segment offsets using nested type access
-        for i in 0..numres {
-            let lresh = Self::get_u64_field(header, &format!("RES_INFO_{}.LRESH", i))?;
-            let lre = Self::get_u64_field(header, &format!("RES_INFO_{}.LRE", i))?;
+        // Calculate RES segment offsets from RES_INFO array
+        let res_info = Self::get_struct_array(header, "RES_INFO", numres)?;
+        for (i, element) in res_info.iter().enumerate() {
+            let lresh = Self::get_struct_u64(header, element, "LRESH", "RES_INFO", i)?;
+            let lre = Self::get_struct_u64(header, element, "LRE", "RES_INFO", i)?;
 
             res.push(SegmentLocation {
                 subheader_offset: current_offset,
@@ -332,6 +339,78 @@ impl SegmentOffsets {
     fn get_usize_field(header: &StructureAccessor, field: &str) -> Result<usize, JBPError> {
         let value = Self::get_u64_field(header, field)?;
         Ok(value as usize)
+    }
+
+    /// Helper to get a repeated struct field as a Vec of Value elements.
+    /// Returns an empty vec if expected_count is 0.
+    fn get_struct_array<'a>(
+        header: &'a StructureAccessor,
+        field: &str,
+        expected_count: usize,
+    ) -> Result<Vec<Value<'a>>, JBPError> {
+        if expected_count == 0 {
+            return Ok(Vec::new());
+        }
+        match header.get(field) {
+            Ok(Value::Array(elements)) => Ok(elements),
+            Ok(_) => Err(JBPError::ValidationError {
+                message: format!("Expected array for field '{}'", field),
+            }),
+            Err(e) => Err(JBPError::ValidationError {
+                message: format!("Failed to read field '{}': {}", field, e),
+            }),
+        }
+    }
+
+    /// Helper to extract a u64 sub-field from a Value::Struct element.
+    /// Creates a nested StructureAccessor using the type definition from the parent.
+    fn get_struct_u64(
+        header: &StructureAccessor,
+        element: &Value,
+        sub_field: &str,
+        array_name: &str,
+        index: usize,
+    ) -> Result<u64, JBPError> {
+        match element {
+            Value::Struct(struct_val) => {
+                let nested_def = header
+                    .definition()
+                    .types
+                    .get(&struct_val.type_name)
+                    .ok_or_else(|| JBPError::ValidationError {
+                        message: format!(
+                            "Unknown type '{}' for {}[{}]",
+                            struct_val.type_name, array_name, index
+                        ),
+                    })?;
+                let nested_accessor =
+                    StructureAccessor::new(Arc::new(nested_def.clone()), struct_val.data)
+                        .map_err(|e| JBPError::ValidationError {
+                            message: format!(
+                                "Failed to create accessor for {}[{}]: {}",
+                                array_name, index, e
+                            ),
+                        })?;
+                nested_accessor
+                    .get(sub_field)
+                    .map_err(|e| JBPError::ValidationError {
+                        message: format!(
+                            "Failed to read {}[{}].{}: {}",
+                            array_name, index, sub_field, e
+                        ),
+                    })?
+                    .as_u64()
+                    .map_err(|e| JBPError::ValidationError {
+                        message: format!(
+                            "Failed to parse {}[{}].{} as u64: {}",
+                            array_name, index, sub_field, e
+                        ),
+                    })
+            }
+            _ => Err(JBPError::ValidationError {
+                message: format!("Expected struct for {}[{}]", array_name, index),
+            }),
+        }
     }
 
     /// Returns the total number of segments across all types.

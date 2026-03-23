@@ -65,8 +65,8 @@ mod prop_7_conditional_field_presence {
 
 
 /// Property 8: Expression-Based Repetition Count
-/// For any repeated field with `repeat: expr`, the number of accessible indexed
-/// elements (`field_0`, `field_1`, ...) SHALL equal the evaluated repeat-expr value.
+/// For any repeated field with `repeat: expr`, the number of elements in the
+/// returned `Value::Array` SHALL equal the evaluated repeat-expr value.
 /// **Validates: Requirements 4.1, 4.6**
 mod prop_8_expression_based_repetition {
     use super::*;
@@ -102,44 +102,14 @@ mod prop_8_expression_based_repetition {
 
             let accessor = StructureAccessor::new(def, &data).unwrap();
 
-            // Count accessible elements
-            let mut accessible_count = 0;
-            for i in 0..256 {
-                let path = format!("items_{}", i);
-                if accessor.has(&path) {
-                    accessible_count += 1;
-                } else {
-                    break;
-                }
+            // Access items as array and check length
+            let items = accessor.get("items").unwrap();
+            if let Value::Array(arr) = items {
+                prop_assert_eq!(arr.len(), count as usize,
+                    "Expected {} elements, found {}", count, arr.len());
+            } else {
+                prop_assert!(false, "Expected array value");
             }
-
-            prop_assert_eq!(accessible_count, count as usize,
-                "Expected {} accessible elements, found {}", count, accessible_count);
-        }
-
-        /// Elements 0 to count-1 are accessible, count and beyond are not
-        #[test]
-        fn correct_elements_accessible(count in 1u8..20u8) {
-            let def = Arc::new(create_repeat_expr_def());
-
-            let mut data = vec![count];
-            for i in 0..count {
-                data.push(i);
-            }
-
-            let accessor = StructureAccessor::new(def, &data).unwrap();
-
-            // All elements 0 to count-1 should be accessible
-            for i in 0..count {
-                let path = format!("items_{}", i);
-                prop_assert!(accessor.has(&path),
-                    "Element {} should be accessible for count={}", i, count);
-            }
-
-            // Element at index count should NOT be accessible
-            let path = format!("items_{}", count);
-            prop_assert!(!accessor.has(&path),
-                "Element {} should NOT be accessible for count={}", count, count);
         }
 
         /// Array access returns correct number of elements
@@ -300,11 +270,15 @@ mod prop_10_eos_repetition {
     }
 }
 
-/// Property 11: Underscore-Indexed Naming
-/// For any repeated field with N elements, paths `field_0` through `field_{N-1}`
-/// SHALL be accessible, and `field_N` SHALL return UnknownField error.
-/// **Validates: Requirements 4.4, 4.5**
-mod prop_11_underscore_indexed_naming {
+/// Feature: metadata-restructure, Property 5: get() Returns Array for Repeated Fields
+///
+/// Property 11: Repeated Field Array Access
+/// For any repeated field with N elements, `get(field_id)` SHALL return a
+/// `Value::Array` with N elements, and `get("field_N")` (with underscore index)
+/// SHALL return `UnknownField` error since `_N` access is removed.
+/// Scalar fields continue to return `Value::String` or `Value::Unsigned` as before.
+/// **Validates: Requirements 2.3, 5.1, 5.3**
+mod prop_11_repeated_field_array_access {
     use super::*;
 
     fn create_repeat_count_def(count: usize) -> StructureDefinition {
@@ -315,62 +289,136 @@ mod prop_11_underscore_indexed_naming {
         )
     }
 
+    fn create_mixed_def(repeat_count: usize, scalar_size: usize) -> StructureDefinition {
+        StructureDefinition::new("test_struct")
+            .with_field(
+                FieldDefinition::new("scalar_str", FieldType::String)
+                    .with_size(SizeSpec::Fixed(scalar_size)),
+            )
+            .with_field(
+                FieldDefinition::new("scalar_uint", FieldType::UnsignedInt(1))
+                    .with_size(SizeSpec::Fixed(1)),
+            )
+            .with_field(
+                FieldDefinition::new("items", FieldType::UnsignedInt(1))
+                    .with_size(SizeSpec::Fixed(1))
+                    .with_repeat(RepeatSpec::Count(repeat_count)),
+            )
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
 
-        /// Paths field_0 through field_{N-1} are accessible
+        /// get(field_id) returns Value::Array with correct length
         #[test]
-        fn valid_indices_accessible(count in 1usize..20usize) {
+        fn get_returns_array_with_correct_length(count in 0usize..20usize) {
             let def = Arc::new(create_repeat_count_def(count));
             let data: Vec<u8> = (0..count as u8).collect();
             let accessor = StructureAccessor::new(def, &data).unwrap();
 
+            let result = accessor.get("items").unwrap();
+            if let Value::Array(arr) = result {
+                prop_assert_eq!(arr.len(), count,
+                    "Expected array of length {}, got {}", count, arr.len());
+            } else {
+                prop_assert!(false, "Expected Value::Array, got {:?}", result);
+            }
+        }
+
+        /// _N indexed paths return UnknownField error
+        #[test]
+        fn indexed_paths_return_unknown_field(count in 1usize..10usize) {
+            let def = Arc::new(create_repeat_count_def(count));
+            let data: Vec<u8> = (0..count as u8).collect();
+            let accessor = StructureAccessor::new(def, &data).unwrap();
+
+            // _N paths should no longer work
             for i in 0..count {
                 let path = format!("items_{}", i);
-                prop_assert!(accessor.has(&path),
-                    "Path '{}' should be accessible for count={}", path, count);
+                prop_assert!(!accessor.has(&path),
+                    "Path '{}' should NOT be accessible (indexed access removed)", path);
 
                 let result = accessor.get(&path);
-                prop_assert!(result.is_ok(),
-                    "get('{}') should succeed for count={}", path, count);
+                prop_assert!(result.is_err(),
+                    "get('{}') should fail (indexed access removed)", path);
+
+                match result.unwrap_err() {
+                    AccessError::UnknownField { .. } => {},
+                    other => prop_assert!(false,
+                        "Expected UnknownField error, got {:?}", other),
+                }
             }
         }
 
-        /// Path field_N returns UnknownField error
+        /// Repeated fields yield base name once (not expanded indices)
         #[test]
-        fn invalid_index_returns_error(count in 1usize..20usize) {
-            let def = Arc::new(create_repeat_count_def(count));
-            let data: Vec<u8> = (0..count as u8).collect();
-            let accessor = StructureAccessor::new(def, &data).unwrap();
-
-            let path = format!("items_{}", count);
-            prop_assert!(!accessor.has(&path),
-                "Path '{}' should NOT be accessible for count={}", path, count);
-
-            let result = accessor.get(&path);
-            prop_assert!(result.is_err(),
-                "get('{}') should fail for count={}", path, count);
-
-            match result.unwrap_err() {
-                AccessError::UnknownField { .. } => {},
-                other => prop_assert!(false,
-                    "Expected UnknownField error, got {:?}", other),
-            }
-        }
-
-        /// Underscore naming format is correct
-        #[test]
-        fn naming_format_correct(count in 1usize..10usize) {
+        fn base_name_yielded_once(count in 1usize..10usize) {
             let def = Arc::new(create_repeat_count_def(count));
             let data: Vec<u8> = (0..count as u8).collect();
             let accessor = StructureAccessor::new(def, &data).unwrap();
 
             let fields: Vec<String> = accessor.fields().collect();
 
+            // Should contain the base field name exactly once
+            prop_assert!(fields.contains(&"items".to_string()),
+                "fields() should contain base name 'items'");
+            let base_count = fields.iter().filter(|f| f.as_str() == "items").count();
+            prop_assert_eq!(base_count, 1,
+                "Base name 'items' should appear exactly once");
+
+            // Should NOT contain any expanded indexed names
             for i in 0..count {
-                let expected_path = format!("items_{}", i);
-                prop_assert!(fields.contains(&expected_path),
-                    "fields() should contain '{}'", expected_path);
+                let indexed_path = format!("items_{}", i);
+                prop_assert!(!fields.contains(&indexed_path),
+                    "fields() should NOT contain expanded name '{}'", indexed_path);
+            }
+        }
+
+        /// Scalar fields return Value::String or Value::Unsigned, not Value::Array
+        #[test]
+        fn scalar_fields_return_non_array(
+            scalar_size in 1usize..10usize,
+            repeat_count in 0usize..10usize,
+        ) {
+            let def = Arc::new(create_mixed_def(repeat_count, scalar_size));
+
+            // Build data: scalar_str (scalar_size bytes) + scalar_uint (1 byte) + items (repeat_count bytes)
+            let mut data = vec![b'A'; scalar_size];
+            data.push(42u8);
+            for i in 0..repeat_count as u8 {
+                data.push(i);
+            }
+
+            let accessor = StructureAccessor::new(def, &data).unwrap();
+
+            // Scalar string field should return Value::String
+            let str_val = accessor.get("scalar_str").unwrap();
+            match &str_val {
+                Value::String(_) => {},
+                other => prop_assert!(false,
+                    "Expected Value::String for scalar_str, got {:?}", other),
+            }
+
+            // Scalar unsigned field should return Value::Unsigned
+            let uint_val = accessor.get("scalar_uint").unwrap();
+            match &uint_val {
+                Value::Unsigned(n) => {
+                    prop_assert_eq!(*n, 42u64,
+                        "Expected scalar_uint value 42, got {}", n);
+                },
+                other => prop_assert!(false,
+                    "Expected Value::Unsigned for scalar_uint, got {:?}", other),
+            }
+
+            // Repeated field should return Value::Array
+            let arr_val = accessor.get("items").unwrap();
+            match &arr_val {
+                Value::Array(arr) => {
+                    prop_assert_eq!(arr.len(), repeat_count,
+                        "Expected array of length {}, got {}", repeat_count, arr.len());
+                },
+                other => prop_assert!(false,
+                    "Expected Value::Array for items, got {:?}", other),
             }
         }
     }

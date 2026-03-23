@@ -34,12 +34,12 @@ definition:
 
 - Fields defined as `type: str` (most NITF header fields) → Python `str`
 - Fields defined as binary integers (`u1`, `u2`, `u4`, `u8`) → Python `int`
-- Repeated fields → Python `list`
-- Nested structures → Python `dict` with `_type` and `_data` keys
+- Repeated fields (e.g. band info) → Python `list` of `dict`
+- TRE fields → Python `dict` keyed by CETAG, containing a nested `dict` of field values
+- Nested structures with a known type in the registry → Python `dict` (recursively resolved)
+- Nested structures with an unknown type → Python `dict` with `_type` and `_data` keys
+- Unknown TREs (no definition in registry) → Python `dict` with `_raw` (hex string) and `_length` (int)
 - Binary byte fields → Python `str` (hex-encoded if not valid UTF-8)
-
-TODO: Check the previous list. Need to make sure the list and dict options actually
-work as described. I thought repeated metadata fields used an _# notation and were flattened into the dict.
 
 In NITF, most header and subheader fields are ASCII strings — even numeric
 values like row counts and compression ratios. A few TREs use binary integer
@@ -73,6 +73,67 @@ comrat = image_meta.get("COMRAT")           # None if IC is "NC" or "NM"
 
 # Binary integer fields (some TREs) are already Python int
 # e.g. BANDSB existence mask, NBLOCA frame offsets
+```
+
+#### TRE Fields as Nested Dictionaries
+
+TRE (Tagged Record Extension) fields are grouped under their CETAG as nested
+dictionaries. Each TRE with a known definition in the `StructureRegistry`
+appears as a top-level key mapped to a dict of its fields:
+
+```python
+# Access TRE fields through nested dictionaries
+geolob = image_meta["GEOLOB"]              # dict
+arv = geolob["ARV"]                        # "000360000"
+brv = geolob["BRV"]                        # "000360000"
+
+# Or access in one step
+arv = image_meta["GEOLOB"]["ARV"]
+
+# TREs with repeated fields contain arrays
+j2klra = image_meta["J2KLRA"]              # dict
+layers = j2klra["LAYERS"]                  # list of dicts
+first_layer = layers[0]                    # {"LAYER_ID": "000", "BITRATE": "0.031250"}
+```
+
+Unknown TREs (those without a definition in the registry) appear with their
+raw data preserved:
+
+```python
+# Unknown TRE — raw hex data and byte length
+unknown = image_meta["UNKNWN"]             # {"_raw": "0102030405", "_length": 5}
+raw_hex = unknown["_raw"]
+byte_count = unknown["_length"]
+```
+
+#### Repeated Fields as Arrays
+
+Repeated fields in the image subheader (like band info) appear as Python lists
+instead of individual indexed entries:
+
+```python
+# Band info is a list of dicts, one per band
+bands = image_meta["BAND_INFO"]            # list of dicts
+for i, band in enumerate(bands):
+    print(f"Band {i}: IREPBAND={band['IREPBAND']}, NLUTS={band['NLUTS']}")
+
+# Access a specific band directly
+first_band = image_meta["BAND_INFO"][0]
+irepband = first_band["IREPBAND"]          # "R"
+```
+
+#### Prefix Filtering
+
+Use `as_dict(prefix)` to retrieve a subset of metadata. For subheader fields,
+the prefix matches field names. For TREs, the prefix matches the CETAG:
+
+```python
+# Get all fields starting with "FS" (file security fields)
+security = dataset.metadata.as_dict("FS")
+
+# Get a specific TRE by CETAG
+geolob_only = image.metadata.as_dict("GEOLOB")
+# Returns: {"GEOLOB": {"ARV": "...", "BRV": "...", ...}}
 ```
 
 For lower-level access with built-in type conversion, the `StructureAccessor`

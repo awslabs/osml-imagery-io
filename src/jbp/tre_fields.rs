@@ -534,10 +534,10 @@ mod property_tests {
             );
         }
 
-        /// Feature: tre-des-support, Property 3 (Extended): Repeated field extraction
+        /// Feature: metadata-restructure, Property 3 (Extended): Repeated field extraction
         ///
-        /// For any TRE with repeated fields, accessing elements using underscore-indexed
-        /// naming (e.g., "field_0", "field_1") SHALL return the correct values.
+        /// For any TRE with repeated fields, accessing the field SHALL return a
+        /// Value::Array, and indexing into that array SHALL return the correct values.
         ///
         /// **Validates: Requirements 2.4, 2.5**
         #[test]
@@ -591,16 +591,23 @@ mod property_tests {
                 "count value should match"
             );
 
-            // Verify each repeated element using underscore-indexed naming
-            for (i, expected_value) in values.iter().enumerate() {
-                let field_path = format!("items_{}", i);
-                let extracted = accessor.get(&field_path)
-                    .expect(&format!("{} should be accessible", field_path));
-                prop_assert_eq!(
-                    extracted.as_str().unwrap(),
-                    expected_value,
-                    "items_{} value should match input", i
-                );
+            // Verify repeated field returns Value::Array
+            let items_value = accessor.get("items")
+                .expect("items should be accessible");
+            match items_value {
+                crate::parser::Value::Array(arr) => {
+                    prop_assert_eq!(arr.len(), count, "Array length should match count");
+                    for (i, expected_value) in values.iter().enumerate() {
+                        prop_assert_eq!(
+                            arr[i].as_str().unwrap(),
+                            expected_value,
+                            "items[{}] value should match input", i
+                        );
+                    }
+                }
+                other => {
+                    prop_assert!(false, "Expected Value::Array, got {:?}", other);
+                }
             }
         }
     }

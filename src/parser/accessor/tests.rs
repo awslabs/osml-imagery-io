@@ -156,8 +156,8 @@ fn accessor_field_byte_range() {
 
 
 #[test]
-fn accessor_raw_slice_repeated_field_element() {
-    // Test that raw_slice works for individual elements of repeated fields
+fn accessor_raw_slice_repeated_field_returns_non_contiguous() {
+    // Test that raw_slice returns NonContiguous for repeated fields (no _N access)
     let def = Arc::new(
         StructureDefinition::new("test_struct").with_field(
             FieldDefinition::new("items", FieldType::UnsignedInt(1))
@@ -168,12 +168,13 @@ fn accessor_raw_slice_repeated_field_element() {
     let data = b"\x01\x02\x03\x04";
     let accessor = StructureAccessor::new(def, data).unwrap();
 
-    // Individual elements should work
-    let slice = accessor.raw_slice("items_0").unwrap();
-    assert_eq!(slice, &[0x01]);
-
-    let slice = accessor.raw_slice("items_3").unwrap();
-    assert_eq!(slice, &[0x04]);
+    // Accessing entire array should return NonContiguous
+    let result = accessor.raw_slice("items");
+    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        AccessError::NonContiguous { .. }
+    ));
 }
 
 #[test]
@@ -218,15 +219,6 @@ fn accessor_field_byte_range_non_contiguous_array() {
         result.unwrap_err(),
         AccessError::NonContiguous { .. }
     ));
-
-    // Individual elements should work
-    let (offset, size) = accessor.field_byte_range("items_0").unwrap();
-    assert_eq!(offset, 0);
-    assert_eq!(size, 1);
-
-    let (offset, size) = accessor.field_byte_range("items_2").unwrap();
-    assert_eq!(offset, 2);
-    assert_eq!(size, 1);
 }
 
 #[test]
@@ -501,15 +493,16 @@ fn accessor_repeat_expr_basic() {
     let count = accessor.get("count").unwrap();
     assert_eq!(count.as_u64().unwrap(), 3);
 
-    // Access individual items using underscore-indexed naming
-    let item0 = accessor.get("items_0").unwrap();
-    assert_eq!(item0.as_str().unwrap(), "AAAA");
-
-    let item1 = accessor.get("items_1").unwrap();
-    assert_eq!(item1.as_str().unwrap(), "BBBB");
-
-    let item2 = accessor.get("items_2").unwrap();
-    assert_eq!(item2.as_str().unwrap(), "CCCC");
+    // Access items as array
+    let items = accessor.get("items").unwrap();
+    if let Value::Array(arr) = items {
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[0].as_str().unwrap(), "AAAA");
+        assert_eq!(arr[1].as_str().unwrap(), "BBBB");
+        assert_eq!(arr[2].as_str().unwrap(), "CCCC");
+    } else {
+        panic!("Expected array");
+    }
 
     // Access trailer
     let trailer = accessor.get("trailer").unwrap();
@@ -555,9 +548,6 @@ fn accessor_repeat_expr_zero_count() {
         panic!("Expected array");
     }
 
-    // items_0 should not exist
-    assert!(!accessor.has("items_0"));
-
     // trailer should be at offset 1
     let trailer = accessor.get("trailer").unwrap();
     assert_eq!(trailer.as_str().unwrap(), "DONE");
@@ -570,10 +560,13 @@ fn accessor_repeat_expr_out_of_bounds() {
     let data = b"\x03AAAABBBBCCCCDONE";
     let accessor = StructureAccessor::new(def, data).unwrap();
 
-    // items_3 should not exist (only 0, 1, 2)
-    assert!(!accessor.has("items_3"));
-    let result = accessor.get("items_3");
-    assert!(result.is_err());
+    // items should be an array of 3 elements
+    let items = accessor.get("items").unwrap();
+    if let Value::Array(arr) = items {
+        assert_eq!(arr.len(), 3);
+    } else {
+        panic!("Expected array");
+    }
 }
 
 fn create_repeat_count_definition() -> StructureDefinition {
@@ -595,11 +588,17 @@ fn accessor_repeat_count() {
     let data = b"\x01\x02\x03\x04DONE";
     let accessor = StructureAccessor::new(def, data).unwrap();
 
-    // Access individual items
-    assert_eq!(accessor.get("items_0").unwrap().as_u64().unwrap(), 1);
-    assert_eq!(accessor.get("items_1").unwrap().as_u64().unwrap(), 2);
-    assert_eq!(accessor.get("items_2").unwrap().as_u64().unwrap(), 3);
-    assert_eq!(accessor.get("items_3").unwrap().as_u64().unwrap(), 4);
+    // Access items as array
+    let items = accessor.get("items").unwrap();
+    if let Value::Array(arr) = items {
+        assert_eq!(arr.len(), 4);
+        assert_eq!(arr[0].as_u64().unwrap(), 1);
+        assert_eq!(arr[1].as_u64().unwrap(), 2);
+        assert_eq!(arr[2].as_u64().unwrap(), 3);
+        assert_eq!(arr[3].as_u64().unwrap(), 4);
+    } else {
+        panic!("Expected array");
+    }
 
     // Access trailer
     let trailer = accessor.get("trailer").unwrap();
@@ -639,15 +638,15 @@ fn accessor_repeat_fields_iterator() {
 
     let fields: Vec<String> = accessor.fields().collect();
 
-    // Should contain count, items_0, items_1, items_2, trailer
+    // Repeated fields yield the base name once, not expanded indices
     assert!(fields.contains(&"count".to_string()));
-    assert!(fields.contains(&"items_0".to_string()));
-    assert!(fields.contains(&"items_1".to_string()));
-    assert!(fields.contains(&"items_2".to_string()));
+    assert!(fields.contains(&"items".to_string()));
     assert!(fields.contains(&"trailer".to_string()));
 
-    // Should NOT contain items_3
-    assert!(!fields.contains(&"items_3".to_string()));
+    // Should NOT contain expanded indexed names
+    assert!(!fields.contains(&"items_0".to_string()));
+    assert!(!fields.contains(&"items_1".to_string()));
+    assert!(!fields.contains(&"items_2".to_string()));
 }
 
 
@@ -867,12 +866,15 @@ fn accessor_typeref_repeated() {
     let count = accessor.get("count").unwrap();
     assert_eq!(count.as_u64().unwrap(), 2);
 
-    // Access individual items
-    let item0 = accessor.get("items_0").unwrap();
-    assert!(item0.is_struct());
-
-    let item1 = accessor.get("items_1").unwrap();
-    assert!(item1.is_struct());
+    // Access items as array
+    let items = accessor.get("items").unwrap();
+    if let Value::Array(arr) = items {
+        assert_eq!(arr.len(), 2);
+        assert!(arr[0].is_struct());
+        assert!(arr[1].is_struct());
+    } else {
+        panic!("Expected array");
+    }
 
     // Access trailer - verifies repeated TypeRef total size was calculated correctly
     let trailer = accessor.get("trailer").unwrap();
@@ -942,14 +944,14 @@ fn accessor_typeref_fields_iterator() {
 
     let fields: Vec<String> = accessor.fields().collect();
 
-    // Should contain count, items_0, items_1, trailer
+    // Repeated fields yield the base name once, not expanded indices
     assert!(fields.contains(&"count".to_string()));
-    assert!(fields.contains(&"items_0".to_string()));
-    assert!(fields.contains(&"items_1".to_string()));
+    assert!(fields.contains(&"items".to_string()));
     assert!(fields.contains(&"trailer".to_string()));
 
-    // Should NOT contain items_2
-    assert!(!fields.contains(&"items_2".to_string()));
+    // Should NOT contain expanded indexed names
+    assert!(!fields.contains(&"items_0".to_string()));
+    assert!(!fields.contains(&"items_1".to_string()));
 }
 
 
@@ -1174,9 +1176,14 @@ fn integration_image_subheader_tre_fields_accessible() {
     let nbands = accessor.get("NBANDS").unwrap();
     assert_eq!(nbands.as_str().unwrap(), "2");
     
-    // Verify band_info is accessible
-    assert!(accessor.has("BAND_INFO_0"), "BAND_INFO_0 should be accessible");
-    assert!(accessor.has("BAND_INFO_1"), "BAND_INFO_1 should be accessible");
+    // Verify band_info is accessible as array
+    assert!(accessor.has("BAND_INFO"), "BAND_INFO should be accessible");
+    let band_info = accessor.get("BAND_INFO").unwrap();
+    if let Value::Array(arr) = band_info {
+        assert_eq!(arr.len(), 2, "BAND_INFO should have 2 elements");
+    } else {
+        panic!("Expected BAND_INFO to be an array");
+    }
     
     // CRITICAL: Verify TRE fields AFTER band_info are accessible
     // This is the main bug fix verification
@@ -1233,9 +1240,14 @@ fn integration_image_subheader_no_tre_data() {
     
     let accessor = StructureAccessor::new(definition, &test_data).unwrap();
     
-    // Verify band_info is accessible
-    assert!(accessor.has("BAND_INFO_0"), "BAND_INFO_0 should be accessible");
-    assert!(!accessor.has("BAND_INFO_1"), "BAND_INFO_1 should NOT exist for 1 band");
+    // Verify band_info is accessible as array with 1 element
+    assert!(accessor.has("BAND_INFO"), "BAND_INFO should be accessible");
+    let band_info = accessor.get("BAND_INFO").unwrap();
+    if let Value::Array(arr) = band_info {
+        assert_eq!(arr.len(), 1, "BAND_INFO should have 1 element");
+    } else {
+        panic!("Expected BAND_INFO to be an array");
+    }
     
     // UDIDL should be accessible and be 0
     assert!(accessor.has("UDIDL"), "UDIDL should be accessible");
@@ -1286,9 +1298,10 @@ fn integration_image_subheader_field_iterator_completeness() {
     assert!(fields.contains(&"IXSOFL".to_string()), "fields() should include IXSOFL (when IXSHDL > 0)");
     assert!(fields.contains(&"IXSHD".to_string()), "fields() should include IXSHD (when IXSHDL > 0)");
     
-    // Verify band_info fields are included
-    assert!(fields.contains(&"BAND_INFO_0".to_string()), "fields() should include BAND_INFO_0");
-    assert!(fields.contains(&"BAND_INFO_1".to_string()), "fields() should include BAND_INFO_1");
+    // Verify band_info field is included (base name, not expanded)
+    assert!(fields.contains(&"BAND_INFO".to_string()), "fields() should include BAND_INFO");
+    assert!(!fields.contains(&"BAND_INFO_0".to_string()), "fields() should NOT include BAND_INFO_0");
+    assert!(!fields.contains(&"BAND_INFO_1".to_string()), "fields() should NOT include BAND_INFO_1");
     
     // Verify fields before band_info are included
     assert!(fields.contains(&"IM".to_string()), "fields() should include IM");

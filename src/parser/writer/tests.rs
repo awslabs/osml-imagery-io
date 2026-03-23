@@ -176,8 +176,8 @@ fn bcs_n_validation_accepts_digits_and_space() {
 
     writer.set("bcs_a_field", "TEST").unwrap(); // Need to write first field
 
-    // Valid BCS-N: digits and space
-    let result = writer.set("bcs_n_field", "12 34");
+    // Valid BCS-N: digits, space, plus, minus, decimal point, slash
+    let result = writer.set("bcs_n_field", "+2.34");
     assert!(result.is_ok());
 }
 

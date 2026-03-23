@@ -59,8 +59,10 @@ pub fn is_valid_bcs_a_byte(byte: u8) -> bool {
 
 /// Validate BCS-N (Basic Character Set - Numeric).
 ///
-/// BCS-N allows only digits (0x30-0x39, i.e., '0'-'9') and space (0x20).
-/// This is used for numeric fields in NITF headers.
+/// Per JBP spec (Section 5.2, page 25), BCS-N allows digits (0x30-0x39),
+/// plus sign (0x2B), minus sign (0x2D), decimal point (0x2E), slash (0x2F),
+/// and space (0x20). This is used for numeric fields in NITF headers that
+/// may contain signed values, decimals, or fractions.
 ///
 /// # Arguments
 ///
@@ -77,9 +79,9 @@ pub fn is_valid_bcs_a_byte(byte: u8) -> bool {
 ///
 /// assert!(validate_bcs_n(b"12345"));
 /// assert!(validate_bcs_n(b"  123")); // leading spaces allowed
-/// assert!(validate_bcs_n(b"00042")); // leading zeros allowed
+/// assert!(validate_bcs_n(b"+22.77")); // signed decimal allowed
+/// assert!(validate_bcs_n(b"-99.99")); // negative decimal allowed
 /// assert!(!validate_bcs_n(b"12A45")); // letters not allowed
-/// assert!(!validate_bcs_n(b"-123")); // minus sign not allowed
 /// ```
 #[inline]
 pub fn validate_bcs_n(data: &[u8]) -> bool {
@@ -94,9 +96,46 @@ pub fn validate_bcs_n(data: &[u8]) -> bool {
 ///
 /// # Returns
 ///
-/// `true` if the byte is a digit (0x30-0x39) or space (0x20), `false` otherwise.
+/// `true` if the byte is a digit (0x30-0x39), plus (0x2B), minus (0x2D),
+/// decimal point (0x2E), slash (0x2F), or space (0x20).
 #[inline]
 pub fn is_valid_bcs_n_byte(byte: u8) -> bool {
+    (0x30..=0x39).contains(&byte)
+        || byte == 0x20 // space
+        || byte == 0x2B // '+'
+        || byte == 0x2D // '-'
+        || byte == 0x2E // '.'
+        || byte == 0x2F // '/'
+}
+
+/// Validate BCS-NPI (Basic Character Set - Numeric Positive Integer).
+///
+/// BCS-NPI allows only digits (0x30-0x39) and space (0x20). This is the
+/// restricted numeric subset used for positive integer fields.
+///
+/// # Arguments
+///
+/// * `data` - The byte slice to validate
+///
+/// # Returns
+///
+/// `true` if all bytes are valid BCS-NPI characters, `false` otherwise.
+#[inline]
+pub fn validate_bcs_npi(data: &[u8]) -> bool {
+    data.iter().all(|&b| is_valid_bcs_npi_byte(b))
+}
+
+/// Check if a single byte is valid BCS-NPI.
+///
+/// # Arguments
+///
+/// * `byte` - The byte to validate
+///
+/// # Returns
+///
+/// `true` if the byte is a digit (0x30-0x39) or space (0x20), `false` otherwise.
+#[inline]
+pub fn is_valid_bcs_npi_byte(byte: u8) -> bool {
     (0x30..=0x39).contains(&byte) || byte == 0x20
 }
 
@@ -305,12 +344,25 @@ mod tests {
     }
 
     #[test]
+    fn bcs_n_valid_with_signs_and_decimals() {
+        assert!(validate_bcs_n(b"+22.7715"));
+        assert!(validate_bcs_n(b"-99.99"));
+        assert!(validate_bcs_n(b"0002.16"));
+        assert!(validate_bcs_n(b"+121.1816"));
+        assert!(validate_bcs_n(b"1/2"));
+    }
+
+    #[test]
     fn bcs_n_boundary_values() {
         assert!(is_valid_bcs_n_byte(0x20)); // space
+        assert!(is_valid_bcs_n_byte(0x2B)); // '+'
+        assert!(is_valid_bcs_n_byte(0x2D)); // '-'
+        assert!(is_valid_bcs_n_byte(0x2E)); // '.'
+        assert!(is_valid_bcs_n_byte(0x2F)); // '/'
         assert!(is_valid_bcs_n_byte(0x30)); // '0'
         assert!(is_valid_bcs_n_byte(0x39)); // '9'
-        assert!(!is_valid_bcs_n_byte(0x2F)); // '/' - just below '0'
         assert!(!is_valid_bcs_n_byte(0x3A)); // ':' - just above '9'
+        assert!(!is_valid_bcs_n_byte(0x2A)); // '*' - just below '+'
     }
 
     #[test]
@@ -318,14 +370,13 @@ mod tests {
         assert!(!validate_bcs_n(b"A"));
         assert!(!validate_bcs_n(b"12A34"));
         assert!(!validate_bcs_n(b"abc"));
+        assert!(!validate_bcs_n(b"1.5E3")); // 'E' not allowed
     }
 
     #[test]
     fn bcs_n_invalid_special_chars() {
-        assert!(!validate_bcs_n(b"-123")); // minus
-        assert!(!validate_bcs_n(b"+123")); // plus
-        assert!(!validate_bcs_n(b"12.34")); // decimal point
         assert!(!validate_bcs_n(b"1,234")); // comma
+        assert!(!validate_bcs_n(b"12@34")); // at sign
     }
 
     #[test]
@@ -339,6 +390,40 @@ mod tests {
         assert!(validate_bcs_n(b"000001")); // segment count
         assert!(validate_bcs_n(b"00000439")); // length field
         assert!(validate_bcs_n(b"20231215")); // date
+    }
+
+    // ==================== BCS-NPI Unit Tests ====================
+
+    #[test]
+    fn bcs_npi_valid_digits() {
+        assert!(validate_bcs_npi(b"0123456789"));
+        assert!(validate_bcs_npi(b"00000"));
+        assert!(validate_bcs_npi(b"99999"));
+    }
+
+    #[test]
+    fn bcs_npi_valid_with_spaces() {
+        assert!(validate_bcs_npi(b"   "));
+        assert!(validate_bcs_npi(b"  123"));
+    }
+
+    #[test]
+    fn bcs_npi_rejects_signs_and_decimals() {
+        assert!(!validate_bcs_npi(b"-123"));
+        assert!(!validate_bcs_npi(b"+123"));
+        assert!(!validate_bcs_npi(b"12.34"));
+        assert!(!validate_bcs_npi(b"1/2"));
+    }
+
+    #[test]
+    fn bcs_npi_rejects_letters() {
+        assert!(!validate_bcs_npi(b"A"));
+        assert!(!validate_bcs_npi(b"12A34"));
+    }
+
+    #[test]
+    fn bcs_npi_empty_slice() {
+        assert!(validate_bcs_npi(b""));
     }
 
     // ==================== ECS-A Unit Tests ====================
@@ -525,15 +610,20 @@ mod proptests {
 
     /// Property 6: BCS-N Character Validation
     /// For any byte sequence, the BCS-N validator SHALL return true if and only if
-    /// all bytes are digits (0x30-0x39) or space (0x20).
+    /// all bytes are digits (0x30-0x39), plus (0x2B), minus (0x2D), decimal point (0x2E),
+    /// slash (0x2F), or space (0x20).
     /// **Validates: Requirements 2.4**
     mod prop_6_bcs_n_validation {
         use super::*;
 
-        /// Generate a valid BCS-N byte (digit or space)
+        /// Generate a valid BCS-N byte (digit, space, plus, minus, decimal, slash)
         fn valid_bcs_n_byte() -> impl Strategy<Value = u8> {
             prop_oneof![
                 Just(0x20u8),           // space
+                Just(0x2Bu8),           // '+'
+                Just(0x2Du8),           // '-'
+                Just(0x2Eu8),           // '.'
+                Just(0x2Fu8),           // '/'
                 0x30u8..=0x39u8,        // digits '0'-'9'
             ]
         }
@@ -541,8 +631,18 @@ mod proptests {
         /// Generate an invalid BCS-N byte
         fn invalid_bcs_n_byte() -> impl Strategy<Value = u8> {
             prop_oneof![
-                0x00u8..0x20u8,         // control chars (except space)
-                0x21u8..0x30u8,         // punctuation before digits
+                0x00u8..0x20u8,         // control chars (below space)
+                Just(0x21u8),           // '!'
+                Just(0x22u8),           // '"'
+                Just(0x23u8),           // '#'
+                Just(0x24u8),           // '$'
+                Just(0x25u8),           // '%'
+                Just(0x26u8),           // '&'
+                Just(0x27u8),           // '\''
+                Just(0x28u8),           // '('
+                Just(0x29u8),           // ')'
+                Just(0x2Au8),           // '*'
+                Just(0x2Cu8),           // ','
                 0x3Au8..=0xFFu8,        // everything after '9'
             ]
         }
@@ -550,10 +650,15 @@ mod proptests {
         proptest! {
             #![proptest_config(ProptestConfig::with_cases(100))]
 
-            /// For any byte, is_valid_bcs_n_byte returns true iff byte is digit or space
+            /// For any byte, is_valid_bcs_n_byte returns true iff byte is in the valid set
             #[test]
             fn single_byte_validation(byte: u8) {
-                let expected = (byte >= 0x30 && byte <= 0x39) || byte == 0x20;
+                let expected = (byte >= 0x30 && byte <= 0x39)
+                    || byte == 0x20
+                    || byte == 0x2B
+                    || byte == 0x2D
+                    || byte == 0x2E
+                    || byte == 0x2F;
                 let actual = is_valid_bcs_n_byte(byte);
                 prop_assert_eq!(expected, actual,
                     "Byte 0x{:02X}: expected {}, got {}", byte, expected, actual);
@@ -562,7 +667,9 @@ mod proptests {
             /// For any byte sequence, validate_bcs_n returns true iff all bytes are valid
             #[test]
             fn slice_validation(bytes in prop::collection::vec(any::<u8>(), 0..100)) {
-                let expected = bytes.iter().all(|&b| (b >= 0x30 && b <= 0x39) || b == 0x20);
+                let expected = bytes.iter().all(|&b|
+                    (b >= 0x30 && b <= 0x39) || b == 0x20 || b == 0x2B || b == 0x2D || b == 0x2E || b == 0x2F
+                );
                 let actual = validate_bcs_n(&bytes);
                 prop_assert_eq!(expected, actual);
             }
@@ -580,6 +687,15 @@ mod proptests {
                 prop_assert!(is_valid_bcs_n_byte(0x20));
             }
 
+            /// Plus, minus, decimal point, slash should pass validation
+            #[test]
+            fn sign_and_decimal_pass(_unused in 0..1i32) {
+                prop_assert!(is_valid_bcs_n_byte(0x2B), "'+' should be valid BCS-N");
+                prop_assert!(is_valid_bcs_n_byte(0x2D), "'-' should be valid BCS-N");
+                prop_assert!(is_valid_bcs_n_byte(0x2E), "'.' should be valid BCS-N");
+                prop_assert!(is_valid_bcs_n_byte(0x2F), "'/' should be valid BCS-N");
+            }
+
             /// Letters should fail validation
             #[test]
             fn letters_fail(byte in prop::sample::select(
@@ -587,15 +703,6 @@ mod proptests {
             )) {
                 prop_assert!(!is_valid_bcs_n_byte(byte),
                     "Letter byte 0x{:02X} should be invalid BCS-N", byte);
-            }
-
-            /// Punctuation should fail validation
-            #[test]
-            fn punctuation_fails(byte in prop::sample::select(vec![
-                b'.', b',', b'-', b'+', b'/', b'*', b'!', b'@', b'#'
-            ])) {
-                prop_assert!(!is_valid_bcs_n_byte(byte),
-                    "Punctuation byte 0x{:02X} should be invalid BCS-N", byte);
             }
 
             /// A slice of only valid bytes should pass
@@ -650,6 +757,18 @@ mod proptests {
             ) {
                 let s = format!("{:>width$}", n, width = padding + format!("{}", n).len());
                 prop_assert!(validate_bcs_n(s.as_bytes()));
+            }
+
+            /// Signed decimal strings should be valid BCS-N
+            #[test]
+            fn signed_decimal_strings_valid(
+                sign in prop::sample::select(vec!["+", "-", ""]),
+                integer_part in 0u32..9999,
+                decimal_part in 0u32..9999,
+            ) {
+                let s = format!("{}{}.{}", sign, integer_part, decimal_part);
+                prop_assert!(validate_bcs_n(s.as_bytes()),
+                    "Signed decimal '{}' should be valid BCS-N", s);
             }
         }
     }

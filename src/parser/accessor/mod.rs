@@ -440,7 +440,9 @@ impl<'a> StructureAccessor<'a> {
 
     /// Iterate over all accessible field paths.
     ///
-    /// This includes expanded paths for repeated fields (e.g., "items_0", "items_1").
+    /// Yields each field's base name once. For repeated fields, the base name
+    /// is yielded (e.g., `"items"`) rather than expanded indexed names.
+    /// Use `get(field_id)` to obtain a `Value::Array` for repeated fields.
     pub fn fields(&self) -> impl Iterator<Item = String> + '_ {
         FieldIterator::new(self)
     }
@@ -513,21 +515,15 @@ impl<'a> StructureAccessor<'a> {
 
     /// Parse a field path into components.
     /// Returns (field_name, optional_index, optional_remaining_path)
+    ///
+    /// Field names are taken as-is — no `_N` suffix parsing is performed.
+    /// Repeated fields are accessed via `get("field")` which returns `Value::Array`.
     fn parse_path(&self, path: &str) -> (String, Option<usize>, Option<String>) {
         // Split on first dot to get the first component
         let (first, rest) = match path.find('.') {
             Some(pos) => (&path[..pos], Some(path[pos + 1..].to_string())),
             None => (path, None),
         };
-
-        // Check if the first component has an underscore index (e.g., "items_0")
-        if let Some(underscore_pos) = first.rfind('_') {
-            let potential_index = &first[underscore_pos + 1..];
-            if let Ok(index) = potential_index.parse::<usize>() {
-                let field_name = first[..underscore_pos].to_string();
-                return (field_name, Some(index), rest);
-            }
-        }
 
         (first.to_string(), None, rest)
     }

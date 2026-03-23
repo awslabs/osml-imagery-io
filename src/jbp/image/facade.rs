@@ -17,10 +17,12 @@
 //! let pvtype = facade.pvtype()?;
 //! ```
 
+use std::sync::Arc;
+
 use crate::error::CodecError;
 use crate::jbp::image::types::{ImageRepresentation, InterleaveMode, PixelJustification, PixelValueType};
 use crate::jbp::types::NitfFormat;
-use crate::parser::{StructureAccessor, StructureRegistry};
+use crate::parser::{StructureAccessor, StructureRegistry, Value};
 
 /// Facade providing typed access to image subheader fields via StructureAccessor.
 ///
@@ -445,10 +447,10 @@ impl<'a> BandInfoFacade<'a> {
         if nluts == 0 {
             Ok(None)
         } else {
-            let path = self.band_field_path("NELUT");
-            if self.accessor.has(&path) {
-                let value = self.accessor
-                    .get(&path)
+            let nested_accessor = self.get_band_accessor()?;
+            if nested_accessor.has("NELUT") {
+                let value = nested_accessor
+                    .get("NELUT")
                     .map_err(|e| CodecError::Parse(format!("Failed to read NELUT: {}", e)))?;
                 let s = value
                     .as_str()
@@ -481,10 +483,12 @@ impl<'a> BandInfoFacade<'a> {
             None => return Ok(None),
         };
 
-        // Get the byte range for the band_info struct
-        let band_info_path = self.band_info_path();
+        // Get the byte offset for this specific band_info element using
+        // calculate_field_offset with an explicit index. The offset cache
+        // internally stores keys as "BAND_INFO_0", "BAND_INFO_1", etc.
+        let field_name = self.band_info_field_name();
         let (band_info_offset, _band_info_size) = self.accessor
-            .field_byte_range(&band_info_path)
+            .calculate_field_offset(field_name, Some(self.index))
             .map_err(|e| CodecError::Parse(format!("Failed to get band info byte range: {}", e)))?;
         
         // Calculate offset to LUT data within the band info
@@ -519,29 +523,71 @@ impl<'a> BandInfoFacade<'a> {
 
     // ==================== Private Helper Methods ====================
 
-    /// Get the path prefix for band info fields.
-    fn band_info_path(&self) -> String {
+    /// Get the base field name for band info (without index suffix).
+    fn band_info_field_name(&self) -> &str {
         if self.use_extended {
-            format!("BAND_INFO_EXTENDED_{}", self.index)
+            "BAND_INFO_EXTENDED"
         } else {
-            format!("BAND_INFO_{}", self.index)
+            "BAND_INFO"
         }
     }
 
-    /// Get the full path for a band field.
-    fn band_field_path(&self, field: &str) -> String {
-        format!("{}.{}", self.band_info_path(), field)
+    /// Get a StructureAccessor for this band's struct element.
+    ///
+    /// Retrieves the BAND_INFO array from the parent accessor, extracts the
+    /// Value::Struct at self.index, and creates a nested StructureAccessor
+    /// using the type definition from the parent's definition types.
+    fn get_band_accessor(&self) -> Result<StructureAccessor<'a>, CodecError> {
+        let field_name = self.band_info_field_name();
+
+        // Get the array of band info structs
+        let array_value = self.accessor
+            .get(field_name)
+            .map_err(|e| CodecError::Parse(format!("Failed to get {}: {}", field_name, e)))?;
+
+        let elements = match &array_value {
+            Value::Array(arr) => arr,
+            _ => return Err(CodecError::Parse(format!(
+                "Expected {} to be an array, got {:?}", field_name, array_value
+            ))),
+        };
+
+        if self.index >= elements.len() {
+            return Err(CodecError::Parse(format!(
+                "Band index {} out of range (array length: {})", self.index, elements.len()
+            )));
+        }
+
+        let struct_val = match &elements[self.index] {
+            Value::Struct(sv) => sv,
+            _ => return Err(CodecError::Parse(format!(
+                "Expected {}[{}] to be a struct", field_name, self.index
+            ))),
+        };
+
+        // Look up the type definition from the parent accessor's definition types
+        let type_def = self.accessor.definition().types.get(&struct_val.type_name)
+            .ok_or_else(|| CodecError::Parse(format!(
+                "Type definition '{}' not found in parent definition types", struct_val.type_name
+            )))?;
+
+        let nested_accessor = StructureAccessor::new(Arc::new(type_def.clone()), struct_val.data)
+            .map_err(|e| CodecError::Parse(format!(
+                "Failed to create nested accessor for {}: {}", struct_val.type_name, e
+            )))?;
+
+        Ok(nested_accessor)
     }
 
     /// Get a string field from the band info.
     fn get_band_str_field(&self, field: &str) -> Result<String, CodecError> {
-        let path = self.band_field_path(field);
-        let value = self.accessor
-            .get(&path)
-            .map_err(|e| CodecError::Parse(format!("Failed to read band field '{}': {}", path, e)))?;
+        let nested_accessor = self.get_band_accessor()?;
+        let value = nested_accessor
+            .get(field)
+            .map_err(|e| CodecError::Parse(format!("Failed to read band field '{}': {}", field, e)))?;
         let s = value
             .as_str()
-            .map_err(|e| CodecError::Parse(format!("Failed to parse band field '{}' as string: {}", path, e)))?;
+            .map_err(|e| CodecError::Parse(format!("Failed to parse band field '{}' as string: {}", field, e)))?;
         Ok(s.to_string())
     }
 
