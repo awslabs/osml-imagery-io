@@ -36,10 +36,46 @@ _TIFF_SKIP_TAGS = {
     "JPEGTables",         # 347 — JPEG quantization/Huffman tables (binary blob)
 }
 
+# NITF/NSIF metadata fields that are internal to file parsing and not useful
+# for human inspection.  These fall into two categories:
+#
+# 1. Segment counts and offset tables — needed to locate segments in the file
+#    but redundant once the dataset is opened (the reader already resolved them).
+# 2. TRE container fields — raw byte blobs (UDHD, XHD, IXSHD, etc.) whose
+#    content is already decomposed into individual TREs in the metadata map.
+_NITF_SKIP_FIELDS = {
+    # File header: segment counts and offset/length tables
+    "NUMI", "NUMS", "NUMX", "NUMT", "NUMDES", "NUMRES",
+    "IMAGE_INFO", "GRAPHIC_INFO", "TEXT_INFO", "DES_INFO", "RES_INFO",
+    "FL", "HL",
+    # File header: TRE container fields
+    "UDHDL", "UDHOFL", "UDHD",
+    "XHDL", "XHDLOFL", "XHD",
+    # Image subheader: TRE container fields
+    "UDIDL", "UDOFL", "UDID",
+    "IXSHDL", "IXSOFL", "IXSHD",
+    # Graphic subheader: TRE container fields
+    "SXSHDL", "SXSOFL", "SXSHD",
+    # Text subheader: TRE container fields
+    "TXSHDL", "TXSOFL", "TXSHD",
+    # DES subheader: user-defined subheader container
+    "DESSHL", "DESSHF",
+}
+
 
 def _is_tiff(asset) -> bool:
     """Return True if the asset's media type indicates TIFF."""
     return getattr(asset, "media_type", "") == "image/tiff"
+
+
+def _is_nitf_file(path: Path) -> bool:
+    """Return True if the file path looks like a NITF/NSIF file."""
+    return path.suffix.lower() in {".ntf", ".nitf", ".nsf"}
+
+
+def _filter_nitf_metadata(metadata_dict: dict) -> dict:
+    """Remove internal NITF/NSIF fields from a metadata dictionary."""
+    return {k: v for k, v in metadata_dict.items() if k not in _NITF_SKIP_FIELDS}
 
 
 def format_metadata(metadata_dict: dict, indent: int = 4) -> str:
@@ -62,7 +98,7 @@ def format_tiff_metadata(metadata_dict: dict, indent: int = 4) -> str:
     return json.dumps(filtered, indent=indent, default=str)
 
 
-def describe_image_asset(asset, show_metadata: bool) -> None:
+def describe_image_asset(asset, show_metadata: bool, is_nitf: bool = False) -> None:
     """Print details for an image asset."""
     # Check if this is a typed ImageAssetProvider with image-specific properties
     if hasattr(asset, 'num_columns'):
@@ -81,10 +117,12 @@ def describe_image_asset(asset, show_metadata: bool) -> None:
         if _is_tiff(asset):
             print(format_tiff_metadata(meta_dict, indent=6))
         else:
+            if is_nitf:
+                meta_dict = _filter_nitf_metadata(meta_dict)
             print(format_metadata(meta_dict, indent=6))
 
 
-def describe_text_asset(asset, show_metadata: bool) -> None:
+def describe_text_asset(asset, show_metadata: bool, is_nitf: bool = False) -> None:
     """Print details for a text asset."""
     # Check if this is a typed TextAssetProvider
     if hasattr(asset, 'encoding'):
@@ -101,6 +139,8 @@ def describe_text_asset(asset, show_metadata: bool) -> None:
         print("    Metadata:")
         meta = asset.get_metadata()
         meta_dict = meta.as_dict()
+        if is_nitf:
+            meta_dict = _filter_nitf_metadata(meta_dict)
         print(format_metadata(meta_dict, indent=6))
 
 
@@ -131,7 +171,7 @@ def is_sicd_sidd_segment(asset) -> bool:
     return False
 
 
-def describe_data_asset(asset, show_metadata: bool) -> None:
+def describe_data_asset(asset, show_metadata: bool, is_nitf: bool = False) -> None:
     """Print details for a data asset.
 
     For SICD/SIDD data segments the XML metadata is parsed and
@@ -149,6 +189,8 @@ def describe_data_asset(asset, show_metadata: bool) -> None:
         print("    Metadata:")
         meta = asset.get_metadata()
         meta_dict = meta.as_dict()
+        if is_nitf:
+            meta_dict = _filter_nitf_metadata(meta_dict)
         print(format_metadata(meta_dict, indent=6))
 
         # Display the XML content for SICD/SIDD segments
@@ -168,12 +210,14 @@ def describe_data_asset(asset, show_metadata: bool) -> None:
                 print(f"    XML Content: (error parsing: {e})")
 
 
-def describe_generic_asset(asset, show_metadata: bool) -> None:
+def describe_generic_asset(asset, show_metadata: bool, is_nitf: bool = False) -> None:
     """Print details for a generic asset."""
     if show_metadata:
         print("    Metadata:")
         meta = asset.get_metadata()
         meta_dict = meta.as_dict()
+        if is_nitf:
+            meta_dict = _filter_nitf_metadata(meta_dict)
         print(format_metadata(meta_dict, indent=6))
 
 
@@ -199,12 +243,16 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
 
     try:
         with IO.open([str(file_path)], "r") as reader:
+            is_nitf = _is_nitf_file(file_path)
+
             # Dataset-level metadata
             if show_metadata:
                 print("File Metadata:")
                 print("-" * 40)
                 file_meta = reader.metadata
                 meta_dict = file_meta.as_dict()
+                if is_nitf:
+                    meta_dict = _filter_nitf_metadata(meta_dict)
                 print(format_metadata(meta_dict))
                 print()
 
@@ -243,13 +291,13 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
 
                 # Type-specific details
                 if asset.asset_type == AssetType.Image:
-                    describe_image_asset(asset, show_metadata)
+                    describe_image_asset(asset, show_metadata, is_nitf)
                 elif asset.asset_type == AssetType.Text:
-                    describe_text_asset(asset, show_metadata)
+                    describe_text_asset(asset, show_metadata, is_nitf)
                 elif asset.asset_type == AssetType.Data:
-                    describe_data_asset(asset, show_metadata)
+                    describe_data_asset(asset, show_metadata, is_nitf)
                 else:
-                    describe_generic_asset(asset, show_metadata)
+                    describe_generic_asset(asset, show_metadata, is_nitf)
 
                 print()
 
