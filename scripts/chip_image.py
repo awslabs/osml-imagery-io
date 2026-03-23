@@ -2,8 +2,9 @@
 """Extract a chip (region) from an image and save it as PNG.
 
 This script demonstrates using the IO DatasetReader to extract a rectangular
-region from a source image and save it using PIL/Pillow. Supports any format
-the IO library can read, including NITF (.ntf) and TIFF/GeoTIFF (.tif, .tiff).
+region from a source image and save it using the library's own PNGDatasetWriter.
+Supports any format the IO library can read, including NITF (.ntf),
+TIFF/GeoTIFF (.tif, .tiff), and PNG (.png).
 
 Usage:
     python scripts/chip_image.py input.ntf output.png --bbox 0 0 512 512
@@ -19,18 +20,11 @@ from pathlib import Path
 
 import numpy as np
 
-try:
-    from PIL import Image
-except ImportError:
-    print("Error: Pillow is required for PNG output.", file=sys.stderr)
-    print("Install with: pip install Pillow", file=sys.stderr)
-    sys.exit(1)
-
 # Add the project root to the path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from aws.osml.io import IO, AssetType  # noqa: E402
+from aws.osml.io import IO, AssetType, BufferedImageAssetProvider, PixelType  # noqa: E402
 
 
 def extract_region(
@@ -121,64 +115,70 @@ def extract_region(
 
 
 def save_as_png(chip: np.ndarray, output_path: Path) -> None:
-    """Save a chip as PNG using PIL.
+    """Save a chip as PNG using the library's PNGDatasetWriter.
 
     Args:
         chip: NumPy array with shape (bands, height, width)
         output_path: Path to save the PNG file
 
     Raises:
-        ValueError: If the image cannot be saved as PNG (e.g., too many bands)
+        ValueError: If the image cannot be saved as PNG (e.g., unsupported band count)
     """
-    num_bands = chip.shape[0]
+    num_bands, height, width = chip.shape
 
-    # Convert from band-sequential (CHW) to channels-last (HWC) for PIL
-    if num_bands == 1:
-        # Grayscale - squeeze to 2D
-        image_hwc = chip[0]
-        mode = "L"
-    elif num_bands == 3:
-        # RGB
-        image_hwc = np.transpose(chip, (1, 2, 0))
-        mode = "RGB"
-    elif num_bands == 4:
-        # RGBA
-        image_hwc = np.transpose(chip, (1, 2, 0))
-        mode = "RGBA"
-    else:
+    # Validate band count — PNG supports 1, 3, or 4 bands
+    supported_bands = {1, 2, 3, 4}
+    if num_bands not in supported_bands:
         raise ValueError(
             f"Cannot save {num_bands}-band image as PNG. "
-            f"PNG supports 1 (grayscale), 3 (RGB), or 4 (RGBA) bands."
+            f"PNG supports 1 (grayscale), 2 (grayscale+alpha), 3 (RGB), or 4 (RGBA) bands."
         )
 
-    # Handle different bit depths
+    # Determine pixel type from dtype
     dtype = chip.dtype
-    if dtype == np.uint16:
-        if mode == "L":
-            # For 16-bit grayscale, use PIL's native handling without mode parameter
-            image_hwc = np.ascontiguousarray(image_hwc)
-            pil_image = Image.fromarray(image_hwc)
-            pil_image.save(output_path, "PNG")
-            return
-        else:
-            # Scale 16-bit to 8-bit for RGB/RGBA
-            image_hwc = (image_hwc / 256).astype(np.uint8)
-    elif dtype not in (np.uint8, np.uint16):
-        # Convert other types to uint8
-        if np.issubdtype(dtype, np.floating):
-            # Assume 0-1 range for floats
-            image_hwc = (np.clip(image_hwc, 0, 1) * 255).astype(np.uint8)
-        else:
-            # Scale integer types to 0-255
-            info = np.iinfo(dtype)
-            image_hwc = ((image_hwc - info.min) / (info.max - info.min) * 255).astype(np.uint8)
+    if dtype == np.uint8:
+        pixel_type = PixelType.UInt8
+        abpp = 8
+    elif dtype == np.uint16:
+        pixel_type = PixelType.UInt16
+        abpp = 16
+    else:
+        raise ValueError(
+            f"Unsupported pixel dtype '{dtype}' for PNG output. "
+            f"PNG supports uint8 and uint16."
+        )
 
-    # Ensure contiguous array for PIL
-    image_hwc = np.ascontiguousarray(image_hwc)
+    # Ensure contiguous BSQ array
+    bsq = np.ascontiguousarray(chip)
 
-    # Create and save PIL image
-    pil_image = Image.fromarray(image_hwc, mode=mode)
-    pil_image.save(output_path, "PNG")
+    # Create a BufferedImageAssetProvider and write via IO
+    provider = BufferedImageAssetProvider.create(
+        key="image_segment_0",
+        num_columns=width,
+        num_rows=height,
+        num_bands=num_bands,
+        block_width=width,
+        block_height=height,
+        pixel_type=pixel_type,
+        actual_bits_per_pixel=abpp,
+        title="Chip",
+        description="Extracted chip",
+    )
+
+    if pixel_type == PixelType.UInt8:
+        provider.set_full_image(bsq)
+    else:
+        provider.set_full_image_u16(bsq)
+
+    writer = IO.open([str(output_path)], "w", "png")
+    writer.add_asset(
+        key="image_segment_0",
+        provider=provider,
+        title="Chip",
+        description="Extracted chip",
+        roles=["data"],
+    )
+    writer.close()
 
 
 def chip_image(
@@ -270,7 +270,7 @@ Examples:
     )
     parser.add_argument(
         "input",
-        help="Path to the input image file (NITF, TIFF/GeoTIFF)"
+        help="Path to the input image file (NITF, TIFF/GeoTIFF, PNG)"
     )
     parser.add_argument(
         "output",

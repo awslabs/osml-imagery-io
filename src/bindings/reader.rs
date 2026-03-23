@@ -25,6 +25,9 @@ use crate::jbp::{JBPDataAssetProvider, JBPGraphicsAssetProvider, JBPImageAssetPr
 #[cfg(feature = "libtiff")]
 use crate::tiff::TIFFImageAssetProvider;
 
+// Import PNG asset providers for downcasting
+use crate::png::PNGImageAssetProvider;
+
 /// Provides read access to geospatial datasets.
 ///
 /// A :class:`DatasetReader` exposes the assets and metadata contained in a
@@ -229,6 +232,18 @@ fn try_as_image_provider(
         unsafe {
             Arc::increment_strong_count(ptr);
             let concrete_ptr = ptr as *const TIFFImageAssetProvider;
+            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
+        }
+    }
+
+    // Try PNGImageAssetProvider
+    if asset.as_any().downcast_ref::<PNGImageAssetProvider>().is_some() {
+        let ptr = Arc::as_ptr(asset);
+        // SAFETY: We've verified the concrete type is PNGImageAssetProvider
+        // which implements ImageAssetProvider. We increment the ref count.
+        unsafe {
+            Arc::increment_strong_count(ptr);
+            let concrete_ptr = ptr as *const PNGImageAssetProvider;
             return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
         }
     }

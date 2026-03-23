@@ -3,7 +3,7 @@
 ## Opening a Dataset
 
 The `IO` class is the entry point for reading and writing imagery files. It auto-detects
-the format (NITF, TIFF/GeoTIFF, etc.) and returns a `DatasetReader` or `DatasetWriter`:
+the format (NITF, TIFF/GeoTIFF, PNG, etc.) and returns a `DatasetReader` or `DatasetWriter`:
 
 ```python
 from aws.osml.io import IO
@@ -15,11 +15,17 @@ with IO.open(["image.ntf"], "r") as dataset:
 with IO.open(["image.tif"], "r") as dataset:
     print(type(dataset))  # DatasetReader
 
+with IO.open(["image.png"], "r") as dataset:
+    print(type(dataset))  # DatasetReader
+
 # Write mode — returns a DatasetWriter
 with IO.open(["output.ntf"], "w", "nitf") as writer:
     print(type(writer))  # DatasetWriter
 
 with IO.open(["output.tif"], "w", "geotiff") as writer:
+    print(type(writer))  # DatasetWriter
+
+with IO.open(["output.png"], "w", "png") as writer:
     print(type(writer))  # DatasetWriter
 ```
 
@@ -85,8 +91,9 @@ with IO.open(["complex_dataset.ntf"], "r") as dataset:
 
 NITF files can contain all four asset types. TIFF files contain only image assets —
 each IFD (Image File Directory) in the file becomes a separate image asset keyed as
-`"image_segment_0"`, `"image_segment_1"`, etc. Text, data, and graphics asset queries
-will return empty lists for TIFF datasets.
+`"image_segment_0"`, `"image_segment_1"`, etc. PNG files also contain only image assets —
+a single image keyed as `"image_segment_0"`. Text, data, and graphics asset queries
+will return empty lists for TIFF and PNG datasets.
 ```
 
 ## Dataset-Level Metadata

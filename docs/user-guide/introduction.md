@@ -7,7 +7,7 @@ using common geospatial imagery formats. It was built using Rust to provide reli
 performance IO routines for both research and production workloads. Python bindings make 
 it easy to use within the broader machine learning and data science communities. It supports
 memory efficient, tiled access to large images and structured metadata encoded using the 
-NITF, SICD, SIDD, TIFF, and GeoTIFF standards. Pixels are returned as NumPy arrays that 
+NITF, SICD, SIDD, TIFF, GeoTIFF, and PNG standards. Pixels are returned as NumPy arrays that 
 integrate directly with ML frameworks like PyTorch and computer vision libraries like 
 OpenCV and scikit-image.
 
@@ -44,28 +44,34 @@ its robust NITF implementation. The sensor independent XML metadata is available
 
 ### What formats are supported?
 
-#### Format Support
+#### File Formats
 
-| Format | Read | Write | Status |
-|--------|------|-------|--------|
-| NITF 2.1 (JBP) | ✅ | ✅ | Primary implementation |
-| NSIF 1.0 | ✅ | ✅ | Structurally identical to NITF 2.1 |
+| Format | Read | Write | Notes |
+|--------|------|-------|-------|
+| NITF 2.1 / NSIF 1.0 (JBP) | ✅ | ✅ | Primary implementation |
 | NITF 2.0 | 🚧 | ❌ | In progress; legacy format |
-| NSIF 1.1 | 🚧 | ❌ | In progress |
-| SICD (via NITF) | ✅ | ✅ | Complex SAR data; pixel access and DES extraction for XML metadata |
-| SIDD (via NITF) | ✅ | ✅ | Derived SAR products; pixel access and DES extraction for XML metadata |
-| TIFF | ✅ | ✅ | Tiled and stripped; LZW, Deflate, PackBits, uncompressed |
-| GeoTIFF | ✅ | ✅ | GeoKeys, ModelTiepoint, ModelPixelScale, ModelTransformation |
-| Cloud Optimized GeoTIFF (COG) | 🚧 | 🚧 | In progress |
+| TIFF | ✅ | ✅ | Tiled and stripped layouts; includes GeoTIFF metadata and COG support |
+| PNG | ✅ | ✅ | Lossless; Deflate compression |
+| JPEG 2000 (.j2k, .jp2) | 🚧 | 🚧 | Coming soon |
+| JPEG (.jpg) | 🚧 | 🚧 | Coming soon |
+
+NITF is the primary container format for defense and intelligence imagery. SICD and SIDD
+(SAR complex and derived data) are supported directly through the NITF implementation —
+the sensor-independent XML metadata is available from the data extension segments.
+
+TIFF support includes GeoTIFF metadata (GeoKeys, ModelTiepoint, ModelPixelScale,
+ModelTransformation) and Cloud Optimized GeoTIFF (COG) conventions. These are not
+separate formats — GeoTIFF adds geospatial tags to a standard TIFF, and COG defines
+a layout convention for efficient range-request access.
 
 #### NITF Image Compression
 
-| IC Codes | Compression Type | Read | Write | Notes |
-|----------|-----------------|------|-------|-------|
+| IC Codes | Compression | Read | Write | Notes |
+|----------|-------------|------|-------|-------|
 | NC / NM | Uncompressed | ✅ | ✅ | All pixel types, all interleave modes (B, P, R, S). NM adds block mask and pad pixel support |
 | C8 / M8 | JPEG 2000 | ✅ | ✅ | Lossy and lossless; multi-resolution decode; 1-38 bit depth; via OpenJPEG |
 | CD / MD | HTJ2K (JPEG 2000 Part 15) | ✅ | ✅ | High-Throughput JPEG 2000; same capabilities as C8/M8 |
-| C3 / M3 | JPEG DCT | ✅ | ✅ | 8-bit lossy only; mono, RGB, YCbCr601. 12-bit JPEG is not supported (requires libjpeg12; use C8 for >8-bit) |
+| C3 / M3 | JPEG DCT | ✅ | ✅ | 8-bit lossy only; mono, RGB, YCbCr601. 12-bit not supported (use C8 for >8-bit) |
 | I1 | JPEG downsampled | ✅ | ✅ | Single-block thumbnail; 2048×2048 max dimension |
 | C4 / M4 | Vector Quantization (VQ) | ❌ | ❌ | On roadmap. Legacy codebook-based compression (MIL-STD-188-199) |
 | CC / MC | ZLIB/DEFLATE | ❌ | ❌ | On roadmap. Used for floating-point scientific data |
@@ -74,6 +80,16 @@ its robust NITF implementation. The sensor independent XML metadata is available
 | C7 / M7 | SARZip | ❌ | ❌ | On roadmap. Custom SAR compression per USAF.RDUCE-001 |
 | C9 / M9 | H.264/AVC (MIE4NITF) | ❌ | ❌ | On roadmap. Motion imagery |
 | CA / MA | H.265/HEVC (MIE4NITF) | ❌ | ❌ | On roadmap. Motion imagery |
+
+#### TIFF Compression
+
+| Compression | Read | Write | Notes |
+|-------------|------|-------|-------|
+| Uncompressed | ✅ | ✅ | All pixel types |
+| LZW | ✅ | ✅ | Lossless |
+| Deflate (zlib) | ✅ | ✅ | Lossless |
+| PackBits | ✅ | ✅ | Lossless; run-length encoding |
+| JPEG | ✅ | ✅ | Lossy; 8-bit only |
 
 ### What standards were used?
 

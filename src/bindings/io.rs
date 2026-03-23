@@ -13,6 +13,7 @@ use pyo3::prelude::*;
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
 use crate::error::CodecError;
 use crate::jbp::{JBPDatasetReader, JBPDatasetWriter, NitfFormat};
+use crate::png::{PNGDatasetReader, PNGDatasetWriter};
 #[cfg(feature = "libtiff")]
 use crate::tiff;
 
@@ -207,6 +208,11 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
                 let reader = tiff::TIFFDatasetReader::from_bytes(&mmap)?;
                 return Ok(PyDatasetReader::new(Box::new(reader)));
             }
+            "png" => {
+                let mmap = mmap_file(&parsed.path)?;
+                let reader = PNGDatasetReader::from_bytes(&mmap)?;
+                return Ok(PyDatasetReader::new(Box::new(reader)));
+            }
             _ => {
                 return Err(CodecError::InvalidFormat(format!(
                     "Unsupported format: '{}'",
@@ -241,6 +247,11 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
                 ))
                 .into());
             }
+        }
+        Some("png") => {
+            let mmap = mmap_file(&parsed.path)?;
+            let reader = PNGDatasetReader::from_bytes(&mmap)?;
+            Ok(PyDatasetReader::new(Box::new(reader)))
         }
         Some("jp2") | Some("j2k") | Some("jpx") => {
             Err(CodecError::Unsupported(format!(
@@ -308,6 +319,10 @@ fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> 
                 "TIFF format writing requires the 'libtiff' feature".to_string(),
             )
             .into())
+        }
+        "png" => {
+            let writer = PNGDatasetWriter::new(&parsed.path)?;
+            Ok(PyDatasetWriter::new(Box::new(writer)))
         }
         "jp2" | "j2k" | "jpx" | "jpeg2000" => {
             // JPEG2000 format - not yet implemented

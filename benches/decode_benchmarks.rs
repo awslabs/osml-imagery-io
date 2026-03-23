@@ -1,8 +1,9 @@
 //! Single entry point for all decode benchmarks.
 //!
-//! Aggregates JBP (NC, C3, C8, CD) and TIFF (None, LZW, JPEG, Deflate, PackBits)
-//! benchmarks into one Criterion executable. Feature-gated benchmarks are compiled
-//! only when their respective features are enabled.
+//! Aggregates JBP (NC, C3, C8, CD), TIFF (None, LZW, JPEG, Deflate, PackBits),
+//! and PNG benchmarks into one Criterion executable. Feature-gated benchmarks are
+//! compiled only when their respective features are enabled. PNG benchmarks are
+//! always available (pure Rust, no feature gate).
 
 #[path = "decode_benchmarks/mod.rs"]
 mod decode_benchmarks;
@@ -58,27 +59,34 @@ criterion_group!(
     decode_benchmarks::tiff::packbits::bench_tiff_packbits,
 );
 
+// PNG benchmarks — always available (pure Rust, no feature gate)
+criterion_group!(
+    png_benches,
+    decode_benchmarks::png::decode::bench_png_decode,
+);
+
 // Combine all groups. The cfg attributes ensure only enabled groups are included.
+// PNG benchmarks are always included (no feature gate).
 #[cfg(all(feature = "libjpeg-turbo", feature = "openjpeg", feature = "libtiff"))]
-criterion_main!(jbp_nc_benches, jbp_c3_benches, jbp_c8_benches, jbp_cd_benches, tiff_benches);
+criterion_main!(jbp_nc_benches, jbp_c3_benches, jbp_c8_benches, jbp_cd_benches, tiff_benches, png_benches);
 
 #[cfg(all(feature = "libjpeg-turbo", feature = "openjpeg", not(feature = "libtiff")))]
-criterion_main!(jbp_nc_benches, jbp_c3_benches, jbp_c8_benches, jbp_cd_benches);
+criterion_main!(jbp_nc_benches, jbp_c3_benches, jbp_c8_benches, jbp_cd_benches, png_benches);
 
 #[cfg(all(feature = "libjpeg-turbo", not(feature = "openjpeg"), feature = "libtiff"))]
-criterion_main!(jbp_nc_benches, jbp_c3_benches, tiff_benches);
+criterion_main!(jbp_nc_benches, jbp_c3_benches, tiff_benches, png_benches);
 
 #[cfg(all(feature = "libjpeg-turbo", not(feature = "openjpeg"), not(feature = "libtiff")))]
-criterion_main!(jbp_nc_benches, jbp_c3_benches);
+criterion_main!(jbp_nc_benches, jbp_c3_benches, png_benches);
 
 #[cfg(all(not(feature = "libjpeg-turbo"), feature = "openjpeg", feature = "libtiff"))]
-criterion_main!(jbp_nc_benches, jbp_c8_benches, jbp_cd_benches, tiff_benches);
+criterion_main!(jbp_nc_benches, jbp_c8_benches, jbp_cd_benches, tiff_benches, png_benches);
 
 #[cfg(all(not(feature = "libjpeg-turbo"), feature = "openjpeg", not(feature = "libtiff")))]
-criterion_main!(jbp_nc_benches, jbp_c8_benches, jbp_cd_benches);
+criterion_main!(jbp_nc_benches, jbp_c8_benches, jbp_cd_benches, png_benches);
 
 #[cfg(all(not(feature = "libjpeg-turbo"), not(feature = "openjpeg"), feature = "libtiff"))]
-criterion_main!(jbp_nc_benches, tiff_benches);
+criterion_main!(jbp_nc_benches, tiff_benches, png_benches);
 
 #[cfg(all(not(feature = "libjpeg-turbo"), not(feature = "openjpeg"), not(feature = "libtiff")))]
-criterion_main!(jbp_nc_benches);
+criterion_main!(jbp_nc_benches, png_benches);

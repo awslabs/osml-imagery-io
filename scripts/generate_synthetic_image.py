@@ -9,6 +9,7 @@ band configurations, pixel types, and interleave modes.
 Supported output formats:
 - NITF (default) - National Imagery Transmission Format (.ntf)
 - TIFF/GeoTIFF - Tagged Image File Format (.tif, .tiff)
+- PNG - Portable Network Graphics (.png)
 
 The script also supports generating masked images where some blocks are empty,
 useful for testing sparse imagery handling (NITF only).
@@ -16,6 +17,7 @@ useful for testing sparse imagery handling (NITF only).
 Usage:
     python scripts/generate_synthetic_image.py output.ntf
     python scripts/generate_synthetic_image.py output.tif --format tiff
+    python scripts/generate_synthetic_image.py output.png --format png
     python scripts/generate_synthetic_image.py output.ntf --width 1024 --height 1024
     python scripts/generate_synthetic_image.py output.ntf --bands 3 --pixel-type uint16
     python scripts/generate_synthetic_image.py output.ntf --tile-width 128 --tile-height 128
@@ -30,6 +32,9 @@ Examples:
 
     # Generate a GeoTIFF image (alias for tiff)
     python scripts/generate_synthetic_image.py test.tif --format geotiff
+
+    # Generate a 512x512 grayscale PNG image
+    python scripts/generate_synthetic_image.py test.png --format png
 
     # Generate a 1024x1024 RGB image with 128x128 tiles
     python scripts/generate_synthetic_image.py rgb_test.ntf --width 1024 --height 1024 \\
@@ -70,17 +75,18 @@ class ImageConfig:
 
     Attributes:
         output_path: Path to the output file
-        format: Output format - "nitf" (default), "tiff", or "geotiff"
+        format: Output format - "nitf" (default), "tiff", "geotiff", or "png"
         width: Image width in pixels (default: 512)
         height: Image height in pixels (default: 512)
         tile_width: Tile width in pixels (default: 256)
         tile_height: Tile height in pixels (default: 256)
-        num_bands: Number of bands - 1 (grayscale), 3 (RGB), or 5 (multispectral)
+        num_bands: Number of bands - 1 (grayscale), 3 (RGB), 4 (RGBA), or 5 (multispectral)
         pixel_type: Pixel data type - "uint8" or "uint16"
         abpp: Actual bits per pixel (defaults to full range for pixel_type)
         imode: Interleave mode - "B", "P", "R", or "S" (NITF only)
         compression: Compression type. NITF: "NC" (none), "C8" (JPEG2000).
             TIFF: "none" (default), "lzw", "deflate".
+            PNG: always "deflate".
         comrat: Compression ratio for JPEG2000 (NITF only)
         masked: Enable masked output mode (NITF only)
         mask_pattern: Mask pattern type (checkerboard, border, random, single)
@@ -105,7 +111,7 @@ class ImageConfig:
     def __post_init__(self) -> None:
         """Validate configuration and set defaults."""
         # Normalize format: "geotiff" is an alias for "tiff"
-        valid_formats = ("nitf", "tiff", "geotiff")
+        valid_formats = ("nitf", "tiff", "geotiff", "png")
         if self.format not in valid_formats:
             raise ValueError(
                 f"Format must be one of {valid_formats}, got '{self.format}'"
@@ -128,7 +134,12 @@ class ImageConfig:
             raise ValueError(f"Tile height must not exceed 2048, got {self.tile_height}")
 
         # Validate band count
-        if self.num_bands not in (1, 3, 5):
+        if self.format == "png":
+            if self.num_bands not in (1, 3, 4):
+                raise ValueError(
+                    f"PNG supports 1, 3, or 4 bands, got {self.num_bands}"
+                )
+        elif self.num_bands not in (1, 3, 5):
             raise ValueError(f"Number of bands must be 1, 3, or 5, got {self.num_bands}")
 
         # Validate pixel type
@@ -145,7 +156,12 @@ class ImageConfig:
 
         if self.compression == "auto":
             # Set format-appropriate default
-            self.compression = "NC" if self.format == "nitf" else "none"
+            if self.format == "nitf":
+                self.compression = "NC"
+            elif self.format == "png":
+                self.compression = "deflate"
+            else:
+                self.compression = "none"
 
         if self.format == "nitf":
             if self.compression not in nitf_compressions:
@@ -158,6 +174,13 @@ class ImageConfig:
                 raise ValueError(
                     f"Compression '{self.compression}' is not valid for TIFF. "
                     f"Use one of: {', '.join(tiff_compressions)}"
+                )
+        elif self.format == "png":
+            # PNG always uses Deflate; only "auto" and "deflate" are accepted
+            if self.compression != "deflate":
+                raise ValueError(
+                    f"Compression '{self.compression}' is not valid for PNG. "
+                    f"PNG always uses Deflate compression."
                 )
 
         # Validate mask pattern
@@ -175,6 +198,16 @@ class ImageConfig:
         if self.format in ("tiff", "geotiff"):
             if self.masked:
                 raise ValueError("Masked output is not supported for TIFF format")
+
+        # Validate PNG-incompatible options
+        if self.format == "png":
+            if self.masked:
+                raise ValueError("Masked output is not supported for PNG format")
+            if self.imode != "B":
+                raise ValueError(
+                    f"IMODE '{self.imode}' is a NITF-specific option and is not "
+                    f"supported for PNG format"
+                )
 
         # Set ABPP to full bit depth if not specified
         max_bits = 8 if self.pixel_type == "uint8" else 16
@@ -754,6 +787,9 @@ Examples:
   %(prog)s output.tif --format tiff
       Generate a 512x512 grayscale TIFF image
 
+  %(prog)s output.png --format png
+      Generate a 512x512 grayscale PNG image
+
   %(prog)s output.ntf --width 1024 --height 1024 --bands 3
       Generate a 1024x1024 RGB image
 
@@ -773,8 +809,8 @@ Examples:
         "--format",
         type=str,
         default="nitf",
-        choices=["nitf", "tiff", "geotiff"],
-        help="Output format: nitf (default), tiff, or geotiff (alias for tiff)"
+        choices=["nitf", "tiff", "geotiff", "png"],
+        help="Output format: nitf (default), tiff, geotiff (alias for tiff), or png"
     )
 
     # Image dimension arguments
@@ -814,8 +850,8 @@ Examples:
         "--bands",
         type=int,
         default=1,
-        choices=[1, 3, 5],
-        help="Number of bands: 1 (grayscale), 3 (RGB), or 5 (multispectral) (default: 1)"
+        choices=[1, 3, 4, 5],
+        help="Number of bands: 1 (grayscale), 3 (RGB), 4 (RGBA, PNG only), or 5 (multispectral) (default: 1)"
     )
 
     # Pixel type arguments
@@ -852,7 +888,8 @@ Examples:
         help=(
             "Compression type. NITF: NC (none), C8 (JPEG2000). "
             "TIFF: none, lzw, deflate. "
-            "Default: auto (NC for NITF, none for TIFF)"
+            "PNG: always deflate. "
+            "Default: auto (NC for NITF, none for TIFF, deflate for PNG)"
         )
     )
     parser.add_argument(

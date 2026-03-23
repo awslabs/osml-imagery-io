@@ -1,0 +1,1 @@
+# PNG container property tests

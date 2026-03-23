@@ -399,3 +399,73 @@ def assert_mask_preserved(
         f"Missing from actual: {sorted(expected_masked - actual_masked)}\n"
         f"Extra in actual: {sorted(actual_masked - expected_masked)}"
     )
+
+
+def write_and_read_png(
+    array: np.ndarray,
+    pixel_type,
+    num_bands: int,
+    num_rows: int,
+    num_cols: int,
+    metadata_hints: dict | None = None,
+) -> np.ndarray:
+    """Write a PNG file and read back the decoded image.
+
+    Handles temp file lifecycle, provider setup, IO.open for write and read,
+    and full-image reassembly.
+
+    Args:
+        array: Source image in BSQ layout (bands, rows, cols).
+        pixel_type: PixelType enum value.
+        num_bands: Number of bands.
+        num_rows: Number of rows.
+        num_cols: Number of columns.
+        metadata_hints: Optional dict of metadata key/value pairs for tEXt chunks.
+
+    Returns:
+        Decoded image array in BSQ format (bands, rows, cols).
+    """
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        path = Path(f.name)
+
+    try:
+        metadata = BufferedMetadataProvider()
+        if metadata_hints:
+            for k, v in metadata_hints.items():
+                if isinstance(v, str):
+                    metadata.set(k, v)
+                else:
+                    metadata.set_json(k, v)
+
+        provider = BufferedImageAssetProvider.create(
+            key="image_segment_0",
+            num_columns=num_cols,
+            num_rows=num_rows,
+            num_bands=num_bands,
+            block_width=num_cols,
+            block_height=num_rows,
+            pixel_type=pixel_type,
+            metadata=metadata,
+        )
+        provider.set_full_image(array)
+
+        writer = IO.open([str(path)], "w", "png")
+        writer.metadata = metadata
+        writer.add_asset(
+            key="image_segment_0",
+            provider=provider,
+            title="Test Image",
+            description="Property test",
+            roles=["data"],
+        )
+        writer.close()
+
+        reader = IO.open([str(path)], "r")
+        asset = reader.get_asset("image_segment_0")
+        decoded = read_full_image(asset, num_bands, num_rows, num_cols)
+        reader.close()
+
+        return decoded
+    finally:
+        if path.exists():
+            path.unlink()

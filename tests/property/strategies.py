@@ -1464,3 +1464,59 @@ def geotiff_metadata(draw) -> dict:
         hints["34264"] = draw(transformation_matrix())
 
     return hints
+
+
+# =============================================================================
+# PNG Format Strategies
+# =============================================================================
+
+# Pixel types supported by PNG writer (8-bit and 16-bit unsigned integers)
+PNG_PIXEL_TYPES = [
+    PixelType.UInt8,
+    PixelType.UInt16,
+]
+
+# PNG-supported band counts: 1 (Gray), 2 (GrayAlpha), 3 (RGB), 4 (RGBA)
+PNG_BAND_COUNTS = [1, 2, 3, 4]
+
+
+def png_pixel_types() -> st.SearchStrategy[PixelType]:
+    """Strategy for PNG-supported pixel types: UInt8 and UInt16."""
+    return st.sampled_from(PNG_PIXEL_TYPES)
+
+
+def png_band_counts() -> st.SearchStrategy[int]:
+    """Strategy for PNG-supported band counts: 1 (Gray), 2 (GrayAlpha), 3 (RGB), 4 (RGBA)."""
+    return st.sampled_from(PNG_BAND_COUNTS)
+
+
+@st.composite
+def png_writable_image(
+    draw,
+    min_size: int = 16,
+    max_size: int = 64,
+) -> Tuple[np.ndarray, PixelType, int, int, int]:
+    """Composite strategy for a random image writable as PNG.
+
+    Generates a random image array (BSQ) together with pixel type metadata
+    suitable for writing via PNGDatasetWriter.
+
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        min_size: Minimum image dimension (default 16)
+        max_size: Maximum image dimension (default 64)
+
+    Returns:
+        Tuple of (array, pixel_type, num_bands, num_rows, num_cols)
+        - array: numpy array with shape (num_bands, num_rows, num_cols)
+        - pixel_type: PixelType enum value (UInt8 or UInt16)
+        - num_bands: number of bands (1, 2, 3, or 4)
+        - num_rows: number of rows
+        - num_cols: number of columns
+    """
+    pixel_type = draw(png_pixel_types())
+    num_bands = draw(png_band_counts())
+    num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
+    array = draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
+
+    return (array, pixel_type, num_bands, num_rows, num_cols)

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Survey a directory for image files and summarize key properties in a table.
 
-Scans for NITF (.ntf, .nitf, .nsf) and JPEG 2000 (.jp2, .j2k, .j2c) files,
-opens each with the IO reader, and prints a summary table of the first image
-segment found in each file.
+Scans for NITF (.ntf, .nitf, .nsf), JPEG 2000 (.jp2, .j2k, .j2c),
+TIFF/GeoTIFF (.tif, .tiff), and PNG (.png) files, opens each with the IO
+reader, and prints a summary table of the first image segment found in each
+file.
 
 Usage:
     python scripts/survey_images.py <directory>
@@ -21,7 +22,7 @@ from aws.osml.io import IO, AssetType  # noqa: E402
 from aws.osml.io.tiff import TagNameResolver  # noqa: E402
 
 # File extensions to scan
-EXTENSIONS = {".ntf", ".nitf", ".nsf", ".jp2", ".j2k", ".j2c", ".tif", ".tiff"}
+EXTENSIONS = {".ntf", ".nitf", ".nsf", ".jp2", ".j2k", ".j2c", ".tif", ".tiff", ".png"}
 
 # TIFF compression code to name mapping (common values)
 TIFF_COMPRESSION = {
@@ -67,6 +68,10 @@ def survey_file(filepath: Path) -> dict | None:
                 resolver = TagNameResolver(meta)
                 comp_code = resolver.get("Compression", "1")
                 compression = TIFF_COMPRESSION.get(str(comp_code), str(comp_code))
+                ic = "N/A"
+                imode = "N/A"
+            elif media == "image/png":
+                compression = "Deflate"
                 ic = "N/A"
                 imode = "N/A"
             else:

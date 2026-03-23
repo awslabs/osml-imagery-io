@@ -3,11 +3,12 @@
 
 This script uses the IO/DatasetReader APIs to dump information about
 a dataset file, including overall dataset info and each asset. Supports
-NITF (.ntf, .nitf, .nsf) and TIFF/GeoTIFF (.tif, .tiff) formats.
+NITF (.ntf, .nitf, .nsf), TIFF/GeoTIFF (.tif, .tiff), and PNG (.png) formats.
 
 Usage:
     python scripts/describe_dataset.py image.ntf
     python scripts/describe_dataset.py image.tif --metadata
+    python scripts/describe_dataset.py image.png --metadata
 """
 
 import argparse
@@ -272,11 +273,14 @@ Examples:
 
     # Describe a GeoTIFF file with full metadata
     python scripts/describe_dataset.py image.tif --metadata
+
+    # Describe a PNG file with full metadata
+    python scripts/describe_dataset.py image.png --metadata
 """
     )
     parser.add_argument(
         "path",
-        help="Path to the dataset file (NITF, TIFF/GeoTIFF)"
+        help="Path to the dataset file (NITF, TIFF/GeoTIFF, PNG)"
     )
     parser.add_argument(
         "--metadata", "-m",
