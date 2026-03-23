@@ -389,22 +389,21 @@ class TestRawView:
         assert isinstance(raw, bytes)
         assert raw == b"NITF"
 
-    def test_raw_view_field_byte_range(self, accessor):
-        """Test field_byte_range() returns offset and length."""
-        offset, length = accessor.field_byte_range("FHDR")
-        assert offset == 0
-        assert length == 4
+    def test_raw_view_field_size(self, accessor):
+        """Test raw_view() returns correct size for known fields."""
+        raw = accessor.raw_view("FHDR")
+        assert len(raw) == 4
+
+        raw = accessor.raw_view("FVER")
+        assert len(raw) == 5
 
     def test_raw_view_consistency(self, accessor):
-        """Test raw_view matches field_byte_range slice."""
-        raw = accessor.raw_view("FVER")
-        offset, length = accessor.field_byte_range("FVER")
+        """Test raw_view returns correct bytes for different fields."""
+        raw_fhdr = accessor.raw_view("FHDR")
+        raw_fver = accessor.raw_view("FVER")
 
-        # Get the same bytes from the data property
-        data = accessor.data
-        sliced = data[offset:offset + length]
-
-        assert raw == sliced
+        assert raw_fhdr == b"NITF"
+        assert raw_fver == b"02.10"
 
 
 # =============================================================================

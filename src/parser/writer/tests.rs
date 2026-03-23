@@ -43,21 +43,19 @@ fn create_definition_with_repeat() -> Arc<StructureDefinition> {
     )
 }
 
-// ==================== Fixed-size mode tests ====================
+// ==================== Streaming mode tests ====================
 
 #[test]
-fn new_fixed_creates_preallocated_buffer() {
+fn new_creates_empty_buffer() {
     let def = create_simple_definition();
-    let writer = StructureWriter::new_fixed(def).unwrap();
-
-    // 10 + 5 + 2 = 17 bytes
-    assert_eq!(writer.buffer().len(), 17);
+    let writer = StructureWriter::new(def);
+    assert_eq!(writer.buffer().len(), 0);
 }
 
 #[test]
-fn set_writes_at_correct_offset() {
+fn set_writes_sequentially() {
     let def = create_simple_definition();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("field1", "HELLO").unwrap();
 
@@ -67,14 +65,13 @@ fn set_writes_at_correct_offset() {
 }
 
 #[test]
-fn set_out_of_order_works_in_fixed_mode() {
+fn sequential_writes_produce_correct_output() {
     let def = create_simple_definition();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
-    // Write fields out of order
+    writer.set("field1", "HELLO").unwrap();
     writer.set("field2", "WORLD").unwrap();
     writer.set("field3", 42u64).unwrap();
-    writer.set("field1", "HELLO").unwrap();
 
     let buffer = writer.buffer();
 
@@ -87,12 +84,23 @@ fn set_out_of_order_works_in_fixed_mode() {
 }
 
 #[test]
+fn out_of_order_write_fails() {
+    let def = create_simple_definition();
+    let mut writer = StructureWriter::new(def);
+
+    // Try to write field2 before field1
+    let result = writer.set("field2", "WORLD");
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), WriteError::OutOfOrder { .. }));
+}
+
+#[test]
 fn is_set_tracks_written_fields() {
     let def = create_simple_definition();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     assert!(!writer.is_set("field1"));
-    writer.set("field1", "TEST").unwrap();
+    writer.set("field1", "HELLO").unwrap();
     assert!(writer.is_set("field1"));
     assert!(!writer.is_set("field2"));
 }
@@ -100,7 +108,7 @@ fn is_set_tracks_written_fields() {
 #[test]
 fn finish_returns_buffer() {
     let def = create_simple_definition();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("field1", "HELLO").unwrap();
     writer.set("field2", "WORLD").unwrap();
@@ -113,7 +121,7 @@ fn finish_returns_buffer() {
 #[test]
 fn finish_fails_if_required_field_missing() {
     let def = create_simple_definition();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("field1", "HELLO").unwrap();
     // field2 and field3 not written
@@ -126,9 +134,9 @@ fn finish_fails_if_required_field_missing() {
 #[test]
 fn value_too_large_error() {
     let def = create_simple_definition();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
-    // field1 is 10 bytes, try to write 15 bytes
+    // field1 is 10 bytes, try to write 16 bytes
     let result = writer.set("field1", "THIS IS TOO LONG");
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), WriteError::ValueTooLarge { .. }));
@@ -137,7 +145,7 @@ fn value_too_large_error() {
 #[test]
 fn padding_applied_for_short_strings() {
     let def = create_simple_definition();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("field1", "HI").unwrap();
 
@@ -151,7 +159,7 @@ fn padding_applied_for_short_strings() {
 #[test]
 fn bcs_a_validation_accepts_valid_chars() {
     let def = create_definition_with_encoding();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     // Valid BCS-A: ASCII 0x20-0x7E
     let result = writer.set("bcs_a_field", "Hello 123");
@@ -161,7 +169,7 @@ fn bcs_a_validation_accepts_valid_chars() {
 #[test]
 fn bcs_a_validation_rejects_invalid_chars() {
     let def = create_definition_with_encoding();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     // Invalid BCS-A: contains control character
     let result = writer.set("bcs_a_field", "Hello\x00");
@@ -172,9 +180,9 @@ fn bcs_a_validation_rejects_invalid_chars() {
 #[test]
 fn bcs_n_validation_accepts_digits_and_space() {
     let def = create_definition_with_encoding();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
-    writer.set("bcs_a_field", "TEST").unwrap(); // Need to write first field
+    writer.set("bcs_a_field", "TEST").unwrap();
 
     // Valid BCS-N: digits, space, plus, minus, decimal point, slash
     let result = writer.set("bcs_n_field", "+2.34");
@@ -184,7 +192,7 @@ fn bcs_n_validation_accepts_digits_and_space() {
 #[test]
 fn bcs_n_validation_rejects_letters() {
     let def = create_definition_with_encoding();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("bcs_a_field", "TEST").unwrap();
 
@@ -197,7 +205,7 @@ fn bcs_n_validation_rejects_letters() {
 #[test]
 fn bcs_n_uses_zero_padding() {
     let def = create_definition_with_encoding();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("bcs_a_field", "TEST").unwrap();
     writer.set("bcs_n_field", "12").unwrap();
@@ -211,9 +219,9 @@ fn bcs_n_uses_zero_padding() {
 // ==================== Repeated field tests ====================
 
 #[test]
-fn repeated_fields_with_index() {
+fn repeated_fields_sequential() {
     let def = create_definition_with_repeat();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("items_0", "AAA").unwrap();
     writer.set("items_1", "BBB").unwrap();
@@ -226,33 +234,42 @@ fn repeated_fields_with_index() {
 }
 
 #[test]
-fn repeated_fields_out_of_order() {
+fn repeated_fields_out_of_order_fails() {
     let def = create_definition_with_repeat();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
-    // Write in reverse order
-    writer.set("items_2", "CCC").unwrap();
-    writer.set("items_0", "AAA").unwrap();
-    writer.set("items_1", "BBB").unwrap();
-
-    let buffer = writer.buffer();
-    assert_eq!(&buffer[0..3], b"AAA");
-    assert_eq!(&buffer[4..7], b"BBB");
-    assert_eq!(&buffer[8..11], b"CCC");
+    // Try to write items_1 before items_0
+    let result = writer.set("items_1", "BBB");
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), WriteError::OutOfOrder { .. }));
 }
 
 #[test]
-fn finish_fails_if_repeated_element_missing() {
+fn repeated_fields_via_array() {
     let def = create_definition_with_repeat();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
+
+    // Write all elements at once via array
+    writer.set("items", vec!["AAA", "BBB", "CCC"]).unwrap();
+
+    let result = writer.finish().unwrap();
+    assert_eq!(result.len(), 12); // 3 * 4 bytes
+    assert_eq!(&result[0..3], b"AAA");
+    assert_eq!(&result[4..7], b"BBB");
+    assert_eq!(&result[8..11], b"CCC");
+}
+
+#[test]
+fn finish_fails_if_repeated_field_missing() {
+    let def = create_definition_with_repeat();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("items_0", "AAA").unwrap();
-    writer.set("items_2", "CCC").unwrap();
-    // items_1 not written
+    // items_1 and items_2 not written — can't skip in streaming mode
 
     let result = writer.finish();
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WriteError::MissingRequired { path } if path == "items_1"));
+    assert!(matches!(result.unwrap_err(), WriteError::MissingRequired { .. }));
 }
 
 // ==================== Integer encoding tests ====================
@@ -263,7 +280,7 @@ fn unsigned_integer_big_endian() {
         StructureDefinition::new("test")
             .with_field(FieldDefinition::new("value", FieldType::u2())),
     );
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("value", 0x1234u64).unwrap();
 
@@ -277,7 +294,7 @@ fn unsigned_integer_little_endian() {
             .with_endian(Endian::Little)
             .with_field(FieldDefinition::new("value", FieldType::u2())),
     );
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("value", 0x1234u64).unwrap();
 
@@ -290,7 +307,7 @@ fn signed_integer_encoding() {
         StructureDefinition::new("test")
             .with_field(FieldDefinition::new("value", FieldType::s2())),
     );
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("value", -1i64).unwrap();
 
@@ -298,78 +315,12 @@ fn signed_integer_encoding() {
     assert_eq!(writer.buffer(), &[0xFF, 0xFF]);
 }
 
-// ==================== Streaming mode tests ====================
-
-#[test]
-fn streaming_mode_sequential_writes() {
-    let def = create_simple_definition();
-    let mut writer = StructureWriter::new_streaming(def);
-
-    writer.set("field1", "HELLO").unwrap();
-    writer.set("field2", "WORLD").unwrap();
-    writer.set("field3", 42u64).unwrap();
-
-    let result = writer.finish().unwrap();
-    assert_eq!(result.len(), 17);
-    assert_eq!(&result[0..5], b"HELLO");
-    assert_eq!(&result[10..15], b"WORLD");
-}
-
-#[test]
-fn streaming_mode_out_of_order_fails() {
-    let def = create_simple_definition();
-    let mut writer = StructureWriter::new_streaming(def);
-
-    // Try to write field2 before field1
-    let result = writer.set("field2", "WORLD");
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WriteError::OutOfOrder { .. }));
-}
-
-#[test]
-fn streaming_mode_repeated_fields_sequential() {
-    let def = create_definition_with_repeat();
-    let mut writer = StructureWriter::new_streaming(def);
-
-    // Write repeated fields in order
-    writer.set("items_0", "AAA").unwrap();
-    writer.set("items_1", "BBB").unwrap();
-    writer.set("items_2", "CCC").unwrap();
-
-    let result = writer.finish().unwrap();
-    assert_eq!(result.len(), 12); // 3 * 4 bytes
-    assert_eq!(&result[0..3], b"AAA");
-    assert_eq!(&result[4..7], b"BBB");
-    assert_eq!(&result[8..11], b"CCC");
-}
-
-#[test]
-fn streaming_mode_repeated_fields_out_of_order_fails() {
-    let def = create_definition_with_repeat();
-    let mut writer = StructureWriter::new_streaming(def);
-
-    // Try to write items_1 before items_0
-    let result = writer.set("items_1", "BBB");
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WriteError::OutOfOrder { .. }));
-}
-
-#[test]
-fn streaming_mode_skipping_field_fails() {
-    let def = create_simple_definition();
-    let mut writer = StructureWriter::new_streaming(def);
-
-    writer.set("field1", "HELLO").unwrap();
-    // Skip field2, try to write field3
-    let result = writer.set("field3", 42u64);
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WriteError::OutOfOrder { .. }));
-}
+// ==================== Growable buffer tests ====================
 
 #[test]
 fn streaming_mode_growable_buffer() {
     let def = create_simple_definition();
-    let mut writer = StructureWriter::new_streaming(def);
+    let mut writer = StructureWriter::new(def);
 
     // Buffer should grow as we write
     assert_eq!(writer.buffer().len(), 0);
@@ -382,6 +333,18 @@ fn streaming_mode_growable_buffer() {
 
     writer.set("field3", 42u64).unwrap();
     assert_eq!(writer.buffer().len(), 17);
+}
+
+#[test]
+fn skipping_field_fails() {
+    let def = create_simple_definition();
+    let mut writer = StructureWriter::new(def);
+
+    writer.set("field1", "HELLO").unwrap();
+    // Skip field2, try to write field3
+    let result = writer.set("field3", 42u64);
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), WriteError::OutOfOrder { .. }));
 }
 
 // ==================== WriteValue conversion tests ====================
@@ -410,12 +373,18 @@ fn write_value_from_bytes() {
     assert!(matches!(value, WriteValue::Bytes(b) if b == vec![1, 2, 3]));
 }
 
+#[test]
+fn write_value_from_array() {
+    let value: WriteValue = vec!["a", "b", "c"].into();
+    assert!(matches!(value, WriteValue::Array(_)));
+}
+
 // ==================== write_to tests ====================
 
 #[test]
 fn write_to_outputs_to_writer() {
     let def = create_simple_definition();
-    let mut writer = StructureWriter::new_fixed(def).unwrap();
+    let mut writer = StructureWriter::new(def);
 
     writer.set("field1", "HELLO").unwrap();
     writer.set("field2", "WORLD").unwrap();

@@ -136,22 +136,22 @@ fn accessor_raw_slice() {
 }
 
 #[test]
-fn accessor_field_byte_range() {
+fn accessor_field_info_offsets() {
     let def = Arc::new(create_simple_definition());
     let data = b"TEST\x00\x01HELLO     ";
     let accessor = StructureAccessor::new(def, data).unwrap();
 
-    let (offset, size) = accessor.field_byte_range("magic").unwrap();
-    assert_eq!(offset, 0);
-    assert_eq!(size, 4);
+    let info = accessor.field_info("magic").unwrap();
+    assert_eq!(info.offset, 0);
+    assert_eq!(info.size, 4);
 
-    let (offset, size) = accessor.field_byte_range("version").unwrap();
-    assert_eq!(offset, 4);
-    assert_eq!(size, 2);
+    let info = accessor.field_info("version").unwrap();
+    assert_eq!(info.offset, 4);
+    assert_eq!(info.size, 2);
 
-    let (offset, size) = accessor.field_byte_range("name").unwrap();
-    assert_eq!(offset, 6);
-    assert_eq!(size, 10);
+    let info = accessor.field_info("name").unwrap();
+    assert_eq!(info.offset, 6);
+    assert_eq!(info.size, 10);
 }
 
 
@@ -200,8 +200,8 @@ fn accessor_raw_slice_non_contiguous_array() {
 }
 
 #[test]
-fn accessor_field_byte_range_non_contiguous_array() {
-    // Test that field_byte_range returns NonContiguous for array access without index
+fn accessor_field_info_non_contiguous_array() {
+    // Test that field_info for array fields returns base offset info
     let def = Arc::new(
         StructureDefinition::new("test_struct").with_field(
             FieldDefinition::new("items", FieldType::UnsignedInt(1))
@@ -212,13 +212,9 @@ fn accessor_field_byte_range_non_contiguous_array() {
     let data = b"\x01\x02\x03\x04";
     let accessor = StructureAccessor::new(def, data).unwrap();
 
-    // Accessing entire array should return NonContiguous
-    let result = accessor.field_byte_range("items");
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        AccessError::NonContiguous { .. }
-    ));
+    // field_info for a repeated field returns base offset info
+    let info = accessor.field_info("items").unwrap();
+    assert_eq!(info.offset, 0);
 }
 
 #[test]
@@ -274,18 +270,18 @@ fn accessor_big_endian() {
 }
 
 #[test]
-fn accessor_offset_caching() {
+fn accessor_caching_works() {
     let def = Arc::new(create_simple_definition());
     let data = b"TEST\x00\x01HELLO     ";
     let accessor = StructureAccessor::new(def, data).unwrap();
 
-    // First access calculates offset
+    // First access triggers parse
     let _ = accessor.get("name").unwrap();
 
-    // Check cache
-    let cache = accessor.offset_cache.borrow();
-    assert!(cache.contains_key("name"));
-    assert_eq!(cache.get("name"), Some(&(6, 10)));
+    // Verify field_info returns correct values (uses cached offsets)
+    let info = accessor.field_info("name").unwrap();
+    assert_eq!(info.offset, 6);
+    assert_eq!(info.size, 10);
 }
 
 
@@ -323,14 +319,14 @@ fn accessor_variable_offset_field() {
     let trailer_val = accessor.get("trailer").unwrap();
     assert_eq!(trailer_val.as_str().unwrap(), "DONE");
 
-    // Verify offsets
-    let (offset, size) = accessor.field_byte_range("data").unwrap();
-    assert_eq!(offset, 1);
-    assert_eq!(size, 5);
+    // Verify offsets via field_info
+    let info = accessor.field_info("data").unwrap();
+    assert_eq!(info.offset, 1);
+    assert_eq!(info.size, 5);
 
-    let (offset, size) = accessor.field_byte_range("trailer").unwrap();
-    assert_eq!(offset, 6);
-    assert_eq!(size, 4);
+    let info = accessor.field_info("trailer").unwrap();
+    assert_eq!(info.offset, 6);
+    assert_eq!(info.size, 4);
 }
 
 #[test]
@@ -344,14 +340,10 @@ fn accessor_caching_multiple_accesses() {
         let _ = accessor.get("name").unwrap();
     }
 
-    // Cache should have the entry
-    let cache = accessor.offset_cache.borrow();
-    assert!(cache.contains_key("name"));
-
-    // Verify cached value is correct
-    let (offset, size) = *cache.get("name").unwrap();
-    assert_eq!(offset, 6);
-    assert_eq!(size, 10);
+    // Verify cached value is correct via field_info
+    let info = accessor.field_info("name").unwrap();
+    assert_eq!(info.offset, 6);
+    assert_eq!(info.size, 10);
 }
 
 // ==================== Conditional Field Tests ====================
@@ -430,14 +422,14 @@ fn accessor_conditional_field_affects_offset() {
     // When condition is true, trailer is at offset 11
     let data_with_extra = b"\x01EXTRA     DONE";
     let accessor1 = StructureAccessor::new(Arc::clone(&def), data_with_extra).unwrap();
-    let (offset, _) = accessor1.field_byte_range("trailer").unwrap();
-    assert_eq!(offset, 11);
+    let info = accessor1.field_info("trailer").unwrap();
+    assert_eq!(info.offset, 11);
 
     // When condition is false, trailer is at offset 1
     let data_without_extra = b"\x00DONE";
     let accessor2 = StructureAccessor::new(def, data_without_extra).unwrap();
-    let (offset, _) = accessor2.field_byte_range("trailer").unwrap();
-    assert_eq!(offset, 1);
+    let info = accessor2.field_info("trailer").unwrap();
+    assert_eq!(info.offset, 1);
 }
 
 #[test]
@@ -698,15 +690,15 @@ fn accessor_typeref_simple_nested_type() {
     assert_eq!(trailer.as_str().unwrap(), "DONE");
 
     // Verify offsets
-    let (offset, size) = accessor.field_byte_range("header").unwrap();
+    let (offset, size) = accessor.calculate_field_offset("header", None).unwrap();
     assert_eq!(offset, 0);
     assert_eq!(size, 4);
 
-    let (offset, size) = accessor.field_byte_range("nested").unwrap();
+    let (offset, size) = accessor.calculate_field_offset("nested", None).unwrap();
     assert_eq!(offset, 4);
     assert_eq!(size, 6); // 4 bytes for field_a + 2 bytes for field_b
 
-    let (offset, size) = accessor.field_byte_range("trailer").unwrap();
+    let (offset, size) = accessor.calculate_field_offset("trailer", None).unwrap();
     assert_eq!(offset, 10);
     assert_eq!(size, 4);
 }
@@ -764,12 +756,12 @@ fn accessor_typeref_with_conditional_present() {
     assert_eq!(trailer.as_str().unwrap(), "DONE");
 
     // Verify band offset and size (2 + 1 + 4 = 7 bytes when conditional is present)
-    let (offset, size) = accessor.field_byte_range("band").unwrap();
+    let (offset, size) = accessor.calculate_field_offset("band", None).unwrap();
     assert_eq!(offset, 4);
     assert_eq!(size, 7);
 
     // Verify trailer offset
-    let (offset, _) = accessor.field_byte_range("trailer").unwrap();
+    let (offset, _) = accessor.calculate_field_offset("trailer", None).unwrap();
     assert_eq!(offset, 11);
 }
 
@@ -816,12 +808,12 @@ fn accessor_typeref_fixed_nested_type() {
     assert_eq!(trailer.as_str().unwrap(), "DONE");
 
     // Verify band offset and size (2 + 1 = 3 bytes)
-    let (offset, size) = accessor.field_byte_range("band").unwrap();
+    let (offset, size) = accessor.calculate_field_offset("band", None).unwrap();
     assert_eq!(offset, 4);
     assert_eq!(size, 3);
 
     // Verify trailer offset
-    let (offset, _) = accessor.field_byte_range("trailer").unwrap();
+    let (offset, _) = accessor.calculate_field_offset("trailer", None).unwrap();
     assert_eq!(offset, 7);
 }
 
@@ -881,7 +873,7 @@ fn accessor_typeref_repeated() {
     assert_eq!(trailer.as_str().unwrap(), "DONE");
 
     // Verify trailer offset: 1 (count) + 2 * 6 (items) = 13
-    let (offset, _) = accessor.field_byte_range("trailer").unwrap();
+    let (offset, _) = accessor.calculate_field_offset("trailer", None).unwrap();
     assert_eq!(offset, 13);
 }
 
@@ -900,7 +892,7 @@ fn accessor_typeref_repeated_zero_count() {
     let trailer = accessor.get("trailer").unwrap();
     assert_eq!(trailer.as_str().unwrap(), "DONE");
 
-    let (offset, _) = accessor.field_byte_range("trailer").unwrap();
+    let (offset, _) = accessor.calculate_field_offset("trailer", None).unwrap();
     assert_eq!(offset, 1);
 }
 
@@ -1424,12 +1416,12 @@ fn accessor_typeref_with_expression_size_lut_present() {
 
     // Verify band offset and size
     // band_id(2) + nluts(1) + nelut(2) + lut_data(4*2=8) = 13 bytes
-    let (offset, size) = accessor.field_byte_range("band").unwrap();
+    let (offset, size) = accessor.calculate_field_offset("band", None).unwrap();
     assert_eq!(offset, 4);
     assert_eq!(size, 13);
 
     // Verify trailer offset
-    let (offset, _) = accessor.field_byte_range("trailer").unwrap();
+    let (offset, _) = accessor.calculate_field_offset("trailer", None).unwrap();
     assert_eq!(offset, 17); // 4 (header) + 13 (band) = 17
 }
 
@@ -1461,11 +1453,11 @@ fn accessor_typeref_with_expression_size_no_lut() {
 
     // Verify band offset and size
     // band_id(2) + nluts(1) = 3 bytes (no nelut or lut_data)
-    let (offset, size) = accessor.field_byte_range("band").unwrap();
+    let (offset, size) = accessor.calculate_field_offset("band", None).unwrap();
     assert_eq!(offset, 4);
     assert_eq!(size, 3);
 
     // Verify trailer offset
-    let (offset, _) = accessor.field_byte_range("trailer").unwrap();
+    let (offset, _) = accessor.calculate_field_offset("trailer", None).unwrap();
     assert_eq!(offset, 7); // 4 (header) + 3 (band) = 7
 }

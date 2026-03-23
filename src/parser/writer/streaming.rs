@@ -3,8 +3,6 @@
 //! This module handles sequential field writing where fields must be written
 //! in definition order.
 
-use std::collections::HashSet;
-
 use crate::parser::error::WriteError;
 use crate::parser::expression::{EvalContext, EvalResult, ExpressionEvaluator};
 use crate::parser::types::{FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition};
@@ -22,17 +20,6 @@ pub fn get_expected_streaming_field(
             path: "".to_string(),
             message: "No more fields expected".to_string(),
         })
-}
-
-/// Check if the given index is expected for a repeated field.
-pub fn is_expected_index(field: &FieldDefinition, index: usize, written: &HashSet<String>) -> bool {
-    // Count how many elements of this field have been written
-    let written_count = (0..=index)
-        .filter(|i| written.contains(&format!("{}_{}", field.id, i)))
-        .count();
-
-    // The expected index is the count of already written elements
-    index == written_count || (written_count == 0 && index == 0)
 }
 
 /// Get the last written field name for error messages.
@@ -90,30 +77,6 @@ pub fn get_streaming_field_size(
                 }),
             }
         }
-    }
-}
-
-/// Determine if streaming position should advance after writing a field.
-///
-/// Returns true if the next_field_index should be incremented.
-pub fn should_advance_streaming_position(
-    field: &FieldDefinition,
-    index: Option<usize>,
-    written: &HashSet<String>,
-    evaluator: &ExpressionEvaluator,
-    ctx: &EvalContext,
-) -> bool {
-    if let Some(ref repeat) = field.repeat {
-        // For repeated fields, check if we've written all expected elements
-        let expected_count = get_repeat_count(repeat, &field.id, evaluator, ctx).unwrap_or(0);
-        let written_count = (0..expected_count)
-            .filter(|i| written.contains(&format!("{}_{}", field.id, i)))
-            .count();
-
-        written_count >= expected_count
-    } else {
-        // Non-repeated field, advance to next
-        index.is_none()
     }
 }
 

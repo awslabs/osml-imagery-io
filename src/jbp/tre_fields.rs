@@ -154,34 +154,43 @@ pub fn serialize_tre_fields(
         None => return Ok(None), // Unknown TRE - no definition exists
     };
     
-    // Create a writer for the TRE structure
-    let mut writer = StructureWriter::new_fixed(definition)?;
+    // Create a streaming writer for the TRE structure (fields written in definition order)
+    let mut writer = StructureWriter::new(Arc::clone(&definition));
     
-    // Write each field from the group
-    for (field_name, value) in &group.fields {
-        // Convert field name to lowercase for matching
-        let normalized_field = field_name.to_lowercase();
+    // Write fields in definition order by iterating the definition's fields
+    // and looking up values from the group
+    for field_def in &definition.fields {
+        let field_id_lower = field_def.id.to_lowercase();
         
-        // Convert JSON value to WriteValue
-        match value {
-            serde_json::Value::String(s) => {
-                writer.set(&normalized_field, s.as_str())?;
+        // Find the matching value in the group (case-insensitive)
+        let value = group.fields.iter().find_map(|(name, val)| {
+            if name.to_lowercase() == field_id_lower {
+                Some(val)
+            } else {
+                None
             }
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    writer.set(&normalized_field, i)?;
-                } else if let Some(u) = n.as_u64() {
-                    writer.set(&normalized_field, u)?;
-                } else if let Some(f) = n.as_f64() {
-                    writer.set(&normalized_field, f)?;
+        });
+        
+        if let Some(value) = value {
+            match value {
+                serde_json::Value::String(s) => {
+                    writer.set(&field_def.id, s.as_str())?;
                 }
-            }
-            serde_json::Value::Bool(b) => {
-                // Convert bool to string "0" or "1"
-                writer.set(&normalized_field, if *b { "1" } else { "0" })?;
-            }
-            _ => {
-                // Skip null, arrays, and objects for now
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        writer.set(&field_def.id, i)?;
+                    } else if let Some(u) = n.as_u64() {
+                        writer.set(&field_def.id, u)?;
+                    } else if let Some(f) = n.as_f64() {
+                        writer.set(&field_def.id, f)?;
+                    }
+                }
+                serde_json::Value::Bool(b) => {
+                    writer.set(&field_def.id, if *b { "1" } else { "0" })?;
+                }
+                _ => {
+                    // Skip null, arrays, and objects for now
+                }
             }
         }
     }

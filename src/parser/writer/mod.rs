@@ -1,10 +1,8 @@
 //! Structure writer for encoding values into binary format.
 //!
-//! The [`StructureWriter`] supports both fixed-size mode (out-of-order writes)
-//! and streaming mode (sequential writes) for encoding binary data.
+//! The [`StructureWriter`] uses streaming mode for sequential field writes.
 
 mod encode;
-mod fixed;
 mod integer;
 mod streaming;
 mod validation;
@@ -18,20 +16,10 @@ use super::expression::{EvalContext, EvalResult, ExpressionEvaluator};
 use super::types::{FieldDefinition, StructureDefinition};
 
 use encode::encode_value;
-use fixed::calculate_fixed_layout;
 use streaming::{
     get_expected_streaming_field, get_last_written_field, get_repeat_count,
-    get_streaming_field_size, is_expected_index, should_advance_streaming_position,
+    get_streaming_field_size,
 };
-
-/// Writing mode for the structure writer.
-#[derive(Debug, Clone)]
-pub enum WriterMode {
-    /// Fixed-size buffer, fields can be written in any order
-    Fixed { size: usize },
-    /// Streaming mode, fields must be written in order
-    Streaming,
-}
 
 /// Value types accepted for writing.
 #[derive(Debug, Clone)]
@@ -46,6 +34,8 @@ pub enum WriteValue {
     Unsigned(u64),
     /// Floating-point value
     Float(f64),
+    /// Array of values (for repeated fields)
+    Array(Vec<WriteValue>),
 }
 
 impl From<String> for WriteValue {
@@ -102,91 +92,79 @@ impl From<f64> for WriteValue {
     }
 }
 
+impl<T: Into<WriteValue>> From<Vec<T>> for WriteValue {
+    fn from(v: Vec<T>) -> Self {
+        WriteValue::Array(v.into_iter().map(Into::into).collect())
+    }
+}
+
 /// Writer for encoding values according to a structure definition.
+///
+/// Fields must be written in definition order. For repeated fields,
+/// pass a `WriteValue::Array` or write elements sequentially with
+/// indexed paths (`field_0`, `field_1`, ...).
 pub struct StructureWriter {
     /// The structure definition
     definition: Arc<StructureDefinition>,
     /// Output buffer
     buffer: Vec<u8>,
-    /// Current write position (for streaming mode)
+    /// Current write position
     position: usize,
-    /// Fields that have been written
+    /// Fields that have been written (base names)
     written: HashSet<String>,
-    /// Writing mode
-    mode: WriterMode,
-    /// Cached field offsets: field_id -> (offset, size)
-    field_offsets: HashMap<String, (usize, usize)>,
     /// Expression evaluator for size expressions
     evaluator: ExpressionEvaluator,
     /// Values written so far (for expression evaluation)
     written_values: HashMap<String, WriteValue>,
-    /// Next expected field index for streaming mode
+    /// Next expected field index
     next_field_index: usize,
+    /// Count of elements written for current repeated field
+    current_repeat_written: usize,
 }
 
 impl StructureWriter {
-    /// Create writer for fixed-size structure.
-    ///
-    /// Pre-allocates a buffer of the correct size based on the structure definition.
-    /// Fields can be written in any order.
-    pub fn new_fixed(definition: Arc<StructureDefinition>) -> Result<Self, WriteError> {
-        // Calculate total size and field offsets
-        let (total_size, field_offsets) = calculate_fixed_layout(&definition)?;
-
-        // Pre-allocate buffer filled with zeros
-        let buffer = vec![0u8; total_size];
-
-        Ok(Self {
-            definition,
-            buffer,
-            position: 0,
-            written: HashSet::new(),
-            mode: WriterMode::Fixed { size: total_size },
-            field_offsets,
-            evaluator: ExpressionEvaluator::new(),
-            written_values: HashMap::new(),
-            next_field_index: 0,
-        })
-    }
-
-    /// Create streaming writer for variable-size structure.
+    /// Create a new streaming writer.
     ///
     /// Fields must be written in definition order.
-    pub fn new_streaming(definition: Arc<StructureDefinition>) -> Self {
+    pub fn new(definition: Arc<StructureDefinition>) -> Self {
         Self {
             definition,
             buffer: Vec::new(),
             position: 0,
             written: HashSet::new(),
-            mode: WriterMode::Streaming,
-            field_offsets: HashMap::new(),
             evaluator: ExpressionEvaluator::new(),
             written_values: HashMap::new(),
             next_field_index: 0,
+            current_repeat_written: 0,
         }
+    }
+
+    /// Create streaming writer (alias for `new` for backward compatibility).
+    pub fn new_streaming(definition: Arc<StructureDefinition>) -> Self {
+        Self::new(definition)
     }
 
     /// Write a value to a field.
     ///
-    /// In fixed-size mode, fields can be written in any order.
-    /// In streaming mode, fields must be written in definition order.
+    /// For repeated fields, pass a `WriteValue::Array` with all elements,
+    /// or write elements one at a time in order.
     pub fn set(&mut self, path: &str, value: impl Into<WriteValue>) -> Result<(), WriteError> {
         let write_value = value.into();
 
-        // Parse the path to handle indexed fields (e.g., "items_0")
-        let (field_name, index) = self.parse_path(path);
-
-        // Find the field definition
-        let field = self.find_field(&field_name)?;
-
-        match &self.mode {
-            WriterMode::Fixed { .. } => {
-                self.write_fixed(&field_name, index, &field.clone(), write_value, path)
-            }
-            WriterMode::Streaming => {
-                self.write_streaming(&field_name, index, &field.clone(), write_value, path)
+        // Check if this is an array value for a repeated field
+        if let WriteValue::Array(ref elements) = write_value {
+            let field_name = path.to_string();
+            let field = self.find_field(&field_name)?;
+            if field.repeat.is_some() {
+                return self.write_array(&field_name, &field.clone(), elements.clone());
             }
         }
+
+        // Parse the path to handle indexed fields (e.g., "items_0")
+        let (field_name, index) = self.parse_path(path);
+        let field = self.find_field(&field_name)?;
+
+        self.write_streaming(&field_name, index, &field.clone(), write_value, path)
     }
 
     /// Check if a field has been written.
@@ -195,36 +173,24 @@ impl StructureWriter {
     }
 
     /// Finalize and return encoded bytes.
-    ///
-    /// Returns MissingRequired error if any required fields have not been written.
     pub fn finish(self) -> Result<Vec<u8>, WriteError> {
-        // Check that all required fields have been written
         for field in &self.definition.fields {
-            // Skip conditional fields - they may not be required
             if field.condition.is_some() {
                 continue;
             }
 
-            // Check if field is repeated
             if let Some(ref repeat) = field.repeat {
-                // For repeated fields, check if at least the expected count was written
                 let ctx = self.build_eval_context();
                 let expected_count = get_repeat_count(repeat, &field.id, &self.evaluator, &ctx)?;
-                for i in 0..expected_count {
-                    let indexed_path = format!("{}_{}", field.id, i);
-                    if !self.written.contains(&indexed_path) {
-                        return Err(WriteError::MissingRequired {
-                            path: indexed_path,
-                        });
-                    }
-                }
-            } else {
-                // Non-repeated field
-                if !self.written.contains(&field.id) {
+                if expected_count > 0 && !self.written.contains(&field.id) {
                     return Err(WriteError::MissingRequired {
                         path: field.id.clone(),
                     });
                 }
+            } else if !self.written.contains(&field.id) {
+                return Err(WriteError::MissingRequired {
+                    path: field.id.clone(),
+                });
             }
         }
 
@@ -245,8 +211,6 @@ impl StructureWriter {
     }
 
     /// Get the current buffer contents without validation.
-    ///
-    /// This is useful for testing or when you want to inspect partial writes.
     pub fn buffer(&self) -> &[u8] {
         &self.buffer
     }
@@ -255,12 +219,14 @@ impl StructureWriter {
 
     /// Parse a field path into (field_name, optional_index).
     fn parse_path(&self, path: &str) -> (String, Option<usize>) {
-        // Check if the path has an underscore index (e.g., "items_0")
         if let Some(underscore_pos) = path.rfind('_') {
             let potential_index = &path[underscore_pos + 1..];
             if let Ok(index) = potential_index.parse::<usize>() {
                 let field_name = path[..underscore_pos].to_string();
-                return (field_name, Some(index));
+                // Only treat as indexed if the base name is a known field
+                if self.definition.fields.iter().any(|f| f.id == field_name) {
+                    return (field_name, Some(index));
+                }
             }
         }
         (path.to_string(), None)
@@ -279,40 +245,17 @@ impl StructureWriter {
             })
     }
 
-    /// Write a field in fixed-size mode.
-    fn write_fixed(
+    /// Write an array of values for a repeated field.
+    fn write_array(
         &mut self,
         field_name: &str,
-        index: Option<usize>,
         field: &FieldDefinition,
-        value: WriteValue,
-        path: &str,
+        elements: Vec<WriteValue>,
     ) -> Result<(), WriteError> {
-        // Get the offset and size for this field
-        let cache_key = match index {
-            Some(i) => format!("{}_{}", field_name, i),
-            None => field_name.to_string(),
-        };
-
-        let (offset, size) = self
-            .field_offsets
-            .get(&cache_key)
-            .copied()
-            .ok_or_else(|| WriteError::ValidationError {
-                path: path.to_string(),
-                message: "Field not found in fixed layout".to_string(),
-            })?;
-
-        // Encode the value
-        let encoded = encode_value(&value, field, size, self.definition.endian, path)?;
-
-        // Write to buffer
-        self.buffer[offset..offset + size].copy_from_slice(&encoded);
-
-        // Mark as written
-        self.written.insert(cache_key.clone());
-        self.written_values.insert(cache_key, value);
-
+        for (i, elem) in elements.into_iter().enumerate() {
+            let path = format!("{}_{}", field_name, i);
+            self.write_streaming(field_name, Some(i), field, elem, &path)?;
+        }
         Ok(())
     }
 
@@ -325,13 +268,10 @@ impl StructureWriter {
         value: WriteValue,
         path: &str,
     ) -> Result<(), WriteError> {
-        // Find the expected field at current position
         let expected_field = get_expected_streaming_field(&self.definition, self.next_field_index)?;
 
-        // Check if we're writing the expected field
         let is_expected = if let Some(idx) = index {
-            // For indexed fields, check both field name and index
-            expected_field.id == field_name && is_expected_index(&expected_field, idx, &self.written)
+            expected_field.id == field_name && idx == self.current_repeat_written
         } else {
             expected_field.id == field_name && expected_field.repeat.is_none()
         };
@@ -343,28 +283,32 @@ impl StructureWriter {
             });
         }
 
-        // Get the size for this field
         let ctx = self.build_eval_context();
         let size = get_streaming_field_size(field, &self.evaluator, &ctx)?;
 
-        // Encode the value
         let encoded = encode_value(&value, field, size, self.definition.endian, path)?;
 
-        // Append to buffer
         self.buffer.extend_from_slice(&encoded);
         self.position += size;
 
-        // Mark as written
-        let cache_key = match index {
-            Some(i) => format!("{}_{}", field_name, i),
-            None => field_name.to_string(),
-        };
-        self.written.insert(cache_key.clone());
-        self.written_values.insert(cache_key, value);
+        // Track written values for eval context
+        let eval_key = field_name.to_string();
+        self.written_values.insert(eval_key, value);
 
-        // Advance to next field if this completes the current field
-        let ctx = self.build_eval_context();
-        if should_advance_streaming_position(field, index, &self.written, &self.evaluator, &ctx) {
+        // Handle repeat advancement
+        if let Some(_idx) = index {
+            self.current_repeat_written += 1;
+            // Check if all elements written
+            if let Some(ref repeat) = field.repeat {
+                let expected_count = get_repeat_count(repeat, &field.id, &self.evaluator, &ctx)?;
+                if self.current_repeat_written >= expected_count {
+                    self.written.insert(field_name.to_string());
+                    self.next_field_index += 1;
+                    self.current_repeat_written = 0;
+                }
+            }
+        } else {
+            self.written.insert(field_name.to_string());
             self.next_field_index += 1;
         }
 
@@ -391,9 +335,7 @@ impl StructureWriter {
                 WriteValue::Float(f) => {
                     ctx.fields.insert(name.clone(), EvalResult::Float(*f));
                 }
-                WriteValue::Bytes(_) => {
-                    // Bytes don't have a direct EvalResult representation
-                }
+                WriteValue::Bytes(_) | WriteValue::Array(_) => {}
             }
         }
 

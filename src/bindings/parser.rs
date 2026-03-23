@@ -549,9 +549,7 @@ impl PyStructureAccessor {
 
     /// Return the raw bytes for a field without interpretation.
     ///
-    /// Useful for passing binary data to external decoders. For zero-copy
-    /// access, use :meth:`field_byte_range` to get the offset and length,
-    /// then slice the original data directly.
+    /// Useful for passing binary data to external decoders.
     ///
     /// :param path: The field path.
     /// :type path: str
@@ -563,18 +561,6 @@ impl PyStructureAccessor {
         let accessor = self.get_accessor()?;
         let slice = accessor.raw_slice(path)?;
         Ok(PyBytes::new_bound(py, slice))
-    }
-
-    /// Return the byte offset and length for a field.
-    ///
-    /// :param path: The field path.
-    /// :type path: str
-    /// :returns: A tuple of ``(offset, length)`` within the data buffer.
-    /// :rtype: tuple[int, int]
-    /// :raises KeyError: If the field does not exist.
-    fn field_byte_range(&self, path: &str) -> PyResult<(usize, usize)> {
-        let accessor = self.get_accessor()?;
-        Ok(accessor.field_byte_range(path)?)
     }
 
     /// The underlying binary data buffer.
@@ -611,18 +597,18 @@ impl PyStructureAccessor {
 /// Encodes values into binary data according to a :class:`StructureDefinition`.
 ///
 /// A ``StructureWriter`` serializes field values into the correct binary layout
-/// defined by a ``.ksy`` structure definition. Two modes are available:
-/// fixed-size mode (via :meth:`new_fixed`) allows fields to be written in any
-/// order, while streaming mode (via :meth:`new_streaming`) requires fields in
+/// defined by a ``.ksy`` structure definition. Fields must be written in
 /// definition order. Call :meth:`finish` to retrieve the final encoded bytes.
 /// Field values are set using bracket notation or the :meth:`set` method, and
 /// accepted types include ``str``, ``int``, ``float``, and ``bytes``.
+/// For repeated fields, write elements sequentially with indexed paths
+/// (``field_0``, ``field_1``, ...).
 ///
 /// Example::
 ///
 ///     from aws.osml.io import StructureWriter
 ///
-///     writer = StructureWriter.new_fixed(definition)
+///     writer = StructureWriter.new_streaming(definition)
 ///     writer["field1"] = "value1"
 ///     writer["field2"] = 42
 ///     data = writer.finish()
@@ -647,31 +633,13 @@ impl PyStructureWriter {
 
 #[pymethods]
 impl PyStructureWriter {
-    /// Create a writer for fixed-size structures.
-    ///
-    /// Pre-allocates a buffer of the correct size so fields can be written
-    /// in any order.
-    ///
-    /// :param definition: The :class:`StructureDefinition` to encode against.
-    /// :type definition: StructureDefinition
-    /// :returns: A new writer in fixed-size mode.
-    /// :rtype: StructureWriter
-    /// :raises ValueError: If the definition has variable-length fields.
-    #[staticmethod]
-    fn new_fixed(definition: &PyStructureDefinition) -> PyResult<Self> {
-        let writer = StructureWriter::new_fixed(Arc::clone(&definition.inner))?;
-        Ok(Self {
-            inner: Some(writer),
-        })
-    }
-
-    /// Create a streaming writer for variable-size structures.
+    /// Create a streaming writer.
     ///
     /// Fields must be written in definition order.
     ///
     /// :param definition: The :class:`StructureDefinition` to encode against.
     /// :type definition: StructureDefinition
-    /// :returns: A new writer in streaming mode.
+    /// :returns: A new writer.
     /// :rtype: StructureWriter
     #[staticmethod]
     fn new_streaming(definition: &PyStructureDefinition) -> Self {

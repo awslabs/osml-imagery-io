@@ -14,44 +14,134 @@ Key differences from Kaitai Struct:
 | Expression syntax | Full Kaitai expression language | Subset (see below) |
 | `instances` | Supported | Not implemented |
 | `params` | Supported | Not implemented |
-| Array indexing | `arr[0]` syntax | `arr_0` naming convention |
-| Bitwise operators | Supported | Not yet implemented |
-| NITF encodings | Not built-in | BCS-A, BCS-N, ECS-A support |
+| Array indexing | `arr[0]` bracket syntax | `arr_0` indexed paths (internal); `Value::Array` (public API) |
+| NITF encodings | Not built-in | BCS-A, BCS-N, BCS-NPI, ECS-A support |
 | Writing support | Limited | Full bidirectional read/write |
 
 Our definition files use the `.ksy` extension for familiarity but should be considered a Kaitai-inspired format rather than true Kaitai Struct files. They may not work with the official Kaitai Struct compiler.
 
 ## Architecture Overview
 
+The parser is organized around six key types that separate concerns between schema definition, reading, writing, expression evaluation, and definition management.
+
+```mermaid
+classDiagram
+    class StructureRegistry {
+        -search_paths: Vec~PathBuf~
+        -file_cache: HashMap~String, Arc~StructureDefinition~~
+        -runtime_defs: HashMap~String, Arc~StructureDefinition~~
+        +add_search_path(path)
+        +get(name) Option~Arc~StructureDefinition~~
+        +register(name, def)
+        +unregister(name)
+        +list() Vec~String~
+        +reload()
+    }
+
+    class DefinitionLoader {
+        +load_file(path)$ StructureDefinition
+        +load_str(yaml)$ StructureDefinition
+        +load_reader(reader)$ StructureDefinition
+        +validate_type_references(def)$
+    }
+
+    class StructureDefinition {
+        +id: String
+        +title: Option~String~
+        +endian: Endian
+        +fields: Vec~FieldDefinition~
+        +types: HashMap~String, StructureDefinition~
+        +enums: HashMap~String, EnumDefinition~
+    }
+
+    class FieldDefinition {
+        +id: String
+        +field_type: FieldType
+        +size: SizeSpec
+        +encoding: Option~Encoding~
+        +condition: Option~Expression~
+        +repeat: Option~RepeatSpec~
+        +doc: Option~String~
+    }
+
+    class StructureAccessor {
+        -definition: Arc~StructureDefinition~
+        -data: &[u8]
+        -repeat_offsets: RefCell~HashMap~
+        -parsed: RefCell~bool~
+        +new(definition, data) Result
+        +get(path) Result~Value~
+        +has(path) bool
+        +fields() Iterator~String~
+        +raw_slice(path) Result~&[u8]~
+        +field_info(path) Result~FieldInfo~
+    }
+
+    class StructureWriter {
+        -definition: Arc~StructureDefinition~
+        -buffer: Vec~u8~
+        -position: usize
+        -written: HashSet~String~
+        -next_field_index: usize
+        -current_repeat_written: usize
+        +new(definition) Self
+        +set(path, value) Result
+        +finish() Result~Vec~u8~~
+        +write_to(writer) Result~usize~
+    }
+
+    class ExpressionEvaluator {
+        +parse(expr)$ Result~Expression~
+        +evaluate(expr, context) Result~EvalResult~
+    }
+
+    class EvalContext {
+        +fields: HashMap~String, EvalResult~
+        +index: Option~usize~
+        +with_field(path, value) Self
+        +with_index(index) Self
+    }
+
+    class Value {
+        <<enum>>
+        String
+        Bytes
+        Unsigned(u64)
+        Struct(StructValue)
+        Array(Vec~Value~)
+    }
+
+    StructureRegistry --> DefinitionLoader : uses to load
+    StructureRegistry o-- StructureDefinition : caches
+    DefinitionLoader ..> StructureDefinition : produces
+    StructureDefinition *-- FieldDefinition : contains
+    StructureDefinition *-- StructureDefinition : nested types
+    StructureAccessor --> StructureDefinition : reads against
+    StructureAccessor --> ExpressionEvaluator : evaluates conditions/sizes
+    StructureAccessor ..> EvalContext : builds for evaluation
+    StructureAccessor ..> Value : returns
+    StructureWriter --> StructureDefinition : writes against
+    StructureWriter --> ExpressionEvaluator : evaluates expressions
+    StructureWriter ..> EvalContext : builds for evaluation
+    FieldDefinition --> Expression : condition/repeat/size expressions
+    ExpressionEvaluator --> EvalContext : reads field values from
 ```
-src/parser/
-├── mod.rs              # Public API exports
-├── definition.rs       # YAML definition loading (uses serde_yaml)
-├── types.rs            # Core types: StructureDefinition, FieldDefinition, etc.
-├── value.rs            # Value type with type conversions
-├── error.rs            # Error types (uses thiserror)
-├── encoding.rs         # NITF character set validation (BCS-A, BCS-N, ECS-A)
-├── registry.rs         # Structure definition registry with search paths
-├── accessor/           # Reading binary data
-│   ├── mod.rs          # StructureAccessor public API
-│   ├── offset.rs       # Field offset calculation
-│   ├── read.rs         # Value reading from bytes
-│   ├── iterator.rs     # Field iteration
-│   └── context.rs      # Expression evaluation context building
-├── expression/         # Expression parsing and evaluation
-│   ├── mod.rs          # Expression AST types
-│   ├── lexer.rs        # Hand-written tokenizer
-│   ├── parser.rs       # Recursive descent parser
-│   ├── eval.rs         # Expression evaluator
-│   └── ops.rs          # Operator implementations
-└── writer/             # Writing binary data
-    ├── mod.rs          # StructureWriter public API
-    ├── encode.rs       # Value encoding
-    ├── integer.rs      # Integer encoding
-    ├── fixed.rs        # Fixed-size structure writing
-    ├── streaming.rs    # Variable-size streaming writing
-    └── validation.rs   # Write validation
-```
+
+### Key Types
+
+- **`StructureRegistry`** is the top-level manager that loads and caches `StructureDefinition`s from KSY (Kaitai Struct YAML) files on disk, delegating parsing to `DefinitionLoader`. It supports multiple search paths with last-wins priority, runtime registration of definitions, and lazy loading with caching.
+
+- **`DefinitionLoader`** deserializes KSY YAML into intermediate `Raw*` structs via `serde_yaml`, then converts them to the final `StructureDefinition` type. All methods are static — the loader is stateless.
+
+- **`StructureDefinition`** / **`FieldDefinition`** form the schema layer — a declarative description of a binary format's fields, types, sizes, conditions, and repeats. Definitions can contain nested type definitions and enum mappings.
+
+- **`StructureAccessor`** is the read path. Given a definition and a byte slice, it lazily parses field offsets via a single O(n) pass on first access, caching repeat element offsets for efficient indexed access. All subsequent field accesses are O(1) lookups. It provides a map-like `get(path)` interface returning `Value` instances, with repeated fields returned as `Value::Array`. It uses `ExpressionEvaluator` to resolve dynamic sizes and conditional fields.
+
+- **`StructureWriter`** is the write path. It uses streaming mode where fields must be written in definition order. It accepts field values via `set(path, value)` and serializes them into bytes according to the definition. For repeated fields, callers can pass a `WriteValue::Array` with all elements at once, or write elements sequentially with indexed paths.
+
+- **`ExpressionEvaluator`** + **`EvalContext`** handle the expression language (arithmetic, comparisons, bitwise operations, field references) used in conditional fields, computed sizes, and repeat counts. Both the accessor and writer build an `EvalContext` from already-parsed fields to evaluate expressions.
+
+- **`Value`** is the parsed field value enum with conversion methods that handle NITF's ASCII-numeric conventions (e.g., parsing `"003"` as integer 3 via `.as_i64()`).
 
 ## Key Components
 
@@ -76,7 +166,7 @@ let def = DefinitionLoader::load_str(yaml_string)?;
 | Field types: `u1-u8`, `s1-s8`, `str` | ✓ | Integer and string types |
 | Endian-specific types: `u2be`, `u4le` | ✓ | Parsed but endian from meta |
 | `size` (fixed and expression) | ✓ | Fixed integer or expression |
-| `encoding` | ✓ | ASCII, BCS-A, BCS-N, ECS-A |
+| `encoding` | ✓ | ASCII, BCS-A, BCS-N, BCS-NPI, ECS-A |
 | `pad-right` | ✓ | Padding character |
 | `if` (conditional) | ✓ | Expression-based conditions |
 | `repeat: expr` | ✓ | Expression-based count |
@@ -89,7 +179,7 @@ let def = DefinitionLoader::load_str(yaml_string)?;
 
 ### 2. StructureAccessor (Reading)
 
-The `StructureAccessor` provides lazy, map-like access to binary data:
+The `StructureAccessor` provides lazy, map-like access to binary data. On first field access, a single O(n) pass walks all fields and caches repeat element offsets. All subsequent accesses are O(1) lookups.
 
 ```rust
 let accessor = StructureAccessor::new(Arc::new(def), &data)?;
@@ -98,49 +188,69 @@ let accessor = StructureAccessor::new(Arc::new(def), &data)?;
 let version = accessor.get("fver")?.as_str()?;
 let num_images = accessor.get("numi")?.as_i64()?;
 
-// Repeated fields use underscore-indexed naming
+// Repeated fields return Value::Array
+let all_info = accessor.get("image_info")?;  // Returns Value::Array
+if let Value::Array(entries) = all_info {
+    for entry in &entries {
+        // Each entry is a Value::Struct with nested fields
+    }
+}
+
+// Indexed access for individual repeated elements
 let first_len = accessor.get("image_info_0.li")?.as_str()?;
 
-// Check field existence
+// Check field existence (including conditional evaluation)
 if accessor.has("optional_field") { ... }
 
 // Zero-copy raw slice access
 let raw_bytes: &[u8] = accessor.raw_slice("data_field")?;
-let (offset, len) = accessor.field_byte_range("data_field")?;
 
-// Iterate all fields
+// Iterate all accessible fields (skips false conditionals)
 for field_path in accessor.fields() { ... }
 ```
 
 #### Offset Calculation
 
-Field offsets are calculated on-demand by walking the field sequence:
+Field offsets are computed in a single pass on first access:
 1. Fixed-size fields: offset computed from preceding field sizes
 2. Variable-size fields: preceding fields parsed to determine sizes
-3. Conditional fields: condition evaluated to determine presence
-4. Repeated fields: repeat count evaluated, element sizes computed
+3. Conditional fields: condition evaluated to determine presence (skipped if false)
+4. Repeated fields: repeat count evaluated, each element's offset cached internally
+
+The single-pass result is cached in a repeat offset map for efficient indexed access. The `fields()` iterator returns base field names only — repeated fields appear once (not once per element).
 
 ### 3. StructureWriter (Writing)
 
-The `StructureWriter` supports two modes:
+The `StructureWriter` uses streaming mode where fields must be written in definition order:
 
 ```rust
-// Fixed-size mode: pre-allocated buffer, random access
-let mut writer = StructureWriter::new_fixed(Arc::new(def))?;
-writer.set("field_a", "value")?;
+// Create a writer
+let mut writer = StructureWriter::new(Arc::new(def));
+writer.set("field_a", "value")?;  // Must be in definition order
 writer.set("field_b", 42i64)?;
 let bytes = writer.finish()?;
 
-// Streaming mode: sequential writes, growable buffer
-let mut writer = StructureWriter::new_streaming(Arc::new(def));
-writer.set("field_a", "value")?;  // Must be in order
-writer.set("field_b", 42i64)?;
-let bytes = writer.finish()?;
+// Write directly to an io::Write target
+let bytes_written = writer.write_to(&mut output_file)?;
 ```
+
+For repeated fields, the writer accepts either a `WriteValue::Array` with all elements at once, or sequential indexed writes:
+
+```rust
+// Option 1: Array value (preferred)
+writer.set("items", vec!["AAA", "BBB", "CCC"])?;
+
+// Option 2: Sequential indexed writes
+writer.set("items_0", "AAA")?;
+writer.set("items_1", "BBB")?;
+writer.set("items_2", "CCC")?;
+```
+
+The streaming writer supports expression-based sizes and repeat counts by evaluating them against previously written values. Fields must be written in the order they appear in the definition.
 
 ### 4. Expression Evaluator
 
-The expression system parses and evaluates Kaitai Struct-style expressions:
+The expression system parses and evaluates Kaitai Struct-style expressions using a hand-written recursive descent parser:
 
 ```rust
 let expr = ExpressionEvaluator::parse("numi.to_i * 16 + 388")?;
@@ -153,20 +263,34 @@ let result = evaluator.evaluate(&expr, &context)?;
 | Category | Syntax | Example |
 |----------|--------|---------|
 | Literals | integers, floats, strings, booleans | `42`, `3.14`, `"text"`, `true` |
+| Hex literals | `0x` prefix | `0xFF`, `0x1A` |
 | Field references | dot-notation paths | `header.version`, `items_0.value` |
 | Arithmetic | `+`, `-`, `*`, `/`, `%` | `width * height` |
 | Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=` | `version >= 2` |
 | Logical | `and`, `or`, `not` | `a > 0 and b < 10` |
+| Bitwise | `&`, `\|`, `^`, `~`, `<<`, `>>` | `flags & 0xFF`, `mask \| 0x01` |
 | Methods | `.to_i`, `.to_s`, `.length` | `numi.to_i`, `data.length` |
 | Special vars | `_index` | Current repeat index |
 | Parentheses | `(expr)` | `(a + b) * c` |
+| Unary | `-`, `not`, `~` | `-offset`, `~mask` |
+
+#### Operator Precedence (lowest to highest)
+
+1. `or`
+2. `and`
+3. `==`, `!=`, `<`, `>`, `<=`, `>=`
+4. `|` (bitwise OR)
+5. `^` (bitwise XOR)
+6. `&` (bitwise AND)
+7. `+`, `-`
+8. `*`, `/`, `%`
+9. Unary `-`, `not`, `~`
+10. Postfix `.method`, `.field`
 
 #### Not Supported
 
-- Array indexing: `arr[0]` (use `arr_0` naming instead)
 - `_root`, `_parent`, `_io` (parsed but not evaluated)
 - Ternary operator: `a ? b : c`
-- Bitwise operators: `&`, `|`, `^`, `<<`, `>>` (planned, see `docs/PARSER_SUGGESTIONS.md`)
 
 #### Why a Custom Expression Evaluator?
 
@@ -178,9 +302,7 @@ We use a hand-written expression evaluator rather than a third-party library for
 
 3. **NITF-specific needs**: NITF fields are often ASCII strings representing numbers (e.g., `"003"` for the count 3). The `.to_i` method handles this conversion naturally. Generic evaluators would need custom type coercion.
 
-4. **Minimal dependencies**: The custom evaluator adds no external dependencies and is ~1500 lines of well-tested code organized into lexer, parser, evaluator, and operator modules.
-
-The expression evaluator is sufficient for NITF structure definitions. Future enhancements (bitwise operators for existence masks) can be added incrementally.
+4. **Minimal dependencies**: The custom evaluator adds no external dependencies and is well-tested code organized into lexer, parser, evaluator, and operator modules.
 
 ### 5. Structure Registry
 
@@ -190,14 +312,20 @@ The registry manages loading and caching of structure definitions:
 let mut registry = StructureRegistry::new();
 registry.add_search_path("data/structures/tre");
 
-// Get definition (loads and caches)
-let def = registry.get("TRE_GEOLOB")?;
+// Get definition (loads from search paths and caches)
+let def = registry.get("TRE_GEOLOB");
 
-// Runtime registration
+// Mutable access (loads and caches if not already present)
+let def = registry.get_mut("TRE_GEOLOB");
+
+// Runtime registration (takes priority over file-loaded definitions)
 registry.register("CUSTOM", custom_def);
 
-// List available definitions
+// List all available definitions (file + runtime)
 for name in registry.list() { ... }
+
+// Reload file-based definitions (preserves runtime registrations)
+registry.reload()?;
 ```
 
 #### Naming Convention
@@ -213,17 +341,14 @@ for name in registry.list() { ... }
 
 The `encoding` module validates NITF-specific character sets:
 
-```rust
-// BCS-A: Basic Character Set - Alphanumeric (0x20-0x7E)
-encoding::validate_bcs_a(data) -> bool
-encoding::validate_bcs_a_detailed(data) -> ValidationResult
+| Encoding | Description | Valid Bytes |
+|----------|-------------|-------------|
+| BCS-A | Basic Character Set - Alphanumeric | `0x20`–`0x7E` |
+| BCS-N | Basic Character Set - Numeric | `0x20`, `0x2B`–`0x2F`, `0x30`–`0x39` |
+| BCS-NPI | Basic Character Set - Numeric Positive Integer | `0x20`, `0x30`–`0x39` |
+| ECS-A | Extended Character Set - Alphanumeric | `0x20`+ |
 
-// BCS-N: Basic Character Set - Numeric (0x20, 0x2B-0x2D, 0x30-0x39)
-encoding::validate_bcs_n(data) -> bool
-
-// ECS-A: Extended Character Set - Alphanumeric (0x20-0x7E, 0xA0-0xFF)
-encoding::validate_ecs_a(data) -> bool
-```
+Each encoding provides `validate()` for bulk validation and `is_valid_byte()` for per-byte checks. The `validate_*_detailed()` functions return a `ValidationResult` with the index and byte of the first invalid character.
 
 ## Value Type
 
@@ -240,20 +365,20 @@ pub enum Value<'a> {
 
 // Conversions (handle NITF's ASCII-numeric fields)
 value.as_str()?      // Trims padding
-value.as_i64()?      // Parses numeric strings
-value.as_u64()?      // Parses unsigned strings
-value.as_f64()?      // Parses float strings
-value.as_bytes()     // Raw bytes
+value.as_i64()?      // Parses numeric strings or casts unsigned
+value.as_u64()?      // Parses unsigned strings or casts unsigned
+value.as_f64()?      // Parses float strings or casts unsigned
+value.as_bytes()     // Raw bytes (always succeeds)
 ```
 
 ## Error Types
 
 ```rust
-LoadError       // Definition loading errors (YAML, missing fields, invalid types)
-AccessError     // Reading errors (unknown field, EOF, encoding, expression)
-WriteError      // Writing errors (out of order, too large, missing required)
+LoadError       // Definition loading errors (YAML, missing fields, invalid types, undefined type refs)
+AccessError     // Reading errors (unknown field, EOF, conditional not present, encoding, expression)
+WriteError      // Writing errors (out of order, too large, missing required, validation, conversion)
 ConversionError // Value conversion errors (type mismatch, parse failure)
-ExpressionError // Expression errors (syntax, unknown field, type, division by zero)
+ExpressionError // Expression errors (syntax, unknown field, type error, division by zero)
 ```
 
 ## Dependencies
@@ -264,9 +389,9 @@ ExpressionError // Expression errors (syntax, unknown field, type, division by z
 | `serde` | Derive macros for deserialization |
 | `thiserror` | Error type derivation |
 
-## Repeated Field Naming Convention
+## Repeated Field Access
 
-Repeated fields use underscore-indexed naming: `{field_id}_{index}` (zero-based).
+Repeated fields are accessed primarily through the base field name, which returns a `Value::Array`. Individual elements can also be accessed via `{field_id}_{index}` indexed paths (zero-based) for convenience.
 
 ```yaml
 seq:
@@ -279,10 +404,22 @@ seq:
 ```
 
 If `num_segments` is 3:
-- `segment_info_0` - First entry
-- `segment_info_0.offset` - Nested field access
-- `segment_info_1` - Second entry
-- `segment_info_2` - Third entry
+- `segment_info` — Entire array as `Value::Array` (preferred)
+- `segment_info_0` — First entry (indexed access)
+- `segment_info_0.offset` — Nested field access on first entry
+- `segment_info_1` — Second entry
+- `segment_info_2` — Third entry
+
+For writing, prefer passing arrays directly:
+```rust
+// Preferred: pass array value
+writer.set("items", vec!["AAA", "BBB", "CCC"])?;
+
+// Also supported: sequential indexed writes
+writer.set("items_0", "AAA")?;
+writer.set("items_1", "BBB")?;
+writer.set("items_2", "CCC")?;
+```
 
 ## Example: NITF File Header
 
@@ -334,28 +471,25 @@ let accessor = StructureAccessor::new(def, &data)?;
 let version = accessor.get("fver")?.as_str()?;  // "02.10"
 let num_images = accessor.get("numi")?.as_i64()?;  // 2
 
+// Access the entire array
+let image_info = accessor.get("image_info")?;  // Value::Array
+
+// Or access individual elements by index
 for i in 0..num_images {
     let path = format!("image_info_{}.li", i);
     let image_len = accessor.get(&path)?.as_i64()?;
 }
 ```
 
-## Comparison with Original Design Document
+## Comparison with Kaitai Struct
 
-The implementation matches the original design with these differences:
-
-| Feature | Original Design | Implementation |
-|---------|-----------------|----------------|
-| `instances` | Planned | Not implemented |
-| `params` | Not mentioned | Not implemented |
-| `_root`, `_parent`, `_io` | Planned | Parsed but not evaluated |
-| Array indexing `arr[0]` | Planned | Use `arr_0` naming |
-| Bitwise operators | Not mentioned | Not supported |
-| Ternary operator | Not mentioned | Not supported |
-| Python bindings | Planned | Not yet implemented in parser |
-| Offset caching | Planned | Not implemented (computed on-demand) |
-
-## See Also
-
-- `internal/STRUCTURES_LIMITATIONS.md` - Known limitations in TRE/DES definitions
-- `internal/PARSER_SUGGESTIONS.md` - Planned improvements (offset caching, bitwise operators)
+| Feature | Kaitai Struct | Implementation Status |
+|---------|---------------|----------------------|
+| `instances` | Supported | Not implemented |
+| `params` | Supported | Not implemented |
+| `_root`, `_parent`, `_io` | Supported | Parsed but not evaluated |
+| Ternary operator | Supported | Not supported |
+| Bitwise operators | Supported | Supported (`&`, `\|`, `^`, `~`, `<<`, `>>`) |
+| Array indexing `arr[0]` | Supported | `Value::Array` for whole array; `arr_0` indexed paths for elements |
+| Method calls | `.to_i`, `.to_s`, `.length`, etc. | `.to_i`, `.to_s`, `.length` |
+| Hex literals | `0xFF` | Supported |
