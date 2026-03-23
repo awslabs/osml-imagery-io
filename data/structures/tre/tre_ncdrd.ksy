@@ -17,14 +17,14 @@ doc: |
   The NCDRD defines several TREs for commercial datasets. Many are already
   defined in other STDI-0002 appendices:
   
-  TREs defined in STDI-0006 only:
-  - CSCRNA (Corner Footprint) - Also in STDI-0002 Vol 3 Appendix B
-  - CSDIDA (Dataset Identification)
-  - CSCCGA (Cloud Cover Grid Data)
-  - CSEPHA (Ephemeris Data)
-  - CSEXRA (Exploitation Reference Data) - Already defined in tre_csexra.ksy
-  - CSPROA (Processing Information)
-  - CSSFAA (Sensor Field Alignment Data)
+  TREs defined in STDI-0006 only (all now have individual .ksy files):
+  - CSCCGA (Cloud Cover Grid Data) - tre_csccga.ksy
+  - CSCRNA (Corner Footprint) - tre_cscrna.ksy
+  - CSDIDA (Dataset Identification) - tre_csdida.ksy
+  - CSEPHA (Ephemeris Data) - tre_csepha.ksy
+  - CSEXRA (Exploitation Reference Data) - tre_csexra.ksy
+  - CSPROA (Processing Information) - tre_csproa.ksy
+  - CSSFAA (Sensor Field Alignment Data) - tre_cssfaa.ksy
   
   TREs also defined in STDI-0002 Vol 1:
   - GEOLOB (Local Geographic Coordinate System) - Appendix P, tre_geolob.ksy
