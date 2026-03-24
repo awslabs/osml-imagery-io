@@ -51,6 +51,9 @@ pub fn get_streaming_field_size(
                     FieldType::UnsignedInt(bytes) | FieldType::SignedInt(bytes) => {
                         Ok(*bytes as usize)
                     }
+                    // TypeRef fields have variable size determined by the nested
+                    // structure's serialized bytes, not by a fixed size spec.
+                    FieldType::TypeRef(_) => Ok(0),
                     _ => Err(WriteError::ValidationError {
                         path: field.id.clone(),
                         message: "Cannot determine size for field".to_string(),

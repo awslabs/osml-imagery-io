@@ -288,8 +288,9 @@ impl StructureWriter {
 
         let encoded = encode_value(&value, field, size, self.definition.endian, path)?;
 
+        let actual_size = encoded.len();
         self.buffer.extend_from_slice(&encoded);
-        self.position += size;
+        self.position += actual_size;
 
         // Track written values for eval context
         let eval_key = field_name.to_string();

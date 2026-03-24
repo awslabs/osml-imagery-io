@@ -61,6 +61,10 @@ pub fn encode_value(
             }
             encode_signed(*n as i64, *byte_size, endian, path)
         }
+        // TypeRef fields accept raw bytes (pre-serialized nested structures).
+        // The bytes are already the correct size from the sub-writer, so we
+        // return them directly without size validation or padding.
+        (FieldType::TypeRef(_), WriteValue::Bytes(bytes)) => Ok(bytes.clone()),
         _ => Err(WriteError::ConversionError {
             path: path.to_string(),
             message: format!(
