@@ -5,30 +5,25 @@ meta:
 
 doc: |
   FREESA TRE - Free Space Tagged Record Extension
-  
+
   Saves space for metadata that may not yet be available when a file is
   written out or used when actual metadata size does not match predicted
-  metadata size. May be removed at any time.
-  
-  IMPORTANT: No data may be placed in this TRE. The TRE exists solely as
-  a placeholder to reserve space in the file structure.
-  
+  metadata size. May be removed at any time by any system provided that
+  the integrity of the NITF file is maintained.
+
+  IMPORTANT: No meaningful data may be placed in this TRE. The STUFFING
+  field must contain only 0xFF bytes.
+
   This TRE is part of the Motion Imagery Extensions for NITF 2.1 (MIE4NITF)
   specification defined in NGA.STND.0044.
-  
-  Note: This is a stub definition. The full field specifications are defined
-  in NGA.STND.0044_1.3 which is not publicly available in STDI-0002.
-  The raw data is preserved for round-trip fidelity.
-  
-  Reference: STDI-0002 Volume 1, Appendix AF - MIE4NITF
-  Reference: NGA.STND.0044_1.3 - Motion Imagery Extension for NITF 2.1
+
+  Reference: STDI-0002 Volume 1, Appendix AF, Section AF 5.6
+  Reference: NGA.STND.0044_1.3.3 - Motion Imagery Extension for NITF 2.1
 
 seq:
-  - id: DATA
+  - id: STUFFING
     size-eos: true
     doc: |
-      Reserved space (should be empty or filled with padding).
-      
-      This TRE is a placeholder only - no meaningful data should be present.
-      
-      Full field definitions are in NGA.STND.0044_1.3.
+      Stuffing Bytes
+      Variable length. Must contain only 0xFF bytes.
+      This field exists solely to reserve space in the file structure.

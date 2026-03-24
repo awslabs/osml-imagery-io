@@ -20,7 +20,7 @@ doc: |
   that appear when DESID is "CSSHPB DES" or "CSSHPB". The DESDATA field contains
   the concatenated shapefile component files.
   
-  Reference: STDI-0002 Volume 2, Appendix D - CSSHPA-CSSHPB
+  Reference: STDI-0002 Volume 2, Appendix D, Table D.5-1
 
 seq:
   - id: SHAPEFILE_ID
@@ -54,6 +54,21 @@ seq:
       3 BCS-A characters.
       Values: ALL (associated with all image segments), or 000-998
 
+  - id: AISDLVL
+    type: str
+    size: 3
+    encoding: BCS-N
+    repeat: expr
+    repeat-expr: NUMAIS.to_i
+    if: NUMAIS != "ALL" and NUMAIS != "000"
+    doc: |
+      Associated Image Segment Display Level (AISDLVLn)
+      The Image Display Level (IDLVL) of each image segment associated
+      with this DES. Repeated NUMAIS times.
+      3 BCS-N characters.
+      Range: 001 to 999
+      Omitted if NUMAIS = "ALL" or "000".
+
   - id: TIMESTAMP
     type: str
     size: 24
@@ -75,6 +90,20 @@ seq:
       3 BCS-N characters.
       Range: 000 to 999
 
+  - id: ASSOC_ELEM_ID
+    type: str
+    size: 36
+    encoding: BCS-A
+    repeat: expr
+    repeat-expr: NUM_ASSOC_ELEM.to_i
+    if: NUM_ASSOC_ELEM.to_i > 0
+    doc: |
+      Associated Element UUID (ASSOC_ELEM_IDi)
+      UUID of the ith element associated with this shapefile.
+      36 BCS-A characters in canonical UUID form.
+      Repeated NUM_ASSOC_ELEM times.
+      Omitted if NUM_ASSOC_ELEM = "000".
+
   - id: SHAPE_USE
     type: str
     size: 25
@@ -94,6 +123,18 @@ seq:
       Number of attributes to differentiate multiple instances with same SHAPE_USE.
       3 BCS-A characters.
       Range: 000 to 999
+
+  - id: SHAPE_USE_ATTR
+    type: shape_use_attr_record
+    repeat: expr
+    repeat-expr: NUM_SHAPE_USE_ATTR.to_i
+    if: NUM_SHAPE_USE_ATTR.to_i > 0
+    doc: |
+      Shape Use Attribute records.
+      Each record contains SHAPE_USE_ATTR_NAMEi (15 BCS-A) and
+      SHAPE_USE_ATTR_VALi (10 BCS-A).
+      Repeated NUM_SHAPE_USE_ATTR times.
+      Omitted if NUM_SHAPE_USE_ATTR = "000".
 
   - id: SHAPE_CLASS
     type: str
@@ -219,3 +260,46 @@ seq:
       9 BCS-A characters.
       Range: 000000000 to 999999998 (or spaces if only one or two files)
 
+  # Version 2 fields - omitted if DESVER is 01
+  # Note: The parser must check DESVER from the DES subheader to determine
+  # presence. These fields are included unconditionally here since the KSY
+  # definition covers the user-defined subheader only and DESVER is not
+  # available in this scope. Callers must handle version gating externally.
+  # When DESVER=01, parsing stops after SHAPE3_START (the remaining bytes
+  # in the subheader will be zero).
+
+  - id: REMAINING_DATA
+    size-eos: true
+    doc: |
+      Remaining subheader data.
+      For DESVER=02, this contains:
+        NUM_SUPPORTING_FILES (2 BCS-N, range 00-99)
+        For n = 1 to NUM_SUPPORTING_FILES:
+          SUPPORTING_NAME_LENn (2 BCS-N, range 01-99)
+          SUPPORTING_NAMEn (variable, SUPPORTING_NAME_LENn bytes BCS-A)
+          SUPPORTING_STARTn (9 BCS-N, range 000000000-999999998)
+          SUPPORTING_SIZEn (9 BCS-N, range 000000001-999999998)
+      For DESVER=01, this field is empty (zero bytes).
+
+types:
+  shape_use_attr_record:
+    seq:
+      - id: SHAPE_USE_ATTR_NAME
+        type: str
+        size: 15
+        encoding: BCS-A
+        doc: |
+          Shape Use Attribute Name (SHAPE_USE_ATTR_NAMEi)
+          Name of the ith SHAPE_USE attribute.
+          15 BCS-A characters. Values are case-insensitive.
+          Values defined in Table D.5-3.
+
+      - id: SHAPE_USE_ATTR_VAL
+        type: str
+        size: 10
+        encoding: BCS-A
+        doc: |
+          Shape Use Attribute Value (SHAPE_USE_ATTR_VALi)
+          Value of the ith SHAPE_USE attribute for this instance.
+          10 BCS-A characters.
+          Values defined independently for each attribute in Table D.5-3.

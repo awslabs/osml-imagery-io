@@ -24,7 +24,7 @@ doc: |
   that appear when DESID is "WEATHER_DATA" and DESVER is "04".
   The DESDATA field contains the METOC dataset in its native format.
   
-  Reference: STDI-0002 Volume 2, Appendix L - WEATHER_DATA
+  Reference: STDI-0002 Volume 2, Appendix L, Table L.6-8
 
 seq:
   # DES specification and creation information
@@ -119,7 +119,7 @@ seq:
       UUID of Associated Shapefile DES (SHAPEFILE_UUIDn)
       The UUID value of each shapefile DES associated with this DES.
       36 BCS-N characters in canonical UUID format.
-      Omitted if NUM_SHAPEFILES = "0" or "ALL".
+      Omitted if NUM_SHAPEFILES = "000" or "ALL".
 
   - id: NUM_ASSOC_ELEM
     type: str
@@ -138,6 +138,7 @@ seq:
     encoding: BCS-N
     repeat: expr
     repeat-expr: NUM_ASSOC_ELEM.to_i
+    if: NUM_ASSOC_ELEM.to_i > 0
     doc: |
       UUID of Associated Element (ASSOC_ELEM_UUIDn)
       The UUID of the nth element associated with this DES.
@@ -205,12 +206,38 @@ seq:
       Source of the METOC Dataset (METOC_SOURCE)
       The name of the organization that created the METOC information.
       80 ECS-A characters.
-      Approved values include: AFWA, FNMOC, NCEP, ECMWF, UKMO, JMA,
-      EUMETSAT, NONTRADITIONAL, and others registered with NTB.
+      Approved values include: 557_WW, AFWA, AUS_BOM, CAN_ENVIRON,
+      EUMETCast, IHO, JMCC, NZL_METSERVICE, MOSC, NATO_METOC,
+      NONTRADITIONAL, NWS, UK_MET_OFFICE, USGS, USNO, WMO,
+      and others registered with NTB.
 
   # Conditional fields for METOC_SOURCE = NONTRADITIONAL
-  # Note: These fields are only present if METOC_SOURCE = "NONTRADITIONAL"
-  # The parser must check METOC_SOURCE value to determine presence
+  - id: METOC_SOURCE_FORCE
+    type: str
+    size: 40
+    encoding: BCS-A
+    if: METOC_SOURCE.to_s.strip == "NONTRADITIONAL"
+    doc: |
+      Non-Traditional METOC Source Force (METOC_SOURCE_FORCE)
+      The branch of the U.S. Armed Forces that acquired the
+      non-traditional source of METOC data.
+      40 BCS-A characters.
+      Values: US_AIR_FORCE, US_ARMY, US_NAVY, US_SOCOM,
+      US_COAST_GUARD, US_MARINE_CORPS, US_SPACE_FORCE,
+      or all BCS spaces (0x20).
+      Only present if METOC_SOURCE = "NONTRADITIONAL".
+
+  - id: METOC_SOURCE_FORCE_UNIT
+    type: str
+    size: 240
+    encoding: BCS-A
+    if: METOC_SOURCE.to_s.strip == "NONTRADITIONAL"
+    doc: |
+      Non-Traditional METOC Source Unit (METOC_SOURCE_FORCE_UNIT)
+      Free text string identifying the unit-level source of the
+      non-traditional METOC data.
+      240 BCS-A characters.
+      Only present if METOC_SOURCE = "NONTRADITIONAL".
 
   - id: METOC_FORMAT
     type: str
@@ -286,4 +313,75 @@ seq:
       Values: POINT, LINE, POLYGON, VOLUME, or BCS spaces (0x20).
 
   # Conditional location fields - only present if LOCATION_SHAPE != spaces
-  # Note: The parser must check LOCATION_SHAPE to determine presence
+  - id: NUMPTS
+    type: str
+    size: 2
+    encoding: BCS-N
+    if: LOCATION_SHAPE.to_s.strip != ""
+    doc: |
+      Number of Points (NUMPTS)
+      The number of points required to provide the location information.
+      2 BCS-N characters.
+      Values: 01 (POINT), 02 (LINE), 04-99 (POLYGON), 08 (VOLUME).
+      Only present if LOCATION_SHAPE is not all spaces.
+
+  - id: LOC_ELEV_REF
+    type: str
+    size: 3
+    encoding: BCS-A
+    if: LOCATION_SHAPE.to_s.strip != ""
+    doc: |
+      Location Elevation Reference (LOC_ELEV_REF)
+      The vertical reference from which elevation information for the
+      LOCATION_POINT_Zn field is reported.
+      3 BCS-A characters.
+      Values: HAE (WGS 84 ellipsoid), AGL (Above Ground Level),
+      MSL (Mean Sea Level).
+      Only present if LOCATION_SHAPE is not all spaces.
+
+  - id: LOCATION_POINTS
+    type: location_point_record
+    repeat: expr
+    repeat-expr: NUMPTS.to_i
+    if: LOCATION_SHAPE.to_s.strip != ""
+    doc: |
+      Location point records. Each record contains longitude (14 BCS-N),
+      latitude (13 BCS-N), and height (12 BCS-A) fields.
+      Repeated NUMPTS times.
+      Only present if LOCATION_SHAPE is not all spaces.
+
+types:
+  location_point_record:
+    seq:
+      - id: LOCATION_POINT_X
+        type: str
+        size: 14
+        encoding: BCS-N
+        doc: |
+          Longitude of the Point (LOCATION_POINT_Xn)
+          Longitude of the nth geographic point.
+          14 BCS-N characters.
+          Range: +/-180.000000000 degrees.
+          Positive = east, negative = west of Prime Meridian.
+
+      - id: LOCATION_POINT_Y
+        type: str
+        size: 13
+        encoding: BCS-N
+        doc: |
+          Latitude of the Point (LOCATION_POINT_Yn)
+          Latitude of the nth geographic point.
+          13 BCS-N characters.
+          Range: +/-90.000000000 degrees.
+          Positive = north, negative = south of Equator.
+
+      - id: LOCATION_POINT_Z
+        type: str
+        size: 12
+        encoding: BCS-A
+        doc: |
+          Height Above Vertical Datum (LOCATION_POINT_Zn)
+          Height with respect to the vertical reference defined in
+          LOC_ELEV_REF, associated with the nth geographic point.
+          12 BCS-A characters.
+          Range: +/-9999999.999 meters, or BCS spaces if unknown.

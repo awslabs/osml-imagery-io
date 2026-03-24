@@ -9,10 +9,20 @@ PDF reference materials are located in `reference-materials/`:
 - `JBP/` - Joint BIIF Profile (NITF format):
   - `Joint-BIIF-Profile-V2024.1_2024-01-18.pdf` - Main JBP format specification (201 pages)
   - `MIL-STD-188-199.pdf` - Vector Quantization (VQ) decompression standard (35 pages)
-  - `STDI-0002-2024.1_2023-10-26/` - TRE and DES definitions:
-    - `Vol-1-App {X} - {NAME}.pdf` - TRE specifications
-    - `Vol-2-App {X} - {NAME}.pdf` - DES specifications
-    - `STDI-0002-Volume-{N}-*.pdf` - Main reference documents
+  - `NCDRD_18February2010.pdf` - NITF 2.1 Commercial Dataset Requirements Document (78 pages). Defines requirements for commercial imagery datasets from CDPs.
+  - `NGA.IP.0002_1.0 HRE.pdf` - High Resolution Elevation (HRE) Products Implementation Profile (148 pages). Specifies data content, structure, and metadata for raster elevation data products.
+  - `NGA.STND.0044_1.3.3_MIE4NITF_202601.pdf` - Motion Imagery Extension for NITF 2.1, v1.3.3 (146 pages). Defines how motion imagery is packaged in NITF files.
+  - `USAF SARzip Standard V1.0.0.pdf` - SAR Compression (SARzip) Standard, v1.0.0 (143 pages). Defines compression for Synthetic Aperture Radar data.
+  - `STDI-0002-v2025.2-202601/` - Support Data Extensions (SDE) Compendium, v2025.2 (2025-06-10):
+    - `STDI-0002-SDE-Fundamentals-MainBody-V2025-2_202601.pdf` - SDE Fundamentals (34 pages)
+    - `STDI-0002-SDE-Fundamentals-Excel-Tables-V2025-2_202507.xlsx` - SDE field tables in Excel format
+    - `STDI-0002-Volume-1-TREs-V2025-2_202601.pdf` - Volume 1: TRE index and overview (14 pages)
+    - `STDI-0002-Volume-2-DESs-and-DESs-TREs-Combinations-V2025-2_202601.pdf` - Volume 2: DES index and overview (15 pages)
+    - `STDI-0002-Volume-3-SDE-Profiles-and-Implementation-Guidance-V2025-2_202601.pdf` - Volume 3: SDE Profiles and Implementation Guidance (7 pages)
+    - `Vol1-App{XX}-{NAME}_{YYYYMM}.pdf` - Individual TRE appendices (see below)
+    - `Vol2-App{X}-{NAME}_{YYYYMM}.pdf` - Individual DES appendices (see below)
+    - `Vol3-App{X}-{NAME}_{YYYYMM}.pdf` - Individual profile appendices
+    - Some appendices also include `.xsd` schema files alongside the PDF
 - `GeoTIFF/` - TIFF and GeoTIFF specifications:
   - `TIFF6.pdf` - TIFF Revision 6.0 base format specification (121 pages)
   - `OGCGeoTIFFStandard.pdf` - OGC GeoTIFF standard (112 pages)
@@ -28,6 +38,86 @@ PDF reference materials are located in `reference-materials/`:
 - `SIPS/` - SAR Image Processing Standard (image operators):
   - `SIPS_v24_21Aug2019.pdf` - Main SIPS specification
   - `SAND2015-2309.pdf`, `SAND2019-2371.pdf` - Supporting Sandia reports
+
+## STDI-0002 Appendix Naming Convention
+
+The v2025.2 release uses a new naming convention for appendices:
+
+```
+Vol{V}-App{XX}-{NAME}_{YYYYMM}.pdf
+```
+
+- `V` = Volume number (1 = TREs, 2 = DESs, 3 = Profiles)
+- `XX` = Appendix letter(s) (e.g., B, C, AA, AX)
+- `NAME` = TRE/DES name(s) (e.g., ICHIPB, SENSRB, CSSHPA-CSSHPB)
+- `YYYYMM` = Appendix revision date
+
+### Volume 1 TRE Appendices
+
+| Appendix | TRE Name(s) | File |
+|----------|-------------|------|
+| B | ICHIPB | `Vol1-AppB-ICHIPB_202410.pdf` |
+| C | PIAE | `Vol1-AppC-PIAE_202506.pdf` |
+| D | CSDE | `Vol1-AppD-CSDE_202502.pdf` |
+| E | ASDE | `Vol1-AppE-ASDE_202502.pdf` |
+| F | IOMAPA | `Vol1-AppF-IOMAPA_202110.pdf` |
+| I | NBLOCA | `Vol1-AppI-NBLOCA_202110.pdf` |
+| L | HISTOA | `Vol1-AppL-HISTOA_202110.pdf` |
+| N | ENGRDA | `Vol1-AppN-ENGRDA_202110.pdf` |
+| O | MITOCA | `Vol1-AppO-MITOCA_202110.pdf` |
+| P | GEOSDE | `Vol1-AppP-GEOSDE_202404.pdf` |
+| R | NSDE | `Vol1-AppR-NSDE_202410.pdf` |
+| U | RSM | `Vol1-AppU-RSM_202207.pdf` |
+| V | DPPDB | `Vol1-AppV-DPPDB_202110.pdf` |
+| W | ATTPTA | `Vol1-AppW-ATTPTA_202502.pdf` |
+| X | BANDSB | `Vol1-AppX-BANDSB_202502.pdf` |
+| Y | J2KLRA/J2KLRB | `Vol1-AppY-J2KLRA-J2KLRB_202407.pdf` |
+| Z | SENSRB | `Vol1-AppZ-SENSRB_202506.pdf` |
+| AA | PIXQLA | `Vol1-AppAA-PIXQLA_202210.pdf` |
+| AD | RELCCA | `Vol1-AppAD-RELCCA_202310.pdf` |
+| AE | XMLDCA | `Vol1-AppAE-XMLDCA_202110.pdf` |
+| AF | MIE4NITF | `Vol1-AppAF-MIE4NITF_202506.pdf` |
+| AG | CCINFA | `Vol1-AppAG-CCINFA_202506.pdf` |
+| AH | GLAS-GFM | `Vol1-AppAH-GLAS-GFM_202110.pdf` |
+| AI | SECURA | `Vol1-AppAI-SECURA_202410.pdf` |
+| AJ | PIXMTA | `Vol1-AppAJ-PIXMTA_202506.pdf` |
+| AK | MATESA | `Vol1-AppAK-MATESA_202506.pdf` |
+| AL | ILLUMA/ILLUMB | `Vol1-AppAL-ILLUMA-ILLUMB_202504.pdf` (+`.xsd`) |
+| AM | PIVECA | `Vol1-AppAM-PIVECA_UnderDevelopment.pdf` |
+| AN | FRMSGA | `Vol1-AppAN-FRMSGA_202506.pdf` (+`.xsd`) |
+| AP | SODDXA | `Vol1-AppAP-SODDXA_202504.pdf` (+`.xsd`) |
+| AQ | ASTORA | `Vol1-AppAQ-ASTORA_202204.pdf` |
+| AR | BCHIPA | `Vol1-AppAR-BCHIPA_202404.pdf` |
+| AS | CSDIDA/SYSIDA | `Vol1-AppAS-CSDIDA-SYSIDA_202502.pdf` |
+| AT | S2EVPA | `Vol1-AppAT-S2EVPA_202506.pdf` |
+| AU | COMNTA | `Vol1-AppAU-COMNTA_202306.pdf` |
+| AV | CCIS-CSCCGA | `Vol1-AppAV-CCIS-CSCCGA_202406.pdf` |
+| AW | CSCRNAandFCRNSA | `Vol1-AppAW-CSCRNAandFCRNSA_202404.pdf` |
+| AX | ISAR | `Vol1-AppAX-ISAR_202402.pdf` |
+| AY | SORBXA | `Vol1-AppAY-SORBXA_202504.pdf` (+`.xsd`) |
+
+### Volume 2 DES Appendices
+
+| Appendix | DES Name(s) | File |
+|----------|-------------|------|
+| A | TRE Overflow | `Vol2-AppA-TREOverflow_202110.pdf` |
+| C | CSATTA | `Vol2-AppC-CSATTA_202110.pdf` |
+| D | CSSHPA/CSSHPB | `Vol2-AppD-CSSHPA-CSSHPB_202506.pdf` |
+| E | WBRD Frame | `Vol2-AppE-WBRD_Frame_202110.pdf` |
+| F | XML_DATA_CONTENT | `Vol2-AppF-XML_DATA_CONTENT_202401.pdf` |
+| G | Moving Target Report | `Vol2-AppG-MovingTargetReport_202405.pdf` |
+| J | LIDARA | `Vol2-AppJ-LIDARA_202110.pdf` |
+| K | EXT_DEF_CONTENT | `Vol2-AppK-EXT_DEF_CONTENT_202110.pdf` |
+| L | WEATHER_DATA | `Vol2-AppL-WEATHER_DATA_202310.pdf` |
+| M | GLAS-GFM | `Vol2-AppM-GLAS-GFM_202505.pdf` |
+| O | MRGXMA | `Vol2-AppO-MRGXMA_202504.pdf` (+`.xsd`) |
+
+### Volume 3 Profile Appendices
+
+| Appendix | Profile Name | File |
+|----------|-------------|------|
+| A | PAPX | `Vol3-AppA-PAPX_202504.pdf` (+`.xsd`) |
+| C | Profile of SENSRB | `Vol3-AppC-ProfileOfSENSRB_202110.pdf` |
 
 ## General Strategy for Reading PDFs
 
@@ -87,6 +177,33 @@ Key concepts:
 - COMRAT expressed as bits-per-pixel (e.g., "1.00")
 - Decompression is table lookup only (no complex math)
 
+### NCDRD (Commercial Dataset Requirements)
+
+Commercial imagery dataset requirements (78 pages). Defines how commercial data providers package imagery in NITF 2.1. Useful for understanding TRE/DES requirements for commercial imagery products and JPEG 2000 packaging conventions.
+
+### HRE (High Resolution Elevation)
+
+Implementation profile for elevation products (148 pages). Specifies how raster elevation data is structured and tagged in NITF. Relevant for DEM/DSM imagery support.
+
+### MIE4NITF (Motion Imagery Extension)
+
+Motion imagery extension for NITF 2.1, v1.3.3 (146 pages). Defines how video/motion imagery frames are packaged in NITF files. Related TRE appendix: `Vol1-AppAF-MIE4NITF_202506.pdf`.
+
+### SARzip (SAR Compression)
+
+SAR compression standard, v1.0.0 (143 pages). Defines a compression scheme for Synthetic Aperture Radar data. Relevant for SAR imagery workflows alongside SICD/SIDD.
+
+### STDI-0002 Structure (v2025.2)
+
+The v2025.2 release reorganized STDI-0002 into a clearer structure:
+
+- **SDE Fundamentals** (34 pages) - Core concepts, field types (BCS-A, BCS-N, binary), and general rules for all SDEs. Read this first when working with any TRE or DES.
+- **Volume 1** (14 pages) - Index of all TRE appendices with status and version info.
+- **Volume 2** (15 pages) - Index of all DES appendices with status and version info.
+- **Volume 3** (7 pages) - SDE profiles and implementation guidance.
+- **Excel Tables** (`.xlsx`) - Machine-readable field tables for all SDEs.
+- **Individual Appendices** - Each TRE/DES has its own PDF (and sometimes `.xsd` schema).
+
 ### STDI-0002 TRE Appendices
 
 Individual TRE specifications. Common structure:
@@ -130,7 +247,7 @@ When implementing parsers, extract:
 
 To implement SENSRB TRE:
 
-1. Read TOC: `pages: [1, 6, 7, 8]` from `Vol-1-App Z - SENSRB.pdf`
+1. Read TOC: `pages: [1, 6, 7, 8]` from `Vol1-AppZ-SENSRB_202506.pdf`
 2. Find "Field Specifications" section in TOC (e.g., Section Z.3, page Z-18)
 3. Read field specs: `pages: [18, 19, 20, 21, 22, 23, 24, 25]`
 4. If TRE has conditional modules, read implementation notes section
