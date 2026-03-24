@@ -341,12 +341,34 @@ pub fn compress_8bit(
 ///
 /// # Arguments
 /// * `jpeg_data` - The JPEG compressed data
-/// * `expected_width` - Expected image width (for validation)
-/// * `expected_height` - Expected image height (for validation)
+/// * `expected_width` - Expected image width (NPPBH from NITF image subheader)
+/// * `expected_height` - Expected image height (NPPBV from NITF image subheader)
 /// * `num_bands` - Expected number of output bands
 ///
 /// # Returns
-/// The decompressed pixel data.
+/// The decompressed pixel data at `expected_width × expected_height` dimensions.
+/// If the JPEG stream is smaller than expected (partial edge block), the output
+/// is zero-padded to the expected dimensions.
+///
+/// # Edge block handling
+///
+/// JBP-2024.1 Section 5.12.1.8.3 (requirements JBP-2021.2-063 and JBP-2021.2-064)
+/// requires that writers pad edge blocks to full NPPBH×NPPBV dimensions before
+/// encoding. A conformant C3/M3 JPEG stream should therefore always have dimensions
+/// equal to the declared block size.
+///
+/// However, some encoders write the JPEG stream at the actual edge dimensions
+/// without padding — producing, for example, a 360×360 stream for a 512×512
+/// block. This is technically non-conformant per JBP requirements 063/064, but
+/// common enough in real-world files that a robust decoder must handle it.
+///
+/// JBP Section 5.12.3 also notes that pad pixel masks are "of limited use with
+/// lossy compressed STI" since lossy compression does not preserve pad pixel values,
+/// which may explain why some encoders skip padding for JPEG blocks.
+///
+/// When the JPEG stream is smaller than expected, we decompress at the stream's
+/// native dimensions and zero-pad the result to the full block size. The caller
+/// (`JpegNitfBlockDecoder::decode_block`) then crops to actual image dimensions.
 pub fn decompress_8bit(
     jpeg_data: &[u8],
     expected_width: usize,
@@ -355,16 +377,43 @@ pub fn decompress_8bit(
 ) -> Result<Vec<u8>, CodecError> {
     let decompressor = TjDecompressor::new()?;
 
-    // Validate dimensions
     let (width, height, _subsamp, _colorspace) = decompressor.get_header(jpeg_data)?;
-    if width != expected_width || height != expected_height {
+
+    // JPEG stream must not exceed expected block dimensions — a larger stream
+    // indicates a genuine format error, not an edge block.
+    if width > expected_width || height > expected_height {
         return Err(CodecError::Decode(format!(
-            "JPEG dimensions {}x{} don't match expected {}x{}",
+            "JPEG dimensions {}x{} exceed expected block size {}x{}",
             width, height, expected_width, expected_height
         )));
     }
 
-    decompressor.decompress(jpeg_data, num_bands)
+    let decoded = decompressor.decompress(jpeg_data, num_bands)?;
+
+    // Conformant case: JPEG dimensions match the block size exactly.
+    if width == expected_width && height == expected_height {
+        return Ok(decoded);
+    }
+
+    // Non-conformant edge block: JPEG stream is smaller than the declared block
+    // size (see doc comment above). Zero-pad each band to the expected dimensions
+    // so callers receive data at the full block size.
+    let expected_band_size = expected_width * expected_height;
+    let jpeg_band_size = width * height;
+    let mut padded = vec![0u8; num_bands * expected_band_size];
+
+    for band in 0..num_bands {
+        let src_offset = band * jpeg_band_size;
+        let dst_offset = band * expected_band_size;
+        for row in 0..height {
+            let src_start = src_offset + row * width;
+            let dst_start = dst_offset + row * expected_width;
+            padded[dst_start..dst_start + width]
+                .copy_from_slice(&decoded[src_start..src_start + width]);
+        }
+    }
+
+    Ok(padded)
 }
 
 /// Compress 12-bit image data to JPEG format.
@@ -529,5 +578,86 @@ mod tests {
         if let Err(CodecError::Unsupported(msg)) = result {
             assert!(msg.contains("libjpeg12") || msg.contains("12-bit"));
         }
+    }
+
+    #[test]
+    fn test_partial_block_grayscale_pads_to_expected() {
+        // Reproduce BUG_JPEG_DIMENSION_MISMATCH: a JPEG stream encoded at smaller
+        // dimensions than the declared NITF block size (edge block scenario).
+        let jpeg_w = 6;
+        let jpeg_h = 6;
+        let block_w = 8;
+        let block_h = 8;
+
+        let mut src = vec![0u8; jpeg_w * jpeg_h];
+        for (i, px) in src.iter_mut().enumerate() {
+            *px = (i * 7 % 256) as u8;
+        }
+
+        // Compress at the JPEG's native (smaller) dimensions
+        let jpeg_data = compress_8bit(&src, jpeg_w, jpeg_h, 1, 95).unwrap();
+
+        // Decompress expecting the larger block dimensions — this used to fail
+        let decoded = decompress_8bit(&jpeg_data, block_w, block_h, 1).unwrap();
+        assert_eq!(decoded.len(), block_w * block_h);
+
+        // The top-left jpeg_w×jpeg_h region should contain the image data
+        for row in 0..jpeg_h {
+            for col in 0..jpeg_w {
+                let dec = decoded[row * block_w + col] as i32;
+                let orig = src[row * jpeg_w + col] as i32;
+                assert!(
+                    (dec - orig).abs() < 20,
+                    "Pixel ({},{}) differs too much: {} vs {}",
+                    row, col, dec, orig
+                );
+            }
+        }
+
+        // The padding region should be zero
+        for row in 0..block_h {
+            for col in 0..block_w {
+                if row >= jpeg_h || col >= jpeg_w {
+                    assert_eq!(
+                        decoded[row * block_w + col], 0,
+                        "Padding pixel ({},{}) should be zero",
+                        row, col
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_partial_block_rgb_pads_to_expected() {
+        let jpeg_w = 6;
+        let jpeg_h = 6;
+        let block_w = 8;
+        let block_h = 8;
+        let num_bands = 3;
+
+        let mut src = vec![128u8; jpeg_w * jpeg_h * num_bands];
+        for (i, px) in src.iter_mut().enumerate() {
+            *px = (i * 5 % 256) as u8;
+        }
+
+        let jpeg_data = compress_8bit(&src, jpeg_w, jpeg_h, num_bands, 95).unwrap();
+        let decoded = decompress_8bit(&jpeg_data, block_w, block_h, num_bands).unwrap();
+        assert_eq!(decoded.len(), block_w * block_h * num_bands);
+    }
+
+    #[test]
+    fn test_jpeg_larger_than_expected_is_rejected() {
+        // A JPEG stream larger than the expected block should still be an error
+        let jpeg_w = 16;
+        let jpeg_h = 16;
+        let block_w = 8;
+        let block_h = 8;
+
+        let src = vec![128u8; jpeg_w * jpeg_h];
+        let jpeg_data = compress_8bit(&src, jpeg_w, jpeg_h, 1, 90).unwrap();
+
+        let result = decompress_8bit(&jpeg_data, block_w, block_h, 1);
+        assert!(result.is_err());
     }
 }
