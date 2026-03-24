@@ -785,6 +785,241 @@ seq:
 }
 
 
+/// Integration tests that validate all shipped .ksy files parse successfully.
+///
+/// These tests load every .ksy file from data/structures/ and verify
+/// compatibility with the parser. They catch regressions when new
+/// definitions are added or the parser changes.
+#[cfg(test)]
+mod ksy_integration_tests {
+    use super::*;
+    use crate::parser::definition::DefinitionLoader;
+    use std::path::PathBuf;
+
+    /// Returns the path to data/structures/ relative to the crate root.
+    fn structures_dir() -> PathBuf {
+        let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+        PathBuf::from(manifest).join("data").join("structures")
+    }
+
+    /// Collect all .ksy files recursively under a directory.
+    fn collect_ksy_files(dir: &Path) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        if !dir.exists() {
+            return files;
+        }
+        for entry in fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(collect_ksy_files(&path));
+            } else if path.extension().is_some_and(|ext| ext == "ksy") {
+                files.push(path);
+            }
+        }
+        files.sort();
+        files
+    }
+
+    /// .ksy files with known parse failures due to unsupported expression
+    /// syntax. These are tracked for future parser improvements.
+    ///
+    /// - des_weather_data: uses `.to_s.strip` method chain which the
+    ///   expression evaluator does not yet support (chained method calls
+    ///   on non-field expressions).
+    const KNOWN_PARSE_FAILURES: &[&str] = &[
+        "des_weather_data.ksy",
+    ];
+
+    /// .ksy files with known type reference validation failures.
+    /// Currently empty — cross-scope type resolution and parameterized
+    /// type name stripping are both supported.
+    const KNOWN_TYPE_REF_ISSUES: &[&str] = &[];
+
+    fn is_known_parse_failure(path: &Path) -> bool {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| KNOWN_PARSE_FAILURES.contains(&name))
+    }
+
+    fn is_known_type_ref_issue(path: &Path) -> bool {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| KNOWN_TYPE_REF_ISSUES.contains(&name))
+    }
+
+    #[test]
+    fn all_ksy_files_parse_into_structure_definitions() {
+        let dir = structures_dir();
+        let files = collect_ksy_files(&dir);
+
+        assert!(
+            !files.is_empty(),
+            "Expected .ksy files in {}, found none",
+            dir.display()
+        );
+
+        let mut failures: Vec<(PathBuf, String)> = Vec::new();
+        let mut known_failures_seen = 0u32;
+
+        for file in &files {
+            match DefinitionLoader::load_file(file) {
+                Ok(def) => {
+                    assert!(
+                        !def.id.is_empty(),
+                        "Parsed definition from {} has empty id",
+                        file.display()
+                    );
+                    // If this file was in the known failures list but now
+                    // parses, that's great — the list is stale.
+                    if is_known_parse_failure(file) {
+                        panic!(
+                            "File {} is in KNOWN_PARSE_FAILURES but now parses \
+                             successfully. Remove it from the list.",
+                            file.display()
+                        );
+                    }
+                }
+                Err(e) => {
+                    if is_known_parse_failure(file) {
+                        known_failures_seen += 1;
+                    } else {
+                        failures.push((file.clone(), e.to_string()));
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            known_failures_seen,
+            KNOWN_PARSE_FAILURES.len() as u32,
+            "Expected {} known parse failures but saw {}. \
+             A known-failure file may have been removed from data/structures/.",
+            KNOWN_PARSE_FAILURES.len(),
+            known_failures_seen
+        );
+
+        if !failures.is_empty() {
+            let report: Vec<String> = failures
+                .iter()
+                .map(|(path, err)| format!("  {}: {}", path.display(), err))
+                .collect();
+            panic!(
+                "{} of {} .ksy files failed to parse:\n{}",
+                failures.len(),
+                files.len(),
+                report.join("\n")
+            );
+        }
+    }
+
+    #[test]
+    fn all_parseable_ksy_files_resolvable_via_registry() {
+        let dir = structures_dir();
+        let mut registry = StructureRegistry::new();
+        registry.add_search_path(&dir);
+
+        let names = registry.list();
+        assert!(
+            !names.is_empty(),
+            "Registry found no definitions in {}",
+            dir.display()
+        );
+
+        let mut failures: Vec<(String, String)> = Vec::new();
+
+        for name in &names {
+            // Skip names whose .ksy files have known parse failures —
+            // the registry silently returns None for those.
+            let filename = StructureRegistry::name_to_filename(name);
+            let is_known = filename
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| KNOWN_PARSE_FAILURES.contains(&n));
+            if is_known {
+                continue;
+            }
+
+            match registry.get(name) {
+                Some(def) => {
+                    assert!(
+                        !def.id.is_empty(),
+                        "Definition '{}' has empty id",
+                        name
+                    );
+                }
+                None => {
+                    failures.push((name.clone(), "get() returned None".to_string()));
+                }
+            }
+        }
+
+        if !failures.is_empty() {
+            let report: Vec<String> = failures
+                .iter()
+                .map(|(name, err)| format!("  {}: {}", name, err))
+                .collect();
+            panic!(
+                "{} of {} definitions failed registry lookup:\n{}",
+                failures.len(),
+                names.len(),
+                report.join("\n")
+            );
+        }
+    }
+
+    #[test]
+    fn all_ksy_files_pass_type_reference_validation() {
+        let dir = structures_dir();
+        let files = collect_ksy_files(&dir);
+
+        let mut failures: Vec<(PathBuf, String)> = Vec::new();
+        let mut known_issues_seen = 0u32;
+
+        for file in &files {
+            // Skip files that fail to parse — covered by the parse test
+            let Ok(def) = DefinitionLoader::load_file(file) else {
+                continue;
+            };
+
+            if let Err(e) = DefinitionLoader::validate_type_references(&def) {
+                if is_known_type_ref_issue(file) {
+                    known_issues_seen += 1;
+                } else {
+                    failures.push((file.clone(), e.to_string()));
+                }
+            } else if is_known_type_ref_issue(file) {
+                panic!(
+                    "File {} is in KNOWN_TYPE_REF_ISSUES but now passes \
+                     validation. Remove it from the list.",
+                    file.display()
+                );
+            }
+        }
+
+        assert_eq!(
+            known_issues_seen,
+            KNOWN_TYPE_REF_ISSUES.len() as u32,
+            "Expected {} known type-ref issues but saw {}. \
+             A known-issue file may have been removed from data/structures/.",
+            KNOWN_TYPE_REF_ISSUES.len(),
+            known_issues_seen
+        );
+
+        if !failures.is_empty() {
+            let report: Vec<String> = failures
+                .iter()
+                .map(|(path, err)| format!("  {}: {}", path.display(), err))
+                .collect();
+            panic!(
+                "{} .ksy files have unexpected type reference errors:\n{}",
+                failures.len(),
+                report.join("\n")
+            );
+        }
+    }
+}
+
 /// Property-based tests for the structure registry.
 #[cfg(test)]
 mod proptests {

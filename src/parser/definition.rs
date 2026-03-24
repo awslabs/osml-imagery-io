@@ -383,17 +383,35 @@ impl DefinitionLoader {
 
     /// Validate that all type references in a definition resolve to defined types.
     pub fn validate_type_references(def: &StructureDefinition) -> Result<(), LoadError> {
-        Self::validate_fields_type_refs(&def.fields, &def.types, &def.id)
+        Self::validate_fields_type_refs(&def.fields, &def.types, &[], &def.id)
     }
 
+    /// Validate that all TypeRef fields reference defined types.
+    ///
+    /// Type resolution follows KSY scoping rules: a type reference is first
+    /// checked against the current scope's `types` map, then against each
+    /// ancestor scope in order (innermost parent first). This allows nested
+    /// types to reference sibling types defined at the parent level.
     fn validate_fields_type_refs(
         fields: &[FieldDefinition],
         types: &HashMap<String, StructureDefinition>,
+        ancestor_types: &[&HashMap<String, StructureDefinition>],
         context: &str,
     ) -> Result<(), LoadError> {
         for field in fields {
             if let FieldType::TypeRef(type_name) = &field.field_type {
-                if !types.contains_key(type_name) {
+                // Strip parenthesized arguments from parameterized type refs
+                // e.g. "warp_set_t(_index)" -> "warp_set_t"
+                let base_name = match type_name.find('(') {
+                    Some(pos) => &type_name[..pos],
+                    None => type_name.as_str(),
+                };
+
+                // Check current scope first, then walk ancestor scopes
+                let found = types.contains_key(base_name)
+                    || ancestor_types.iter().any(|t| t.contains_key(base_name));
+
+                if !found {
                     return Err(LoadError::UndefinedType {
                         type_name: type_name.clone(),
                         context: format!("field '{}' in {}", field.id, context),
@@ -402,9 +420,18 @@ impl DefinitionLoader {
             }
         }
 
-        // Recursively validate nested types
+        // Recursively validate nested types, adding current scope to ancestors
+        let mut new_ancestors = Vec::with_capacity(ancestor_types.len() + 1);
+        new_ancestors.push(types);
+        new_ancestors.extend_from_slice(ancestor_types);
+
         for (name, nested_def) in types {
-            Self::validate_fields_type_refs(&nested_def.fields, &nested_def.types, name)?;
+            Self::validate_fields_type_refs(
+                &nested_def.fields,
+                &nested_def.types,
+                &new_ancestors,
+                name,
+            )?;
         }
 
         Ok(())
