@@ -10,7 +10,7 @@
 //! - Arithmetic: `+`, `-`, `*`, `/`, `%`
 //! - Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
 //! - Logical: `and`, `or`, `not`
-//! - Method calls: `.to_i`, `.to_s`, `.length`
+//! - Method calls: `.to_i`, `.to_s`, `.length`, `.strip`
 //! - Special variables: `_index`, `_root`, `_parent`, `_io`
 //! - Literals: integers, floats, strings, booleans
 
@@ -45,7 +45,7 @@ pub enum Expression {
         op: UnaryOperator,
         operand: Box<Expression>,
     },
-    /// Method call (.to_i, .to_s, .length)
+    /// Method call (.to_i, .to_s, .length, .strip)
     MethodCall {
         target: Box<Expression>,
         method: String,

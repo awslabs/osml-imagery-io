@@ -224,7 +224,7 @@ impl<'a> Parser<'a> {
                     let name = name.clone();
                     self.advance()?;
                     // Check if this is a method call
-                    if name == "to_i" || name == "to_s" || name == "length" {
+                    if name == "to_i" || name == "to_s" || name == "length" || name == "strip" {
                         expr = Expression::MethodCall {
                             target: Box::new(expr),
                             method: name,

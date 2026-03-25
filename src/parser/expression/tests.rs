@@ -602,3 +602,75 @@ fn eval_string_concatenation() {
     let result = evaluator.evaluate(&expr, &ctx).unwrap();
     assert_eq!(result, EvalResult::String("hello world".to_string()));
 }
+
+#[test]
+fn parse_method_strip() {
+    let expr = ExpressionEvaluator::parse("field.strip").unwrap();
+    assert_eq!(
+        expr,
+        Expression::MethodCall {
+            target: Box::new(Expression::FieldRef("field".to_string())),
+            method: "strip".to_string(),
+        }
+    );
+}
+
+#[test]
+fn parse_chained_method_to_s_strip() {
+    let expr = ExpressionEvaluator::parse("METOC_SOURCE.to_s.strip").unwrap();
+    assert_eq!(
+        expr,
+        Expression::MethodCall {
+            target: Box::new(Expression::MethodCall {
+                target: Box::new(Expression::FieldRef("METOC_SOURCE".to_string())),
+                method: "to_s".to_string(),
+            }),
+            method: "strip".to_string(),
+        }
+    );
+}
+
+#[test]
+fn eval_method_strip() {
+    let expr = ExpressionEvaluator::parse("field.strip").unwrap();
+    let evaluator = ExpressionEvaluator::new();
+    let ctx =
+        EvalContext::new().with_field("field", EvalResult::String("  hello  ".to_string()));
+    let result = evaluator.evaluate(&expr, &ctx).unwrap();
+    assert_eq!(result, EvalResult::String("hello".to_string()));
+}
+
+#[test]
+fn eval_chained_to_s_strip_eq() {
+    // Mirrors: METOC_SOURCE.to_s.strip == "NONTRADITIONAL"
+    let expr =
+        ExpressionEvaluator::parse("METOC_SOURCE.to_s.strip == \"NONTRADITIONAL\"").unwrap();
+    let evaluator = ExpressionEvaluator::new();
+    let ctx = EvalContext::new().with_field(
+        "METOC_SOURCE",
+        EvalResult::String("NONTRADITIONAL      ".to_string()),
+    );
+    let result = evaluator.evaluate(&expr, &ctx).unwrap();
+    assert_eq!(result, EvalResult::Boolean(true));
+}
+
+#[test]
+fn eval_chained_to_s_strip_ne_empty() {
+    // Mirrors: LOCATION_SHAPE.to_s.strip != ""
+    let expr =
+        ExpressionEvaluator::parse("LOCATION_SHAPE.to_s.strip != \"\"").unwrap();
+    let evaluator = ExpressionEvaluator::new();
+    let ctx = EvalContext::new()
+        .with_field("LOCATION_SHAPE", EvalResult::String("   ".to_string()));
+    let result = evaluator.evaluate(&expr, &ctx).unwrap();
+    assert_eq!(result, EvalResult::Boolean(false));
+}
+
+#[test]
+fn eval_strip_on_non_string_is_error() {
+    let expr = ExpressionEvaluator::parse("num.strip").unwrap();
+    let evaluator = ExpressionEvaluator::new();
+    let ctx = EvalContext::new().with_field("num", EvalResult::Integer(42));
+    let result = evaluator.evaluate(&expr, &ctx);
+    assert!(result.is_err());
+}

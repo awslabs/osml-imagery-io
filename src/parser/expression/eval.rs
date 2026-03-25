@@ -230,6 +230,13 @@ impl ExpressionEvaluator {
                     operand_type: format!("{:?}", v),
                 }),
             },
+            "strip" => match val {
+                EvalResult::String(s) => Ok(EvalResult::String(s.trim().to_string())),
+                v => Err(ExpressionError::TypeError {
+                    operator: "strip".to_string(),
+                    operand_type: format!("{:?}", v),
+                }),
+            },
             _ => Err(ExpressionError::SyntaxError {
                 message: format!("Unknown method: {}", method),
             }),
