@@ -823,13 +823,7 @@ mod ksy_integration_tests {
 
     /// .ksy files with known parse failures due to unsupported expression
     /// syntax. These are tracked for future parser improvements.
-    ///
-    /// - des_weather_data: uses `.to_s.strip` method chain which the
-    ///   expression evaluator does not yet support (chained method calls
-    ///   on non-field expressions).
-    const KNOWN_PARSE_FAILURES: &[&str] = &[
-        "des_weather_data.ksy",
-    ];
+    const KNOWN_PARSE_FAILURES: &[&str] = &[];
 
     /// .ksy files with known type reference validation failures.
     /// Currently empty — cross-scope type resolution and parameterized

@@ -1255,6 +1255,13 @@ mod proptests {
             fn defined_type_passes_validation(
                 type_name in "[a-z][a-z0-9_]{2,15}",
             ) {
+                // Skip names that collide with built-in types
+                prop_assume!(!type_name.starts_with("str"));
+                prop_assume!(!(type_name.starts_with('b') && type_name[1..].parse::<u32>().is_ok()));
+                prop_assume!(!(type_name.len() == 2 && (type_name.starts_with('u') || type_name.starts_with('s'))));
+                prop_assume!(!(type_name.len() == 4 && (type_name.ends_with("be") || type_name.ends_with("le"))
+                    && (type_name.starts_with('u') || type_name.starts_with('s'))));
+
                 let yaml = format!(
                     "meta:\n  id: test\nseq:\n  - id: field1\n    type: {}\ntypes:\n  {}:\n    seq:\n      - id: inner\n        type: u1\n",
                     type_name, type_name
@@ -1271,6 +1278,14 @@ mod proptests {
             ) {
                 // Ensure type names are different
                 prop_assume!(type1 != type2);
+                // Skip names that collide with built-in types
+                for t in [&type1, &type2] {
+                    prop_assume!(!t.starts_with("str"));
+                    prop_assume!(!(t.starts_with('b') && t[1..].parse::<u32>().is_ok()));
+                    prop_assume!(!(t.len() == 2 && (t.starts_with('u') || t.starts_with('s'))));
+                    prop_assume!(!(t.len() == 4 && (t.ends_with("be") || t.ends_with("le"))
+                        && (t.starts_with('u') || t.starts_with('s'))));
+                }
 
                 let yaml = format!(
                     "meta:\n  id: test\nseq:\n  - id: field1\n    type: {}\n  - id: field2\n    type: {}\n",
