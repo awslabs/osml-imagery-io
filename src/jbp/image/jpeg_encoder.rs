@@ -21,11 +21,17 @@
 //! - 2.5: Convert RGB to YCbCr601 before compression
 //! - 2.6: Encode multiband images (IMODE=B or S)
 
+use std::collections::HashSet;
+
 use crate::error::CodecError;
+use crate::jbp::image::encoder::BlockEncoder;
 use crate::jbp::image::types::InterleaveMode;
 
 use crate::jpeg::JpegCodec;
 use crate::jbp::image::jpeg_decoder::JpegColorSpace;
+
+#[cfg(feature = "libjpeg-turbo")]
+use crate::jpeg::JpegComrat;
 
 /// Block encoder for JPEG DCT compressed imagery.
 ///
@@ -360,6 +366,321 @@ impl JpegBlockEncoder {
     }
 }
 
+
+// =============================================================================
+// JpegNitfBlockEncoder - JPEG DCT encoder for NITF (IC=C3, M3, I1)
+// =============================================================================
+
+/// Block encoder for JPEG DCT compressed NITF imagery (IC=C3, M3, I1).
+///
+/// This encoder wraps the [`JpegBlockEncoder`] and implements the [`BlockEncoder`]
+/// trait for integration with the JBP image writer infrastructure.
+///
+/// # Supported IC Codes
+/// - `C3`: JPEG DCT compressed imagery
+/// - `M3`: JPEG DCT compressed imagery with block mask
+/// - `I1`: Downsampled JPEG (single block ≤2048×2048)
+///
+/// # Requirements
+/// - 2.1: Encode JPEG DCT compressed blocks (IC=C3)
+/// - 2.2: Encode 8-bit monochrome JPEG blocks
+/// - 2.3: Return error for 12-bit JPEG (not supported)
+/// - 2.4: Encode 3-band RGB images (IMODE=P)
+/// - 2.5: Convert RGB to YCbCr601 before compression
+/// - 2.6: Encode multiband images (IMODE=B or S)
+#[cfg(feature = "libjpeg-turbo")]
+pub struct JpegNitfBlockEncoder {
+    /// The underlying JPEG encoder
+    jpeg_encoder: JpegBlockEncoder,
+    /// Number of rows in the image
+    nrows: u32,
+    /// Number of columns in the image
+    ncols: u32,
+    /// Number of blocks per row
+    nbpr: u32,
+    /// Number of blocks per column
+    nbpc: u32,
+    /// Number of pixels per block horizontal
+    nppbh: u32,
+    /// Number of pixels per block vertical
+    nppbv: u32,
+    /// Number of bands
+    nbands: u32,
+    /// Bits per pixel
+    nbpp: u8,
+    /// Interleave mode
+    imode: InterleaveMode,
+    /// Compression type (C3, M3, or I1)
+    ic: String,
+    /// Accumulated encoded data buffer
+    encoded_data: Vec<u8>,
+    /// Track which blocks have been encoded
+    encoded_blocks: HashSet<(u32, u32)>,
+    /// Bytes per pixel
+    bytes_per_pixel: usize,
+}
+
+#[cfg(feature = "libjpeg-turbo")]
+impl JpegNitfBlockEncoder {
+    /// Create a new JPEG NITF block encoder.
+    ///
+    /// # Arguments
+    /// * `ic` - Image compression code (C3, M3, or I1)
+    /// * `nrows` - Image height in pixels
+    /// * `ncols` - Image width in pixels
+    /// * `nbands` - Number of bands
+    /// * `nbpp` - Bits per pixel (8 or 12)
+    /// * `imode` - Interleave mode
+    /// * `nppbh` - Block width in pixels
+    /// * `nppbv` - Block height in pixels
+    /// * `comrat` - Optional COMRAT string for quality
+    ///
+    /// # Returns
+    /// A new `JpegNitfBlockEncoder` or an error if parameters are invalid.
+    ///
+    /// # Requirements
+    /// - 2.1: JPEG DCT encoding support
+    /// - 4.4: I1 dimension constraint validation (≤2048×2048)
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        ic: &str,
+        nrows: u32,
+        ncols: u32,
+        nbands: u32,
+        nbpp: u8,
+        imode: InterleaveMode,
+        nppbh: u32,
+        nppbv: u32,
+        comrat: Option<&str>,
+    ) -> Result<Self, CodecError> {
+        let ic_trimmed = ic.trim().to_string();
+
+        // Validate I1 dimension constraint (Requirement 4.4)
+        if ic_trimmed == "I1" && (nrows > 2048 || ncols > 2048) {
+            return Err(CodecError::InvalidFormat(format!(
+                "IC=I1 (Downsampled JPEG) requires dimensions ≤2048×2048, got {}×{}",
+                ncols, nrows
+            )));
+        }
+
+        // Parse COMRAT to get quality
+        let quality = match comrat {
+            Some(c) => JpegComrat::parse(c)?.quality(),
+            None => JpegComrat::default().quality(),
+        };
+
+        // Determine color space from band count and IMODE
+        let color_space = if nbands == 1 {
+            JpegColorSpace::Grayscale
+        } else if nbands == 3 && imode == InterleaveMode::P {
+            // 3-band pixel-interleaved is typically RGB or YCbCr
+            // Default to RGB, let the encoder handle YCbCr conversion
+            JpegColorSpace::Rgb
+        } else {
+            // Multiband - encode each band as grayscale
+            JpegColorSpace::Grayscale
+        };
+
+        // Create the underlying JPEG encoder
+        let jpeg_encoder = JpegBlockEncoder::new(
+            nbpp,
+            nbands as usize,
+            nppbh as usize,
+            nppbv as usize,
+            imode,
+            color_space,
+            quality,
+        )?;
+
+        // Calculate block grid
+        let nbpr = ncols.div_ceil(nppbh);
+        let nbpc = nrows.div_ceil(nppbv);
+
+        // Calculate bytes per pixel
+        let bytes_per_pixel = (nbpp as usize).div_ceil(8);
+
+        Ok(Self {
+            jpeg_encoder,
+            nrows,
+            ncols,
+            nbpr,
+            nbpc,
+            nppbh,
+            nppbv,
+            nbands,
+            nbpp,
+            imode,
+            ic: ic_trimmed,
+            encoded_data: Vec::new(),
+            encoded_blocks: HashSet::new(),
+            bytes_per_pixel,
+        })
+    }
+
+    /// Calculate the actual dimensions of a block, handling edge blocks.
+    fn actual_block_dimensions(&self, block_row: u32, block_col: u32) -> (u32, u32) {
+        let start_row = block_row * self.nppbv;
+        let start_col = block_col * self.nppbh;
+
+        let actual_rows = if start_row + self.nppbv > self.nrows {
+            self.nrows - start_row
+        } else {
+            self.nppbv
+        };
+
+        let actual_cols = if start_col + self.nppbh > self.ncols {
+            self.ncols - start_col
+        } else {
+            self.nppbh
+        };
+
+        (actual_rows, actual_cols)
+    }
+}
+
+#[cfg(feature = "libjpeg-turbo")]
+impl BlockEncoder for JpegNitfBlockEncoder {
+    fn encode_block(
+        &mut self,
+        block_row: u32,
+        block_col: u32,
+        data: &[u8],
+        shape: [u32; 3],
+    ) -> Result<(), CodecError> {
+        // Validate block coordinates
+        if block_row >= self.nbpc || block_col >= self.nbpr {
+            return Err(CodecError::InvalidBlockCoordinates(
+                block_row,
+                block_col,
+                0,
+            ));
+        }
+
+        // Validate data size matches shape
+        let expected_size =
+            (shape[0] as usize) * (shape[1] as usize) * (shape[2] as usize) * self.bytes_per_pixel;
+        if data.len() != expected_size {
+            return Err(CodecError::Encode(format!(
+                "Data size {} doesn't match shape {:?} with {} bytes/pixel (expected {})",
+                data.len(),
+                shape,
+                self.bytes_per_pixel,
+                expected_size
+            )));
+        }
+
+        // Get actual block dimensions for edge blocks
+        let (actual_rows, actual_cols) = self.actual_block_dimensions(block_row, block_col);
+
+        // For edge blocks, we may need to handle partial data
+        // The input data should already be sized for the actual block dimensions
+        if shape[1] != actual_rows || shape[2] != actual_cols {
+            return Err(CodecError::Encode(format!(
+                "Block shape {:?} doesn't match expected dimensions ({}, {})",
+                shape, actual_rows, actual_cols
+            )));
+        }
+
+        // For edge blocks that are smaller than the full block size, zero-pad
+        // to full block dimensions. JPEG requires fixed-size input matching the
+        // encoder's configured block dimensions (JBP-2021.2-063, JBP-2021.2-064).
+        let padded_buf;
+        let data_to_encode = if actual_rows < self.nppbv || actual_cols < self.nppbh {
+            let full_h = self.nppbv as usize;
+            let full_w = self.nppbh as usize;
+            let act_h = actual_rows as usize;
+            let act_w = actual_cols as usize;
+            let nbands = self.nbands as usize;
+            let bpp = self.bytes_per_pixel;
+
+            let full_band_size = full_h * full_w * bpp;
+            let act_band_size = act_h * act_w * bpp;
+            // Zero-initialized: extra rows/cols are already zero-filled
+            padded_buf = {
+                let mut buf = vec![0u8; nbands * full_band_size];
+                for band in 0..nbands {
+                    let src_offset = band * act_band_size;
+                    let dst_offset = band * full_band_size;
+                    for row in 0..act_h {
+                        let src_start = src_offset + row * act_w * bpp;
+                        let dst_start = dst_offset + row * full_w * bpp;
+                        buf[dst_start..dst_start + act_w * bpp]
+                            .copy_from_slice(&data[src_start..src_start + act_w * bpp]);
+                    }
+                }
+                buf
+            };
+            &padded_buf
+        } else {
+            data
+        };
+
+        // Encode the block using the JPEG encoder
+        let jpeg_data = if self.nbands > 1 && self.imode != InterleaveMode::P {
+            // Multiband with IMODE=B or S - encode each band separately
+            self.jpeg_encoder.encode_multiband_block(data_to_encode)?
+        } else {
+            // Single band or pixel-interleaved RGB
+            self.jpeg_encoder.encode_block(data_to_encode)?
+        };
+
+        // Append the JPEG data to the output buffer
+        // For NITF JPEG, each block is stored sequentially
+        self.encoded_data.extend_from_slice(&jpeg_data);
+
+        // Track encoded block
+        self.encoded_blocks.insert((block_row, block_col));
+
+        Ok(())
+    }
+
+    fn skip_block(&mut self, block_row: u32, block_col: u32) -> Result<(), CodecError> {
+        // Validate block coordinates
+        if block_row >= self.nbpc || block_col >= self.nbpr {
+            return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
+        }
+
+        // Mark block as handled (skipped for masked images like M3)
+        self.encoded_blocks.insert((block_row, block_col));
+
+        Ok(())
+    }
+
+    fn finalize(self: Box<Self>) -> Result<Vec<u8>, CodecError> {
+        // Verify all blocks were encoded
+        let expected_blocks = self.nbpc * self.nbpr;
+        if self.encoded_blocks.len() != expected_blocks as usize {
+            return Err(CodecError::Encode(format!(
+                "Incomplete encoding: {} of {} blocks encoded",
+                self.encoded_blocks.len(),
+                expected_blocks
+            )));
+        }
+
+        Ok(self.encoded_data)
+    }
+
+    fn compression_type(&self) -> &str {
+        &self.ic
+    }
+
+    fn block_grid_size(&self) -> (u32, u32) {
+        (self.nbpc, self.nbpr)
+    }
+
+    fn block_dimensions(&self) -> (u32, u32) {
+        (self.nppbv, self.nppbh)
+    }
+}
+
+// Safety: JpegNitfBlockEncoder is thread-safe
+// - jpeg_encoder contains only primitive types and JpegCodec (which is Send+Sync)
+// - All other fields are primitive types or standard collections
+#[cfg(feature = "libjpeg-turbo")]
+unsafe impl Send for JpegNitfBlockEncoder {}
+
+#[cfg(feature = "libjpeg-turbo")]
+unsafe impl Sync for JpegNitfBlockEncoder {}
 
 #[cfg(test)]
 mod tests {

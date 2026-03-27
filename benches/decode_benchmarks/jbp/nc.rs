@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 
-use _io::jbp::image::decoder::{BlockDecoder, UncompressedBlockDecoder};
+use _io::jbp::image::decoder::BlockDecoder;
+use _io::jbp::image::nc_decoder::UncompressedBlockDecoder;
 use _io::jbp::image::interleave::{
     fused_bip_to_bsq_swap, fused_bip_to_bsq_swap_parallel, to_band_sequential,
 };

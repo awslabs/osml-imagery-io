@@ -27,17 +27,21 @@ pub mod jpeg_decoder;
 #[cfg(feature = "libjpeg-turbo")]
 pub mod jpeg_encoder;
 pub mod mask;
+pub mod nc_decoder;
+pub mod nc_encoder;
 pub mod pixel;
 pub mod types;
 pub mod validation;
 
 pub use builder::{BandInfoBuilder, ImageSubheaderBuilder};
-pub use decoder::{create_block_decoder, swap_be_to_ne, BlockDecoder, UncompressedBlockDecoder};
+pub use decoder::{create_block_decoder, swap_be_to_ne, BlockDecoder};
+pub use nc_decoder::UncompressedBlockDecoder;
+pub use nc_encoder::UncompressedBlockEncoder;
 #[cfg(feature = "libjpeg-turbo")]
-pub use decoder::JpegNitfBlockDecoder;
+pub use jpeg_decoder::JpegNitfBlockDecoder;
 pub use encoder::{create_block_encoder, swap_ne_to_be, BlockEncoder, TileAssembler};
 #[cfg(feature = "libjpeg-turbo")]
-pub use encoder::JpegNitfBlockEncoder;
+pub use jpeg_encoder::JpegNitfBlockEncoder;
 pub use facade::{BandInfoFacade, ImageSubheaderFacade};
 pub use interleave::{convert, from_band_sequential, to_band_sequential};
 pub use j2k_decoder::Jpeg2000BlockDecoder;
