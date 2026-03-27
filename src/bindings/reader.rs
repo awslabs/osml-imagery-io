@@ -28,6 +28,14 @@ use crate::tiff::TIFFImageAssetProvider;
 // Import PNG asset providers for downcasting
 use crate::png::PNGImageAssetProvider;
 
+// Import J2K asset providers for downcasting
+#[cfg(feature = "openjpeg")]
+use crate::j2k::J2KImageAssetProvider;
+
+// Import JPEG asset providers for downcasting
+#[cfg(feature = "libjpeg-turbo")]
+use crate::jpeg::JPEGImageAssetProvider;
+
 /// Provides read access to geospatial datasets.
 ///
 /// A :class:`DatasetReader` exposes the assets and metadata contained in a
@@ -244,6 +252,32 @@ fn try_as_image_provider(
         unsafe {
             Arc::increment_strong_count(ptr);
             let concrete_ptr = ptr as *const PNGImageAssetProvider;
+            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
+        }
+    }
+
+    // Try J2KImageAssetProvider
+    #[cfg(feature = "openjpeg")]
+    if asset.as_any().downcast_ref::<J2KImageAssetProvider>().is_some() {
+        let ptr = Arc::as_ptr(asset);
+        // SAFETY: We've verified the concrete type is J2KImageAssetProvider
+        // which implements ImageAssetProvider. We increment the ref count.
+        unsafe {
+            Arc::increment_strong_count(ptr);
+            let concrete_ptr = ptr as *const J2KImageAssetProvider;
+            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
+        }
+    }
+
+    // Try JPEGImageAssetProvider
+    #[cfg(feature = "libjpeg-turbo")]
+    if asset.as_any().downcast_ref::<JPEGImageAssetProvider>().is_some() {
+        let ptr = Arc::as_ptr(asset);
+        // SAFETY: We've verified the concrete type is JPEGImageAssetProvider
+        // which implements ImageAssetProvider. We increment the ref count.
+        unsafe {
+            Arc::increment_strong_count(ptr);
+            let concrete_ptr = ptr as *const JPEGImageAssetProvider;
             return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
         }
     }

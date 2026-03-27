@@ -38,10 +38,12 @@ use crate::jbp::image::interleave::{
 use crate::jbp::image::types::{InterleaveMode, PixelJustification, PixelValueType};
 
 #[cfg(feature = "openjpeg")]
-use crate::jbp::j2k::{get_j2k_codec, Jpeg2000BlockDecoder};
+use crate::j2k::get_j2k_codec;
+#[cfg(feature = "openjpeg")]
+use crate::jbp::image::j2k_decoder::Jpeg2000BlockDecoder;
 
 #[cfg(feature = "libjpeg-turbo")]
-use crate::jbp::jpeg::{JpegBlockDecoder, JpegColorSpace};
+use crate::jbp::image::jpeg_decoder::{JpegBlockDecoder, JpegColorSpace};
 
 /// Default tile height in rows for the tiled BIP→BSQ transpose.
 /// Chosen so that one tile's worth of destination writes fits in L2 cache.

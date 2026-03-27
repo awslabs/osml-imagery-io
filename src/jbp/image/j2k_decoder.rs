@@ -28,7 +28,7 @@ use crate::jbp::image::decoder::BlockDecoder;
 use crate::jbp::image::facade::ImageSubheaderFacade;
 use crate::jbp::image::types::{InterleaveMode, PixelValueType};
 
-use super::codec::{J2KCodec, J2KDecodeParams};
+use crate::j2k::{J2KCodec, J2KDecodeParams};
 
 // =============================================================================
 // Jpeg2000BlockDecoder
@@ -527,7 +527,7 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
 
         // Decode the block codestream
         // For masked images, each block is a single-tile codestream, so tile_index is 0
-        let params = super::codec::J2KDecodeParams {
+        let params = crate::j2k::J2KDecodeParams {
             resolution_level,
             region: None,
         };
@@ -611,7 +611,7 @@ mod tests {
     /// Mock codec for testing without OpenJPEG dependency
     struct MockJ2KCodec {
         htj2k_support: bool,
-        decode_result: Option<super::super::codec::J2KDecodeResult>,
+        decode_result: Option<crate::j2k::J2KDecodeResult>,
         tile_info: (u32, u32, u32, u32), // (tile_width, tile_height, num_tiles_x, num_tiles_y)
     }
 
@@ -639,7 +639,7 @@ mod tests {
             let bytes_per_pixel = ((bits_per_component as usize) + 7) / 8;
             let data_size =
                 (width * height * num_components) as usize * bytes_per_pixel;
-            self.decode_result = Some(super::super::codec::J2KDecodeResult {
+            self.decode_result = Some(crate::j2k::J2KDecodeResult {
                 data: vec![0u8; data_size],
                 width,
                 height,
@@ -660,8 +660,8 @@ mod tests {
     }
 
     impl J2KCodec for MockJ2KCodec {
-        fn capabilities(&self) -> super::super::codec::J2KCodecCapabilities {
-            super::super::codec::J2KCodecCapabilities {
+        fn capabilities(&self) -> crate::j2k::J2KCodecCapabilities {
+            crate::j2k::J2KCodecCapabilities {
                 max_bit_depth: 38,
                 htj2k_decode: self.htj2k_support,
                 htj2k_encode: self.htj2k_support,
@@ -673,7 +673,7 @@ mod tests {
             &self,
             _codestream: &[u8],
             _params: &J2KDecodeParams,
-        ) -> Result<super::super::codec::J2KDecodeResult, CodecError> {
+        ) -> Result<crate::j2k::J2KDecodeResult, CodecError> {
             self.decode_result
                 .clone()
                 .ok_or_else(|| CodecError::Decode("Mock decode not configured".into()))
@@ -681,8 +681,8 @@ mod tests {
 
         fn start_encode(
             &self,
-            _params: &super::super::codec::J2KEncodeParams,
-        ) -> Result<Box<dyn super::super::codec::J2KEncodeState>, CodecError> {
+            _params: &crate::j2k::J2KEncodeParams,
+        ) -> Result<Box<dyn crate::j2k::J2KEncodeState>, CodecError> {
             Err(CodecError::Unsupported("Mock encode not implemented".into()))
         }
 
@@ -707,7 +707,7 @@ mod tests {
             _codestream: &[u8],
             tile_index: u32,
             _params: &J2KDecodeParams,
-        ) -> Result<super::super::codec::J2KDecodeResult, CodecError> {
+        ) -> Result<crate::j2k::J2KDecodeResult, CodecError> {
             let (tile_width, tile_height, num_tiles_x, num_tiles_y) = self.tile_info;
             let total_tiles = num_tiles_x * num_tiles_y;
             
@@ -723,7 +723,7 @@ mod tests {
             if let Some(ref result) = self.decode_result {
                 let bytes_per_pixel = ((result.bits_per_component as usize) + 7) / 8;
                 let data_size = (tile_width * tile_height * result.num_components) as usize * bytes_per_pixel;
-                Ok(super::super::codec::J2KDecodeResult {
+                Ok(crate::j2k::J2KDecodeResult {
                     data: vec![0u8; data_size],
                     width: tile_width,
                     height: tile_height,

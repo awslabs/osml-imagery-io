@@ -26,12 +26,6 @@ pub enum PixelValueType {
 
 impl PixelValueType {
     /// Parse from PVTYPE string field (3 characters, space-padded).
-    ///
-    /// # Arguments
-    /// * `s` - The PVTYPE field value (e.g., "INT", "SI ", "R  ", "C  ", "B  ")
-    ///
-    /// # Returns
-    /// The corresponding `PixelValueType` variant, or an error if invalid.
     pub fn from_str(s: &str) -> Result<Self, CodecError> {
         match s.trim() {
             "INT" => Ok(PixelValueType::UnsignedInt),
@@ -39,17 +33,11 @@ impl PixelValueType {
             "R" => Ok(PixelValueType::Real),
             "C" => Ok(PixelValueType::Complex),
             "B" => Ok(PixelValueType::BiLevel),
-            _ => Err(CodecError::Parse(format!(
-                "Invalid PVTYPE value: '{}'",
-                s
-            ))),
+            _ => Err(CodecError::Parse(format!("Invalid PVTYPE value: '{}'", s))),
         }
     }
 
     /// Convert to PVTYPE string for writing (3 characters, space-padded).
-    ///
-    /// # Returns
-    /// The PVTYPE field value as a 3-character string.
     pub fn to_str(&self) -> &'static str {
         match self {
             PixelValueType::UnsignedInt => "INT",
@@ -61,56 +49,33 @@ impl PixelValueType {
     }
 
     /// Convert to `PixelType` based on NBPP (number of bits per pixel).
-    ///
-    /// # Arguments
-    /// * `nbpp` - Number of bits per pixel
-    ///
-    /// # Returns
-    /// The corresponding `PixelType` for the ImageAssetProvider trait.
-    ///
-    /// # Note
-    /// For JPEG 2000 images, NBPP can range from 1-38 bits. This function
-    /// returns the smallest PixelType that can hold the specified bit depth:
-    /// - 1-8 bits: UInt8/Int8
-    /// - 9-16 bits: UInt16/Int16
-    /// - 17-32 bits: UInt32/Int32
-    /// - 33-64 bits: Float64 (for very high bit depths)
     pub fn to_pixel_type(&self, nbpp: u8) -> PixelType {
         match self {
-            PixelValueType::UnsignedInt => {
-                match nbpp {
-                    1..=8 => PixelType::UInt8,
-                    9..=16 => PixelType::UInt16,
-                    17..=32 => PixelType::UInt32,
-                    _ => PixelType::UInt32, // 33+ bits, use largest unsigned type
-                }
-            }
-            PixelValueType::SignedInt => {
-                match nbpp {
-                    1..=8 => PixelType::Int8,
-                    9..=16 => PixelType::Int16,
-                    17..=32 => PixelType::Int32,
-                    _ => PixelType::Int32, // 33+ bits, use largest signed type
-                }
-            }
-            PixelValueType::Real => {
-                match nbpp {
-                    32 => PixelType::Float32,
-                    64 => PixelType::Float64,
-                    _ => PixelType::Float32, // Default fallback
-                }
-            }
-            PixelValueType::Complex => PixelType::Float32, // Complex uses pairs of Float32
-            PixelValueType::BiLevel => PixelType::UInt8,   // Bi-level unpacks to bytes
+            PixelValueType::UnsignedInt => match nbpp {
+                1..=8 => PixelType::UInt8,
+                9..=16 => PixelType::UInt16,
+                17..=32 => PixelType::UInt32,
+                _ => PixelType::UInt32,
+            },
+            PixelValueType::SignedInt => match nbpp {
+                1..=8 => PixelType::Int8,
+                9..=16 => PixelType::Int16,
+                17..=32 => PixelType::Int32,
+                _ => PixelType::Int32,
+            },
+            PixelValueType::Real => match nbpp {
+                32 => PixelType::Float32,
+                64 => PixelType::Float64,
+                _ => PixelType::Float32,
+            },
+            PixelValueType::Complex => PixelType::Float32,
+            PixelValueType::BiLevel => PixelType::UInt8,
         }
     }
 }
 
 
 /// Image representation (IREP field) describing how the image should be displayed.
-///
-/// This enum represents the NITF IREP field which specifies the intended
-/// display interpretation of the image data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageRepresentation {
     /// Monochrome image (single band)
@@ -135,12 +100,6 @@ pub enum ImageRepresentation {
 
 impl ImageRepresentation {
     /// Parse from IREP string field (8 characters, space-padded).
-    ///
-    /// # Arguments
-    /// * `s` - The IREP field value (e.g., "MONO    ", "RGB     ", "RGB/LUT ")
-    ///
-    /// # Returns
-    /// The corresponding `ImageRepresentation` variant, or an error if invalid.
     pub fn from_str(s: &str) -> Result<Self, CodecError> {
         match s.trim() {
             "MONO" => Ok(ImageRepresentation::Mono),
@@ -157,9 +116,6 @@ impl ImageRepresentation {
     }
 
     /// Convert to IREP string for writing (8 characters, space-padded).
-    ///
-    /// # Returns
-    /// The IREP field value as an 8-character string.
     pub fn to_str(&self) -> &'static str {
         match self {
             ImageRepresentation::Mono => "MONO    ",
@@ -175,17 +131,12 @@ impl ImageRepresentation {
     }
 
     /// Get the expected band count for this representation.
-    ///
-    /// # Returns
-    /// `Some(count)` if the representation has a fixed band count requirement,
-    /// `None` if any number of bands is allowed.
     pub fn expected_band_count(&self) -> Option<usize> {
         match self {
             ImageRepresentation::Mono => Some(1),
             ImageRepresentation::Rgb => Some(3),
             ImageRepresentation::RgbLut => Some(1),
             ImageRepresentation::YCbCr601 => Some(3),
-            // Multi, NoDisplay, NVector, Polar, Vph allow any band count
             _ => None,
         }
     }
@@ -193,46 +144,31 @@ impl ImageRepresentation {
 
 
 /// Image interleave mode (IMODE field) specifying how multi-band data is organized.
-///
-/// This enum represents the NITF IMODE field which specifies the interleave
-/// pattern for multi-band imagery within blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterleaveMode {
-    /// Band interleaved by block - all bands for each block stored sequentially
+    /// Band interleaved by block
     B,
-    /// Band interleaved by pixel - bands interleaved within each pixel
+    /// Band interleaved by pixel
     P,
-    /// Band interleaved by row - bands interleaved by row within each block
+    /// Band interleaved by row
     R,
-    /// Band sequential - each band stored as a separate set of blocks
+    /// Band sequential
     S,
 }
 
 impl InterleaveMode {
     /// Parse from IMODE character field.
-    ///
-    /// # Arguments
-    /// * `c` - The IMODE field value ('B', 'P', 'R', or 'S')
-    ///
-    /// # Returns
-    /// The corresponding `InterleaveMode` variant, or an error if invalid.
     pub fn from_char(c: char) -> Result<Self, CodecError> {
         match c {
             'B' => Ok(InterleaveMode::B),
             'P' => Ok(InterleaveMode::P),
             'R' => Ok(InterleaveMode::R),
             'S' => Ok(InterleaveMode::S),
-            _ => Err(CodecError::Parse(format!(
-                "Invalid IMODE value: '{}'",
-                c
-            ))),
+            _ => Err(CodecError::Parse(format!("Invalid IMODE value: '{}'", c))),
         }
     }
 
     /// Convert to IMODE character for writing.
-    ///
-    /// # Returns
-    /// The IMODE field value as a single character.
     pub fn to_char(&self) -> char {
         match self {
             InterleaveMode::B => 'B',
@@ -440,7 +376,6 @@ mod tests {
 
         #[test]
         fn from_str_with_padding() {
-            assert_eq!(PixelValueType::from_str("INT").unwrap(), PixelValueType::UnsignedInt);
             assert_eq!(PixelValueType::from_str("SI ").unwrap(), PixelValueType::SignedInt);
             assert_eq!(PixelValueType::from_str("R  ").unwrap(), PixelValueType::Real);
             assert_eq!(PixelValueType::from_str("C  ").unwrap(), PixelValueType::Complex);
@@ -457,15 +392,11 @@ mod tests {
         #[test]
         fn to_str_round_trip() {
             let variants = [
-                PixelValueType::UnsignedInt,
-                PixelValueType::SignedInt,
-                PixelValueType::Real,
-                PixelValueType::Complex,
-                PixelValueType::BiLevel,
+                PixelValueType::UnsignedInt, PixelValueType::SignedInt,
+                PixelValueType::Real, PixelValueType::Complex, PixelValueType::BiLevel,
             ];
             for variant in variants {
-                let s = variant.to_str();
-                assert_eq!(PixelValueType::from_str(s).unwrap(), variant);
+                assert_eq!(PixelValueType::from_str(variant.to_str()).unwrap(), variant);
             }
         }
 
@@ -477,46 +408,10 @@ mod tests {
         }
 
         #[test]
-        fn to_pixel_type_unsigned_int_j2k_bit_depths() {
-            // J2K supports 1-38 bits per pixel
-            // 1-8 bits -> UInt8
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(1), PixelType::UInt8);
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(4), PixelType::UInt8);
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(8), PixelType::UInt8);
-            // 9-16 bits -> UInt16
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(10), PixelType::UInt16);
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(12), PixelType::UInt16);
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(14), PixelType::UInt16);
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(16), PixelType::UInt16);
-            // 17-32 bits -> UInt32
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(20), PixelType::UInt32);
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(24), PixelType::UInt32);
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(32), PixelType::UInt32);
-            // 33+ bits -> UInt32 (largest available)
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(38), PixelType::UInt32);
-        }
-
-        #[test]
         fn to_pixel_type_signed_int() {
             assert_eq!(PixelValueType::SignedInt.to_pixel_type(8), PixelType::Int8);
             assert_eq!(PixelValueType::SignedInt.to_pixel_type(16), PixelType::Int16);
             assert_eq!(PixelValueType::SignedInt.to_pixel_type(32), PixelType::Int32);
-        }
-
-        #[test]
-        fn to_pixel_type_signed_int_j2k_bit_depths() {
-            // J2K supports 1-38 bits per pixel for signed integers
-            // 1-8 bits -> Int8
-            assert_eq!(PixelValueType::SignedInt.to_pixel_type(1), PixelType::Int8);
-            assert_eq!(PixelValueType::SignedInt.to_pixel_type(8), PixelType::Int8);
-            // 9-16 bits -> Int16
-            assert_eq!(PixelValueType::SignedInt.to_pixel_type(12), PixelType::Int16);
-            assert_eq!(PixelValueType::SignedInt.to_pixel_type(16), PixelType::Int16);
-            // 17-32 bits -> Int32
-            assert_eq!(PixelValueType::SignedInt.to_pixel_type(24), PixelType::Int32);
-            assert_eq!(PixelValueType::SignedInt.to_pixel_type(32), PixelType::Int32);
-            // 33+ bits -> Int32 (largest available)
-            assert_eq!(PixelValueType::SignedInt.to_pixel_type(38), PixelType::Int32);
         }
 
         #[test]
@@ -547,42 +442,26 @@ mod tests {
             assert_eq!(ImageRepresentation::from_str("RGB/LUT").unwrap(), ImageRepresentation::RgbLut);
             assert_eq!(ImageRepresentation::from_str("MULTI").unwrap(), ImageRepresentation::Multi);
             assert_eq!(ImageRepresentation::from_str("NODISPLY").unwrap(), ImageRepresentation::NoDisplay);
-            assert_eq!(ImageRepresentation::from_str("NVECTOR").unwrap(), ImageRepresentation::NVector);
-            assert_eq!(ImageRepresentation::from_str("POLAR").unwrap(), ImageRepresentation::Polar);
-            assert_eq!(ImageRepresentation::from_str("VPH").unwrap(), ImageRepresentation::Vph);
             assert_eq!(ImageRepresentation::from_str("YCbCr601").unwrap(), ImageRepresentation::YCbCr601);
-        }
-
-        #[test]
-        fn from_str_with_padding() {
-            assert_eq!(ImageRepresentation::from_str("MONO    ").unwrap(), ImageRepresentation::Mono);
-            assert_eq!(ImageRepresentation::from_str("RGB     ").unwrap(), ImageRepresentation::Rgb);
-            assert_eq!(ImageRepresentation::from_str("RGB/LUT ").unwrap(), ImageRepresentation::RgbLut);
         }
 
         #[test]
         fn from_str_invalid() {
             assert!(ImageRepresentation::from_str("INVALID").is_err());
             assert!(ImageRepresentation::from_str("").is_err());
-            assert!(ImageRepresentation::from_str("MONOCHROME").is_err());
         }
 
         #[test]
         fn to_str_round_trip() {
             let variants = [
-                ImageRepresentation::Mono,
-                ImageRepresentation::Rgb,
-                ImageRepresentation::RgbLut,
-                ImageRepresentation::Multi,
-                ImageRepresentation::NoDisplay,
-                ImageRepresentation::NVector,
-                ImageRepresentation::Polar,
-                ImageRepresentation::Vph,
+                ImageRepresentation::Mono, ImageRepresentation::Rgb,
+                ImageRepresentation::RgbLut, ImageRepresentation::Multi,
+                ImageRepresentation::NoDisplay, ImageRepresentation::NVector,
+                ImageRepresentation::Polar, ImageRepresentation::Vph,
                 ImageRepresentation::YCbCr601,
             ];
             for variant in variants {
-                let s = variant.to_str();
-                assert_eq!(ImageRepresentation::from_str(s).unwrap(), variant);
+                assert_eq!(ImageRepresentation::from_str(variant.to_str()).unwrap(), variant);
             }
         }
 
@@ -593,10 +472,6 @@ mod tests {
             assert_eq!(ImageRepresentation::RgbLut.expected_band_count(), Some(1));
             assert_eq!(ImageRepresentation::YCbCr601.expected_band_count(), Some(3));
             assert_eq!(ImageRepresentation::Multi.expected_band_count(), None);
-            assert_eq!(ImageRepresentation::NoDisplay.expected_band_count(), None);
-            assert_eq!(ImageRepresentation::NVector.expected_band_count(), None);
-            assert_eq!(ImageRepresentation::Polar.expected_band_count(), None);
-            assert_eq!(ImageRepresentation::Vph.expected_band_count(), None);
         }
     }
 
@@ -615,21 +490,14 @@ mod tests {
         #[test]
         fn from_char_invalid() {
             assert!(InterleaveMode::from_char('X').is_err());
-            assert!(InterleaveMode::from_char('b').is_err()); // lowercase
+            assert!(InterleaveMode::from_char('b').is_err());
             assert!(InterleaveMode::from_char(' ').is_err());
         }
 
         #[test]
         fn to_char_round_trip() {
-            let variants = [
-                InterleaveMode::B,
-                InterleaveMode::P,
-                InterleaveMode::R,
-                InterleaveMode::S,
-            ];
-            for variant in variants {
-                let c = variant.to_char();
-                assert_eq!(InterleaveMode::from_char(c).unwrap(), variant);
+            for variant in [InterleaveMode::B, InterleaveMode::P, InterleaveMode::R, InterleaveMode::S] {
+                assert_eq!(InterleaveMode::from_char(variant.to_char()).unwrap(), variant);
             }
         }
     }

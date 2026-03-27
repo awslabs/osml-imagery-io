@@ -24,8 +24,8 @@
 use crate::error::CodecError;
 use crate::jbp::image::types::InterleaveMode;
 
-use super::codec::JpegCodec;
-use super::decoder::JpegColorSpace;
+use crate::jpeg::JpegCodec;
+use crate::jbp::image::jpeg_decoder::JpegColorSpace;
 
 /// Block encoder for JPEG DCT compressed imagery.
 ///
@@ -178,7 +178,7 @@ impl JpegBlockEncoder {
     /// - 2.5: YCbCr601 color space handling
     #[cfg(feature = "libjpeg-turbo")]
     pub fn encode_block(&self, pixel_data: &[u8]) -> Result<Vec<u8>, CodecError> {
-        use super::ffi;
+        use crate::jpeg::ffi;
 
         // Validate input size
         let expected_size = self.expected_input_size();
@@ -260,7 +260,7 @@ impl JpegBlockEncoder {
     /// - 2.6: Multiband JPEG encoding (IMODE=B or S)
     #[cfg(feature = "libjpeg-turbo")]
     pub fn encode_multiband_block(&self, pixel_data: &[u8]) -> Result<Vec<u8>, CodecError> {
-        use super::ffi;
+        use crate::jpeg::ffi;
 
         if self.num_bands == 1 {
             // Single band - just encode directly
@@ -593,7 +593,7 @@ mod tests {
     #[cfg(feature = "libjpeg-turbo")]
     mod encode_tests {
         use super::*;
-        use crate::jbp::jpeg::ffi::decompress_8bit;
+        use crate::jpeg::ffi::decompress_8bit;
 
         #[test]
         fn test_encode_8bit_grayscale_roundtrip() {
@@ -940,7 +940,7 @@ mod tests {
         /// Test encoder/decoder roundtrip for multiband data
         #[test]
         fn test_encode_decode_multiband_roundtrip() {
-            use crate::jbp::jpeg::decoder::JpegBlockDecoder;
+            use crate::jbp::image::jpeg_decoder::JpegBlockDecoder;
 
             let width = 8;
             let height = 8;

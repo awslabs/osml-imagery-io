@@ -1520,3 +1520,96 @@ def png_writable_image(
     array = draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
 
     return (array, pixel_type, num_bands, num_rows, num_cols)
+
+# =============================================================================
+# J2K Format Strategies
+# =============================================================================
+
+# Pixel types supported by J2K writer (UInt8, UInt16, Int16)
+J2K_PIXEL_TYPES = [
+    PixelType.UInt8,
+    PixelType.UInt16,
+    PixelType.Int16,
+]
+
+# J2K-supported band counts: 1–4
+J2K_BAND_COUNTS = [1, 2, 3, 4]
+
+
+@st.composite
+def j2k_writable_image(
+    draw,
+    min_size: int = 16,
+    max_size: int = 64,
+) -> Tuple[np.ndarray, PixelType, int, int, int]:
+    """Composite strategy for a random image writable as JPEG 2000.
+
+    Generates a random image array (BSQ) together with pixel type metadata
+    suitable for writing via J2KDatasetWriter.
+
+    J2K supports UInt8, UInt16, and Int16 pixel types with 1–4 bands.
+
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        min_size: Minimum image dimension (default 16)
+        max_size: Maximum image dimension (default 64)
+
+    Returns:
+        Tuple of (array, pixel_type, num_bands, num_rows, num_cols)
+        - array: numpy array with shape (num_bands, num_rows, num_cols)
+        - pixel_type: PixelType enum value (UInt8, UInt16, or Int16)
+        - num_bands: number of bands (1–4)
+        - num_rows: number of rows
+        - num_cols: number of columns
+    """
+    pixel_type = draw(st.sampled_from(J2K_PIXEL_TYPES))
+    num_bands = draw(st.sampled_from(J2K_BAND_COUNTS))
+    num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
+    array = draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
+
+    return (array, pixel_type, num_bands, num_rows, num_cols)
+
+
+# =============================================================================
+# JPEG Format Strategies
+# =============================================================================
+
+# JPEG only supports UInt8
+JPEG_STANDALONE_PIXEL_TYPES = [PixelType.UInt8]
+
+# JPEG-supported band counts: 1 (Grayscale) or 3 (RGB)
+JPEG_STANDALONE_BAND_COUNTS = [1, 3]
+
+
+@st.composite
+def jpeg_writable_image(
+    draw,
+    min_size: int = 16,
+    max_size: int = 64,
+) -> Tuple[np.ndarray, PixelType, int, int, int]:
+    """Composite strategy for a random image writable as standalone JPEG.
+
+    Generates a random image array (BSQ) together with pixel type metadata
+    suitable for writing via JPEGDatasetWriter.
+
+    JPEG supports only UInt8 pixel type with 1 (grayscale) or 3 (RGB) bands.
+
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        min_size: Minimum image dimension (default 16)
+        max_size: Maximum image dimension (default 64)
+
+    Returns:
+        Tuple of (array, pixel_type, num_bands, num_rows, num_cols)
+        - array: numpy array with shape (num_bands, num_rows, num_cols)
+        - pixel_type: PixelType.UInt8
+        - num_bands: number of bands (1 or 3)
+        - num_rows: number of rows
+        - num_cols: number of columns
+    """
+    pixel_type = PixelType.UInt8
+    num_bands = draw(st.sampled_from(JPEG_STANDALONE_BAND_COUNTS))
+    num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
+    array = draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
+
+    return (array, pixel_type, num_bands, num_rows, num_cols)

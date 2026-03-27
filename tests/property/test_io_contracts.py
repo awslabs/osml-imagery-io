@@ -4,12 +4,15 @@ This module contains property tests that validate IO factory behavior including:
 - Format auto-detection
 - Dataset round-trip consistency
 - TIFF format detection and routing
+- J2K format detection and routing
 """
 
+import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
-from aws.osml.io import IO
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 
 # =============================================================================
 # Test Data Paths
@@ -113,7 +116,7 @@ class TestFormatAutoDetection:
     def test_open_rejects_unsupported_extension(self):
         """Test that IO.open() rejects files with unsupported extensions."""
         with pytest.raises(Exception) as exc_info:
-            IO.open(["nonexistent.jpg"], "r")
+            IO.open(["nonexistent.bmp"], "r")
 
         assert "Unsupported" in str(exc_info.value) or "format" in str(exc_info.value).lower()
 
@@ -606,6 +609,315 @@ class TestTiffFormatDetection:
             pytest.skip("Test data file not available")
 
         reader = IO.open([str(SMALL_TIF)], "r")
+        asset = reader.get_asset("image_segment_0")
+
+        assert asset is not None
+        assert hasattr(asset, "key")
+        assert hasattr(asset, "num_columns")
+        assert hasattr(asset, "num_rows")
+        assert hasattr(asset, "num_bands")
+        assert hasattr(asset, "pixel_value_type")
+        assert asset.key == "image_segment_0"
+
+
+# =============================================================================
+# J2K Format Detection Tests
+# =============================================================================
+
+
+def _write_j2k_test_file(path: Path) -> None:
+    """Write a minimal valid J2K file at *path* for read-mode tests."""
+    array = np.zeros((1, 32, 32), dtype=np.uint8)
+    metadata = BufferedMetadataProvider()
+    metadata.set("J2K_LOSSLESS", "true")
+
+    provider = BufferedImageAssetProvider.create(
+        key="image_segment_0",
+        num_columns=32,
+        num_rows=32,
+        num_bands=1,
+        block_width=32,
+        block_height=32,
+        pixel_type=PixelType.UInt8,
+        metadata=metadata,
+    )
+    provider.set_full_image(array)
+
+    writer = IO.open([str(path)], "w", "j2k")
+    writer.metadata = metadata
+    writer.add_asset(
+        key="image_segment_0",
+        provider=provider,
+        title="Test Image",
+        description="Format detection test",
+        roles=["data"],
+    )
+    writer.close()
+
+
+@pytest.mark.property
+class TestJ2KFormatDetection:
+    """J2K format auto-detection and explicit format routing.
+
+    Verifies that the IO factory correctly routes .j2k/.jp2 extensions
+    and explicit "j2k", "jp2", "jpeg2000" format strings to the J2K reader,
+    and that write mode creates a writer for all three format aliases.
+
+    **Validates: Requirements 7.1, 7.3, 7.5**
+    """
+
+    # -- extension auto-detection (read mode) --------------------------------
+
+    def test_j2k_extension_auto_detected(self, tmp_path):
+        """IO.open() auto-detects .j2k extension and returns a reader."""
+        j2k_path = tmp_path / "test.j2k"
+        _write_j2k_test_file(j2k_path)
+
+        reader = IO.open([str(j2k_path)], "r")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert len(keys) > 0
+        assert "image_segment_0" in keys
+
+    def test_jp2_extension_auto_detected(self, tmp_path):
+        """IO.open() auto-detects .jp2 extension and returns a reader."""
+        j2k_path = tmp_path / "source.j2k"
+        _write_j2k_test_file(j2k_path)
+
+        # Copy the raw bytes to a .jp2 extension
+        jp2_path = tmp_path / "test.jp2"
+        shutil.copy2(j2k_path, jp2_path)
+
+        reader = IO.open([str(jp2_path)], "r")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert len(keys) > 0
+        assert "image_segment_0" in keys
+
+    # -- explicit format strings (read mode) ---------------------------------
+
+    def test_explicit_j2k_format(self, tmp_path):
+        """IO.open() with explicit 'j2k' format routes to J2K reader."""
+        j2k_path = tmp_path / "test.j2k"
+        _write_j2k_test_file(j2k_path)
+
+        reader = IO.open([str(j2k_path)], "r", "j2k")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert "image_segment_0" in keys
+
+    def test_explicit_jp2_format(self, tmp_path):
+        """IO.open() with explicit 'jp2' format routes to J2K reader."""
+        j2k_path = tmp_path / "test.j2k"
+        _write_j2k_test_file(j2k_path)
+
+        reader = IO.open([str(j2k_path)], "r", "jp2")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert "image_segment_0" in keys
+
+    def test_explicit_jpeg2000_format(self, tmp_path):
+        """IO.open() with explicit 'jpeg2000' format routes to J2K reader."""
+        j2k_path = tmp_path / "test.j2k"
+        _write_j2k_test_file(j2k_path)
+
+        reader = IO.open([str(j2k_path)], "r", "jpeg2000")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert "image_segment_0" in keys
+
+    # -- write mode ----------------------------------------------------------
+
+    def test_j2k_write_mode_supported(self, tmp_path):
+        """Write mode with 'j2k' format creates a writer successfully."""
+        writer = IO.open([str(tmp_path / "output.j2k")], "w", "j2k")
+        assert writer is not None
+
+    def test_jp2_write_mode_supported(self, tmp_path):
+        """Write mode with 'jp2' format creates a writer successfully."""
+        writer = IO.open([str(tmp_path / "output.jp2")], "w", "jp2")
+        assert writer is not None
+
+    def test_jpeg2000_write_mode_supported(self, tmp_path):
+        """Write mode with 'jpeg2000' format creates a writer successfully."""
+        writer = IO.open([str(tmp_path / "output.j2k")], "w", "jpeg2000")
+        assert writer is not None
+
+    # -- asset consistency ---------------------------------------------------
+
+    def test_j2k_has_asset_consistency(self, tmp_path):
+        """has_asset() is consistent with get_asset_keys() for J2K files."""
+        j2k_path = tmp_path / "test.j2k"
+        _write_j2k_test_file(j2k_path)
+
+        reader = IO.open([str(j2k_path)], "r")
+        keys = reader.get_asset_keys()
+
+        for key in keys:
+            assert reader.has_asset(key), (
+                f"has_asset('{key}') should be True for key from get_asset_keys()"
+            )
+
+        assert not reader.has_asset("nonexistent_key")
+        assert not reader.has_asset("image_segment_999")
+
+    def test_j2k_asset_has_expected_properties(self, tmp_path):
+        """J2K asset provider exposes expected properties."""
+        j2k_path = tmp_path / "test.j2k"
+        _write_j2k_test_file(j2k_path)
+
+        reader = IO.open([str(j2k_path)], "r")
+        asset = reader.get_asset("image_segment_0")
+
+        assert asset is not None
+        assert hasattr(asset, "key")
+        assert hasattr(asset, "num_columns")
+        assert hasattr(asset, "num_rows")
+        assert hasattr(asset, "num_bands")
+        assert hasattr(asset, "pixel_value_type")
+        assert asset.key == "image_segment_0"
+
+
+# =============================================================================
+# JPEG Format Detection Tests
+# =============================================================================
+
+
+def _write_jpeg_test_file(path: Path) -> None:
+    """Write a minimal valid JPEG file at *path* for read-mode tests."""
+    array = np.zeros((1, 32, 32), dtype=np.uint8)
+    metadata = BufferedMetadataProvider()
+
+    provider = BufferedImageAssetProvider.create(
+        key="image_segment_0",
+        num_columns=32,
+        num_rows=32,
+        num_bands=1,
+        block_width=32,
+        block_height=32,
+        pixel_type=PixelType.UInt8,
+        metadata=metadata,
+    )
+    provider.set_full_image(array)
+
+    writer = IO.open([str(path)], "w", "jpeg")
+    writer.metadata = metadata
+    writer.add_asset(
+        key="image_segment_0",
+        provider=provider,
+        title="Test Image",
+        description="Format detection test",
+        roles=["data"],
+    )
+    writer.close()
+
+
+@pytest.mark.property
+class TestJPEGFormatDetection:
+    """JPEG format auto-detection and explicit format routing.
+
+    Verifies that the IO factory correctly routes .jpg/.jpeg extensions
+    and explicit "jpg", "jpeg" format strings to the JPEG reader,
+    and that write mode creates a writer for both format aliases.
+
+    **Validates: Requirements 7.2, 7.4, 7.6**
+    """
+
+    # -- extension auto-detection (read mode) --------------------------------
+
+    def test_jpg_extension_auto_detected(self, tmp_path):
+        """IO.open() auto-detects .jpg extension and returns a reader."""
+        jpg_path = tmp_path / "test.jpg"
+        _write_jpeg_test_file(jpg_path)
+
+        reader = IO.open([str(jpg_path)], "r")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert len(keys) > 0
+        assert "image_segment_0" in keys
+
+    def test_jpeg_extension_auto_detected(self, tmp_path):
+        """IO.open() auto-detects .jpeg extension and returns a reader."""
+        jpg_path = tmp_path / "source.jpg"
+        _write_jpeg_test_file(jpg_path)
+
+        # Copy the raw bytes to a .jpeg extension
+        jpeg_path = tmp_path / "test.jpeg"
+        shutil.copy2(jpg_path, jpeg_path)
+
+        reader = IO.open([str(jpeg_path)], "r")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert len(keys) > 0
+        assert "image_segment_0" in keys
+
+    # -- explicit format strings (read mode) ---------------------------------
+
+    def test_explicit_jpg_format(self, tmp_path):
+        """IO.open() with explicit 'jpg' format routes to JPEG reader."""
+        jpg_path = tmp_path / "test.jpg"
+        _write_jpeg_test_file(jpg_path)
+
+        reader = IO.open([str(jpg_path)], "r", "jpg")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert "image_segment_0" in keys
+
+    def test_explicit_jpeg_format(self, tmp_path):
+        """IO.open() with explicit 'jpeg' format routes to JPEG reader."""
+        jpg_path = tmp_path / "test.jpg"
+        _write_jpeg_test_file(jpg_path)
+
+        reader = IO.open([str(jpg_path)], "r", "jpeg")
+        assert reader is not None
+
+        keys = reader.get_asset_keys()
+        assert "image_segment_0" in keys
+
+    # -- write mode ----------------------------------------------------------
+
+    def test_jpg_write_mode_supported(self, tmp_path):
+        """Write mode with 'jpg' format creates a writer successfully."""
+        writer = IO.open([str(tmp_path / "output.jpg")], "w", "jpg")
+        assert writer is not None
+
+    def test_jpeg_write_mode_supported(self, tmp_path):
+        """Write mode with 'jpeg' format creates a writer successfully."""
+        writer = IO.open([str(tmp_path / "output.jpeg")], "w", "jpeg")
+        assert writer is not None
+
+    # -- asset consistency ---------------------------------------------------
+
+    def test_jpeg_has_asset_consistency(self, tmp_path):
+        """has_asset() is consistent with get_asset_keys() for JPEG files."""
+        jpg_path = tmp_path / "test.jpg"
+        _write_jpeg_test_file(jpg_path)
+
+        reader = IO.open([str(jpg_path)], "r")
+        keys = reader.get_asset_keys()
+
+        for key in keys:
+            assert reader.has_asset(key), (
+                f"has_asset('{key}') should be True for key from get_asset_keys()"
+            )
+
+        assert not reader.has_asset("nonexistent_key")
+        assert not reader.has_asset("image_segment_999")
+
+    def test_jpeg_asset_has_expected_properties(self, tmp_path):
+        """JPEG asset provider exposes expected properties."""
+        jpg_path = tmp_path / "test.jpg"
+        _write_jpeg_test_file(jpg_path)
+
+        reader = IO.open([str(jpg_path)], "r")
         asset = reader.get_asset("image_segment_0")
 
         assert asset is not None

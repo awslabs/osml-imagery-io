@@ -7,7 +7,7 @@ using common geospatial imagery formats. It was built using Rust to provide reli
 performance IO routines for both research and production workloads. Python bindings make 
 it easy to use within the broader machine learning and data science communities. It supports
 memory efficient, tiled access to large images and structured metadata encoded using the 
-NITF, SICD, SIDD, TIFF, GeoTIFF, and PNG standards. Pixels are returned as NumPy arrays that 
+NITF, SICD, SIDD, TIFF, GeoTIFF, PNG, JPEG 2000, and JPEG standards. Pixels are returned as NumPy arrays that 
 integrate directly with ML frameworks like PyTorch and computer vision libraries like 
 OpenCV and scikit-image.
 
@@ -52,8 +52,8 @@ its robust NITF implementation. The sensor independent XML metadata is available
 | NITF 2.0 | 🚧 | ❌ | In progress; legacy format |
 | TIFF | ✅ | ✅ | Tiled and stripped layouts; includes GeoTIFF metadata and COG support |
 | PNG | ✅ | ✅ | Lossless; Deflate compression |
-| JPEG 2000 (.j2k, .jp2) | 🚧 | 🚧 | Coming soon |
-| JPEG (.jpg) | 🚧 | 🚧 | Coming soon |
+| JPEG 2000 (.j2k, .jp2) | ✅ | ✅ | Lossless and lossy; multi-resolution decode; via OpenJPEG |
+| JPEG (.jpg, .jpeg) | ✅ | ✅ | Lossy; 8-bit; 1 or 3 bands |
 
 NITF is the primary container format for defense and intelligence imagery. SICD and SIDD
 (SAR complex and derived data) are supported directly through the NITF implementation —

@@ -10,6 +10,8 @@ Supported output formats:
 - NITF (default) - National Imagery Transmission Format (.ntf)
 - TIFF/GeoTIFF - Tagged Image File Format (.tif, .tiff)
 - PNG - Portable Network Graphics (.png)
+- J2K - JPEG 2000 codestream (.j2k, .jp2)
+- JPEG - JPEG/JFIF (.jpg, .jpeg)
 
 The script also supports generating masked images where some blocks are empty,
 useful for testing sparse imagery handling (NITF only).
@@ -18,6 +20,8 @@ Usage:
     python scripts/generate_synthetic_image.py output.ntf
     python scripts/generate_synthetic_image.py output.tif --format tiff
     python scripts/generate_synthetic_image.py output.png --format png
+    python scripts/generate_synthetic_image.py output.j2k --format j2k
+    python scripts/generate_synthetic_image.py output.jpg --format jpeg
     python scripts/generate_synthetic_image.py output.ntf --width 1024 --height 1024
     python scripts/generate_synthetic_image.py output.ntf --bands 3 --pixel-type uint16
     python scripts/generate_synthetic_image.py output.ntf --tile-width 128 --tile-height 128
@@ -54,6 +58,12 @@ Examples:
 
     # Generate a TIFF with LZW compression
     python scripts/generate_synthetic_image.py test.tif --format tiff --compression lzw
+
+    # Generate a lossless JPEG 2000 RGB image
+    python scripts/generate_synthetic_image.py test.j2k --format j2k --bands 3
+
+    # Generate a JPEG RGB image at quality 90
+    python scripts/generate_synthetic_image.py test.jpg --format jpeg --bands 3
 """
 
 import argparse
@@ -75,7 +85,7 @@ class ImageConfig:
 
     Attributes:
         output_path: Path to the output file
-        format: Output format - "nitf" (default), "tiff", "geotiff", or "png"
+        format: Output format - "nitf" (default), "tiff", "geotiff", "png", "j2k", or "jpeg"
         width: Image width in pixels (default: 512)
         height: Image height in pixels (default: 512)
         tile_width: Tile width in pixels (default: 256)
@@ -87,6 +97,8 @@ class ImageConfig:
         compression: Compression type. NITF: "NC" (none), "C8" (JPEG2000).
             TIFF: "none" (default), "lzw", "deflate".
             PNG: always "deflate".
+            J2K: "lossless" (default) or "lossy".
+            JPEG: quality controlled via --jpeg-quality.
         comrat: Compression ratio for JPEG2000 (NITF only)
         masked: Enable masked output mode (NITF only)
         mask_pattern: Mask pattern type (checkerboard, border, random, single)
@@ -111,7 +123,7 @@ class ImageConfig:
     def __post_init__(self) -> None:
         """Validate configuration and set defaults."""
         # Normalize format: "geotiff" is an alias for "tiff"
-        valid_formats = ("nitf", "tiff", "geotiff", "png")
+        valid_formats = ("nitf", "tiff", "geotiff", "png", "j2k", "jpeg")
         if self.format not in valid_formats:
             raise ValueError(
                 f"Format must be one of {valid_formats}, got '{self.format}'"
@@ -139,12 +151,26 @@ class ImageConfig:
                 raise ValueError(
                     f"PNG supports 1, 3, or 4 bands, got {self.num_bands}"
                 )
+        elif self.format == "jpeg":
+            if self.num_bands not in (1, 3):
+                raise ValueError(
+                    f"JPEG supports 1 (grayscale) or 3 (RGB) bands, got {self.num_bands}"
+                )
+        elif self.format == "j2k":
+            if self.num_bands not in (1, 3, 4):
+                raise ValueError(
+                    f"J2K supports 1, 3, or 4 bands, got {self.num_bands}"
+                )
         elif self.num_bands not in (1, 3, 5):
             raise ValueError(f"Number of bands must be 1, 3, or 5, got {self.num_bands}")
 
         # Validate pixel type
         if self.pixel_type not in ("uint8", "uint16"):
             raise ValueError(f"Pixel type must be 'uint8' or 'uint16', got '{self.pixel_type}'")
+
+        # JPEG only supports uint8
+        if self.format == "jpeg" and self.pixel_type != "uint8":
+            raise ValueError("JPEG only supports uint8 pixel type")
 
         # Validate IMODE
         if self.imode not in ("B", "P", "R", "S"):
@@ -160,6 +186,10 @@ class ImageConfig:
                 self.compression = "NC"
             elif self.format == "png":
                 self.compression = "deflate"
+            elif self.format == "j2k":
+                self.compression = "lossless"
+            elif self.format == "jpeg":
+                self.compression = "jpeg"
             else:
                 self.compression = "none"
 
@@ -181,6 +211,18 @@ class ImageConfig:
                 raise ValueError(
                     f"Compression '{self.compression}' is not valid for PNG. "
                     f"PNG always uses Deflate compression."
+                )
+        elif self.format == "j2k":
+            if self.compression not in ("lossless", "lossy"):
+                raise ValueError(
+                    f"Compression '{self.compression}' is not valid for J2K. "
+                    f"Use 'lossless' or 'lossy'."
+                )
+        elif self.format == "jpeg":
+            # JPEG compression is implicit; accept "auto" or "jpeg"
+            if self.compression != "jpeg":
+                raise ValueError(
+                    f"Compression '{self.compression}' is not valid for JPEG."
                 )
 
         # Validate mask pattern
@@ -208,6 +250,16 @@ class ImageConfig:
                     f"IMODE '{self.imode}' is a NITF-specific option and is not "
                     f"supported for PNG format"
                 )
+
+        # Validate J2K-incompatible options
+        if self.format == "j2k":
+            if self.masked:
+                raise ValueError("Masked output is not supported for J2K format")
+
+        # Validate JPEG-incompatible options
+        if self.format == "jpeg":
+            if self.masked:
+                raise ValueError("Masked output is not supported for JPEG format")
 
         # Set ABPP to full bit depth if not specified
         max_bits = 8 if self.pixel_type == "uint8" else 16
@@ -270,7 +322,7 @@ class ImageConfig:
         """Return the format string expected by IO.open().
 
         Maps "geotiff" alias to "tiff" since the IO library treats them
-        identically for writing.
+        identically for writing. J2K and JPEG map directly.
         """
         if self.format in ("tiff", "geotiff"):
             return "tiff"
@@ -598,6 +650,15 @@ class ImageWriter:
             for key, value in tag_dict.items():
                 metadata.set(key, str(value) if not isinstance(value, str) else value)
 
+        # J2K-specific metadata (lossless flag)
+        if config.io_format == "j2k":
+            is_lossless = config.compression == "lossless"
+            metadata.set("J2K_LOSSLESS", str(is_lossless).lower())
+
+        # JPEG-specific metadata (quality)
+        if config.io_format == "jpeg":
+            metadata.set("JPEG_QUALITY", "85")
+
         # Build description string
         if config.io_format == "nitf":
             desc = (f"{config.width}x{config.height} {config.num_bands}-band "
@@ -657,6 +718,12 @@ class ImageWriter:
         try:
             # For TIFF, set dataset-level metadata with encoding hints (tile size, etc.)
             if config.io_format == "tiff":
+                writer.metadata = metadata
+            # For J2K, set dataset-level metadata with encoding hints
+            if config.io_format == "j2k":
+                writer.metadata = metadata
+            # For JPEG, set dataset-level metadata with quality hint
+            if config.io_format == "jpeg":
                 writer.metadata = metadata
             # Add image asset to writer using the BufferedImageAssetProvider
             writer.add_asset(
@@ -809,8 +876,8 @@ Examples:
         "--format",
         type=str,
         default="nitf",
-        choices=["nitf", "tiff", "geotiff", "png"],
-        help="Output format: nitf (default), tiff, geotiff (alias for tiff), or png"
+        choices=["nitf", "tiff", "geotiff", "png", "j2k", "jpeg"],
+        help="Output format: nitf (default), tiff, geotiff, png, j2k, or jpeg"
     )
 
     # Image dimension arguments
@@ -884,12 +951,14 @@ Examples:
         "--compression",
         type=str,
         default="auto",
-        choices=["auto", "NC", "C8", "none", "lzw", "deflate"],
+        choices=["auto", "NC", "C8", "none", "lzw", "deflate", "lossless", "lossy", "jpeg"],
         help=(
             "Compression type. NITF: NC (none), C8 (JPEG2000). "
             "TIFF: none, lzw, deflate. "
             "PNG: always deflate. "
-            "Default: auto (NC for NITF, none for TIFF, deflate for PNG)"
+            "J2K: lossless, lossy. "
+            "JPEG: jpeg (implicit). "
+            "Default: auto (format-appropriate default)"
         )
     )
     parser.add_argument(
@@ -967,6 +1036,10 @@ def main() -> int:
     if config.io_format == "nitf":
         print(f"  IMODE: {config.imode}")
         print(f"  IC: {config.effective_ic}")
+    elif config.io_format == "j2k":
+        print(f"  Compression: {config.compression}")
+    elif config.io_format == "jpeg":
+        print(f"  Quality: 85")
     else:
         print(f"  Compression: {config.compression}")
     if config.masked:

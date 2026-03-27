@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc c4c1e9f75db8b98d615dff93db8c41bc761321823f29173934712834f8fa4811 # shrinks to type_name = "b00"
+cc 8f45d14676622ed5f3eeb0731ddf37d8ede77b201b616fb0c8422547fdd53957 # shrinks to type1 = "str", type2 = "a00"

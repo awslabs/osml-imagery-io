@@ -8,7 +8,10 @@ use pyo3::prelude::*;
 mod bindings;
 pub mod buffered;
 mod error;
+pub mod j2k;
 pub mod jbp;
+#[cfg(feature = "libjpeg-turbo")]
+pub mod jpeg;
 pub mod parser;
 pub mod png;
 #[cfg(feature = "libtiff")]

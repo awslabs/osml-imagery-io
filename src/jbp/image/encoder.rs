@@ -36,10 +36,16 @@ use crate::jbp::image::interleave::from_band_sequential;
 use crate::jbp::image::types::InterleaveMode;
 
 #[cfg(feature = "openjpeg")]
-use crate::jbp::j2k::{J2KEncodingHints, Jpeg2000BlockEncoder};
+use crate::j2k::J2KEncodingHints;
+#[cfg(feature = "openjpeg")]
+use crate::jbp::image::j2k_encoder::Jpeg2000BlockEncoder;
 
 #[cfg(feature = "libjpeg-turbo")]
-use crate::jbp::jpeg::{JpegBlockEncoder, JpegColorSpace, JpegComrat};
+use crate::jbp::image::jpeg_encoder::JpegBlockEncoder;
+#[cfg(feature = "libjpeg-turbo")]
+use crate::jbp::image::jpeg_decoder::JpegColorSpace;
+#[cfg(feature = "libjpeg-turbo")]
+use crate::jpeg::JpegComrat;
 
 /// Convert a byte buffer from native-endian to big-endian.
 ///

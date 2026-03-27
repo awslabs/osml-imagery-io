@@ -20,6 +20,12 @@ pub mod decoder;
 pub mod encoder;
 pub mod facade;
 pub mod interleave;
+pub mod j2k_decoder;
+pub mod j2k_encoder;
+#[cfg(feature = "libjpeg-turbo")]
+pub mod jpeg_decoder;
+#[cfg(feature = "libjpeg-turbo")]
+pub mod jpeg_encoder;
 pub mod mask;
 pub mod pixel;
 pub mod types;
@@ -34,6 +40,12 @@ pub use encoder::{create_block_encoder, swap_ne_to_be, BlockEncoder, TileAssembl
 pub use encoder::JpegNitfBlockEncoder;
 pub use facade::{BandInfoFacade, ImageSubheaderFacade};
 pub use interleave::{convert, from_band_sequential, to_band_sequential};
+pub use j2k_decoder::Jpeg2000BlockDecoder;
+pub use j2k_encoder::Jpeg2000BlockEncoder;
+#[cfg(feature = "libjpeg-turbo")]
+pub use jpeg_decoder::{JpegBlockDecoder, JpegColorSpace};
+#[cfg(feature = "libjpeg-turbo")]
+pub use jpeg_encoder::JpegBlockEncoder;
 pub use mask::{ImageDataMask, EMPTY_BLOCK_OFFSET};
 pub use types::{ImageRepresentation, InterleaveMode, LookUpTable, PixelJustification, PixelValueType};
 pub use validation::{ImageValidationCode, ImageValidationResult, ImageValidator, ValidationSeverity};

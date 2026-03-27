@@ -103,7 +103,7 @@ pub struct EncodingHints {
     /// Compression ratio (for compressed images)
     pub comrat: Option<String>,
     /// JPEG 2000 specific encoding hints (for IC=C8 or CD)
-    pub j2k_hints: Option<crate::jbp::j2k::comrat::J2KEncodingHints>,
+    pub j2k_hints: Option<crate::j2k::comrat::J2KEncodingHints>,
 }
 
 impl Default for EncodingHints {
@@ -604,7 +604,7 @@ impl JBPDatasetWriter {
     /// # Returns
     /// EncodingHints with values from metadata or defaults.
     fn extract_encoding_hints(asset: &QueuedAsset, image_props: &ImageProperties) -> EncodingHints {
-        use crate::jbp::j2k::comrat::{J2KComrat, J2KEncodingHints};
+        use crate::j2k::comrat::{J2KComrat, J2KEncodingHints};
         
         let metadata = asset.provider.metadata();
         let dict = metadata.as_dict(None);
@@ -1282,7 +1282,7 @@ impl JBPDatasetWriter {
                             // So: decomposition_levels <= floor(log2(min_dim))
                             #[cfg(feature = "openjpeg")]
                             let block_hints = {
-                                use crate::jbp::j2k::comrat::J2KEncodingHints;
+                                use crate::j2k::comrat::J2KEncodingHints;
                                 
                                 let min_dim = block_height.min(block_width);
                                 // Calculate safe decomposition levels based on OpenJPEG's requirement:
@@ -1494,7 +1494,7 @@ impl JBPDatasetWriter {
                 // Use user-supplied COMRAT directly, ensure it's 4 characters
                 format!("{:4}", comrat_str)
             } else if let Some(ref j2k_hints) = hints.j2k_hints {
-                crate::jbp::j2k::comrat::generate_comrat(j2k_hints)
+                crate::j2k::comrat::generate_comrat(j2k_hints)
             } else {
                 // Default to numerically lossless for J2K
                 if ic_trimmed == "C8" || ic_trimmed == "CD" {

@@ -24,7 +24,7 @@
 use crate::error::CodecError;
 use crate::jbp::image::types::{ImageRepresentation, InterleaveMode};
 
-use super::codec::JpegCodec;
+use crate::jpeg::JpegCodec;
 
 /// Color space for JPEG decoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,7 +192,7 @@ impl JpegBlockDecoder {
     /// - 1.5: YCbCr601 to RGB conversion
     #[cfg(feature = "libjpeg-turbo")]
     pub fn decode_block(&self, jpeg_data: &[u8]) -> Result<Vec<u8>, CodecError> {
-        use super::ffi;
+        use crate::jpeg::ffi;
 
         if self.bits_per_pixel == 8 {
             // Determine output bands based on color space
@@ -253,7 +253,7 @@ impl JpegBlockDecoder {
     /// - 1.6: Multiband JPEG decoding (IMODE=B or S)
     #[cfg(feature = "libjpeg-turbo")]
     pub fn decode_multiband_block(&self, jpeg_data: &[u8]) -> Result<Vec<u8>, CodecError> {
-        use super::ffi;
+        use crate::jpeg::ffi;
 
         if self.num_bands == 1 {
             // Single band - just decode directly
@@ -600,7 +600,7 @@ mod tests {
     #[cfg(feature = "libjpeg-turbo")]
     mod decode_tests {
         use super::*;
-        use crate::jbp::jpeg::ffi::compress_8bit;
+        use crate::jpeg::ffi::compress_8bit;
 
         #[test]
         fn test_decode_8bit_grayscale_roundtrip() {

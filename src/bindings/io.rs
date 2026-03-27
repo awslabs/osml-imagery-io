@@ -12,7 +12,11 @@ use pyo3::prelude::*;
 
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
 use crate::error::CodecError;
+#[cfg(feature = "openjpeg")]
+use crate::j2k::{J2KDatasetReader, J2KDatasetWriter};
 use crate::jbp::{JBPDatasetReader, JBPDatasetWriter, NitfFormat};
+#[cfg(feature = "libjpeg-turbo")]
+use crate::jpeg::{JPEGDatasetReader, JPEGDatasetWriter};
 use crate::png::{PNGDatasetReader, PNGDatasetWriter};
 #[cfg(feature = "libtiff")]
 use crate::tiff;
@@ -213,6 +217,18 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
                 let reader = PNGDatasetReader::from_bytes(&mmap)?;
                 return Ok(PyDatasetReader::new(Box::new(reader)));
             }
+            #[cfg(feature = "openjpeg")]
+            "j2k" | "jp2" | "jpeg2000" => {
+                let mmap = mmap_file(&parsed.path)?;
+                let reader = J2KDatasetReader::from_bytes(&mmap)?;
+                return Ok(PyDatasetReader::new(Box::new(reader)));
+            }
+            #[cfg(feature = "libjpeg-turbo")]
+            "jpg" | "jpeg" => {
+                let mmap = mmap_file(&parsed.path)?;
+                let reader = JPEGDatasetReader::from_bytes(&mmap)?;
+                return Ok(PyDatasetReader::new(Box::new(reader)));
+            }
             _ => {
                 return Err(CodecError::InvalidFormat(format!(
                     "Unsupported format: '{}'",
@@ -253,12 +269,37 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
             let reader = PNGDatasetReader::from_bytes(&mmap)?;
             Ok(PyDatasetReader::new(Box::new(reader)))
         }
-        Some("jp2") | Some("j2k") | Some("jpx") => {
-            Err(CodecError::Unsupported(format!(
-                "JPEG2000 format reader not yet implemented for: {}",
-                parsed.path
-            ))
-            .into())
+        Some("j2k") | Some("jp2") => {
+            #[cfg(feature = "openjpeg")]
+            {
+                let mmap = mmap_file(&parsed.path)?;
+                let reader = J2KDatasetReader::from_bytes(&mmap)?;
+                Ok(PyDatasetReader::new(Box::new(reader)))
+            }
+            #[cfg(not(feature = "openjpeg"))]
+            {
+                Err(CodecError::Unsupported(format!(
+                    "JPEG 2000 support not enabled (openjpeg feature disabled) for: {}",
+                    parsed.path
+                ))
+                .into())
+            }
+        }
+        Some("jpg") | Some("jpeg") => {
+            #[cfg(feature = "libjpeg-turbo")]
+            {
+                let mmap = mmap_file(&parsed.path)?;
+                let reader = JPEGDatasetReader::from_bytes(&mmap)?;
+                Ok(PyDatasetReader::new(Box::new(reader)))
+            }
+            #[cfg(not(feature = "libjpeg-turbo"))]
+            {
+                Err(CodecError::Unsupported(format!(
+                    "JPEG support not enabled (libjpeg-turbo feature disabled) for: {}",
+                    parsed.path
+                ))
+                .into())
+            }
         }
         Some(ext) => {
             Err(CodecError::InvalidFormat(format!(
@@ -324,12 +365,28 @@ fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> 
             let writer = PNGDatasetWriter::new(&parsed.path)?;
             Ok(PyDatasetWriter::new(Box::new(writer)))
         }
-        "jp2" | "j2k" | "jpx" | "jpeg2000" => {
-            // JPEG2000 format - not yet implemented
-            Err(CodecError::Unsupported(format!(
-                "JPEG2000 format writer not yet implemented for: {}",
-                parsed.path
-            ))
+        #[cfg(feature = "openjpeg")]
+        "j2k" | "jp2" | "jpeg2000" => {
+            let writer = J2KDatasetWriter::new(&parsed.path)?;
+            Ok(PyDatasetWriter::new(Box::new(writer)))
+        }
+        #[cfg(not(feature = "openjpeg"))]
+        "j2k" | "jp2" | "jpeg2000" => {
+            Err(CodecError::Unsupported(
+                "JPEG 2000 format writing requires the 'openjpeg' feature".to_string(),
+            )
+            .into())
+        }
+        #[cfg(feature = "libjpeg-turbo")]
+        "jpg" | "jpeg" => {
+            let writer = JPEGDatasetWriter::new(&parsed.path)?;
+            Ok(PyDatasetWriter::new(Box::new(writer)))
+        }
+        #[cfg(not(feature = "libjpeg-turbo"))]
+        "jpg" | "jpeg" => {
+            Err(CodecError::Unsupported(
+                "JPEG format writing requires the 'libjpeg-turbo' feature".to_string(),
+            )
             .into())
         }
         _ => {

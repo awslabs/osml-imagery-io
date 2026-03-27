@@ -1,7 +1,7 @@
-//! JPEG DCT codec support for JBP/NITF imagery.
+//! JPEG DCT codec support.
 //!
 //! This module provides JPEG DCT encoding and decoding capabilities for
-//! NITF files with IC=C3 (JPEG DCT), IC=M3 (Masked JPEG DCT), and IC=I1
+//! JPEG files with IC=C3 (JPEG DCT), IC=M3 (Masked JPEG DCT), and IC=I1
 //! (Downsampled JPEG).
 //!
 //! # Architecture
@@ -17,7 +17,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use osml_imagery_io::jbp::jpeg::{JpegCodec, JpegBlockDecoder, JpegBlockEncoder};
+//! use osml_imagery_io::jpeg::{JpegCodec, JpegBlockDecoder, JpegBlockEncoder};
 //!
 //! let codec = JpegCodec::new();
 //! let decoder = JpegBlockDecoder::new(...)?;
@@ -27,13 +27,22 @@
 // Codec types (always available for API compatibility)
 mod codec;
 pub mod comrat;
-pub mod decoder;
-mod encoder;
+
+// Standalone reader/writer components
+pub(crate) mod image;
+pub(crate) mod metadata;
+pub(crate) mod reader;
+pub(crate) mod writer;
 
 pub use codec::{JpegCodec, JpegCodecCapabilities};
 pub use comrat::JpegComrat;
-pub use decoder::{JpegBlockDecoder, JpegColorSpace};
-pub use encoder::JpegBlockEncoder;
+
+// Standalone reader/writer types
+pub use image::JPEGImageAssetProvider;
+#[cfg(feature = "libjpeg-turbo")]
+pub use reader::JPEGDatasetReader;
+#[cfg(feature = "libjpeg-turbo")]
+pub use writer::JPEGDatasetWriter;
 
 // FFI bindings (feature-gated)
 #[cfg(feature = "libjpeg-turbo")]

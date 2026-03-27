@@ -23,11 +23,11 @@ use std::sync::Arc;
 
 use crate::error::CodecError;
 use crate::jbp::image::encoder::BlockEncoder;
-use crate::jbp::j2k::codec::{J2KCodec, J2KEncodeParams, J2KEncodeState};
-use crate::jbp::j2k::comrat::J2KEncodingHints;
+use crate::j2k::{J2KCodec, J2KEncodeParams, J2KEncodeState};
+use crate::j2k::comrat::J2KEncodingHints;
 
 #[cfg(feature = "openjpeg")]
-use crate::jbp::j2k::openjpeg::get_j2k_codec;
+use crate::j2k::get_j2k_codec;
 
 // =============================================================================
 // Jpeg2000BlockEncoder
@@ -306,7 +306,7 @@ unsafe impl Sync for Jpeg2000BlockEncoder {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::jbp::j2k::codec::{J2KCodecCapabilities, J2KDecodeParams, J2KDecodeResult};
+    use crate::j2k::{J2KCodecCapabilities, J2KDecodeParams, J2KDecodeResult};
 
     /// Mock J2K codec for testing
     struct MockJ2KCodec {

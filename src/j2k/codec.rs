@@ -90,6 +90,26 @@ pub struct J2KEncodeParams {
     pub tile_height: u32,
 }
 
+impl J2KEncodeParams {
+    /// Clamp `num_decomposition_levels` to the maximum supported by the
+    /// tile dimensions.
+    ///
+    /// OpenJPEG requires `min(tile_width, tile_height) >= 2^levels`. This
+    /// method reduces `num_decomposition_levels` in-place when the current
+    /// value would exceed that limit, preventing encoder setup failures on
+    /// small images or tiles.
+    pub fn clamp_decomposition_levels(&mut self) {
+        let min_dim = self.tile_width.min(self.tile_height);
+        let max_levels = if min_dim == 0 {
+            0
+        } else {
+            // floor(log2(min_dim))
+            (u32::BITS - min_dim.leading_zeros() - 1) as u8
+        };
+        self.num_decomposition_levels = self.num_decomposition_levels.min(max_levels);
+    }
+}
+
 impl Default for J2KEncodeParams {
     fn default() -> Self {
         Self {
@@ -287,5 +307,54 @@ mod tests {
         assert!(!params.htj2k);
         assert_eq!(params.tile_width, 1024);
         assert_eq!(params.tile_height, 1024);
+    }
+
+    #[test]
+    fn test_clamp_decomposition_levels() {
+        // 2x2 tile: floor(log2(2)) = 1, so 5 → 1
+        let mut params = J2KEncodeParams {
+            tile_width: 2,
+            tile_height: 2,
+            ..Default::default()
+        };
+        params.clamp_decomposition_levels();
+        assert_eq!(params.num_decomposition_levels, 1);
+
+        // 64x64 tile: floor(log2(64)) = 6, so 5 stays 5
+        let mut params = J2KEncodeParams {
+            tile_width: 64,
+            tile_height: 64,
+            ..Default::default()
+        };
+        params.clamp_decomposition_levels();
+        assert_eq!(params.num_decomposition_levels, 5);
+
+        // 1x1 tile: floor(log2(1)) = 0, so 5 → 0
+        let mut params = J2KEncodeParams {
+            tile_width: 1,
+            tile_height: 1,
+            ..Default::default()
+        };
+        params.clamp_decomposition_levels();
+        assert_eq!(params.num_decomposition_levels, 0);
+
+        // Asymmetric: 4x1024 tile: floor(log2(4)) = 2, so 5 → 2
+        let mut params = J2KEncodeParams {
+            tile_width: 4,
+            tile_height: 1024,
+            ..Default::default()
+        };
+        params.clamp_decomposition_levels();
+        assert_eq!(params.num_decomposition_levels, 2);
+
+        // Already within limit: 32x32 with levels=3, stays 3
+        let mut params = J2KEncodeParams {
+            tile_width: 32,
+            tile_height: 32,
+            num_decomposition_levels: 3,
+            ..Default::default()
+        };
+        params.clamp_decomposition_levels();
+        assert_eq!(params.num_decomposition_levels, 3);
     }
 }

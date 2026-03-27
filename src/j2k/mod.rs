@@ -1,7 +1,7 @@
-//! JPEG 2000 codec support for JBP/NITF imagery.
+//! JPEG 2000 codec support.
 //!
-//! This module provides JPEG 2000 encoding and decoding capabilities for
-//! NITF files with IC=C8 (JPEG 2000 Part 1) and IC=CD (HTJ2K Part 15).
+//! This module provides JPEG 2000 encoding and decoding capabilities,
+//! supporting JPEG 2000 Part 1 (IC=C8) and HTJ2K Part 15 (IC=CD).
 //!
 //! # Architecture
 //!
@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use osml_imagery_io::jbp::j2k::{OpenJpegCodec, J2KCodec, J2KDecodeParams};
+//! use osml_imagery_io::j2k::{OpenJpegCodec, J2KCodec, J2KDecodeParams};
 //!
 //! let codec = OpenJpegCodec::new();
 //! let params = J2KDecodeParams::default();
@@ -26,16 +26,25 @@
 // Codec trait and types (always available)
 mod codec;
 pub mod comrat;
-mod decoder;
-mod encoder;
+
+// Standalone reader/writer components
+pub(crate) mod image;
+pub(crate) mod metadata;
+pub(crate) mod reader;
+pub(crate) mod writer;
 
 pub use codec::{
     J2KCodec, J2KCodecCapabilities, J2KDecodeParams, J2KDecodeResult, J2KEncodeParams,
     J2KEncodeState,
 };
 pub use comrat::{generate_comrat, hints_to_comrat, J2KComrat, J2KEncodingHints};
-pub use decoder::Jpeg2000BlockDecoder;
-pub use encoder::Jpeg2000BlockEncoder;
+
+// Standalone reader/writer types
+pub use image::J2KImageAssetProvider;
+#[cfg(feature = "openjpeg")]
+pub use reader::J2KDatasetReader;
+#[cfg(feature = "openjpeg")]
+pub use writer::J2KDatasetWriter;
 
 // OpenJPEG implementation (feature-gated)
 #[cfg(feature = "openjpeg")]
