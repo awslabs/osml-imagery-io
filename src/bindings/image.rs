@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use numpy::PyArrayMethods;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyDict};
 
 use crate::bindings::PyMetadataProvider;
 use crate::traits::ImageAssetProvider;
@@ -278,6 +278,55 @@ impl PyImageAssetProvider {
         let array = create_numpy_array(py, &data, shape, pixel_type)?;
 
         Ok(array)
+    }
+
+    /// Return per-tile byte ranges relative to the source file.
+    ///
+    /// Returns a dictionary mapping ``(block_row, block_col)`` tuples to
+    /// ``(byte_offset, byte_length)`` tuples, where offsets are relative to
+    /// the start of the source file.
+    ///
+    /// Returns ``None`` for providers without a backing file (e.g. in-memory
+    /// images created with :class:`BufferedImageAssetProvider`).
+    ///
+    /// :returns: Mapping of tile coordinates to byte ranges, or ``None``.
+    /// :rtype: dict[tuple[int, int], tuple[int, int]] | None
+    fn tile_byte_ranges<'py>(&self, py: Python<'py>) -> PyResult<Option<PyObject>> {
+        match self.inner.tile_byte_ranges() {
+            None => Ok(None),
+            Some(ranges) => {
+                let dict = PyDict::new_bound(py);
+                for ((row, col), (offset, length)) in ranges {
+                    dict.set_item((row, col), (offset, length))?;
+                }
+                Ok(Some(dict.into_py(py)))
+            }
+        }
+    }
+
+    /// Return opaque codec configuration for independent tile decoding.
+    ///
+    /// The returned dictionary contains format-specific key-value pairs
+    /// needed to decode tiles independently. For JPEG 2000 images this
+    /// includes a ``"main_header"`` key whose value is the raw codestream
+    /// main header bytes.
+    ///
+    /// Returns ``None`` if no configuration is needed (e.g. uncompressed
+    /// images).
+    ///
+    /// :returns: Codec parameters, or ``None``.
+    /// :rtype: dict[str, bytes] | None
+    fn codec_configuration<'py>(&self, py: Python<'py>) -> PyResult<Option<PyObject>> {
+        match self.inner.codec_configuration() {
+            None => Ok(None),
+            Some(config) => {
+                let dict = PyDict::new_bound(py);
+                for (key, value) in config {
+                    dict.set_item(key, PyBytes::new_bound(py, &value))?;
+                }
+                Ok(Some(dict.into_py(py)))
+            }
+        }
     }
 }
 

@@ -27,6 +27,7 @@ from aws.osml.io._io import (
     Value,
     __version__,
 )
+from aws.osml.io.tile_index import TileIndex
 
 # Convenience alias for IO.open
 open = IO.open
@@ -59,4 +60,6 @@ __all__ = [
     "StructureWriter",
     "StructureDefinition",
     "Value",
+    # Tile Index
+    "TileIndex",
 ]
