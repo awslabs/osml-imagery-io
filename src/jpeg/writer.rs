@@ -89,6 +89,50 @@ impl JPEGDatasetWriter {
             .unwrap_or(75)
     }
 
+    /// Reassemble a full BSQ image from a multi-block provider.
+    ///
+    /// Iterates over the block grid, reads each tile, and copies its pixels
+    /// into the correct position in a contiguous BSQ buffer of shape
+    /// `[bands, height, width]`.
+    fn reassemble_bsq(
+        image: &dyn ImageAssetProvider,
+        width: u32,
+        height: u32,
+        num_bands: u32,
+        grid_rows: u32,
+        grid_cols: u32,
+    ) -> Result<Vec<u8>, CodecError> {
+        let total_size = (num_bands as usize) * (height as usize) * (width as usize);
+        let mut bsq = vec![0u8; total_size];
+        let band_stride = (height as usize) * (width as usize);
+
+        for br in 0..grid_rows {
+            for bc in 0..grid_cols {
+                let (block_data, shape) = image.get_block(br, bc, 0, None)?;
+                let blk_bands = shape[0] as usize;
+                let blk_rows = shape[1] as usize;
+                let blk_cols = shape[2] as usize;
+                let blk_band_size = blk_rows * blk_cols;
+
+                let start_row = (br * image.num_pixels_per_block_vertical()) as usize;
+                let start_col = (bc * image.num_pixels_per_block_horizontal()) as usize;
+
+                for band in 0..blk_bands {
+                    let src_band_offset = band * blk_band_size;
+                    let dst_band_offset = band * band_stride;
+                    for row in 0..blk_rows {
+                        let src_start = src_band_offset + row * blk_cols;
+                        let dst_start = dst_band_offset + (start_row + row) * (width as usize) + start_col;
+                        bsq[dst_start..dst_start + blk_cols]
+                            .copy_from_slice(&block_data[src_start..src_start + blk_cols]);
+                    }
+                }
+            }
+        }
+
+        Ok(bsq)
+    }
+
     /// Convert BSQ pixel data to pixel-interleaved format.
     ///
     /// BSQ: [R0,R1,...,Rn, G0,G1,...,Gn, B0,B1,...,Bn]
@@ -202,12 +246,22 @@ impl DatasetWriter for JPEGDatasetWriter {
         let width = image.num_columns();
         let height = image.num_rows();
         let num_bands = image.num_bands();
+        let num_pixels = (width * height) as usize;
 
-        // Read all pixel data (BSQ format)
-        let (bsq_data, _shape) = image.get_block(0, 0, 0, None)?;
+        // Read all pixel data (BSQ format).
+        // We must iterate over the block grid and reassemble the full image
+        // because get_block() returns a single tile, not the entire image.
+        let (grid_rows, grid_cols) = image.block_grid_size();
+        let bsq_data = if grid_rows == 1 && grid_cols == 1 {
+            // Single block — no reassembly needed
+            let (data, _shape) = image.get_block(0, 0, 0, None)?;
+            data
+        } else {
+            // Multi-block: reassemble into a contiguous BSQ buffer
+            Self::reassemble_bsq(image, width, height, num_bands, grid_rows, grid_cols)?
+        };
 
         // Convert BSQ to pixel-interleaved for libjpeg-turbo
-        let num_pixels = (width * height) as usize;
         let interleaved = Self::bsq_to_interleaved(&bsq_data, num_pixels, num_bands as usize);
 
         // Extract quality from metadata hints
@@ -498,5 +552,67 @@ mod tests {
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [3, 64, 64]);
         assert_eq!(read_pixels.len(), npix * 3);
+    }
+
+    // =========================================================================
+    // Roundtrip: multi-block RGB image (regression for multiband panic)
+    // =========================================================================
+
+    #[test]
+    fn test_roundtrip_rgb_multiblock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rgb_multiblock.jpg");
+
+        // 64x64 image with 32x32 blocks → 2x2 block grid
+        let width: u32 = 64;
+        let height: u32 = 64;
+        let num_bands: u32 = 3;
+        let block_w: u32 = 32;
+        let block_h: u32 = 32;
+
+        let config = MemoryImageConfig::new(width, height)
+            .with_bands(num_bands)
+            .with_block_size(block_w, block_h)
+            .with_pixel_type(PixelType::UInt8);
+        let provider = BufferedImageAssetProvider::new("image_segment_0", config);
+
+        // Fill each block with BSQ data
+        let blk_pixels = (block_h * block_w) as usize;
+        for br in 0..2u32 {
+            for bc in 0..2u32 {
+                let base = (br * 2 + bc) * 50;
+                let mut block_bsq = Vec::with_capacity(blk_pixels * num_bands as usize);
+                for band in 0..num_bands {
+                    for i in 0..blk_pixels {
+                        block_bsq.push(((base + band * 30 + i as u32) % 256) as u8);
+                    }
+                }
+                provider.set_block(br, bc, &block_bsq).unwrap();
+            }
+        }
+
+        let provider = Arc::new(provider);
+        let mut writer = JPEGDatasetWriter::new(&path).unwrap();
+        writer
+            .add_asset("image_segment_0", provider, "Test", "Test", &[])
+            .unwrap();
+        writer.close().unwrap();
+
+        // Read back and verify dimensions
+        let data = std::fs::read(&path).unwrap();
+        let reader = JPEGDatasetReader::from_bytes(&data).unwrap();
+        let asset = reader.get_asset("image_segment_0").unwrap();
+        let image = asset
+            .as_any()
+            .downcast_ref::<JPEGImageAssetProvider>()
+            .unwrap();
+
+        assert_eq!(image.num_bands(), 3);
+        assert_eq!(image.num_rows(), 64);
+        assert_eq!(image.num_columns(), 64);
+
+        let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
+        assert_eq!(shape, [3, 64, 64]);
+        assert_eq!(read_pixels.len(), (width * height * num_bands) as usize);
     }
 }
