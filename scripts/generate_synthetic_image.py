@@ -614,13 +614,11 @@ class ImageWriter:
 
             tag_dict = metadata.as_dict()
             resolver = TagNameResolver(tag_dict)
-            resolver["TileWidth"] = str(config.tile_width)
-            resolver["TileLength"] = str(config.tile_height)
-            # Map compression CLI value to the writer's expected string values.
-            # Default is "None" because macOS Preview cannot render tiled
-            # TIFFs with Deflate compression.
-            tiff_compression_map = {"none": "None", "lzw": "LZW", "deflate": "Deflate"}
-            resolver["Compression"] = tiff_compression_map[config.compression]
+            resolver["TileWidth"] = config.tile_width
+            resolver["TileLength"] = config.tile_height
+            # TagNameResolver resolves human-readable compression names
+            # (e.g. "None", "LZW", "Deflate") to their numeric TIFF values.
+            resolver["Compression"] = config.compression.capitalize() if config.compression != "none" else "None"
             # Write resolved numeric keys back into the metadata provider
             for key, value in tag_dict.items():
                 metadata.set(key, str(value) if not isinstance(value, str) else value)

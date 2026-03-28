@@ -252,7 +252,7 @@ class TestSetItem:
         tag_dict = {"259": 1}
         resolver = TagNameResolver(tag_dict)
         resolver["Compression"] = "Deflate"
-        assert tag_dict["259"] == "Deflate"
+        assert tag_dict["259"] == 8  # "Deflate" resolved to numeric value
 
     def test_setitem_unknown_name_passes_through(self):
         tag_dict = {}
@@ -299,4 +299,4 @@ class TestSetItem:
         resolver = TagNameResolver(tag_dict)
         resolver["Compression"] = "LZW"
         items = dict(resolver)
-        assert items["Compression"] == "LZW"
+        assert items["Compression"] == 5  # "LZW" resolved to numeric value

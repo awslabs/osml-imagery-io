@@ -28,6 +28,62 @@ class TagNameResolver:
         comp = resolver.get("Compression")   # returns None if absent
     """
 
+    # Enumerated tag values: maps (tag_number, value_name) → numeric value.
+    # Used by __setitem__ to resolve human-readable value names to the
+    # integers the Rust writer expects.
+    VALUE_MAPPING: Dict[int, Dict[str, int]] = {
+        # Tag 259 – Compression
+        259: {
+            "none": 1,
+            "ccittrle": 2,
+            "ccittfax3": 3,
+            "ccittfax4": 4,
+            "lzw": 5,
+            "ojpeg": 6,
+            "jpeg": 7,
+            "deflate": 8,
+            "packbits": 32773,
+        },
+        # Tag 262 – PhotometricInterpretation
+        262: {
+            "miniswhite": 0,
+            "minisblack": 1,
+            "rgb": 2,
+            "palette": 3,
+            "mask": 4,
+            "ycbcr": 6,
+        },
+        # Tag 274 – Orientation
+        274: {
+            "topleft": 1,
+            "topright": 2,
+            "bottomright": 3,
+            "bottomleft": 4,
+            "lefttop": 5,
+            "righttop": 6,
+            "rightbottom": 7,
+            "leftbottom": 8,
+        },
+        # Tag 284 – PlanarConfiguration
+        284: {
+            "chunky": 1,
+            "planar": 2,
+        },
+        # Tag 317 – Predictor
+        317: {
+            "none": 1,
+            "horizontal": 2,
+            "floatingpoint": 3,
+        },
+        # Tag 339 – SampleFormat
+        339: {
+            "uint": 1,
+            "int": 2,
+            "float": 3,
+            "void": 4,
+        },
+    }
+
     DEFAULT_MAPPING: Dict[str, int] = {
         # Baseline TIFF 6.0 tags
         "NewSubfileType": 254,
@@ -180,14 +236,43 @@ class TagNameResolver:
         key = self._resolve_key(name)
         return key in self._tag_dict
 
+    def _resolve_value(self, tag_number: int, value: Any) -> Any:
+        """Resolve a human-readable value name to its numeric equivalent.
+
+        For tags with well-known enumerated values (e.g. Compression,
+        PhotometricInterpretation), string values are looked up
+        case-insensitively in :attr:`VALUE_MAPPING` and replaced with the
+        corresponding integer.  Non-string values and strings that don't
+        match any known name are returned unchanged.
+        """
+        if not isinstance(value, str) or tag_number not in self.VALUE_MAPPING:
+            return value
+        lookup = value.lower()
+        enum_map = self.VALUE_MAPPING[tag_number]
+        if lookup in enum_map:
+            return enum_map[lookup]
+        return value
+
     def __setitem__(self, name: str, value: Any) -> None:
         """Set a tag value by human-readable name.
 
         If *name* is in the mapping it is resolved to the corresponding
-        numeric key.  Otherwise *name* is used directly as the dictionary
-        key, allowing unmapped keys to pass through.
+        numeric key.  If the tag has well-known enumerated values (see
+        :attr:`VALUE_MAPPING`), string values are resolved to their numeric
+        equivalents automatically.  Otherwise *name* and *value* are used
+        as-is, allowing unmapped keys to pass through.
+
+        Examples::
+
+            resolver["Compression"] = "LZW"       # stored as 5
+            resolver["Compression"] = 5            # stored as 5
+            resolver["Compression"] = "Deflate"    # stored as 8
+            resolver["TileWidth"] = 512            # stored as 512
         """
         key = self._resolve_key(name)
+        # Resolve enumerated string values when the tag number is known
+        if name in self._mapping:
+            value = self._resolve_value(self._mapping[name], value)
         self._tag_dict[key] = value
 
     def set(self, name: str, value: Any) -> None:
