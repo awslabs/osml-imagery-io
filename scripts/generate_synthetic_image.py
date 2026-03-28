@@ -54,7 +54,13 @@ Examples:
     python scripts/generate_synthetic_image.py masked_random.ntf --masked --mask-pattern random --mask-ratio 0.5
 
     # Generate a masked J2K image
-    python scripts/generate_synthetic_image.py masked_j2k.ntf --masked --compression C8
+    python scripts/generate_synthetic_image.py masked_j2k.ntf --masked --compression j2k
+
+    # Generate a NITF with JPEG compression (IC=C3)
+    python scripts/generate_synthetic_image.py jpeg_test.ntf --compression jpeg
+
+    # Generate a NITF with JPEG 2000 compression (IC=C8)
+    python scripts/generate_synthetic_image.py j2k_test.ntf --compression j2k
 
     # Generate a TIFF with LZW compression
     python scripts/generate_synthetic_image.py test.tif --format tiff --compression lzw
@@ -79,6 +85,28 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
+# Valid compression choices per output format. The keys are the
+# format-agnostic compression names accepted by --compression.
+_VALID_COMPRESSIONS = {
+    "nitf":    ("none", "jpeg", "j2k"),
+    "tiff":    ("none", "lzw", "deflate"),
+    "geotiff": ("none", "lzw", "deflate"),
+    "png":     ("deflate",),
+    "j2k":     ("j2k",),
+    "jpeg":    ("jpeg",),
+}
+
+# Default compression when --compression auto is used.
+_DEFAULT_COMPRESSION = {
+    "nitf":    "none",
+    "tiff":    "none",
+    "geotiff": "none",
+    "png":     "deflate",
+    "j2k":     "j2k",
+    "jpeg":    "jpeg",
+}
+
+
 @dataclass
 class ImageConfig:
     """Configuration for synthetic image generation.
@@ -94,11 +122,9 @@ class ImageConfig:
         pixel_type: Pixel data type - "uint8" or "uint16"
         abpp: Actual bits per pixel (defaults to full range for pixel_type)
         imode: Interleave mode - "B", "P", "R", or "S" (NITF only)
-        compression: Compression type. NITF: "NC" (none), "C8" (JPEG2000).
-            TIFF: "none" (default), "lzw", "deflate".
-            PNG: always "deflate".
-            J2K: "lossless" (default) or "lossy".
-            JPEG: quality controlled via --jpeg-quality.
+        compression: Format-agnostic compression type: "none", "jpeg", "j2k",
+            "lzw", "deflate". Not all combinations are valid for all formats.
+            Use "auto" for format-appropriate default.
         comrat: Compression ratio for JPEG2000 (NITF only)
         masked: Enable masked output mode (NITF only)
         mask_pattern: Mask pattern type (checkerboard, border, random, single)
@@ -168,62 +194,29 @@ class ImageConfig:
         if self.pixel_type not in ("uint8", "uint16"):
             raise ValueError(f"Pixel type must be 'uint8' or 'uint16', got '{self.pixel_type}'")
 
-        # JPEG only supports uint8
+        # JPEG compression only supports uint8 (both as a format and as NITF compression)
         if self.format == "jpeg" and self.pixel_type != "uint8":
-            raise ValueError("JPEG only supports uint8 pixel type")
+            raise ValueError("JPEG format only supports uint8 pixel type")
 
         # Validate IMODE
         if self.imode not in ("B", "P", "R", "S"):
             raise ValueError(f"IMODE must be 'B', 'P', 'R', or 'S', got '{self.imode}'")
 
-        # Validate and normalize compression for the target format
-        nitf_compressions = ("NC", "C8")
-        tiff_compressions = ("none", "lzw", "deflate")
-
+        # Resolve "auto" to format-appropriate default
         if self.compression == "auto":
-            # Set format-appropriate default
-            if self.format == "nitf":
-                self.compression = "NC"
-            elif self.format == "png":
-                self.compression = "deflate"
-            elif self.format == "j2k":
-                self.compression = "lossless"
-            elif self.format == "jpeg":
-                self.compression = "jpeg"
-            else:
-                self.compression = "none"
+            self.compression = _DEFAULT_COMPRESSION[self.format]
 
-        if self.format == "nitf":
-            if self.compression not in nitf_compressions:
-                raise ValueError(
-                    f"Compression '{self.compression}' is not valid for NITF. "
-                    f"Use one of: {', '.join(nitf_compressions)}"
-                )
-        elif self.format in ("tiff", "geotiff"):
-            if self.compression not in tiff_compressions:
-                raise ValueError(
-                    f"Compression '{self.compression}' is not valid for TIFF. "
-                    f"Use one of: {', '.join(tiff_compressions)}"
-                )
-        elif self.format == "png":
-            # PNG always uses Deflate; only "auto" and "deflate" are accepted
-            if self.compression != "deflate":
-                raise ValueError(
-                    f"Compression '{self.compression}' is not valid for PNG. "
-                    f"PNG always uses Deflate compression."
-                )
-        elif self.format == "j2k":
-            if self.compression not in ("lossless", "lossy"):
-                raise ValueError(
-                    f"Compression '{self.compression}' is not valid for J2K. "
-                    f"Use 'lossless' or 'lossy'."
-                )
-        elif self.format == "jpeg":
-            # JPEG compression is implicit; accept "auto" or "jpeg"
-            if self.compression != "jpeg":
-                raise ValueError(
-                    f"Compression '{self.compression}' is not valid for JPEG."
-                )
+        # Validate compression is allowed for this format
+        valid = _VALID_COMPRESSIONS[self.format]
+        if self.compression not in valid:
+            raise ValueError(
+                f"Compression '{self.compression}' is not valid for "
+                f"{self.format.upper()}. Use one of: {', '.join(valid)}"
+            )
+
+        # JPEG compression requires uint8 regardless of output format
+        if self.compression == "jpeg" and self.pixel_type != "uint8":
+            raise ValueError("JPEG compression only supports uint8 pixel type")
 
         # Validate mask pattern
         if self.mask_pattern not in ("checkerboard", "border", "random", "single"):
@@ -236,30 +229,11 @@ class ImageConfig:
         if not 0.0 <= self.mask_ratio <= 1.0:
             raise ValueError(f"Mask ratio must be between 0.0 and 1.0, got {self.mask_ratio}")
 
-        # Validate TIFF-incompatible options
-        if self.format in ("tiff", "geotiff"):
-            if self.masked:
-                raise ValueError("Masked output is not supported for TIFF format")
-
-        # Validate PNG-incompatible options
-        if self.format == "png":
-            if self.masked:
-                raise ValueError("Masked output is not supported for PNG format")
-            if self.imode != "B":
-                raise ValueError(
-                    f"IMODE '{self.imode}' is a NITF-specific option and is not "
-                    f"supported for PNG format"
-                )
-
-        # Validate J2K-incompatible options
-        if self.format == "j2k":
-            if self.masked:
-                raise ValueError("Masked output is not supported for J2K format")
-
-        # Validate JPEG-incompatible options
-        if self.format == "jpeg":
-            if self.masked:
-                raise ValueError("Masked output is not supported for JPEG format")
+        # Masking is only supported for NITF
+        if self.masked and self.format not in ("nitf",):
+            raise ValueError(
+                f"Masked output is not supported for {self.format.upper()} format"
+            )
 
         # Set ABPP to full bit depth if not specified
         max_bits = 8 if self.pixel_type == "uint8" else 16
@@ -299,23 +273,22 @@ class ImageConfig:
 
     @property
     def effective_ic(self) -> str:
-        """Get the effective IC value based on compression and masked settings.
+        """Get the effective NITF IC value based on compression and masked settings.
 
-        When masked is True, returns the masked variant of the compression:
-        - NC -> NM (uncompressed with mask)
-        - C8 -> M8 (JPEG 2000 with mask)
+        Maps format-agnostic compression names to NITF IC codes:
+        - none  → NC (or NM when masked)
+        - jpeg  → C3 (or M3 when masked)
+        - j2k   → C8 (or M8 when masked)
 
-        When masked is False, returns the original compression value.
+        Returns:
+            NITF IC code string
         """
-        if not self.masked:
-            return self.compression
-
-        # Map non-masked IC to masked IC
-        ic_mapping = {
-            "NC": "NM",
-            "C8": "M8",
-        }
-        return ic_mapping.get(self.compression, self.compression)
+        ic_map = {"none": "NC", "jpeg": "C3", "j2k": "C8"}
+        masked_map = {"NC": "NM", "C3": "M3", "C8": "M8"}
+        ic = ic_map.get(self.compression, self.compression)
+        if self.masked:
+            ic = masked_map.get(ic, ic)
+        return ic
 
     @property
     def io_format(self) -> str:
@@ -629,7 +602,9 @@ class ImageWriter:
         if config.io_format == "nitf":
             metadata.set("IMODE", config.imode)
             metadata.set("IC", config.effective_ic)
-            if config.compression == "C8" and config.comrat:
+            if config.compression == "j2k" and config.comrat:
+                metadata.set("COMRAT", config.comrat)
+            if config.compression == "jpeg" and config.comrat:
                 metadata.set("COMRAT", config.comrat)
 
         # TIFF-specific metadata: use TagNameResolver to convert human-readable
@@ -652,8 +627,8 @@ class ImageWriter:
 
         # J2K-specific metadata (lossless flag)
         if config.io_format == "j2k":
-            is_lossless = config.compression == "lossless"
-            metadata.set("J2K_LOSSLESS", str(is_lossless).lower())
+            # J2K format always uses j2k compression; lossless is the default
+            metadata.set("J2K_LOSSLESS", "true")
 
         # JPEG-specific metadata (quality)
         if config.io_format == "jpeg":
@@ -851,6 +826,12 @@ Examples:
   %(prog)s output.ntf
       Generate a default 512x512 grayscale NITF image
 
+  %(prog)s output.ntf --compression jpeg
+      Generate a NITF with JPEG compression (IC=C3)
+
+  %(prog)s output.ntf --compression j2k
+      Generate a NITF with JPEG 2000 compression (IC=C8)
+
   %(prog)s output.tif --format tiff
       Generate a 512x512 grayscale TIFF image
 
@@ -951,13 +932,14 @@ Examples:
         "--compression",
         type=str,
         default="auto",
-        choices=["auto", "NC", "C8", "none", "lzw", "deflate", "lossless", "lossy", "jpeg"],
+        choices=["auto", "none", "jpeg", "j2k", "lzw", "deflate"],
         help=(
-            "Compression type. NITF: NC (none), C8 (JPEG2000). "
+            "Compression type (format-agnostic). "
+            "NITF: none, jpeg (IC=C3), j2k (IC=C8). "
             "TIFF: none, lzw, deflate. "
-            "PNG: always deflate. "
-            "J2K: lossless, lossy. "
-            "JPEG: jpeg (implicit). "
+            "PNG: deflate (always). "
+            "J2K: j2k (always). "
+            "JPEG: jpeg (always). "
             "Default: auto (format-appropriate default)"
         )
     )
@@ -966,14 +948,14 @@ Examples:
         type=str,
         default=None,
         metavar="RATIO",
-        help="Compression ratio for JPEG2000: N001.0 (lossless), 01.0 (1.0 bpp), etc."
+        help="Compression ratio for JPEG2000 or JPEG: N001.0 (J2K lossless), 01.0 (J2K 1.0 bpp), 75.0 (JPEG quality), etc."
     )
 
     # Masking options
     parser.add_argument(
         "--masked",
         action="store_true",
-        help="Enable masked output mode (uses NM for uncompressed, M8 for J2K)"
+        help="Enable masked output mode. NITF only: maps none→NM, jpeg→M3, j2k→M8"
     )
     parser.add_argument(
         "--mask-pattern",
