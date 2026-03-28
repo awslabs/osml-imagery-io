@@ -805,6 +805,33 @@ impl BlockDecoder for JpegNitfBlockDecoder {
         // Return shape as [bands, rows, cols] (CHW format)
         Ok((final_data, [num_bands, actual_rows, actual_cols]))
     }
+
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+        let offsets = self.get_block_offsets();
+        let mut ranges = std::collections::HashMap::new();
+        for (idx, &(start, end)) in offsets.iter().enumerate() {
+            let row = idx as u32 / self.nbpr;
+            let col = idx as u32 % self.nbpr;
+            ranges.insert((row, col), (start as u64, (end - start) as u64));
+        }
+        Some(ranges)
+    }
+
+    fn codec_configuration(&self) -> Option<std::collections::HashMap<String, Vec<u8>>> {
+        let mut config = std::collections::HashMap::new();
+        config.insert("bits_per_pixel".to_string(), vec![self.nbpp]);
+        config.insert("num_bands".to_string(), self.nbands.to_le_bytes().to_vec());
+        config.insert("block_width".to_string(), self.nppbh.to_le_bytes().to_vec());
+        config.insert("block_height".to_string(), self.nppbv.to_le_bytes().to_vec());
+        config.insert("imode".to_string(), vec![self.imode.to_char() as u8]);
+        let cs_byte = match self.jpeg_decoder.color_space() {
+            JpegColorSpace::Grayscale => 0u8,
+            JpegColorSpace::Rgb => 1u8,
+            JpegColorSpace::YCbCr601 => 2u8,
+        };
+        config.insert("color_space".to_string(), vec![cs_byte]);
+        Some(config)
+    }
 }
 
 // Safety: JpegNitfBlockDecoder is thread-safe

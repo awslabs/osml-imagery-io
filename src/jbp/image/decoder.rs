@@ -169,6 +169,24 @@ pub trait BlockDecoder: Send + Sync {
         resolution_level: u32,
         bands: Option<&[u32]>,
     ) -> Result<(Vec<u8>, [u32; 3]), CodecError>;
+
+    /// Return per-tile byte ranges relative to the start of the image data buffer.
+    ///
+    /// Returns `None` if the decoder does not support byte range reporting.
+    /// The returned offsets are relative to the start of the image data
+    /// (i.e., codestream-relative for J2K, buffer-relative for NC/JPEG).
+    /// The caller (JBPImageAssetProvider) translates these to file-relative
+    /// offsets by adding `location.data_offset`.
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+        None
+    }
+
+    /// Return codec configuration needed for independent tile decoding.
+    ///
+    /// Returns `None` if no additional configuration is needed.
+    fn codec_configuration(&self) -> Option<std::collections::HashMap<String, Vec<u8>>> {
+        None
+    }
 }
 
 /// Factory function to create the appropriate block decoder based on IC field.

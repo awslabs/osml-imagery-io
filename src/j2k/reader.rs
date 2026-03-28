@@ -18,6 +18,7 @@ use serde_json::json;
 use crate::error::CodecError;
 use crate::j2k::codec::J2KCodec;
 use crate::j2k::image::J2KImageAssetProvider;
+use crate::j2k::markers::parse_main_header;
 use crate::j2k::metadata::J2KMetadataProvider;
 use crate::traits::asset::AssetProvider;
 use crate::traits::metadata::MetadataProvider;
@@ -135,6 +136,14 @@ impl J2KDatasetReader {
         // The image provider will slice into it using cs_range.
         let buffer: Arc<[u8]> = Arc::from(data);
 
+        // Parse main header for tile-part extraction
+        let codestream_bytes = &buffer[cs_range.clone()];
+        let header_info = parse_main_header(codestream_bytes)?;
+        let tile_part_table = std::sync::OnceLock::new();
+        if let Some(tlm_table) = header_info.tlm_offset_table {
+            let _ = tile_part_table.set(tlm_table);
+        }
+
         let image_asset = J2KImageAssetProvider::new(
             "image_segment_0".to_string(),
             siz.width,
@@ -151,6 +160,9 @@ impl J2KDatasetReader {
             metadata.clone(),
             num_resolution_levels,
             codec,
+            header_info.decode_header,
+            header_info.first_sot_offset,
+            tile_part_table,
         );
 
         Ok(Self {

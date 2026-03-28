@@ -26,6 +26,7 @@
 // Codec trait and types (always available)
 mod codec;
 pub mod comrat;
+pub mod markers;
 
 // Standalone reader/writer components
 pub(crate) mod image;

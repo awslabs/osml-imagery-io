@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ed3e7ecd551d23dc60550be9dd0275fffe93957d8f377b1a509b97576dc8d372 # shrinks to num_tlm = 0, non_tlm_markers = [(65328, [255, 85])], tile_lengths = [1]

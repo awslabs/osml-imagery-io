@@ -131,4 +131,22 @@ pub trait ImageAssetProvider: AssetProvider {
         let cols = if bw == 0 { 1 } else { w.div_ceil(bw) };
         (rows, cols)
     }
+
+    /// Return per-tile byte ranges relative to the source file.
+    ///
+    /// Keys are `(block_row, block_col)`, values are `(byte_offset, byte_length)`
+    /// where byte_offset is relative to the start of the source file.
+    ///
+    /// Returns `None` for providers without a backing file (e.g., BufferedImageAssetProvider).
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+        None
+    }
+
+    /// Return opaque codec configuration for independent tile decoding.
+    ///
+    /// The map contains format-specific key-value pairs. For J2K: `"main_header"` → decode header bytes.
+    /// Returns `None` if no configuration is needed.
+    fn codec_configuration(&self) -> Option<std::collections::HashMap<String, Vec<u8>>> {
+        None
+    }
 }

@@ -479,6 +479,29 @@ impl ImageAssetProvider for JBPImageAssetProvider {
         }
         0.0
     }
+
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+        // For masked images, return None — mask table provides offsets but not lengths
+        if self.mask.is_some() {
+            return None;
+        }
+
+        // For non-masked images, delegate to BlockDecoder
+        let decoder = self.decoder().ok()?;
+        let mut ranges = decoder.tile_byte_ranges()?;
+
+        // Translate codestream-relative offsets to file-relative
+        let base_offset = self.location.data_offset;
+        for (_, (offset, _)) in ranges.iter_mut() {
+            *offset += base_offset;
+        }
+        Some(ranges)
+    }
+
+    fn codec_configuration(&self) -> Option<std::collections::HashMap<String, Vec<u8>>> {
+        let decoder = self.decoder().ok()?;
+        decoder.codec_configuration()
+    }
 }
 
 

@@ -285,6 +285,25 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
     fn pad_pixel_value(&self) -> f64 {
         0.0
     }
+
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+        // TODO: Implement when TiffHandle supports reading TileOffsets/TileByteCounts
+        // and StripOffsets/StripByteCounts tag arrays.
+        // TIFF offsets are already file-relative (no translation needed).
+        None
+    }
+
+    fn codec_configuration(&self) -> Option<std::collections::HashMap<String, Vec<u8>>> {
+        // For lossless compression types, no configuration needed
+        // COMPRESSION_NONE=1, COMPRESSION_LZW=5, COMPRESSION_DEFLATE=8, COMPRESSION_ADOBE_DEFLATE=32946
+        match self.compression {
+            1 | 5 | 8 | 32946 => None,
+            // For JPEG and other compression types, configuration would be needed
+            // but requires additional FFI support to read JPEGTables tag.
+            // Return None for now.
+            _ => None,
+        }
+    }
 }
 
 // =============================================================================

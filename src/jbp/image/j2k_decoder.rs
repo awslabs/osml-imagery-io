@@ -29,6 +29,7 @@ use crate::jbp::image::facade::ImageSubheaderFacade;
 use crate::jbp::image::types::{InterleaveMode, PixelValueType};
 
 use crate::j2k::{J2KCodec, J2KDecodeParams};
+use crate::j2k::markers::{TilePartOffsetTable, parse_main_header, scan_sot_markers, build_minimal_codestream};
 
 // =============================================================================
 // Jpeg2000BlockDecoder
@@ -83,6 +84,12 @@ pub struct Jpeg2000BlockDecoder {
     num_resolution_levels: OnceLock<u32>,
     /// Cached tile grid info: (tile_width, tile_height, num_tiles_x, num_tiles_y)
     tile_info: OnceLock<(u32, u32, u32, u32)>,
+    /// Decode header (main header with TLM stripped). None for masked images.
+    decode_header: Option<Vec<u8>>,
+    /// Byte offset of the first SOT marker in the codestream. None for masked images.
+    first_sot_offset: Option<u64>,
+    /// Tile-part offset table. Populated eagerly from TLM or lazily from SOT scan.
+    tile_part_table: OnceLock<TilePartOffsetTable>,
 }
 
 impl Jpeg2000BlockDecoder {
@@ -186,6 +193,25 @@ impl Jpeg2000BlockDecoder {
         let nbands = subheader.band_count()? as u32;
         let comrat = subheader.comrat()?;
 
+        // Extract main header for non-masked images
+        let (decode_header, first_sot_offset, tile_part_table) = if !is_masked {
+            let header_info = parse_main_header(&codestream)?;
+            let table = OnceLock::new();
+            // If TLM markers present, populate tile_part_table eagerly
+            if let Some(tlm_table) = header_info.tlm_offset_table {
+                let _ = table.set(tlm_table);
+            }
+            // If no TLM, leave OnceLock empty for lazy SOT scan
+            (
+                Some(header_info.decode_header),
+                Some(header_info.first_sot_offset),
+                table,
+            )
+        } else {
+            // Masked images: skip header extraction
+            (None, None, OnceLock::new())
+        };
+
         Ok(Self {
             codestream,
             nrows,
@@ -201,6 +227,9 @@ impl Jpeg2000BlockDecoder {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header,
+            first_sot_offset,
+            tile_part_table,
         })
     }
 
@@ -250,6 +279,27 @@ impl Jpeg2000BlockDecoder {
         // Ignore the result of set() - if another thread set it first, that's fine
         let _ = self.tile_info.set(info);
         Ok(info)
+    }
+
+    /// Ensure the tile-part offset table is populated.
+    ///
+    /// If the table was eagerly populated from TLM markers during construction,
+    /// returns it immediately. Otherwise, triggers a lazy SOT marker scan.
+    ///
+    /// # Errors
+    /// Returns `CodecError::InvalidFormat` if called on a masked image or if
+    /// SOT scanning fails.
+    fn ensure_tile_part_table(&self) -> Result<&TilePartOffsetTable, CodecError> {
+        if let Some(table) = self.tile_part_table.get() {
+            return Ok(table);
+        }
+        let first_sot = self.first_sot_offset.ok_or_else(|| {
+            CodecError::InvalidFormat("Cannot scan SOT markers for masked images".to_string())
+        })?;
+        let table = scan_sot_markers(&self.codestream, first_sot)?;
+        // Ignore set result — if another thread set it first, that's fine
+        let _ = self.tile_part_table.set(table);
+        Ok(self.tile_part_table.get().unwrap())
     }
 
     /// Select specific bands from decoded data.
@@ -368,7 +418,28 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         };
         
         // Decode the specific tile
-        let result = self.codec.decode_tile(&self.codestream, tile_index, &params)?;
+        let result = if self.decode_header.is_some() {
+            // Non-masked path: construct minimal single-tile codestream
+            let table = self.ensure_tile_part_table()?;
+            let tile_parts: Vec<(u64, u64)> = table
+                .iter()
+                .filter(|e| e.tile_index as u32 == tile_index)
+                .map(|e| (e.offset, e.length))
+                .collect();
+            if tile_parts.is_empty() {
+                return Err(CodecError::InvalidBlockCoordinates(
+                    block_row,
+                    block_col,
+                    resolution_level,
+                ));
+            }
+            let decode_header = self.decode_header.as_ref().unwrap();
+            let minimal_codestream = build_minimal_codestream(decode_header, &tile_parts, &self.codestream);
+            self.codec.decode_tile(&minimal_codestream, 0, &params)?
+        } else {
+            // Masked path: fall through to existing full-codestream path
+            self.codec.decode_tile(&self.codestream, tile_index, &params)?
+        };
 
         // Calculate expected tile dimensions at this resolution level
         let scale = 1u32 << resolution_level;
@@ -586,6 +657,32 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
 
         // Return shape as [bands, rows, cols] (CHW format)
         Ok((data, [num_bands, result.height, result.width]))
+    }
+
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+        if self.is_masked {
+            return None; // Delegate to JBPImageAssetProvider's mask-aware logic
+        }
+        let table = self.ensure_tile_part_table().ok()?;
+        let (_, _, num_tiles_x, _) = self.tile_grid_info().ok()?;
+
+        let mut ranges = std::collections::HashMap::new();
+        for entry in table {
+            let row = entry.tile_index as u32 / num_tiles_x;
+            let col = entry.tile_index as u32 % num_tiles_x;
+            ranges
+                .entry((row, col))
+                .and_modify(|(_, len): &mut (u64, u64)| *len += entry.length)
+                .or_insert((entry.offset, entry.length));
+        }
+        Some(ranges)
+    }
+
+    fn codec_configuration(&self) -> Option<std::collections::HashMap<String, Vec<u8>>> {
+        let decode_header = self.decode_header.as_ref()?;
+        let mut config = std::collections::HashMap::new();
+        config.insert("main_header".to_string(), decode_header.clone());
+        Some(config)
     }
 }
 
@@ -823,6 +920,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         // Create test data: 3 bands, 16 pixels each, 1 byte per pixel
@@ -859,6 +959,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         // Create test data: 3 bands, 16 pixels each
@@ -895,6 +998,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         let data = vec![0u8; 48]; // 3 bands * 16 pixels
@@ -932,6 +1038,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         // All 4 tiles in 2x2 grid are valid
@@ -965,6 +1074,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         // Only (0, 0) is valid for single-tile image
@@ -993,6 +1105,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         assert_eq!(decoder.compression_type(), "C8");
@@ -1017,6 +1132,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         assert_eq!(decoder.compression_type(), "CD");
@@ -1041,6 +1159,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         // Mock codec returns 6 resolution levels
@@ -1067,6 +1188,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         // Invalid block coordinates should return error (single tile image)
@@ -1097,6 +1221,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         let result = decoder.decode_block(0, 0, 0, None);
@@ -1130,6 +1257,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         // All 4 tiles should be decodable
@@ -1169,6 +1299,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         // Select only band 1
@@ -1201,6 +1334,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         // Decode at offset 0 (start of codestream)
@@ -1232,6 +1368,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         // Offset beyond codestream length should fail
@@ -1259,6 +1398,9 @@ mod tests {
             codec,
             num_resolution_levels: OnceLock::new(),
             tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
         };
 
         // Select only band 1

@@ -713,6 +713,29 @@ impl BlockDecoder for UncompressedBlockDecoder {
             }
         }
     }
+
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+        let mut ranges = std::collections::HashMap::new();
+        let block_size = self.block_size_bytes() as u64;
+        for row in 0..self.nbpc {
+            for col in 0..self.nbpr {
+                let offset = self.block_offset(row, col);
+                ranges.insert((row, col), (offset, block_size));
+            }
+        }
+        Some(ranges)
+    }
+
+    fn codec_configuration(&self) -> Option<std::collections::HashMap<String, Vec<u8>>> {
+        let mut config = std::collections::HashMap::new();
+        config.insert("nbpp".to_string(), vec![self.nbpp]);
+        config.insert("abpp".to_string(), vec![self.abpp]);
+        config.insert("pvtype".to_string(), self.pvtype.to_str().trim().as_bytes().to_vec());
+        config.insert("imode".to_string(), vec![self.imode.to_char() as u8]);
+        config.insert("nbands".to_string(), self.nbands.to_le_bytes().to_vec());
+        config.insert("pjust".to_string(), vec![self.pjust.to_char() as u8]);
+        Some(config)
+    }
 }
 
 // Expose internal types for testing

@@ -8,10 +8,11 @@
 //! Supports multi-resolution decoding via the `resolution_level` parameter.
 
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::error::CodecError;
 use crate::j2k::codec::{J2KCodec, J2KDecodeParams};
+use crate::j2k::markers::{TilePartOffsetTable, scan_sot_markers};
 use crate::j2k::metadata::J2KMetadataProvider;
 use crate::traits::asset::AssetProvider;
 use crate::traits::image::ImageAssetProvider;
@@ -55,6 +56,12 @@ pub struct J2KImageAssetProvider {
     num_resolution_levels: u32,
     /// J2K codec for decoding tiles
     codec: Arc<dyn J2KCodec>,
+    /// Decode header (main header with TLM stripped)
+    decode_header: Vec<u8>,
+    /// Byte offset of first SOT in the codestream
+    first_sot_offset: u64,
+    /// Tile-part offset table (lazy if no TLM)
+    tile_part_table: OnceLock<TilePartOffsetTable>,
 }
 
 impl J2KImageAssetProvider {
@@ -76,6 +83,9 @@ impl J2KImageAssetProvider {
         metadata: Arc<J2KMetadataProvider>,
         num_resolution_levels: u32,
         codec: Arc<dyn J2KCodec>,
+        decode_header: Vec<u8>,
+        first_sot_offset: u64,
+        tile_part_table: OnceLock<TilePartOffsetTable>,
     ) -> Self {
         Self {
             key,
@@ -93,6 +103,9 @@ impl J2KImageAssetProvider {
             metadata,
             num_resolution_levels,
             codec,
+            decode_header,
+            first_sot_offset,
+            tile_part_table,
         }
     }
 
@@ -100,6 +113,16 @@ impl J2KImageAssetProvider {
     #[inline]
     fn codestream(&self) -> &[u8] {
         &self.buffer[self.codestream_range.clone()]
+    }
+
+    /// Ensure the tile-part offset table is populated, triggering a SOT scan if needed.
+    fn ensure_tile_part_table(&self) -> Result<&TilePartOffsetTable, CodecError> {
+        if let Some(table) = self.tile_part_table.get() {
+            return Ok(table);
+        }
+        let table = scan_sot_markers(self.codestream(), self.first_sot_offset)?;
+        let _ = self.tile_part_table.set(table);
+        Ok(self.tile_part_table.get().unwrap())
     }
 }
 
@@ -261,5 +284,26 @@ impl ImageAssetProvider for J2KImageAssetProvider {
 
     fn pad_pixel_value(&self) -> f64 {
         0.0
+    }
+
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+        let table = self.ensure_tile_part_table().ok()?;
+        let base_offset = self.codestream_range.start as u64;
+        let mut ranges = std::collections::HashMap::new();
+        for entry in table {
+            let row = entry.tile_index as u32 / self.num_tiles_x;
+            let col = entry.tile_index as u32 % self.num_tiles_x;
+            ranges
+                .entry((row, col))
+                .and_modify(|(_, len): &mut (u64, u64)| *len += entry.length)
+                .or_insert((base_offset + entry.offset, entry.length));
+        }
+        Some(ranges)
+    }
+
+    fn codec_configuration(&self) -> Option<std::collections::HashMap<String, Vec<u8>>> {
+        let mut config = std::collections::HashMap::new();
+        config.insert("main_header".to_string(), self.decode_header.clone());
+        Some(config)
     }
 }
