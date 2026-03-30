@@ -1357,6 +1357,30 @@ impl TiffHandle {
     // Array Tag Access (GeoTIFF support)
     // =========================================================================
 
+    /// Read a tile/strip offset or byte-count array from the current IFD.
+    ///
+    /// libtiff normalizes TileOffsets (324), TileByteCounts (325),
+    /// StripOffsets (273), and StripByteCounts (279) to `u64` internally,
+    /// regardless of classic TIFF (LONG) vs BigTIFF (LONG8). The call
+    /// signature is `TIFFGetField(tif, tag, &ptr)` — no count parameter;
+    /// the caller must know the count from `TIFFNumberOfTiles()` or
+    /// `TIFFNumberOfStrips()`.
+    pub fn get_field_u64_ptr(&self, tag: u32, count: u32) -> Result<Vec<u64>, CodecError> {
+        let mut ptr: *const u64 = ptr::null();
+        let ret = unsafe {
+            sys::TIFFGetField(self.handle, tag, &mut ptr as *mut *const u64)
+        };
+        if ret == 1 && !ptr.is_null() {
+            let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
+            Ok(slice.to_vec())
+        } else {
+            Err(CodecError::Decode(format!(
+                "TIFF tag {} not found or not a u64 array",
+                tag
+            )))
+        }
+    }
+
     /// Read a SHORT array tag from the current IFD.
     ///
     /// libtiff returns variable-length SHORT arrays (e.g., GeoKeyDirectoryTag 34735)

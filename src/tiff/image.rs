@@ -287,10 +287,45 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
     }
 
     fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
-        // TODO: Implement when TiffHandle supports reading TileOffsets/TileByteCounts
-        // and StripOffsets/StripByteCounts tag arrays.
-        // TIFF offsets are already file-relative (no translation needed).
-        None
+        let guard = self.handle.lock().ok()?;
+        guard.set_directory(self.ifd_index).ok()?;
+
+        let (offset_tag, count_tag, num_entries) = if self.is_tiled {
+            (tags::TILE_OFFSETS, tags::TILE_BYTE_COUNTS, guard.number_of_tiles())
+        } else {
+            (tags::STRIP_OFFSETS, tags::STRIP_BYTE_COUNTS, guard.number_of_strips())
+        };
+
+        if num_entries == 0 {
+            return None;
+        }
+
+        let offsets = guard.get_field_u64_ptr(offset_tag, num_entries).ok()?;
+        let counts = guard.get_field_u64_ptr(count_tag, num_entries).ok()?;
+
+        if offsets.len() != counts.len() {
+            return None;
+        }
+
+        // For contig planar config, tiles are indexed linearly across the grid.
+        // For separate planar config, there are bands × grid_tiles entries;
+        // we expose only the first band's tiles (band 0) since the tile index
+        // maps to a single BSQ array where all bands share the same spatial grid.
+        let (grid_rows, grid_cols) = self.block_grid_size();
+        let tiles_per_band = (grid_rows * grid_cols) as usize;
+
+        let mut ranges = std::collections::HashMap::with_capacity(tiles_per_band);
+        for idx in 0..tiles_per_band {
+            if idx >= offsets.len() {
+                break;
+            }
+            let row = idx as u32 / grid_cols;
+            let col = idx as u32 % grid_cols;
+            // TIFF offsets are already file-relative (no translation needed)
+            ranges.insert((row, col), (offsets[idx], counts[idx]));
+        }
+
+        Some(ranges)
     }
 
     fn codec_configuration(&self) -> Option<std::collections::HashMap<String, Vec<u8>>> {
@@ -930,5 +965,168 @@ mod tests {
             CodecError::InvalidResolutionLevel(l) => assert_eq!(l, 1),
             other => panic!("Expected InvalidResolutionLevel, got: {:?}", other),
         }
+    }
+
+    // =========================================================================
+    // tile_byte_ranges() Tests
+    // =========================================================================
+
+    #[test]
+    fn test_stripped_tile_byte_ranges() {
+        let data = make_stripped_tiff();
+        let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
+        let metadata = Arc::new(
+            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
+        );
+
+        let provider =
+            TIFFImageAssetProvider::new("image_segment_0".to_string(), 0, handle, metadata)
+                .unwrap();
+
+        let ranges = provider.tile_byte_ranges();
+        assert!(ranges.is_some(), "tile_byte_ranges() should return Some for stripped TIFF");
+
+        let ranges = ranges.unwrap();
+        // 2 strips → (0,0) and (1,0)
+        assert_eq!(ranges.len(), 2);
+        assert!(ranges.contains_key(&(0, 0)));
+        assert!(ranges.contains_key(&(1, 0)));
+
+        // Each strip is 4 pixels wide × 2 rows × 1 byte = 8 bytes
+        let (_, len0) = ranges[&(0, 0)];
+        let (_, len1) = ranges[&(1, 0)];
+        assert_eq!(len0, 8);
+        assert_eq!(len1, 8);
+
+        // Strip 1 offset should be strip 0 offset + strip 0 length
+        let (off0, _) = ranges[&(0, 0)];
+        let (off1, _) = ranges[&(1, 0)];
+        assert_eq!(off1, off0 + len0);
+    }
+
+    /// Build a minimal valid tiled TIFF: 4x4 pixels, 8-bit grayscale,
+    /// uncompressed, 2x2 tiles (4 tiles total).
+    fn make_tiled_tiff() -> Vec<u8> {
+        let width: u32 = 4;
+        let height: u32 = 4;
+        let tile_width: u32 = 2;
+        let tile_height: u32 = 2;
+        let tile_bytes = tile_width * tile_height; // 4 bytes per tile
+
+        let mut buf = Vec::new();
+
+        // TIFF Header
+        buf.extend_from_slice(b"II");
+        buf.extend_from_slice(&42u16.to_le_bytes());
+        buf.extend_from_slice(&8u32.to_le_bytes()); // IFD at offset 8
+
+        // IFD: 12 entries
+        let num_entries: u16 = 12;
+        buf.extend_from_slice(&num_entries.to_le_bytes());
+
+        let short_type: u16 = 3;
+        let long_type: u16 = 4;
+
+        // Calculate offsets
+        let ifd_size = 2 + num_entries as u32 * 12 + 4;
+        let tile_offsets_offset = 8 + ifd_size;
+        let tile_byte_counts_offset = tile_offsets_offset + 16; // 4 u32 values
+        let pixel_data_offset = tile_byte_counts_offset + 16;
+
+        // Tag entries (must be in ascending tag order)
+        write_ifd_entry(&mut buf, 256, short_type, 1, width);       // ImageWidth
+        write_ifd_entry(&mut buf, 257, short_type, 1, height);      // ImageLength
+        write_ifd_entry(&mut buf, 258, short_type, 1, 8);           // BitsPerSample
+        write_ifd_entry(&mut buf, 259, short_type, 1, 1);           // Compression=None
+        write_ifd_entry(&mut buf, 262, short_type, 1, 1);           // PhotometricInterpretation
+        write_ifd_entry(&mut buf, 277, short_type, 1, 1);           // SamplesPerPixel
+        write_ifd_entry(&mut buf, 284, short_type, 1, 1);           // PlanarConfiguration=Contig
+        write_ifd_entry(&mut buf, 322, short_type, 1, tile_width);  // TileWidth
+        write_ifd_entry(&mut buf, 323, short_type, 1, tile_height); // TileLength
+        write_ifd_entry(&mut buf, 324, long_type, 4, tile_offsets_offset); // TileOffsets
+        write_ifd_entry(&mut buf, 325, long_type, 4, tile_byte_counts_offset); // TileByteCounts
+        write_ifd_entry(&mut buf, 339, short_type, 1, 1);           // SampleFormat=UInt
+
+        // Next IFD offset = 0
+        buf.extend_from_slice(&0u32.to_le_bytes());
+
+        // TileOffsets: 4 tiles (row-major: [0,0], [0,1], [1,0], [1,1])
+        for i in 0..4u32 {
+            buf.extend_from_slice(&(pixel_data_offset + i * tile_bytes).to_le_bytes());
+        }
+
+        // TileByteCounts: 4 tiles
+        for _ in 0..4u32 {
+            buf.extend_from_slice(&tile_bytes.to_le_bytes());
+        }
+
+        // Pixel data: 4 tiles × 4 bytes each = 16 bytes
+        // Tile (0,0): top-left 2x2
+        buf.extend_from_slice(&[1, 2, 5, 6]);
+        // Tile (0,1): top-right 2x2
+        buf.extend_from_slice(&[3, 4, 7, 8]);
+        // Tile (1,0): bottom-left 2x2
+        buf.extend_from_slice(&[9, 10, 13, 14]);
+        // Tile (1,1): bottom-right 2x2
+        buf.extend_from_slice(&[11, 12, 15, 16]);
+
+        buf
+    }
+
+    #[test]
+    fn test_tiled_tile_byte_ranges() {
+        let data = make_tiled_tiff();
+        let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
+        let metadata = Arc::new(
+            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
+        );
+
+        let provider =
+            TIFFImageAssetProvider::new("image_segment_0".to_string(), 0, handle, metadata)
+                .unwrap();
+
+        assert!(provider.is_tiled);
+        assert_eq!(provider.block_grid_size(), (2, 2));
+
+        let ranges = provider.tile_byte_ranges();
+        assert!(ranges.is_some(), "tile_byte_ranges() should return Some for tiled TIFF");
+
+        let ranges = ranges.unwrap();
+        // 2x2 grid = 4 tiles
+        assert_eq!(ranges.len(), 4);
+        assert!(ranges.contains_key(&(0, 0)));
+        assert!(ranges.contains_key(&(0, 1)));
+        assert!(ranges.contains_key(&(1, 0)));
+        assert!(ranges.contains_key(&(1, 1)));
+
+        // Each tile is 2x2 × 1 byte = 4 bytes
+        for (_, (_, len)) in &ranges {
+            assert_eq!(*len, 4);
+        }
+
+        // Tiles should be contiguous in file
+        let (off_00, _) = ranges[&(0, 0)];
+        let (off_01, _) = ranges[&(0, 1)];
+        let (off_10, _) = ranges[&(1, 0)];
+        let (off_11, _) = ranges[&(1, 1)];
+        assert_eq!(off_01, off_00 + 4);
+        assert_eq!(off_10, off_01 + 4);
+        assert_eq!(off_11, off_10 + 4);
+    }
+
+    #[test]
+    fn test_tiled_codec_configuration_uncompressed() {
+        let data = make_tiled_tiff();
+        let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
+        let metadata = Arc::new(
+            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
+        );
+
+        let provider =
+            TIFFImageAssetProvider::new("image_segment_0".to_string(), 0, handle, metadata)
+                .unwrap();
+
+        // Uncompressed TIFF should return None for codec_configuration
+        assert!(provider.codec_configuration().is_none());
     }
 }
