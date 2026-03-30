@@ -14,4 +14,5 @@ assets
 metadata
 parser
 types
+zarr-codecs
 ```

@@ -57,5 +57,11 @@ fn _io(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyStructureWriter>()?;
     m.add_class::<PyStructureDefinition>()?;
     m.add_class::<PyValue>()?;
+    // Codec decode bindings
+    #[cfg(feature = "openjpeg")]
+    m.add_function(wrap_pyfunction!(bindings::codecs::decode_jpeg2000, m)?)?;
+    #[cfg(feature = "libjpeg-turbo")]
+    m.add_function(wrap_pyfunction!(bindings::codecs::decode_jpeg, m)?)?;
+    m.add_function(wrap_pyfunction!(bindings::codecs::decode_jbp_block, m)?)?;
     Ok(())
 }

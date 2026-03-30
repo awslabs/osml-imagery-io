@@ -38,6 +38,8 @@ dev = [
     "hypothesis>=6.0",
 ]
 
+zarr = ["zarr>=3.0", "fsspec"]
+
 docs = [
     "sphinx>=7.0",
     "myst-parser>=2.0",
@@ -48,6 +50,11 @@ docs = [
 
 [project.urls]
 Repository = "https://github.com/awslabs/osml-imagery-io"
+
+[project.entry-points."zarr.codecs"]
+"https://awslabs.github.io/osml-imagery-io/codecs/jpeg2000" = "aws.osml.io.zarr_codecs:Jpeg2000Codec"
+"https://awslabs.github.io/osml-imagery-io/codecs/jpeg" = "aws.osml.io.zarr_codecs:JpegCodec"
+"https://awslabs.github.io/osml-imagery-io/codecs/jbp-block" = "aws.osml.io.zarr_codecs:JbpBlockCodec"
 
 [tool.maturin]
 python-source = "python"

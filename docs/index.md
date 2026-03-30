@@ -21,6 +21,7 @@ getting-started
 user-guide/index
 design/index
 api/index
+codecs/index
 performance
 roadmap/index
 ```

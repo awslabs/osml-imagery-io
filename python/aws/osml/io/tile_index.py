@@ -47,12 +47,14 @@ _EXTENSION_TO_FORMAT: dict[str, str] = {
 
 
 def _pixel_type_to_zarr_dtype(pixel_type: PixelType) -> str:
-    """Map a :class:`PixelType` enum to the corresponding Zarr dtype string.
+    """Map a :class:`PixelType` enum to a zarr v2 dtype string.
 
-    Delegates to ``PixelType.to_numpy_dtype()`` which already returns the
-    correct string (e.g. ``"uint8"``, ``"float32"``).
+    Zarr v2 requires numpy-style dtype strings (e.g. ``"|u1"``, ``"<f4"``)
+    rather than friendly names like ``"uint8"``.
     """
-    return pixel_type.to_numpy_dtype()
+    import numpy as np
+
+    return np.dtype(pixel_type.to_numpy_dtype()).str
 
 
 def _detect_format(path: str) -> str | None:
@@ -81,6 +83,11 @@ def _import_pyarrow():
 def _build_zarray(asset: ImageAssetProvider) -> str:
     """Build the ``.zarray`` JSON string for an image segment.
 
+    Produces a zarr v2 compatible ``.zarray`` metadata dict. Custom codecs
+    are placed in the ``filters`` list using the zarr v2 convention. Each
+    filter entry has an ``id`` field matching the codec's entry-point name
+    so that zarr/numcodecs can dispatch to the correct codec class.
+
     Parameters
     ----------
     asset:
@@ -92,40 +99,91 @@ def _build_zarray(asset: ImageAssetProvider) -> str:
         A JSON-encoded string suitable for inclusion in the Kerchunk v1
         ``refs`` dictionary.
     """
+    dtype_str = _pixel_type_to_zarr_dtype(asset.pixel_value_type)
+
     zarray: dict = {
+        "zarr_format": 2,
         "shape": [asset.num_bands, asset.num_rows, asset.num_columns],
         "chunks": [
             asset.num_bands,
             asset.num_pixels_per_block_vertical,
             asset.num_pixels_per_block_horizontal,
         ],
-        "data_type": _pixel_type_to_zarr_dtype(asset.pixel_value_type),
+        "dtype": dtype_str,
+        "compressor": None,
+        "fill_value": 0,
+        "order": "C",
+        "dimension_separator": ".",
+        "filters": None,
     }
 
     codec_config = asset.codec_configuration()
     if codec_config is not None:
-        # Build a single codec entry from the configuration map.
-        configuration: dict = {}
-        codec_name: str | None = None
+        # Build a clean filter config that matches what the codec's
+        # from_config() expects. We use asset properties for dimensions
+        # and normalize the raw codec_configuration() values.
+        raw: dict = {}
         for key, value in codec_config.items():
             if key == "main_header":
-                configuration[key] = base64.b64encode(value).decode("ascii")
+                raw[key] = base64.b64encode(value).decode("ascii")
             elif isinstance(value, (bytes, bytearray)) and len(value) == 1:
-                configuration[key] = value[0]
+                raw[key] = value[0]
             elif isinstance(value, (bytes, bytearray)):
-                # Try to decode as ASCII text; fall back to base64
                 try:
-                    configuration[key] = value.decode("ascii")
+                    raw[key] = value.decode("ascii")
                 except UnicodeDecodeError:
-                    configuration[key] = base64.b64encode(value).decode("ascii")
+                    raw[key] = base64.b64encode(value).decode("ascii")
             else:
-                configuration[key] = value
-            if codec_name is None:
-                codec_name = key  # use first key as a fallback name
-        # Use the first key as the codec name if no explicit name is provided.
-        zarray["codecs"] = [
-            {"name": codec_name or "unknown", "configuration": configuration}
-        ]
+                raw[key] = value
+
+        num_bands = asset.num_bands
+        block_h = asset.num_pixels_per_block_vertical
+        block_w = asset.num_pixels_per_block_horizontal
+
+        if "main_header" in raw:
+            # JPEG 2000
+            filt = {
+                "id": "https://awslabs.github.io/osml-imagery-io/codecs/jpeg2000",
+                "main_header": raw["main_header"],
+                "resolution_level": 0,
+            }
+        elif "color_space" in raw:
+            # JPEG
+            imode_raw = raw.get("imode", 66)
+            imode = chr(imode_raw) if isinstance(imode_raw, int) else str(imode_raw)
+            cs_raw = raw.get("color_space", 0)
+            cs_map = {0: "MONO", 1: "YCbCr601", 2: "RGB"}
+            color_space = cs_map.get(cs_raw, "MONO") if isinstance(cs_raw, int) else str(cs_raw)
+            filt = {
+                "id": "https://awslabs.github.io/osml-imagery-io/codecs/jpeg",
+                "bits_per_pixel": raw.get("bits_per_pixel", asset.num_bits_per_pixel),
+                "num_bands": num_bands,
+                "block_width": block_w,
+                "block_height": block_h,
+                "imode": imode,
+                "color_space": color_space,
+            }
+        elif "pvtype" in raw:
+            # Uncompressed JBP block
+            imode_raw = raw.get("imode", 66)
+            imode = chr(imode_raw) if isinstance(imode_raw, int) else str(imode_raw)
+            nbpp = raw.get("nbpp", raw.get("abpp", asset.num_bits_per_pixel))
+            if isinstance(nbpp, str):
+                nbpp = int(nbpp)
+            filt = {
+                "id": "https://awslabs.github.io/osml-imagery-io/codecs/jbp-block",
+                "num_bands": num_bands,
+                "block_height": block_h,
+                "block_width": block_w,
+                "nbpp": nbpp,
+                "imode": imode,
+                "pvtype": raw["pvtype"],
+            }
+        else:
+            filt = None
+
+        if filt is not None:
+            zarray["filters"] = [filt]
 
     return json.dumps(zarray)
 
@@ -149,8 +207,10 @@ def _build_tile_refs(
     Returns
     -------
     dict
-        Mapping of ``"{segment_key}/{row}.{col}"`` to
-        ``[source_uri, byte_offset, byte_length]``.
+        Mapping of ``"{segment_key}/0.{row}.{col}"`` to
+        ``[source_uri, byte_offset, byte_length]``.  The leading ``0``
+        is the band-chunk index (always 0 because all bands are in a
+        single chunk).
     """
     byte_ranges = asset.tile_byte_ranges()
     if byte_ranges is None:
@@ -158,7 +218,9 @@ def _build_tile_refs(
 
     refs: dict[str, list] = {}
     for (row, col), (offset, length) in byte_ranges.items():
-        chunk_key = f"{segment_key}/{row}.{col}"
+        # Zarr chunk keys are N-dimensional: band.row.col
+        # Band chunk is always 0 (all bands in one chunk).
+        chunk_key = f"{segment_key}/0.{row}.{col}"
         refs[chunk_key] = [source_uri, offset, length]
     return refs
 
@@ -270,7 +332,7 @@ class TileIndex:
                 zattrs["format"] = detected
 
             inner_refs: dict = {
-                ".zgroup": json.dumps({"zarr_format": 3}),
+                ".zgroup": json.dumps({"zarr_format": 2}),
                 ".zattrs": json.dumps(zattrs),
             }
 
