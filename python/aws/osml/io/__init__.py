@@ -20,14 +20,12 @@ from aws.osml.io._io import (
     PixelType,
     StructureAccessor,
     StructureDefinition,
-    # Parser bindings
     StructureRegistry,
     StructureWriter,
     TextAssetProvider,
     Value,
     __version__,
 )
-from aws.osml.io.tile_index import TileIndex
 
 # Convenience alias for IO.open
 open = IO.open
@@ -60,6 +58,12 @@ __all__ = [
     "StructureWriter",
     "StructureDefinition",
     "Value",
-    # Tile Index
-    "TileIndex",
 ]
+
+# Optional VirtualiZarr parser exports — only available when virtualizarr is installed
+try:
+    from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+    __all__ += ["OversightMLParser"]
+except ImportError:
+    pass

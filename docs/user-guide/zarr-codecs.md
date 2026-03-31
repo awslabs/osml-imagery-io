@@ -10,7 +10,7 @@ tile-level analytics running on data lakehouse architectures, and interactive
 visualizations, all benefit from services that can quickly fetch only the compressed 
 bytes for the tiles they care about, decode them, and move on.
 
-The challenge is that some well established formats, like NITF, were designed before 
+The challenge is that some well established geospatial formats were designed before 
 cloud object stores existed. Their internal structure — headers, offset tables, 
 interleaved bands, shared compression state — was built for fast local disk access, 
 not HTTP range requests with network delays. At best consumers of these images execute 
@@ -23,72 +23,84 @@ In some cases entire files must be scanned to locate the region of interst.
 for chunked, compressed, cloud-native data. Each chunk in a Zarr array is independently
 addressable and independently decodable. Zarr enjoys integration with a wide ecosystem: 
 xarray for labeled array access, Dask for parallel and distributed computation, and 
-fsspec for transparent cloud IO. If we can make our imagery accessible like Zarr chunks, 
-the entire ecosystem works out of the box.
+fsspec for transparent cloud IO. 
 
 If we were starting from scratch, we might store our imagery as Zarr arrays and be
 done. The reality is we have petabytes of imagery governed by well-defined standards 
 and strong communities already stored in the cloud S3. Converting it all to Zarr or 
-something like cloud-optimized GeoTIFFs is expensive, slow, and likely increase 
+something like cloud-optimized GeoTIFFs is expensive, slow, and will increase 
 storage costs. What we need is a way to make the existing data behave like Zarr without 
 actually transcoding it.
 
-## Kerchunk: Making Old Data Behave Like New
+## VirtualiZarr: Making Old Data Behave Like New
 
-[Kerchunk](https://fsspec.github.io/kerchunk/) is a community project that bridges
-archival data formats and the Zarr ecosystem. Instead of converting files, it creates
-lightweight reference files that describe where each chunk lives inside an existing
-file — a JSON or Parquet document that maps Zarr chunk coordinates to byte ranges in
-the original data. fsspec's `ReferenceFileSystem` consumes these references directly,
-making the archival file appear as a virtual Zarr store.
+[VirtualiZarr](https://github.com/zarr-developers/VirtualiZarr) is a community project
+under the `zarr-developers` organization that creates virtual Zarr stores from archival
+data formats. Instead of converting files, it builds lightweight reference layers that
+describe where each chunk lives inside an existing file. These references map Zarr chunk
+coordinates to byte ranges in the original data, making archival files appear as native
+Zarr stores without copying or modifying a single byte.
 
-Zarr is a great general abstraction for raster data, and Kerchunk is the bridge that
+VirtualiZarr provides a pluggable parser system and a `ManifestStore` abstraction that
+represents a virtual Zarr store backed by chunk references. The references can be
+serialized to several formats including [Kerchunk](https://fsspec.github.io/kerchunk/)
+JSON, Kerchunk Parquet, or committed to an [Icechunk](https://icechunk.io/) transactional
+store. On the consumer side, fsspec's `ReferenceFileSystem` reads Kerchunk references
+directly, while Icechunk provides its own zarr-compatible store.
+
+Zarr is a great general abstraction for raster data, and VirtualiZarr is the bridge that
 makes existing data behave like Zarr — without the cost of conversion. We keep our
-geospatial imagery files exactly where they are in S3. A small index file (kilobytes to
-low megabytes) sits alongside each one, and the Zarr ecosystem treats them as native
-chunked arrays.
+geospatial imagery files exactly where they are in S3. A small reference index
+(kilobytes to low megabytes) sits alongside each one, and the Zarr ecosystem treats
+them as native chunked arrays.
 
 ## What We Built
 
 This library provides the two components needed to bridge existing imagery formats into the
-Zarr ecosystem: a tile indexer and a set of custom codecs.
+Zarr ecosystem: VirtualiZarr parsers for tile indexing and a set of custom codecs.
 
-The tile indexer scans a source file and produces a Kerchunk v1 reference file. The
-reference file maps every image tile to a byte range in the original data. The custom
-codecs decode those bytes into NumPy arrays at read time. Together, they let the Zarr
-ecosystem treat NITF and TIFF files as chunked arrays without any format conversion.
+### Tile Indexing with VirtualiZarr Parsers
 
-### Tile Indexing
+The library provides `OversightMLParser`, a single VirtualiZarr parser that makes it possible
+to access any imagery format supported by this library as a virtual dataset. The parser scans
+a file using the library's native reader and walks each image segment, determining the byte
+offset and length of every tile relative to the start of the file. 
 
-The `TileIndex` class opens a local imagery file using the library's native reader
-and walks each image segment. For each segment it determines the byte offset and
-length of every tile relative to the start of the file.
-
-How tile boundaries are discovered depends on the format and compression:
+How tile boundaries are calculated depends on the format and compression:
 
 - Uncompressed tiles have fixed sizes. Offsets are computed arithmetically from the
-  image dimensions, pixel type, and interleave mode.
-- JPEG tiles are length-prefixed. The indexer scans the length headers sequentially
+  image dimensions, pixel type, and interleave mode. Formats that support sparse tile
+  arrays (ex: NITF masked images) may have existing metadata that contains these 
+  boundaries.
+- JPEG tiles are length-prefixed. The parser scans the length headers sequentially
   to locate each tile boundary.
 - JPEG 2000 codestreams use SOT (Start of Tile-part) markers that record the byte
   offset and length of each tile-part. If the codestream contains a TLM (Tile-part
   Length Marker) in its main header, the full tile index is available immediately
-  without scanning. If no TLM is present, the indexer performs a sequential SOT scan.
+  without scanning. If no TLM is present, the parser performs a sequential SOT scan.
 - TIFF files store tile offsets and byte counts in IFD tags (`TileOffsets` and
-  `TileByteCounts`). The indexer reads these directly.
+  `TileByteCounts`). The parser reads these directly.
 
-The output is a Kerchunk v1 JSON (or Parquet) file. Each tile becomes a
-`[url, byte_offset, byte_length]` triple pointing into the source file. Array
-metadata (`.zarray`) records the shape, chunk size, data type, and codec
-configuration. The index is typically kilobytes to low megabytes, regardless of
-image size.
+The parsers produce the `ManifestStore` — a virtual Zarr store backed by chunk
+references into the source file. This can be serialized to create a format-agnostic
+tile index.
 
 ### Custom Codecs
 
 The tile index tells fsspec where to fetch each tile's bytes, but those bytes are
 still in the source format's native encoding. Standard Zarr codecs cannot decode
-them. The library registers three Zarr v3 codecs that handle the format-specific
+them. This library registers three Zarr v3 codecs that handle the format-specific
 decoding:
+
+`JbpBlockCodec` handles uncompressed NITF tiles. NITF raw pixel data uses
+big-endian byte order and one of four interleave modes (band-interleaved by pixel,
+band-interleaved by line, band-interleaved by block, or band-sequential). The
+codec performs the endian swap and interleave conversion to produce standard NumPy
+arrays.
+
+`JpegCodec` decodes JPEG tiles. It carries format-specific parameters (color
+space, interleave mode, bits per pixel) in its configuration and passes them to
+the underlying Rust decoder.
 
 `Jpeg2000Codec` decodes JPEG 2000 tile data. JPEG 2000 codestreams support
 internal tiling, but the tiles are not self-contained. Each tile's compressed
@@ -110,20 +122,9 @@ codec reconstructs a minimal single-tile codestream on the fly:
 OpenJPEG receives what looks like a normal single-tile codestream and decodes it.
 This approach has precedent in the JPEG 2000 ecosystem. JPIP (the JPEG 2000
 Interactive Protocol) streams individual tile-parts to clients that already hold
-the main header. ESA adopted the same principle when adding TLM markers to
-Sentinel-2 imagery to enable per-tile random access. Because the codec operates
-on the J2K codestream directly, it works for standalone `.j2k`/`.jp2` files and
-for J2K codestreams embedded in container formats like NITF.
-
-`JpegCodec` decodes JPEG tiles. It carries format-specific parameters (color
-space, interleave mode, bits per pixel) in its configuration and passes them to
-the underlying Rust decoder.
-
-`JbpBlockCodec` handles uncompressed NITF tiles. NITF raw pixel data uses
-big-endian byte order and one of four interleave modes (band-interleaved by pixel,
-band-interleaved by line, band-interleaved by block, or band-sequential). The
-codec performs the endian swap and interleave conversion to produce standard NumPy
-arrays.
+the main header. Because the codec operates on the J2K codestream directly, it 
+works for standalone `.j2k`/`.jp2` files and for J2K codestreams embedded in 
+container formats like NITF.
 
 All three codecs are registered with the Zarr codec registry via Python entry
 points. They use URI-based names per the Zarr v3 specification to avoid conflicts
@@ -136,25 +137,12 @@ with existing codecs:
 The URIs resolve to human-readable documentation. Implementations do not fetch
 them at runtime.
 
-### Supported Compression Types
-
-#### NITF
-
-| IC Code | Description | Codec | Notes |
-|---------|-------------|-------|-------|
-| NC / NM | Uncompressed | `JbpBlockCodec` | All pixel types, all interleave modes |
-| C3 / M3 | JPEG DCT | `JpegCodec` | 8-bit lossy |
-| I1 | JPEG downsampled | `JpegCodec` | Single-block thumbnail |
-| C8 / M8 | JPEG 2000 Part 1 | `Jpeg2000Codec` | Lossy and lossless |
-| CD / MD | HTJ2K (Part 15) | `Jpeg2000Codec` | High-Throughput JPEG 2000 |
-
-#### TIFF
-
-| Compression | Codec | Notes |
-|-------------|-------|-------|
-| Deflate / LZW | Native Zarr | Tiles are directly Zarr-compatible |
-| Uncompressed | Native Zarr | Direct byte access |
-| JPEG | `JpegCodec` | 8-bit lossy |
+```{note}
+No custom codec is needed for TIFF. The compression formats commonly used in
+TIFF files (Deflate, LZW, and uncompressed) are already supported natively by
+Zarr. The parser handles tile indexing, and Zarr's built-in codecs handle the
+decoding.
+```
 
 ## Results
 
@@ -176,31 +164,50 @@ accessing its tiles through xarray and Dask.
 ### Step 1: Generate the tile index
 
 Run this once per file, typically as part of an ingest pipeline. The file must be
-available locally for indexing. The `source_uri` parameter sets the S3 path that
-tile references will point to.
+available locally for indexing. The `url` parameter sets the S3 path that tile
+references will point to.
+
+```{note}
+Index generation requires the `virtualizarr` optional dependency:
+`pip install osml-imagery-io[virtualizarr]`
+```
 
 ```python
-from aws.osml.io import TileIndex
+from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
-index = TileIndex.generate(
-    "local/image.ntf",
-    source_uri="s3://my-bucket/imagery/image.ntf",
-)
-index.save("image.ntf.index.json")
+# Generate index from a local file — works for NITF, JPEG 2000, TIFF, GeoTIFF
+parser = OversightMLParser(local_path="local/image.ntf")
+manifest_store = parser(url="s3://my-bucket/imagery/image.ntf")
+
+# Convert to xarray virtual dataset and save as Kerchunk Parquet
+vds = manifest_store.to_virtual_dataset()
+vds.vz.to_kerchunk("image.ntf.index.parquet", format="parquet")
 ```
 
-Upload both files to S3:
-TODO: Show the boto3 commands to do this upload
+Upload the index to S3 alongside the image. This assumes the image itself is
+already residing in the cloud.
 
-```
-s3://my-bucket/imagery/image.ntf
-s3://my-bucket/imagery/image.ntf.index.json
+```python
+import boto3
+import os
+
+s3 = boto3.client("s3")
+
+# Upload each file in the Parquet directory
+for root, dirs, files in os.walk("image.ntf.index.parquet"):
+    for filename in files:
+        local_path = os.path.join(root, filename)
+        s3_key = f"imagery/{os.path.relpath(local_path, '.')}"
+        s3.upload_file(local_path, "my-bucket", s3_key)
 ```
 
-### Step 2: Open the imagery as a Zarr dataset
+### Step 2: Open and access tiles
 
 Codec registration happens automatically when the package is installed with the
 `zarr` extras (`pip install osml-imagery-io[zarr]`). No explicit import is needed.
+When you slice into the dataset, fsspec issues HTTP range requests for only the
+bytes backing the requested tiles and the registered codec decodes them into NumPy
+arrays.
 
 ```python
 import xarray as xr
@@ -208,53 +215,18 @@ import xarray as xr
 ds = xr.open_zarr(
     "reference://",
     storage_options={
-        "fo": "s3://my-bucket/imagery/image.ntf.index.json",
+        "fo": "s3://my-bucket/imagery/image.ntf.index.parquet/",
         "remote_protocol": "s3",
+        "remote_options": {"profile": "my-profile"},
     },
 )
-```
 
-### Step 3: Access tiles
-
-fsspec issues HTTP range requests for only the bytes backing the requested tiles.
-The registered codec decodes them into NumPy arrays.
-
-TODO: Check how Zarr handles this, assume we can access arbitrary slices and Zarr will correctly only fetch necessary tiles.
-TODO: Describe Zarr slicing and note difference to underlying tile boundaries defined by tile index.
-
-```python
 # Read a single tile region
 tile = ds["image_segment_0"][0:3, 768:1024, 1024:1280].values
 print(tile.shape)  # (3, 256, 256)
 print(tile.dtype)  # uint8
 ```
 
-### Step 4: Scale with Dask
-
-TODO: Replace this with a much more interesting example. Do something real, compute a reduced resolution dataset, do some warping, extract features, etc.
-
-Because the dataset is chunked, Dask can parallelize tile access across workers.
-Each worker fetches and decodes only the tiles it needs.
-
-```python
-import dask.array as da
-
-# Lazy — no data is fetched yet
-image = ds["image_segment_0"].data
-
-# Compute a downsampled overview across the full image
-# Dask distributes tile fetches across workers
-mean_band = image[0].mean(axis=0).compute()
-```
-
-### Using a local index for development
-TODO: Consider removing this. It isn't really necessary. Maybe it is a sentence acknowledging fsspec abstracts away the filesystem.
-
-For local testing, point to a file path instead of an S3 URI:
-
-```python
-ds = xr.open_zarr(
-    "reference://",
-    storage_options={"fo": "path/to/image.ntf.index.json"},
-)
-```
+AWS credentials can also be provided through environment variables
+(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`) or any other
+method supported by boto3 and fsspec.

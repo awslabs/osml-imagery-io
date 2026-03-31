@@ -3,15 +3,16 @@
 Validates: Requirements 9.1, 12.2, 12.3, 14.1, 14.2, 14.3, 14.4, 14.5, 14.6
 """
 
-import pytest
+from pathlib import Path
 
+import numpy as np
+import pytest
 from aws.osml.io.zarr_codecs import (
     JbpBlockCodec,
     Jpeg2000Codec,
     JpegCodec,
     decode_jbp_block,
     decode_jpeg,
-    decode_jpeg2000,
 )
 
 
@@ -27,17 +28,26 @@ class TestDecodeBindingErrors:
     def test_decode_jpeg_invalid_imode(self):
         """decode_jpeg raises ValueError for invalid imode string."""
         with pytest.raises(ValueError, match="Invalid interleave mode"):
-            decode_jpeg(b"\x00", bits_per_pixel=8, num_bands=1, block_width=1, block_height=1, imode="X", color_space="MONO")
+            decode_jpeg(
+                b"\x00", bits_per_pixel=8, num_bands=1,
+                block_width=1, block_height=1, imode="X", color_space="MONO",
+            )
 
     def test_decode_jpeg_invalid_color_space(self):
         """decode_jpeg raises ValueError for invalid color_space string."""
         with pytest.raises(ValueError, match="Invalid color space"):
-            decode_jpeg(b"\x00", bits_per_pixel=8, num_bands=1, block_width=1, block_height=1, imode="B", color_space="INVALID")
+            decode_jpeg(
+                b"\x00", bits_per_pixel=8, num_bands=1,
+                block_width=1, block_height=1, imode="B", color_space="INVALID",
+            )
 
     def test_jbp_block_invalid_pvtype(self):
         """decode_jbp_block raises ValueError for invalid pvtype string."""
         with pytest.raises(ValueError, match="Invalid pixel value type"):
-            decode_jbp_block(b"\x00" * 4, num_bands=1, block_height=2, block_width=2, nbpp=8, imode="B", pvtype="INVALID")
+            decode_jbp_block(
+                b"\x00" * 4, num_bands=1, block_height=2,
+                block_width=2, nbpp=8, imode="B", pvtype="INVALID",
+            )
 
     def test_jbp_block_invalid_imode(self):
         """decode_jbp_block raises ValueError for invalid imode string."""
@@ -59,19 +69,25 @@ class TestCodecEncodeRejection:
     """All three codec encode() methods raise NotImplementedError."""
 
     def test_jpeg2000_encode_raises(self):
+        import asyncio
+
         codec = Jpeg2000Codec()
         with pytest.raises(NotImplementedError, match="Jpeg2000Codec"):
-            codec.encode(b"\x00")
+            asyncio.run(codec._encode_single(b"\x00", None))
 
     def test_jpeg_encode_raises(self):
+        import asyncio
+
         codec = JpegCodec(bits_per_pixel=8, num_bands=1, block_width=8, block_height=8, imode="B", color_space="MONO")
         with pytest.raises(NotImplementedError, match="JpegCodec"):
-            codec.encode(b"\x00")
+            asyncio.run(codec._encode_single(b"\x00", None))
 
     def test_jbp_block_encode_raises(self):
+        import asyncio
+
         codec = JbpBlockCodec(num_bands=1, block_height=8, block_width=8, nbpp=8, imode="B", pvtype="INT")
         with pytest.raises(NotImplementedError, match="JbpBlockCodec"):
-            codec.encode(b"\x00")
+            asyncio.run(codec._encode_single(b"\x00", None))
 
 
 class TestCodecConfigValidation:
@@ -122,7 +138,7 @@ class TestCodecConfigRoundTrip:
         codec2 = Jpeg2000Codec.from_dict(d)
         assert codec2.to_dict() == d
         assert codec2.resolution_level == 2
-        assert codec2._main_header_b64 is None
+        assert codec2._main_header_bytes is None
 
     def test_jpeg2000_round_trip_with_header(self):
         """Jpeg2000Codec round-trip with base64 main_header."""
@@ -165,10 +181,6 @@ class TestCodecConfigRoundTrip:
         codec2 = JbpBlockCodec.from_dict(d)
         assert codec2.to_dict() == d
 
-
-from pathlib import Path
-
-import numpy as np
 
 # Test data paths
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "unit"
@@ -454,3 +466,59 @@ class TestDecodeCorrectness:
         )
         assert result.dtype == np.float32
         np.testing.assert_array_equal(result, values)
+
+
+class TestCodecABCConformance:
+    """Verify codec classes subclass BytesBytesCodec and are discoverable via entry points.
+
+    Validates: Requirements 1.1, 1.2, 1.3, 1.5
+    """
+
+    def test_jpeg2000_codec_is_bytes_bytes_codec(self):
+        """Jpeg2000Codec is a subclass of zarr.abc.codec.BytesBytesCodec."""
+        from zarr.abc.codec import BytesBytesCodec
+
+        assert issubclass(Jpeg2000Codec, BytesBytesCodec)
+
+    def test_jpeg_codec_is_bytes_bytes_codec(self):
+        """JpegCodec is a subclass of zarr.abc.codec.BytesBytesCodec."""
+        from zarr.abc.codec import BytesBytesCodec
+
+        assert issubclass(JpegCodec, BytesBytesCodec)
+
+    def test_jbp_block_codec_is_bytes_bytes_codec(self):
+        """JbpBlockCodec is a subclass of zarr.abc.codec.BytesBytesCodec."""
+        from zarr.abc.codec import BytesBytesCodec
+
+        assert issubclass(JbpBlockCodec, BytesBytesCodec)
+
+    def test_entry_point_resolves_jpeg2000(self):
+        """Zarr codec registry resolves the JPEG 2000 URI to Jpeg2000Codec."""
+        from zarr.registry import get_codec_class
+
+        cls = get_codec_class("https://awslabs.github.io/osml-imagery-io/codecs/jpeg2000")
+        assert cls is Jpeg2000Codec
+
+    def test_entry_point_resolves_jpeg(self):
+        """Zarr codec registry resolves the JPEG URI to JpegCodec."""
+        from zarr.registry import get_codec_class
+
+        cls = get_codec_class("https://awslabs.github.io/osml-imagery-io/codecs/jpeg")
+        assert cls is JpegCodec
+
+    def test_entry_point_resolves_jbp_block(self):
+        """Zarr codec registry resolves the JBP block URI to JbpBlockCodec."""
+        from zarr.registry import get_codec_class
+
+        cls = get_codec_class("https://awslabs.github.io/osml-imagery-io/codecs/jbp-block")
+        assert cls is JbpBlockCodec
+
+    # NOTE: Testing that importing codecs without zarr installed raises ImportError
+    # is not feasible in this test suite. The zarr package is already imported at
+    # module level (it's a test dependency and required for the codec classes to be
+    # defined). Mocking the zarr import would require patching sys.modules before
+    # the codec module is loaded, but since the codec classes inherit from
+    # BytesBytesCodec at class definition time (not at call time), unloading and
+    # reloading the module with zarr mocked out would break the already-defined
+    # classes in this test file. A true test would require a subprocess with zarr
+    # uninstalled, which is outside the scope of unit tests.

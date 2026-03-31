@@ -15,4 +15,5 @@ metadata
 parser
 types
 zarr-codecs
+virtualizarr-parsers
 ```

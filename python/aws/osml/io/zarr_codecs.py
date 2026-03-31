@@ -1,10 +1,9 @@
 """Zarr codec plugins for JPEG 2000, JPEG, and uncompressed JBP/NITF imagery.
 
-Codec classes implement both the zarr-python v3 codec protocol (registered via
-entry points) and the numcodecs Codec protocol (registered at import time).
-This dual registration allows the codecs to work with:
-- zarr v3 native stores (via entry points)
-- Kerchunk v1 references consumed through fsspec ReferenceFileSystem (via numcodecs)
+Codec classes subclass the zarr-python v3 ``BytesBytesCodec`` ABC and are
+registered via entry points in ``pyproject.toml``.  The zarr v3 codec pipeline
+discovers them automatically when it encounters the corresponding URI-based
+codec name in ``.zarray`` metadata.
 
 Usage (automatic via entry points — no import needed):
     import xarray as xr
@@ -14,7 +13,11 @@ Usage (explicit import):
     from aws.osml.io.zarr_codecs import Jpeg2000Codec, JpegCodec, JbpBlockCodec
 """
 
+from __future__ import annotations
+
+import asyncio
 import base64
+from dataclasses import dataclass
 
 from aws.osml.io._io import decode_jbp_block, decode_jpeg, decode_jpeg2000
 
@@ -41,8 +44,17 @@ def _import_zarr():
         )
 
 
-class Jpeg2000Codec:
-    """Zarr codec for JPEG 2000 codestreams.
+def _import_zarr_bytescodec():
+    """Return the ``BytesBytesCodec`` ABC, raising ``ImportError`` if zarr is missing."""
+    _import_zarr()
+    from zarr.abc.codec import BytesBytesCodec
+
+    return BytesBytesCodec
+
+
+@dataclass(frozen=True)
+class Jpeg2000Codec(_import_zarr_bytescodec()):
+    """Zarr v3 bytes-to-bytes codec for JPEG 2000 codestreams.
 
     Registered as: https://awslabs.github.io/osml-imagery-io/codecs/jpeg2000
 
@@ -53,47 +65,65 @@ class Jpeg2000Codec:
 
     codec_name = "https://awslabs.github.io/osml-imagery-io/codecs/jpeg2000"
     codec_id = "https://awslabs.github.io/osml-imagery-io/codecs/jpeg2000"
+    is_fixed_size = False
 
-    def __init__(self, *, main_header=None, resolution_level=0):
-        self.resolution_level = resolution_level
+    main_header: str | None = None
+    resolution_level: int = 0
+
+    def __init__(self, *, main_header: str | None = None, resolution_level: int = 0):
         if main_header is not None:
             try:
-                self._main_header_bytes = base64.b64decode(main_header)
+                main_header_bytes = base64.b64decode(main_header)
             except Exception as e:
                 raise ValueError(f"Invalid base64 in main_header: {e}")
-            self._main_header_b64 = main_header
         else:
-            self._main_header_bytes = None
-            self._main_header_b64 = None
+            main_header_bytes = None
 
-    def decode(self, chunk_bytes, chunk_spec=None):
+        object.__setattr__(self, "resolution_level", resolution_level)
+        object.__setattr__(self, "main_header", main_header)
+        object.__setattr__(self, "_main_header_bytes", main_header_bytes)
+
+    def _decode_sync(self, chunk_bytes, chunk_spec):
+        """Synchronous decode — delegates to the Rust JPEG 2000 decoder."""
+        from zarr.core.buffer.cpu import as_numpy_array_wrapper
+
+        return as_numpy_array_wrapper(
+            lambda buf: decode_jpeg2000(
+                bytes(buf),
+                main_header=self._main_header_bytes,
+                resolution_level=self.resolution_level,
+            ).tobytes(),
+            chunk_bytes,
+            chunk_spec.prototype,
+        )
+
+    async def _decode_single(self, chunk_bytes, chunk_spec):
         """Decode JPEG 2000 chunk bytes into pixel data.
 
         Args:
-            chunk_bytes: Bytes-like object or numpy array containing J2K codestream data.
-            chunk_spec: Optional ArraySpec (unused, accepted for zarr protocol compatibility).
+            chunk_bytes: Buffer containing J2K codestream data.
+            chunk_spec: ArraySpec describing the expected output.
 
         Returns:
-            Flat byte buffer for numcodecs filter compatibility.
+            Buffer with decoded pixel data.
         """
-        if hasattr(chunk_bytes, 'tobytes'):
-            data = chunk_bytes.tobytes()
-        else:
-            data = bytes(chunk_bytes)
-        result = decode_jpeg2000(
-            data,
-            main_header=self._main_header_bytes,
-            resolution_level=self.resolution_level,
-        )
-        return result.tobytes()
+        return await asyncio.to_thread(self._decode_sync, chunk_bytes, chunk_spec)
 
-    def encode(self, chunk_bytes, chunk_spec=None):
+    async def _encode_single(self, chunk_bytes, chunk_spec):
         """Encoding is not supported.
 
         Raises:
             NotImplementedError: Always.
         """
-        raise NotImplementedError("Jpeg2000Codec: encoding is not yet supported")
+        raise NotImplementedError("Jpeg2000Codec: encoding is not supported")
+
+    def compute_encoded_size(self, input_byte_length: int, chunk_spec) -> int:
+        """Return *input_byte_length* — compressed size is not predictable."""
+        return input_byte_length
+
+    def evolve_from_array_spec(self, array_spec):
+        """Codec configuration is fixed at construction time."""
+        return self
 
     def to_dict(self):
         """Serialize codec configuration to a JSON-compatible dictionary.
@@ -104,7 +134,7 @@ class Jpeg2000Codec:
         return {
             "name": self.codec_name,
             "configuration": {
-                "main_header": self._main_header_b64,
+                "main_header": self.main_header,
                 "resolution_level": self.resolution_level,
             },
         }
@@ -128,11 +158,26 @@ class Jpeg2000Codec:
             resolution_level=config.get("resolution_level", 0),
         )
 
+    # -- numcodecs compatibility (consumer path) ---------------------------
+
+    def decode(self, buf, out=None):
+        """Synchronous decode for numcodecs filter protocol."""
+        data = bytes(buf) if not isinstance(buf, bytes) else buf
+        return decode_jpeg2000(
+            data,
+            main_header=self._main_header_bytes,
+            resolution_level=self.resolution_level,
+        )
+
+    def encode(self, buf):
+        """Encoding is not supported."""
+        raise NotImplementedError("Jpeg2000Codec: encoding is not supported")
+
     def get_config(self):
         """Return numcodecs-compatible configuration dict."""
         return {
             "id": self.codec_id,
-            "main_header": self._main_header_b64,
+            "main_header": self.main_header,
             "resolution_level": self.resolution_level,
         }
 
@@ -145,8 +190,9 @@ class Jpeg2000Codec:
         )
 
 
-class JpegCodec:
-    """Zarr codec for JPEG streams.
+@dataclass(frozen=True)
+class JpegCodec(_import_zarr_bytescodec()):
+    """Zarr v3 bytes-to-bytes codec for JPEG streams.
 
     Registered as: https://awslabs.github.io/osml-imagery-io/codecs/jpeg
 
@@ -161,47 +207,68 @@ class JpegCodec:
 
     codec_name = "https://awslabs.github.io/osml-imagery-io/codecs/jpeg"
     codec_id = "https://awslabs.github.io/osml-imagery-io/codecs/jpeg"
+    is_fixed_size = False
+
+    bits_per_pixel: int = 8
+    num_bands: int = 1
+    block_width: int = 256
+    block_height: int = 256
+    imode: str = "B"
+    color_space: str = "MONO"
 
     def __init__(self, *, bits_per_pixel, num_bands, block_width, block_height, imode, color_space):
-        self.bits_per_pixel = bits_per_pixel
-        self.num_bands = num_bands
-        self.block_width = block_width
-        self.block_height = block_height
-        self.imode = imode
-        self.color_space = color_space
+        object.__setattr__(self, "bits_per_pixel", bits_per_pixel)
+        object.__setattr__(self, "num_bands", num_bands)
+        object.__setattr__(self, "block_width", block_width)
+        object.__setattr__(self, "block_height", block_height)
+        object.__setattr__(self, "imode", imode)
+        object.__setattr__(self, "color_space", color_space)
 
-    def decode(self, chunk_bytes, chunk_spec=None):
+    def _decode_sync(self, chunk_bytes, chunk_spec):
+        """Synchronous decode — delegates to the Rust JPEG decoder."""
+        from zarr.core.buffer.cpu import as_numpy_array_wrapper
+
+        return as_numpy_array_wrapper(
+            lambda buf: decode_jpeg(
+                bytes(buf),
+                bits_per_pixel=self.bits_per_pixel,
+                num_bands=self.num_bands,
+                block_width=self.block_width,
+                block_height=self.block_height,
+                imode=self.imode,
+                color_space=self.color_space,
+            ).tobytes(),
+            chunk_bytes,
+            chunk_spec.prototype,
+        )
+
+    async def _decode_single(self, chunk_bytes, chunk_spec):
         """Decode JPEG chunk bytes into pixel data.
 
         Args:
-            chunk_bytes: Bytes-like object or numpy array containing JPEG stream data.
-            chunk_spec: Optional ArraySpec (unused, accepted for zarr protocol compatibility).
+            chunk_bytes: Buffer containing JPEG stream data.
+            chunk_spec: ArraySpec describing the expected output.
 
         Returns:
-            Flat byte buffer for numcodecs filter compatibility.
+            Buffer with decoded pixel data.
         """
-        if hasattr(chunk_bytes, 'tobytes'):
-            data = chunk_bytes.tobytes()
-        else:
-            data = bytes(chunk_bytes)
-        result = decode_jpeg(
-            data,
-            bits_per_pixel=self.bits_per_pixel,
-            num_bands=self.num_bands,
-            block_width=self.block_width,
-            block_height=self.block_height,
-            imode=self.imode,
-            color_space=self.color_space,
-        )
-        return result.tobytes()
+        return await asyncio.to_thread(self._decode_sync, chunk_bytes, chunk_spec)
 
-    def encode(self, chunk_bytes, chunk_spec=None):
+    async def _encode_single(self, chunk_bytes, chunk_spec):
         """Encoding is not supported.
 
         Raises:
             NotImplementedError: Always.
         """
-        raise NotImplementedError("JpegCodec: encoding is not yet supported")
+        raise NotImplementedError("JpegCodec: encoding is not supported")
+
+    def compute_encoded_size(self, input_byte_length: int, chunk_spec) -> int:
+        """Return *input_byte_length* — compressed size is not predictable."""
+        return input_byte_length
+
+    def evolve_from_array_spec(self, array_spec):
+        """Codec configuration is fixed at construction time."""
+        return self
 
     def to_dict(self):
         """Serialize codec configuration to a JSON-compatible dictionary.
@@ -251,6 +318,25 @@ class JpegCodec:
             color_space=config["color_space"],
         )
 
+    # -- numcodecs compatibility (consumer path) ---------------------------
+
+    def decode(self, buf, out=None):
+        """Synchronous decode for numcodecs filter protocol."""
+        data = bytes(buf) if not isinstance(buf, bytes) else buf
+        return decode_jpeg(
+            data,
+            bits_per_pixel=self.bits_per_pixel,
+            num_bands=self.num_bands,
+            block_width=self.block_width,
+            block_height=self.block_height,
+            imode=self.imode,
+            color_space=self.color_space,
+        )
+
+    def encode(self, buf):
+        """Encoding is not supported."""
+        raise NotImplementedError("JpegCodec: encoding is not supported")
+
     def get_config(self):
         """Return numcodecs-compatible configuration dict."""
         return {
@@ -276,8 +362,9 @@ class JpegCodec:
         )
 
 
-class JbpBlockCodec:
-    """Zarr codec for uncompressed JBP/NITF/NSIF image blocks.
+@dataclass(frozen=True)
+class JbpBlockCodec(_import_zarr_bytescodec()):
+    """Zarr v3 bytes-to-bytes codec for uncompressed JBP/NITF/NSIF image blocks.
 
     Registered as: https://awslabs.github.io/osml-imagery-io/codecs/jbp-block
 
@@ -292,53 +379,68 @@ class JbpBlockCodec:
 
     codec_name = "https://awslabs.github.io/osml-imagery-io/codecs/jbp-block"
     codec_id = "https://awslabs.github.io/osml-imagery-io/codecs/jbp-block"
+    is_fixed_size = False
+
+    num_bands: int = 1
+    block_height: int = 256
+    block_width: int = 256
+    nbpp: int = 8
+    imode: str = "B"
+    pvtype: str = "INT"
 
     def __init__(self, *, num_bands, block_height, block_width, nbpp, imode, pvtype):
-        self.num_bands = num_bands
-        self.block_height = block_height
-        self.block_width = block_width
-        self.nbpp = nbpp
-        self.imode = imode
-        self.pvtype = pvtype
+        object.__setattr__(self, "num_bands", num_bands)
+        object.__setattr__(self, "block_height", block_height)
+        object.__setattr__(self, "block_width", block_width)
+        object.__setattr__(self, "nbpp", nbpp)
+        object.__setattr__(self, "imode", imode)
+        object.__setattr__(self, "pvtype", pvtype)
 
-    def decode(self, chunk_bytes, chunk_spec=None):
-        """Decode uncompressed JBP/NITF chunk bytes into a NumPy ndarray.
+    def _decode_sync(self, chunk_bytes, chunk_spec):
+        """Synchronous decode — delegates to the Rust JBP block decoder."""
+        from zarr.core.buffer.cpu import as_numpy_array_wrapper
 
-        When called as a numcodecs filter (by zarr v2 pipeline), the input
-        may be a numpy array of raw bytes. Returns a flat byte buffer that
-        zarr will view/reshape into the chunk shape.
+        return as_numpy_array_wrapper(
+            lambda buf: decode_jbp_block(
+                bytes(buf),
+                num_bands=self.num_bands,
+                block_height=self.block_height,
+                block_width=self.block_width,
+                nbpp=self.nbpp,
+                imode=self.imode,
+                pvtype=self.pvtype,
+            ).tobytes(),
+            chunk_bytes,
+            chunk_spec.prototype,
+        )
+
+    async def _decode_single(self, chunk_bytes, chunk_spec):
+        """Decode JBP/NITF chunk bytes into pixel data.
 
         Args:
-            chunk_bytes: Bytes-like object or numpy array containing raw pixel data.
-            chunk_spec: Optional ArraySpec (unused, accepted for zarr protocol compatibility).
+            chunk_bytes: Buffer containing raw pixel data.
+            chunk_spec: ArraySpec describing the expected output.
 
         Returns:
-            NumPy ndarray — flat byte buffer when used as filter, shaped array otherwise.
+            Buffer with decoded pixel data.
         """
-        if hasattr(chunk_bytes, 'tobytes'):
-            data = chunk_bytes.tobytes()
-        else:
-            data = bytes(chunk_bytes)
-        result = decode_jbp_block(
-            data,
-            num_bands=self.num_bands,
-            block_height=self.block_height,
-            block_width=self.block_width,
-            nbpp=self.nbpp,
-            imode=self.imode,
-            pvtype=self.pvtype,
-        )
-        # Return flat contiguous bytes for numcodecs filter compatibility.
-        # zarr's V2Codec will view() and reshape() the result.
-        return result.tobytes()
+        return await asyncio.to_thread(self._decode_sync, chunk_bytes, chunk_spec)
 
-    def encode(self, chunk_bytes, chunk_spec=None):
+    async def _encode_single(self, chunk_bytes, chunk_spec):
         """Encoding is not supported.
 
         Raises:
             NotImplementedError: Always.
         """
-        raise NotImplementedError("JbpBlockCodec: encoding is not yet supported")
+        raise NotImplementedError("JbpBlockCodec: encoding is not supported")
+
+    def compute_encoded_size(self, input_byte_length: int, chunk_spec) -> int:
+        """Return *input_byte_length* — compressed size is not predictable."""
+        return input_byte_length
+
+    def evolve_from_array_spec(self, array_spec):
+        """Codec configuration is fixed at construction time."""
+        return self
 
     def to_dict(self):
         """Serialize codec configuration to a JSON-compatible dictionary.
@@ -388,6 +490,25 @@ class JbpBlockCodec:
             pvtype=config["pvtype"],
         )
 
+    # -- numcodecs compatibility (consumer path) ---------------------------
+
+    def decode(self, buf, out=None):
+        """Synchronous decode for numcodecs filter protocol."""
+        data = bytes(buf) if not isinstance(buf, bytes) else buf
+        return decode_jbp_block(
+            data,
+            num_bands=self.num_bands,
+            block_height=self.block_height,
+            block_width=self.block_width,
+            nbpp=self.nbpp,
+            imode=self.imode,
+            pvtype=self.pvtype,
+        )
+
+    def encode(self, buf):
+        """Encoding is not supported."""
+        raise NotImplementedError("JbpBlockCodec: encoding is not supported")
+
     def get_config(self):
         """Return numcodecs-compatible configuration dict."""
         return {
@@ -414,22 +535,27 @@ class JbpBlockCodec:
 
 
 # ---------------------------------------------------------------------------
-# Register codecs with numcodecs so zarr v2 filters can resolve them
+# numcodecs registration (consumer path)
 # ---------------------------------------------------------------------------
 
-def _register_numcodecs():
-    """Register our codecs with the numcodecs registry.
 
-    This allows zarr v2 metadata (used by Kerchunk v1 references) to
-    resolve our custom codecs when they appear in the ``filters`` list.
+def _register_numcodecs():
+    """Register all codecs with numcodecs for the consumer path.
+
+    The consumer path (``fsspec ReferenceFileSystem`` + ``zarr.open_group``)
+    reads zarr v2 metadata from Kerchunk JSON and uses
+    ``numcodecs.get_codec(filter_config)`` to resolve codecs by their ``id``
+    field.  This function registers our codec classes so that resolution works.
     """
     try:
-        from numcodecs.registry import register_codec
-        register_codec(Jpeg2000Codec)
-        register_codec(JpegCodec)
-        register_codec(JbpBlockCodec)
+        import numcodecs
     except ImportError:
-        pass  # numcodecs not installed — zarr v2 filter path unavailable
+        return
+
+    numcodecs.register_codec(Jpeg2000Codec)
+    numcodecs.register_codec(JpegCodec)
+    numcodecs.register_codec(JbpBlockCodec)
 
 
 _register_numcodecs()
+

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a Kerchunk v1 tile index from a local imagery file.
+"""Generate a Kerchunk tile index from a local imagery file.
 
 This script creates a tile index that maps image tile coordinates to byte
 ranges in the source file. The index can be saved as JSON or Parquet and
@@ -8,12 +8,10 @@ is compatible with fsspec's ReferenceFileSystem for cloud-native access.
 Usage:
     python scripts/generate_tile_index.py image.ntf --source-uri s3://bucket/image.ntf
     python scripts/generate_tile_index.py image.ntf --source-uri s3://bucket/image.ntf -o index.parquet
-    python scripts/generate_tile_index.py image.ntf --source-uri s3://bucket/image.ntf --segments image_segment_0 image_segment_2
     python scripts/generate_tile_index.py image.ntf --source-uri s3://bucket/image.ntf --list-segments
 """
 
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
@@ -23,7 +21,6 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from aws.osml.io import IO, AssetType  # noqa: E402
-from aws.osml.io.tile_index import TileIndex  # noqa: E402
 
 
 def list_segments(path: str) -> int:
@@ -41,7 +38,6 @@ def list_segments(path: str) -> int:
 
     print(f"Image segments in {path}:")
     for key in keys:
-        asset = None
         try:
             with IO.open([path], "r") as reader:
                 asset = reader.get_asset(key)
@@ -55,14 +51,19 @@ def list_segments(path: str) -> int:
     return 0
 
 
-def generate_index(
-    path: str,
-    source_uri: str,
-    output: str,
-    segments: list[str] | None,
-    pretty: bool,
-) -> int:
+def generate_index(path: str, source_uri: str, output: str, segments: list[str] | None) -> int:
     """Generate a tile index and save it to disk."""
+    from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+    ext = Path(output).suffix.lower()
+    if ext == ".json":
+        fmt = "json"
+    elif ext == ".parquet":
+        fmt = "parquet"
+    else:
+        print(f"Error: Unsupported output extension '{ext}'. Use .json or .parquet", file=sys.stderr)
+        return 1
+
     print(f"Source file:  {path}")
     print(f"Source URI:   {source_uri}")
     if segments:
@@ -74,34 +75,39 @@ def generate_index(
 
     t0 = time.perf_counter()
     try:
-        idx = TileIndex.generate(path, source_uri=source_uri, segments=segments)
-    except FileNotFoundError as e:
+        parser = OversightMLParser(local_path=path)
+        ms = parser(url=source_uri)
+        vds = ms.to_virtual_dataset()
+    except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
-    except KeyError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+
+    if segments:
+        missing = [s for s in segments if s not in vds.data_vars]
+        if missing:
+            print(f"Error: Segment(s) not found: {', '.join(missing)}", file=sys.stderr)
+            print(f"Available: {', '.join(vds.data_vars)}", file=sys.stderr)
+            return 1
+        vds = vds[segments]
+
     elapsed_gen = time.perf_counter() - t0
 
-    print(f"Generated index: {idx.num_segments} segment(s), {idx.num_tiles} tile(s) ({elapsed_gen:.3f}s)")
+    num_segments = len(vds.data_vars)
+    print(f"Generated index: {num_segments} segment(s) ({elapsed_gen:.3f}s)")
 
-    # Pretty-print JSON if requested (write manually instead of save())
     t1 = time.perf_counter()
-    if pretty and output.endswith(".json"):
-        with open(output, "w") as f:
-            json.dump(idx.refs, f, indent=2)
-    else:
-        try:
-            idx.save(output)
-        except (ValueError, ImportError) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return 1
+    try:
+        vds.vz.to_kerchunk(output, format=fmt)
+    except (ImportError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
     elapsed_save = time.perf_counter() - t1
 
-    size = Path(output).stat().st_size
+    out_path = Path(output)
+    if out_path.is_dir():
+        size = sum(f.stat().st_size for f in out_path.rglob("*") if f.is_file())
+    else:
+        size = out_path.stat().st_size
     print(f"Saved {output} ({_human_size(size)}, {elapsed_save:.3f}s)")
     return 0
 
@@ -117,7 +123,7 @@ def _human_size(nbytes: int) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Generate a Kerchunk v1 tile index from a local imagery file.",
+        description="Generate a Kerchunk tile index from a local imagery file.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -136,10 +142,6 @@ Examples:
 
     # List available segments without generating an index
     python scripts/generate_tile_index.py image.ntf --list-segments
-
-    # Pretty-print the JSON output
-    python scripts/generate_tile_index.py image.ntf \\
-        --source-uri s3://my-bucket/image.ntf --pretty
 """,
     )
     parser.add_argument(
@@ -158,21 +160,16 @@ Examples:
         "(default: <input_stem>.tile_index.json)",
     )
     parser.add_argument(
-        "--segments",
-        nargs="+",
-        metavar="KEY",
-        help="Image segment keys to index (default: all segments). "
-        "Use --list-segments to see available keys.",
-    )
-    parser.add_argument(
         "--list-segments",
         action="store_true",
         help="List available image segments and exit without generating an index.",
     )
     parser.add_argument(
-        "--pretty",
-        action="store_true",
-        help="Pretty-print JSON output with indentation (JSON only).",
+        "--segments",
+        nargs="+",
+        metavar="KEY",
+        help="Image segment keys to index (default: all segments). "
+        "Use --list-segments to see available keys.",
     )
 
     args = parser.parse_args()
@@ -188,7 +185,7 @@ Examples:
         stem = Path(args.path).stem
         output = f"{stem}.tile_index.json"
 
-    return generate_index(args.path, args.source_uri, output, args.segments, args.pretty)
+    return generate_index(args.path, args.source_uri, output, args.segments)
 
 
 if __name__ == "__main__":

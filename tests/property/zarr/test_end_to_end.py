@@ -1,8 +1,8 @@
-"""Property-based end-to-end tests for TileIndex + Zarr codec integration.
+"""Property-based end-to-end tests for VirtualiZarr parser + Zarr codec integration.
 
 This module validates the full pipeline from the user's perspective:
 1. Write a multi-tile synthetic image (NITF with various compressions, TIFF).
-2. Generate a Kerchunk tile index via TileIndex.generate().
+2. Generate a Kerchunk JSON index via VirtualiZarr parsers (JbpParser / TiffParser).
 3. Read tiles through the standard IO.open() / DatasetReader path.
 4. Open the index via fsspec ReferenceFileSystem + zarr and read the same tiles.
 5. Compare pixels: exact match for lossless, PSNR/SSIM for lossy.
@@ -12,7 +12,7 @@ docs/user-guide/zarr-codecs.md. It exercises the full stack: index
 serialization, fsspec reference resolution, byte-range reads, codec
 entry-point dispatch, and decode.
 
-Feature: zarr-tile-index-end-to-end
+Feature: virtualizarr-migration
 """
 
 import tempfile
@@ -20,8 +20,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from hypothesis import given, assume
-
 from aws.osml.io import (
     IO,
     AssetType,
@@ -29,13 +27,13 @@ from aws.osml.io import (
     BufferedMetadataProvider,
     PixelType,
 )
-from aws.osml.io.tile_index import TileIndex
+from hypothesis import assume, given
 
 from ..conftest import pbt_settings
 from ..quality import MIN_PSNR_DB, MIN_SSIM, calculate_psnr, calculate_ssim
 from ..strategies import (
-    realistic_image_for_compression,
     jpeg_image_for_compression,
+    realistic_image_for_compression,
     tiff_writable_image,
 )
 
@@ -44,8 +42,7 @@ zarr = pytest.importorskip("zarr", minversion="3.0")
 fsspec = pytest.importorskip("fsspec")
 
 # Ensure our codecs are registered with numcodecs before zarr reads any stores.
-import aws.osml.io.zarr_codecs  # noqa: F401
-
+import aws.osml.io.zarr_codecs  # noqa: E402, F401
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -187,11 +184,16 @@ def _read_all_tiles_via_zarr(index_path: Path):
 
 
 def _generate_and_save_index(path: Path) -> Path:
-    """Generate a TileIndex for a file, save to JSON, return the index path."""
-    idx = TileIndex.generate(str(path), source_uri=str(path))
+    """Generate a Kerchunk JSON index via VirtualiZarr parser, return the index path."""
+    from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+    parser = OversightMLParser(local_path=str(path))
+    ms = parser(url=str(path))
+    vds = ms.to_virtual_dataset()
+
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         index_path = Path(f.name)
-    idx.save(str(index_path))
+    vds.vz.to_kerchunk(str(index_path), format="json")
     return index_path
 
 
@@ -387,107 +389,47 @@ class TestEndToEndNitfJpeg:
 
 
 # ---------------------------------------------------------------------------
-# TIFF — TileIndex generation and tile coverage
+# TIFF — tile index generation and tile coverage via VirtualiZarr parser
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.property
 class TestEndToEndTiff:
-    """End-to-end: TIFF tile index generation and coverage.
-
-    Validates that TileIndex.generate() produces a valid index for TIFF
-    files with correct tile counts and byte ranges. The full Zarr codec
-    decode path is not tested because TIFF codec_configuration() returns
-    None for all compressions — a TIFF Zarr codec is not yet implemented.
-    """
+    """End-to-end: TIFF tile index generation and coverage via VirtualiZarr parser."""
 
     @given(tiff_writable_image(min_size=48, max_size=128, min_bands=1, max_bands=3))
     @pbt_settings
     def test_tiff_tile_index_coverage(self, image_tuple):
-        """TileIndex covers all tiles for a TIFF image."""
+        """TiffParser covers all tiles for a TIFF image."""
         array, pixel_type, num_bands, num_rows, num_cols, hints = image_tuple
+        assume(hints["259"] != 7)  # Skip JPEG TIFF
 
-        # Skip JPEG TIFF — not meaningful for tile index validation
-        assume(hints["259"] != 7)
-
-        path = _write_tiff(
-            array, pixel_type, num_bands, num_rows, num_cols, hints,
-        )
+        path = _write_tiff(array, pixel_type, num_bands, num_rows, num_cols, hints)
         try:
             tiles_io = _read_all_tiles_via_io(path)
-            assert len(tiles_io) > 0, "No tiles read via IO"
+            assert len(tiles_io) > 0
 
             try:
-                idx = TileIndex.generate(str(path), source_uri=str(path))
+                index_path = _generate_and_save_index(path)
             except ValueError:
                 pytest.skip("tile_byte_ranges not available for this TIFF config")
 
-            assert idx.num_tiles == len(tiles_io), (
-                f"Index has {idx.num_tiles} tiles, IO read {len(tiles_io)}"
-            )
-            assert idx.num_segments == 1
-
-            file_size = path.stat().st_size
-            refs = idx.refs
-            for key, value in refs["refs"].items():
-                if not isinstance(value, list) or len(value) != 3:
-                    continue
-                _, offset, length = value
-                assert offset >= 0, f"Negative offset for {key}"
-                assert length > 0, f"Zero-length tile for {key}"
-                assert offset + length <= file_size, (
-                    f"Tile {key} extends past EOF: offset={offset}, "
-                    f"length={length}, file_size={file_size}"
-                )
-        finally:
-            path.unlink(missing_ok=True)
-
-
-# ---------------------------------------------------------------------------
-# TileIndex JSON round-trip preserves decode equivalence
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.property
-class TestEndToEndIndexRoundTrip:
-    """End-to-end: TileIndex save/load preserves decode equivalence.
-
-    Generates a tile index, saves to JSON, loads it back, and verifies
-    that tiles decoded from the loaded index via zarr match the IO path.
-    """
-
-    @given(realistic_image_for_compression(min_size=48, max_size=96, min_bands=1, max_bands=3))
-    @pbt_settings
-    def test_index_json_roundtrip_preserves_decode(self, image_tuple):
-        """Tiles from a saved/loaded JSON index match IO path via zarr."""
-        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
-
-        path = _write_nitf(
-            array, pixel_type, num_bands, num_rows, num_cols,
-            metadata_hints={"IC": "NC", "IMODE": "B"},
-            block_width=32, block_height=32,
-        )
-        try:
-            tiles_io = _read_all_tiles_via_io(path)
-
-            # Generate → save → load → save again → read via zarr
-            idx = TileIndex.generate(str(path), source_uri=str(path))
-            with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-                index_path = Path(f.name)
-            idx.save(str(index_path))
-
             try:
-                loaded = TileIndex.load(str(index_path))
-                # Re-save the loaded index to a second file
-                with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-                    reloaded_path = Path(f.name)
-                loaded.save(str(reloaded_path))
+                # Verify tile count by reading the kerchunk JSON
+                import json
+                with open(index_path) as f:
+                    refs = json.load(f)
+                tile_refs = [k for k, v in refs["refs"].items()
+                             if isinstance(v, list) and len(v) == 3]
+                assert len(tile_refs) == len(tiles_io)
 
-                try:
-                    tiles_zarr = _read_all_tiles_via_zarr(reloaded_path)
-                    _assert_tiles_match_lossless(tiles_io, tiles_zarr, label="roundtrip-zarr")
-                finally:
-                    reloaded_path.unlink(missing_ok=True)
+                # Verify byte ranges are valid
+                file_size = path.stat().st_size
+                for key in tile_refs:
+                    _, offset, length = refs["refs"][key]
+                    assert offset >= 0
+                    assert length > 0
+                    assert offset + length <= file_size
             finally:
                 index_path.unlink(missing_ok=True)
         finally:

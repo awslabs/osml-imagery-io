@@ -38,6 +38,7 @@ dev = [
     "hypothesis>=6.0",
 ]
 
+virtualizarr = ["virtualizarr>=2.0"]
 zarr = ["zarr>=3.0", "fsspec"]
 
 docs = [

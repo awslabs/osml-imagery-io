@@ -218,6 +218,7 @@ class TestProperty7EndToEndDecodeEquivalence:
         from pathlib import Path
 
         from aws.osml.io import IO, AssetType, BufferedImageAssetProvider, BufferedMetadataProvider
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
         array, pixel_type, num_bands, num_rows, num_cols = image_tuple
 
@@ -259,41 +260,50 @@ class TestProperty7EndToEndDecodeEquivalence:
                 block_via_io = asset.get_block(0, 0, 0)
 
             # Path B: Read via Kerchunk index + codec
-            from aws.osml.io.tile_index import TileIndex
+            parser = OversightMLParser(local_path=str(path))
+            ms = parser(url=str(path))
+            vds = ms.to_virtual_dataset()
 
-            idx = TileIndex.generate(str(path), source_uri=str(path))
-            refs = idx.refs
+            with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+                index_path = Path(f.name)
+            vds.vz.to_kerchunk(str(index_path), format="json")
 
-            # Find the segment key (first image segment)
-            segment_key = None
-            for k in refs["refs"]:
-                if k.endswith("/.zarray"):
-                    segment_key = k.replace("/.zarray", "")
-                    break
-            assert segment_key is not None, "No .zarray found in index"
+            try:
+                with open(index_path) as f:
+                    refs = json.load(f)
 
-            zarray = json.loads(refs["refs"][f"{segment_key}/.zarray"])
-            codec = _codec_from_zarray(zarray)
+                # Find the segment key (first image segment)
+                segment_key = None
+                for k in refs["refs"]:
+                    if k.endswith("/.zarray"):
+                        segment_key = k.replace("/.zarray", "")
+                        break
+                assert segment_key is not None, "No .zarray found in index"
 
-            # Read tile bytes from file
-            tile_key = f"{segment_key}/0.0.0"
-            tile_ref = refs["refs"][tile_key]
-            with open(tile_ref[0], "rb") as f:
-                f.seek(tile_ref[1])
-                tile_bytes = f.read(tile_ref[2])
+                zarray = json.loads(refs["refs"][f"{segment_key}/.zarray"])
+                codec = _codec_from_zarray(zarray)
 
-            block_via_codec_bytes = codec.decode(tile_bytes)
+                # Read tile bytes from file
+                tile_key = f"{segment_key}/0.0.0"
+                tile_ref = refs["refs"][tile_key]
+                with open(tile_ref[0], "rb") as f:
+                    f.seek(tile_ref[1])
+                    tile_bytes = f.read(tile_ref[2])
 
-            # Codec returns flat bytes; reconstruct as numpy array
-            expected_dtype = get_numpy_dtype(pixel_type)
-            block_via_codec = np.frombuffer(block_via_codec_bytes, dtype=expected_dtype).reshape(
-                num_bands, num_rows, num_cols
-            )
+                block_via_codec_bytes = codec.decode(tile_bytes)
 
-            # Property: identical pixel values
-            np.testing.assert_array_equal(
-                block_via_codec, block_via_io,
-                err_msg="Codec path and IO path produced different pixels",
-            )
+                # Codec returns flat bytes; reconstruct as numpy array
+                expected_dtype = get_numpy_dtype(pixel_type)
+                block_via_codec = np.frombuffer(block_via_codec_bytes, dtype=expected_dtype).reshape(
+                    num_bands, num_rows, num_cols
+                )
+
+                # Property: identical pixel values
+                np.testing.assert_array_equal(
+                    block_via_codec, block_via_io,
+                    err_msg="Codec path and IO path produced different pixels",
+                )
+            finally:
+                index_path.unlink(missing_ok=True)
         finally:
             path.unlink(missing_ok=True)
