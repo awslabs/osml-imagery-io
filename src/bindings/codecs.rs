@@ -66,10 +66,30 @@ pub fn decode_jpeg2000(
 
     let result = match main_header {
         Some(header) => {
+            use crate::j2k::markers::rewrite_siz_for_tile;
+
+            // Extract original Isot from the tile-part SOT marker before patching.
+            let isot = if codestream.len() >= 6
+                && codestream[0] == 0xFF
+                && codestream[1] == 0x90
+            {
+                Some(u16::from_be_bytes([codestream[4], codestream[5]]))
+            } else {
+                None
+            };
+
+            // Rewrite SIZ to describe a single-tile image with actual edge tile
+            // dimensions. For interior tiles this is a no-op.
+            let patched_header = match isot {
+                Some(tile_index) => rewrite_siz_for_tile(header, tile_index),
+                None => header.to_vec(),
+            };
+
             // Reconstruct a single-tile codestream:
-            // [main_header] + [tile-part bytes with Isot patched to 0] + [EOC]
-            let mut full_codestream = Vec::with_capacity(header.len() + codestream.len() + 2);
-            full_codestream.extend_from_slice(header);
+            // [patched header] + [tile-part bytes with Isot patched to 0] + [EOC]
+            let mut full_codestream =
+                Vec::with_capacity(patched_header.len() + codestream.len() + 2);
+            full_codestream.extend_from_slice(&patched_header);
 
             // The codestream bytes start with SOT marker — patch Isot to 0
             if codestream.len() >= 6 && codestream[0] == 0xFF && codestream[1] == 0x90 {

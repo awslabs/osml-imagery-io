@@ -391,6 +391,102 @@ pub fn scan_sot_markers(
     Ok(entries)
 }
 
+/// Extracts the original tile index (Isot) from a tile-part's SOT marker.
+///
+/// Returns `None` if the tile-part data is too short or doesn't start with SOT.
+fn extract_isot(tile_part: &[u8]) -> Option<u16> {
+    if tile_part.len() >= 6 && tile_part[0] == 0xFF && tile_part[1] == 0x90 {
+        Some(read_u16(tile_part, 4))
+    } else {
+        None
+    }
+}
+
+/// Rewrite the SIZ marker in a decode header so it describes a single-tile image
+/// matching the actual dimensions of the tile identified by `isot`.
+///
+/// For interior tiles the rewritten values match the originals, so this is a no-op.
+/// For edge tiles the SIZ now describes a single-tile image of the correct dimensions,
+/// which makes OpenJPEG decode the wavelet coefficients against the right grid position.
+///
+/// # SIZ marker layout (offsets from marker code)
+///
+/// | Offset | Size | Field   | Description          |
+/// |--------|------|---------|----------------------|
+/// | 0      | 2    | marker  | 0xFF51               |
+/// | 2      | 2    | Lsiz   | segment length        |
+/// | 4      | 2    | Rsiz   | capabilities          |
+/// | 6      | 4    | Xsiz   | image width           |
+/// | 10     | 4    | Ysiz   | image height          |
+/// | 14     | 4    | XOsiz  | image x origin        |
+/// | 18     | 4    | YOsiz  | image y origin        |
+/// | 22     | 4    | XTsiz  | tile width            |
+/// | 26     | 4    | YTsiz  | tile height           |
+/// | 30     | 4    | XTOsiz | tile grid x origin    |
+/// | 34     | 4    | YTOsiz | tile grid y origin    |
+pub fn rewrite_siz_for_tile(decode_header: &[u8], isot: u16) -> Vec<u8> {
+    // The decode header starts with SOC (2 bytes), then SIZ marker.
+    // SIZ marker code is at offset 2, SIZ fields start at offset 6.
+    // Minimum SIZ: marker(2) + Lsiz(2) + Rsiz(2) + 8 fields × 4 bytes = 38 bytes
+    // So we need at least 2 (SOC) + 38 = 40 bytes.
+    const SOC_LEN: usize = 2;
+    const SIZ_FIXED_HEADER: usize = 38; // marker(2) + Lsiz(2) + Rsiz(2) + 8×u32
+    if decode_header.len() < SOC_LEN + SIZ_FIXED_HEADER {
+        return decode_header.to_vec();
+    }
+
+    // Verify SIZ marker follows SOC
+    if read_u16(decode_header, SOC_LEN) != marker_codes::SIZ {
+        return decode_header.to_vec();
+    }
+
+    // Parse SIZ fields (offsets relative to start of decode_header)
+    let siz_base = SOC_LEN; // offset of SIZ marker code
+    let xsiz = read_u32(decode_header, siz_base + 6);
+    let ysiz = read_u32(decode_header, siz_base + 10);
+    let xosiz = read_u32(decode_header, siz_base + 14);
+    let yosiz = read_u32(decode_header, siz_base + 18);
+    let xtsiz = read_u32(decode_header, siz_base + 22);
+    let ytsiz = read_u32(decode_header, siz_base + 26);
+
+    // Compute tile grid position from Isot
+    let num_tiles_x = (xsiz - xosiz).div_ceil(xtsiz);
+    let tile_col = isot as u32 % num_tiles_x;
+    let tile_row = isot as u32 / num_tiles_x;
+
+    // Compute actual tile dimensions (per ISO/IEC 15444-1 Annex B)
+    let tile_x0 = xosiz + tile_col * xtsiz;
+    let tile_y0 = yosiz + tile_row * ytsiz;
+    let actual_width = (tile_x0 + xtsiz).min(xsiz) - tile_x0;
+    let actual_height = (tile_y0 + ytsiz).min(ysiz) - tile_y0;
+
+    // If this is a full-size tile, no rewrite needed
+    if actual_width == xtsiz && actual_height == ytsiz {
+        return decode_header.to_vec();
+    }
+
+    // Build a patched copy with SIZ describing a single-tile image
+    let mut patched = decode_header.to_vec();
+    // Xsiz = actual_width
+    patched[siz_base + 6..siz_base + 10].copy_from_slice(&actual_width.to_be_bytes());
+    // Ysiz = actual_height
+    patched[siz_base + 10..siz_base + 14].copy_from_slice(&actual_height.to_be_bytes());
+    // XOsiz = 0
+    patched[siz_base + 14..siz_base + 18].copy_from_slice(&0u32.to_be_bytes());
+    // YOsiz = 0
+    patched[siz_base + 18..siz_base + 22].copy_from_slice(&0u32.to_be_bytes());
+    // XTsiz = actual_width
+    patched[siz_base + 22..siz_base + 26].copy_from_slice(&actual_width.to_be_bytes());
+    // YTsiz = actual_height
+    patched[siz_base + 26..siz_base + 30].copy_from_slice(&actual_height.to_be_bytes());
+    // XTOsiz = 0
+    patched[siz_base + 30..siz_base + 34].copy_from_slice(&0u32.to_be_bytes());
+    // YTOsiz = 0
+    patched[siz_base + 34..siz_base + 38].copy_from_slice(&0u32.to_be_bytes());
+
+    patched
+}
+
 /// Construct a minimal single-tile codestream for decoding.
 ///
 /// Concatenates: `decode_header + tile_part_bytes + EOC_MARKER`
@@ -409,10 +505,29 @@ pub fn build_minimal_codestream(
     tile_parts: &[(u64, u64)],
     codestream: &[u8],
 ) -> Vec<u8> {
+    // Extract the original tile index from the first tile-part before patching.
+    // This is needed to compute actual edge tile dimensions for SIZ rewrite.
+    let isot = tile_parts.first().and_then(|&(offset, length)| {
+        let start = offset as usize;
+        let end = start + length as usize;
+        if end <= codestream.len() {
+            extract_isot(&codestream[start..end])
+        } else {
+            None
+        }
+    });
+
+    // Rewrite SIZ to describe a single-tile image with the actual tile dimensions.
+    // For interior tiles this is a no-op; for edge tiles it fixes the decode.
+    let header = match isot {
+        Some(tile_index) => rewrite_siz_for_tile(decode_header, tile_index),
+        None => decode_header.to_vec(),
+    };
+
     let total_tile_bytes: u64 = tile_parts.iter().map(|(_, len)| len).sum();
-    let capacity = decode_header.len() + total_tile_bytes as usize + 2; // +2 for EOC
+    let capacity = header.len() + total_tile_bytes as usize + 2; // +2 for EOC
     let mut out = Vec::with_capacity(capacity);
-    out.extend_from_slice(decode_header);
+    out.extend_from_slice(&header);
     for &(offset, length) in tile_parts {
         let start = offset as usize;
         let end = start + length as usize;
@@ -1020,6 +1135,190 @@ mod tests {
         expected.extend_from_slice(&decode_header);
         expected.extend_from_slice(&[0xFF, 0xD9]);
         assert_eq!(result, expected);
+    }
+
+    // ---- rewrite_siz_for_tile tests ----
+
+    /// Build a decode header with a realistic SIZ marker for testing.
+    /// Returns a header with SOC + SIZ describing the given image/tile dimensions.
+    fn build_siz_header(
+        xsiz: u32, ysiz: u32,
+        xosiz: u32, yosiz: u32,
+        xtsiz: u32, ytsiz: u32,
+        xtosiz: u32, ytosiz: u32,
+        num_components: u16,
+    ) -> Vec<u8> {
+        let mut hdr = Vec::new();
+        // SOC
+        hdr.extend_from_slice(&marker_codes::SOC.to_be_bytes());
+        // SIZ marker code
+        hdr.extend_from_slice(&marker_codes::SIZ.to_be_bytes());
+        // Lsiz: 38 (fixed fields) + 3 * num_components - 2 (marker code not counted)
+        // SIZ body = Lsiz(2) + Rsiz(2) + 8*u32(32) + Csiz(2) + 3*Csiz = 38 + 3*Csiz
+        // Lsiz includes itself: 2 + 2 + 32 + 2 + 3*num_components = 38 + 3*num_components
+        let lsiz = 38u16 + 3 * num_components;
+        hdr.extend_from_slice(&lsiz.to_be_bytes());
+        // Rsiz (capabilities) = 0
+        hdr.extend_from_slice(&0u16.to_be_bytes());
+        // Xsiz, Ysiz
+        hdr.extend_from_slice(&xsiz.to_be_bytes());
+        hdr.extend_from_slice(&ysiz.to_be_bytes());
+        // XOsiz, YOsiz
+        hdr.extend_from_slice(&xosiz.to_be_bytes());
+        hdr.extend_from_slice(&yosiz.to_be_bytes());
+        // XTsiz, YTsiz
+        hdr.extend_from_slice(&xtsiz.to_be_bytes());
+        hdr.extend_from_slice(&ytsiz.to_be_bytes());
+        // XTOsiz, YTOsiz
+        hdr.extend_from_slice(&xtosiz.to_be_bytes());
+        hdr.extend_from_slice(&ytosiz.to_be_bytes());
+        // Csiz
+        hdr.extend_from_slice(&num_components.to_be_bytes());
+        // Per-component: Ssiz(1) + XRsiz(1) + YRsiz(1) = 3 bytes each
+        for _ in 0..num_components {
+            hdr.push(7); // Ssiz = 7 (8-bit unsigned)
+            hdr.push(1); // XRsiz = 1
+            hdr.push(1); // YRsiz = 1
+        }
+        hdr
+    }
+
+    #[test]
+    fn test_rewrite_siz_interior_tile_is_noop() {
+        // 512x512 image with 256x256 tiles → 2x2 grid, all tiles are full-size
+        let header = build_siz_header(512, 512, 0, 0, 256, 256, 0, 0, 3);
+        let result = rewrite_siz_for_tile(&header, 0); // tile 0 = interior
+        assert_eq!(result, header);
+        let result = rewrite_siz_for_tile(&header, 1);
+        assert_eq!(result, header);
+        let result = rewrite_siz_for_tile(&header, 2);
+        assert_eq!(result, header);
+        let result = rewrite_siz_for_tile(&header, 3);
+        assert_eq!(result, header);
+    }
+
+    #[test]
+    fn test_rewrite_siz_right_edge_tile() {
+        // 2000x2000 image with 256x256 tiles → 8x8 grid
+        // Tile (0,7) = Isot 7: right edge, 208 cols × 256 rows
+        let header = build_siz_header(2000, 2000, 0, 0, 256, 256, 0, 0, 3);
+        let result = rewrite_siz_for_tile(&header, 7);
+
+        // Verify rewritten SIZ fields
+        let siz_base = 2usize; // after SOC
+        assert_eq!(read_u32(&result, siz_base + 6), 208);  // Xsiz = 208
+        assert_eq!(read_u32(&result, siz_base + 10), 256); // Ysiz = 256
+        assert_eq!(read_u32(&result, siz_base + 14), 0);   // XOsiz = 0
+        assert_eq!(read_u32(&result, siz_base + 18), 0);   // YOsiz = 0
+        assert_eq!(read_u32(&result, siz_base + 22), 208); // XTsiz = 208
+        assert_eq!(read_u32(&result, siz_base + 26), 256); // YTsiz = 256
+        assert_eq!(read_u32(&result, siz_base + 30), 0);   // XTOsiz = 0
+        assert_eq!(read_u32(&result, siz_base + 34), 0);   // YTOsiz = 0
+    }
+
+    #[test]
+    fn test_rewrite_siz_bottom_edge_tile() {
+        // 2000x2000 image, tile (7,0) = Isot 56: bottom edge, 256 cols × 208 rows
+        let header = build_siz_header(2000, 2000, 0, 0, 256, 256, 0, 0, 3);
+        let result = rewrite_siz_for_tile(&header, 56);
+
+        let siz_base = 2usize;
+        assert_eq!(read_u32(&result, siz_base + 6), 256);  // Xsiz = 256
+        assert_eq!(read_u32(&result, siz_base + 10), 208); // Ysiz = 208
+        assert_eq!(read_u32(&result, siz_base + 22), 256); // XTsiz = 256
+        assert_eq!(read_u32(&result, siz_base + 26), 208); // YTsiz = 208
+    }
+
+    #[test]
+    fn test_rewrite_siz_corner_edge_tile() {
+        // 2000x2000 image, tile (7,7) = Isot 63: corner, 208×208
+        let header = build_siz_header(2000, 2000, 0, 0, 256, 256, 0, 0, 3);
+        let result = rewrite_siz_for_tile(&header, 63);
+
+        let siz_base = 2usize;
+        assert_eq!(read_u32(&result, siz_base + 6), 208);  // Xsiz = 208
+        assert_eq!(read_u32(&result, siz_base + 10), 208); // Ysiz = 208
+        assert_eq!(read_u32(&result, siz_base + 22), 208); // XTsiz = 208
+        assert_eq!(read_u32(&result, siz_base + 26), 208); // YTsiz = 208
+    }
+
+    #[test]
+    fn test_rewrite_siz_preserves_rest_of_header() {
+        // Verify that non-SIZ bytes (component entries, etc.) are preserved
+        let header = build_siz_header(2000, 2000, 0, 0, 256, 256, 0, 0, 3);
+        let result = rewrite_siz_for_tile(&header, 63);
+
+        // Length should be identical
+        assert_eq!(result.len(), header.len());
+        // SOC preserved
+        assert_eq!(read_u16(&result, 0), marker_codes::SOC);
+        // SIZ marker code preserved
+        assert_eq!(read_u16(&result, 2), marker_codes::SIZ);
+        // Lsiz preserved
+        assert_eq!(read_u16(&result, 4), read_u16(&header, 4));
+        // Rsiz preserved
+        assert_eq!(read_u16(&result, 6), read_u16(&header, 6));
+        // Csiz preserved
+        assert_eq!(read_u16(&result, 40), read_u16(&header, 40));
+        // Component entries preserved (bytes after Csiz)
+        assert_eq!(&result[42..], &header[42..]);
+    }
+
+    #[test]
+    fn test_rewrite_siz_short_header_passthrough() {
+        // Header too short to contain SIZ → returned unchanged
+        let short = vec![0xFF, 0x4F]; // just SOC
+        assert_eq!(rewrite_siz_for_tile(&short, 0), short);
+    }
+
+    #[test]
+    fn test_rewrite_siz_no_siz_marker_passthrough() {
+        // Header with SOC but no SIZ marker → returned unchanged
+        let mut hdr = Vec::new();
+        hdr.extend_from_slice(&marker_codes::SOC.to_be_bytes());
+        hdr.extend_from_slice(&marker_codes::COD.to_be_bytes()); // not SIZ
+        hdr.extend_from_slice(&10u16.to_be_bytes());
+        hdr.extend_from_slice(&[0u8; 36]);
+        assert_eq!(rewrite_siz_for_tile(&hdr, 0), hdr);
+    }
+
+    #[test]
+    fn test_build_minimal_codestream_rewrites_siz_for_edge_tile() {
+        // 2000x2000 image with 256x256 tiles
+        let decode_header = build_siz_header(2000, 2000, 0, 0, 256, 256, 0, 0, 1);
+
+        // Build a fake codestream with a SOT marker for tile Isot=7 (right edge)
+        let mut codestream = vec![0u8; 200];
+        let tile_offset = 50u64;
+        // SOT marker: FF90 + Lsot(10) + Isot(7) + Psot(0) + TPsot(0) + TNsot(1)
+        codestream[50] = 0xFF;
+        codestream[51] = 0x90;
+        codestream[52..54].copy_from_slice(&10u16.to_be_bytes());
+        codestream[54..56].copy_from_slice(&7u16.to_be_bytes()); // Isot = 7
+        codestream[56..60].copy_from_slice(&0u32.to_be_bytes());
+        codestream[60] = 0;
+        codestream[61] = 1;
+
+        let tile_parts = [(tile_offset, 12u64)];
+        let result = build_minimal_codestream(&decode_header, &tile_parts, &codestream);
+
+        // The SIZ in the output should be rewritten for edge tile
+        let siz_base = 2usize;
+        assert_eq!(read_u32(&result, siz_base + 6), 208);  // Xsiz = 208
+        assert_eq!(read_u32(&result, siz_base + 10), 256); // Ysiz = 256 (full height)
+        assert_eq!(read_u32(&result, siz_base + 22), 208); // XTsiz = 208
+        assert_eq!(read_u32(&result, siz_base + 26), 256); // YTsiz = 256
+
+        // Isot should be patched to 0
+        let sot_start = decode_header.len(); // SIZ was rewritten but same length
+        // Actually the header length changes because rewrite_siz_for_tile returns
+        // a new vec of the same length. Let's find the SOT in the output.
+        // The patched header has same length as original decode_header.
+        let hdr_len = decode_header.len();
+        assert_eq!(read_u16(&result, hdr_len + 4), 0); // Isot = 0
+
+        // Ends with EOC
+        assert_eq!(read_u16(&result, result.len() - 2), marker_codes::EOC);
     }
 
     // ---- Property-based tests ----

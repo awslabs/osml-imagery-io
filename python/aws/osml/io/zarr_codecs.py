@@ -87,12 +87,28 @@ class Jpeg2000Codec(_import_zarr_bytescodec()):
         """Synchronous decode — delegates to the Rust JPEG 2000 decoder."""
         from zarr.core.buffer.cpu import as_numpy_array_wrapper
 
-        return as_numpy_array_wrapper(
-            lambda buf: decode_jpeg2000(
+        expected_shape = chunk_spec.shape
+
+        def _decode_and_pad(buf):
+            arr = decode_jpeg2000(
                 bytes(buf),
                 main_header=self._main_header_bytes,
                 resolution_level=self.resolution_level,
-            ).tobytes(),
+            )
+            # Edge tiles may decode to smaller dimensions than the chunk shape.
+            # Pad to the expected chunk shape so zarr's reshape succeeds; zarr
+            # will trim the padding when the array boundary is reached.
+            if arr.shape != expected_shape:
+                import numpy as np
+
+                padded = np.zeros(expected_shape, dtype=arr.dtype)
+                slices = tuple(slice(0, s) for s in arr.shape)
+                padded[slices] = arr
+                return padded.tobytes()
+            return arr.tobytes()
+
+        return as_numpy_array_wrapper(
+            _decode_and_pad,
             chunk_bytes,
             chunk_spec.prototype,
         )
@@ -161,13 +177,39 @@ class Jpeg2000Codec(_import_zarr_bytescodec()):
     # -- numcodecs compatibility (consumer path) ---------------------------
 
     def decode(self, buf, out=None):
-        """Synchronous decode for numcodecs filter protocol."""
+        """Synchronous decode for numcodecs filter protocol.
+
+        For edge tiles, the decoded array may be smaller than the nominal tile
+        dimensions. Pad to the nominal tile size so zarr v2's reshape succeeds.
+        """
+        import struct
+
+        import numpy as np
+
         data = bytes(buf) if not isinstance(buf, bytes) else buf
-        return decode_jpeg2000(
+        arr = decode_jpeg2000(
             data,
             main_header=self._main_header_bytes,
             resolution_level=self.resolution_level,
         )
+
+        # If we have a main_header, compute the nominal tile size and pad if needed.
+        if self._main_header_bytes is not None and len(self._main_header_bytes) >= 40:
+            hdr = self._main_header_bytes
+            # SIZ fields start at offset 2 (after SOC marker)
+            xtsiz = struct.unpack(">I", hdr[24:28])[0]
+            ytsiz = struct.unpack(">I", hdr[28:32])[0]
+            scale = 1 << self.resolution_level
+            nominal_tw = -(-xtsiz // scale)  # ceil division
+            nominal_th = -(-ytsiz // scale)
+            bands = arr.shape[0]
+            nominal_shape = (bands, nominal_th, nominal_tw)
+            if arr.shape != nominal_shape:
+                padded = np.zeros(nominal_shape, dtype=arr.dtype)
+                slices = tuple(slice(0, s) for s in arr.shape)
+                padded[slices] = arr
+                return padded
+        return arr
 
     def encode(self, buf):
         """Encoding is not supported."""
