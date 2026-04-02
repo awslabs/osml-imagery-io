@@ -155,9 +155,9 @@ impl PyDatasetWriter {
     #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
     fn __exit__(
         &mut self,
-        _exc_type: Option<PyObject>,
-        _exc_val: Option<PyObject>,
-        _exc_tb: Option<PyObject>,
+        _exc_type: Option<Py<PyAny>>,
+        _exc_val: Option<Py<PyAny>>,
+        _exc_tb: Option<Py<PyAny>>,
     ) -> PyResult<bool> {
         self.close()?;
         Ok(false)

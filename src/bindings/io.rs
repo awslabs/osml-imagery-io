@@ -9,6 +9,7 @@ use std::path::Path;
 use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::IntoPyObjectExt;
 
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
 use crate::error::CodecError;
@@ -133,7 +134,7 @@ impl IO {
         paths: Vec<String>,
         mode: &str,
         format: Option<&str>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         // Validate that paths is not empty
         let uri = paths.first().ok_or_else(|| {
             PyValueError::new_err("paths list cannot be empty")
@@ -145,7 +146,7 @@ impl IO {
             "r" => {
                 // Create a reader based on the URI scheme and format
                 let reader = create_reader(&parsed, format)?;
-                Ok(reader.into_py(py))
+                Ok(reader.into_pyobject(py)?.into_any().unbind())
             }
             "w" => {
                 // Create a writer based on the URI scheme and format
@@ -153,7 +154,7 @@ impl IO {
                     PyValueError::new_err("Format must be specified when opening for writing")
                 })?;
                 let writer = create_writer(&parsed, format_str)?;
-                Ok(writer.into_py(py))
+                Ok(writer.into_pyobject(py)?.into_any().unbind())
             }
             _ => Err(PyValueError::new_err(format!(
                 "Invalid mode '{}'. Expected 'r' for reading or 'w' for writing.",

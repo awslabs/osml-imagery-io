@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use pyo3::IntoPyObjectExt;
 
 use crate::bindings::PyMetadataProvider;
 use crate::error::CodecError;
@@ -101,12 +102,12 @@ impl PyAssetProvider {
     ///
     ///     raw = asset.get_raw_asset()
     ///     data = raw.read()
-    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let bytes = self.inner.raw_asset()?;
-        let py_bytes = PyBytes::new_bound(py, &bytes);
+        let py_bytes = PyBytes::new(py, &bytes);
 
         // Import io.BytesIO and create instance
-        let io_module = py.import_bound("io")?;
+        let io_module = py.import("io")?;
         let bytes_io_class = io_module.getattr("BytesIO")?;
         let bytes_io = bytes_io_class.call1((py_bytes,))?;
 

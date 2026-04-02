@@ -6,6 +6,7 @@
 //! and decoder parameters, and return NumPy ndarrays.
 
 use pyo3::prelude::*;
+use pyo3::IntoPyObjectExt;
 
 use crate::jbp::image::decoder::swap_be_to_ne;
 use crate::jbp::image::interleave;
@@ -54,7 +55,7 @@ pub fn decode_jpeg2000(
     codestream: &[u8],
     main_header: Option<&[u8]>,
     resolution_level: u32,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     use crate::j2k::{get_j2k_codec, J2KDecodeParams};
 
     let codec = get_j2k_codec();
@@ -176,7 +177,7 @@ pub fn decode_jpeg(
     block_height: u32,
     imode: &str,
     color_space: &str,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let imode_enum = parse_imode(imode)?;
     let cs_enum = parse_jpeg_color_space(color_space)?;
 
@@ -274,7 +275,7 @@ pub fn decode_jbp_block(
     nbpp: u8,
     imode: &str,
     pvtype: &str,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let imode_enum = parse_imode(imode)?;
     let pv = parse_pvtype(pvtype)?;
     let pixel_type = validate_nbpp_pvtype(nbpp, pvtype, &pv)?;

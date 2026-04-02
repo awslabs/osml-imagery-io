@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 ///
 /// Assets are classified into one of four categories based on their content type.
 /// This enumeration follows STAC (SpatioTemporal Asset Catalog) patterns.
-#[pyclass(eq, eq_int, hash, frozen)]
+#[pyclass(eq, eq_int, hash, frozen, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum AssetType {
     /// Raster image data (e.g., satellite imagery, aerial photos)
@@ -26,7 +26,7 @@ pub enum AssetType {
 ///
 /// This enumeration represents the various numeric types that can be used
 /// to store pixel values in imagery data.
-#[pyclass(eq, eq_int, frozen)]
+#[pyclass(eq, eq_int, frozen, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PixelType {
     /// Unsigned 8-bit integer (0-255)

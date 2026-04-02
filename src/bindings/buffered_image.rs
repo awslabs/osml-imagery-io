@@ -7,6 +7,7 @@ use std::sync::Arc;
 use numpy::PyReadonlyArrayDyn;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use pyo3::IntoPyObjectExt;
 
 use crate::bindings::PyMetadataProvider;
 use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
@@ -21,7 +22,7 @@ use crate::types::{AssetType, PixelType};
 ///
 /// Note: Uses native byte order for internal representation. The NITF
 /// encoder handles conversion to big-endian at the file boundary.
-fn extract_array_bytes(py: Python<'_>, data: &PyObject) -> PyResult<Vec<u8>> {
+fn extract_array_bytes(py: Python<'_>, data: &Py<PyAny>) -> PyResult<Vec<u8>> {
     // Get the dtype string from the array
     let dtype_str: String = data
         .getattr(py, "dtype")?
@@ -42,7 +43,7 @@ fn extract_array_bytes(py: Python<'_>, data: &PyObject) -> PyResult<Vec<u8>> {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
             // Single byte - no endianness conversion needed
-            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+            Ok(slice.iter().flat_map(|&v: &i8| v.to_ne_bytes()).collect())
         }
         "uint16" => {
             let array: PyReadonlyArrayDyn<'_, u16> = data.extract(py)?;
@@ -50,42 +51,42 @@ fn extract_array_bytes(py: Python<'_>, data: &PyObject) -> PyResult<Vec<u8>> {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
             // Native byte order for internal representation
-            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+            Ok(slice.iter().flat_map(|&v: &u16| v.to_ne_bytes()).collect())
         }
         "int16" => {
             let array: PyReadonlyArrayDyn<'_, i16> = data.extract(py)?;
             let slice = array.as_slice().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
-            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+            Ok(slice.iter().flat_map(|&v: &i16| v.to_ne_bytes()).collect())
         }
         "uint32" => {
             let array: PyReadonlyArrayDyn<'_, u32> = data.extract(py)?;
             let slice = array.as_slice().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
-            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+            Ok(slice.iter().flat_map(|&v: &u32| v.to_ne_bytes()).collect())
         }
         "int32" => {
             let array: PyReadonlyArrayDyn<'_, i32> = data.extract(py)?;
             let slice = array.as_slice().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
-            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+            Ok(slice.iter().flat_map(|&v: &i32| v.to_ne_bytes()).collect())
         }
         "float32" => {
             let array: PyReadonlyArrayDyn<'_, f32> = data.extract(py)?;
             let slice = array.as_slice().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
-            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+            Ok(slice.iter().flat_map(|&v: &f32| v.to_ne_bytes()).collect())
         }
         "float64" => {
             let array: PyReadonlyArrayDyn<'_, f64> = data.extract(py)?;
             let slice = array.as_slice().map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!("Array must be contiguous: {}", e))
             })?;
-            Ok(slice.iter().flat_map(|&v| v.to_ne_bytes()).collect())
+            Ok(slice.iter().flat_map(|&v: &f64| v.to_ne_bytes()).collect())
         }
         _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "Unsupported array dtype '{}'. Supported: uint8, int8, uint16, int16, uint32, int32, float32, float64",
@@ -289,7 +290,7 @@ impl PyBufferedImageAssetProvider {
     ///     image_data = np.zeros((3, 512, 512), dtype=np.uint8)
     ///     image_data[0, :, :] = 255  # Red channel
     ///     provider.set_full_image(image_data)
-    fn set_full_image(&self, py: Python<'_>, data: PyObject) -> PyResult<()> {
+    fn set_full_image(&self, py: Python<'_>, data: Py<PyAny>) -> PyResult<()> {
         let bytes = extract_array_bytes(py, &data)?;
         self.inner.set_full_image(&bytes)?;
         Ok(())
@@ -323,7 +324,7 @@ impl PyBufferedImageAssetProvider {
     ///         for col in range(4):
     ///             block = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
     ///             provider.set_block(row, col, block)
-    fn set_block(&self, py: Python<'_>, block_row: u32, block_col: u32, data: PyObject) -> PyResult<()> {
+    fn set_block(&self, py: Python<'_>, block_row: u32, block_col: u32, data: Py<PyAny>) -> PyResult<()> {
         let bytes = extract_array_bytes(py, &data)?;
         self.inner.set_block(block_row, block_col, &bytes)?;
         Ok(())
@@ -368,11 +369,11 @@ impl PyBufferedImageAssetProvider {
     }
 
     /// Raw asset bytes as a ``BytesIO`` object.
-    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let bytes = self.inner.raw_asset()?;
-        let py_bytes = PyBytes::new_bound(py, &bytes);
+        let py_bytes = PyBytes::new(py, &bytes);
 
-        let io_module = py.import_bound("io")?;
+        let io_module = py.import("io")?;
         let bytes_io_class = io_module.getattr("BytesIO")?;
         let bytes_io = bytes_io_class.call1((py_bytes,))?;
 
@@ -523,7 +524,7 @@ impl PyBufferedImageAssetProvider {
         block_col: u32,
         resolution_level: u32,
         bands: Option<Vec<u32>>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let bands_slice = bands.as_deref();
         let (data, shape) = self
             .inner

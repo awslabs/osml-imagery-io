@@ -8,6 +8,7 @@ use std::sync::Arc;
 use numpy::PyArrayMethods;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
+use pyo3::IntoPyObjectExt;
 
 use crate::bindings::PyMetadataProvider;
 use crate::traits::ImageAssetProvider;
@@ -105,11 +106,11 @@ impl PyImageAssetProvider {
     }
 
     /// Raw asset bytes as a ``BytesIO`` object.
-    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let bytes = self.inner.raw_asset()?;
-        let py_bytes = PyBytes::new_bound(py, &bytes);
+        let py_bytes = PyBytes::new(py, &bytes);
 
-        let io_module = py.import_bound("io")?;
+        let io_module = py.import("io")?;
         let bytes_io_class = io_module.getattr("BytesIO")?;
         let bytes_io = bytes_io_class.call1((py_bytes,))?;
 
@@ -267,10 +268,10 @@ impl PyImageAssetProvider {
         block_col: u32,
         resolution_level: u32,
         bands: Option<Vec<u32>>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let bands_slice = bands.as_deref();
         let inner = Arc::clone(&self.inner);
-        let (data, shape) = py.allow_threads(|| {
+        let (data, shape) = py.detach(|| {
             inner.get_block(block_row, block_col, resolution_level, bands_slice)
         })?;
 
@@ -292,16 +293,16 @@ impl PyImageAssetProvider {
     ///
     /// :returns: Mapping of tile coordinates to byte range lists, or ``None``.
     /// :rtype: dict[tuple[int, int], list[tuple[int, int]]] | None
-    fn tile_byte_ranges<'py>(&self, py: Python<'py>) -> PyResult<Option<PyObject>> {
+    fn tile_byte_ranges<'py>(&self, py: Python<'py>) -> PyResult<Option<Py<PyAny>>> {
         match self.inner.tile_byte_ranges() {
             None => Ok(None),
             Some(ranges) => {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 for ((row, col), range_list) in ranges {
                     let py_list: Vec<(u64, u64)> = range_list;
-                    dict.set_item((row, col), py_list.into_py(py))?;
+                    dict.set_item((row, col), py_list.into_pyobject(py)?)?;
                 }
-                Ok(Some(dict.into_py(py)))
+                Ok(Some(dict.into_any().unbind()))
             }
         }
     }
@@ -318,15 +319,15 @@ impl PyImageAssetProvider {
     ///
     /// :returns: Codec parameters, or ``None``.
     /// :rtype: dict[str, bytes] | None
-    fn codec_configuration<'py>(&self, py: Python<'py>) -> PyResult<Option<PyObject>> {
+    fn codec_configuration<'py>(&self, py: Python<'py>) -> PyResult<Option<Py<PyAny>>> {
         match self.inner.codec_configuration() {
             None => Ok(None),
             Some(config) => {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 for (key, value) in config {
-                    dict.set_item(key, PyBytes::new_bound(py, &value))?;
+                    dict.set_item(key, PyBytes::new(py, &value))?;
                 }
-                Ok(Some(dict.into_py(py)))
+                Ok(Some(dict.into_any().unbind()))
             }
         }
     }
@@ -341,7 +342,7 @@ pub fn create_numpy_array(
     data: &[u8],
     shape: [u32; 3],
     pixel_type: PixelType,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     // Shape is [bands, rows, cols] (CHW format)
     let bands = shape[0] as usize;
     let rows = shape[1] as usize;
@@ -349,15 +350,15 @@ pub fn create_numpy_array(
 
     match pixel_type {
         PixelType::UInt8 => {
-            let array = numpy::PyArray1::<u8>::from_slice_bound(py, data);
+            let array = numpy::PyArray1::<u8>::from_slice(py, data);
             let reshaped = array.reshape([bands, rows, cols])?;
-            Ok(reshaped.into_py(py))
+            reshaped.into_pyobject(py).map(|a| a.into_any().unbind()).map_err(|e| e.into())
         }
         PixelType::Int8 => {
             let typed_data: Vec<i8> = data.iter().map(|&b| b as i8).collect();
-            let array = numpy::PyArray1::<i8>::from_slice_bound(py, &typed_data);
+            let array = numpy::PyArray1::<i8>::from_slice(py, &typed_data);
             let reshaped = array.reshape([bands, rows, cols])?;
-            Ok(reshaped.into_py(py))
+            reshaped.into_pyobject(py).map(|a| a.into_any().unbind()).map_err(|e| e.into())
         }
         PixelType::UInt16 => {
             // All decoders produce native-endian bytes internally
@@ -365,45 +366,45 @@ pub fn create_numpy_array(
                 .chunks_exact(2)
                 .map(|chunk| u16::from_ne_bytes([chunk[0], chunk[1]]))
                 .collect();
-            let array = numpy::PyArray1::<u16>::from_slice_bound(py, &typed_data);
+            let array = numpy::PyArray1::<u16>::from_slice(py, &typed_data);
             let reshaped = array.reshape([bands, rows, cols])?;
-            Ok(reshaped.into_py(py))
+            reshaped.into_pyobject(py).map(|a| a.into_any().unbind()).map_err(|e| e.into())
         }
         PixelType::Int16 => {
             let typed_data: Vec<i16> = data
                 .chunks_exact(2)
                 .map(|chunk| i16::from_ne_bytes([chunk[0], chunk[1]]))
                 .collect();
-            let array = numpy::PyArray1::<i16>::from_slice_bound(py, &typed_data);
+            let array = numpy::PyArray1::<i16>::from_slice(py, &typed_data);
             let reshaped = array.reshape([bands, rows, cols])?;
-            Ok(reshaped.into_py(py))
+            reshaped.into_pyobject(py).map(|a| a.into_any().unbind()).map_err(|e| e.into())
         }
         PixelType::UInt32 => {
             let typed_data: Vec<u32> = data
                 .chunks_exact(4)
                 .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect();
-            let array = numpy::PyArray1::<u32>::from_slice_bound(py, &typed_data);
+            let array = numpy::PyArray1::<u32>::from_slice(py, &typed_data);
             let reshaped = array.reshape([bands, rows, cols])?;
-            Ok(reshaped.into_py(py))
+            reshaped.into_pyobject(py).map(|a| a.into_any().unbind()).map_err(|e| e.into())
         }
         PixelType::Int32 => {
             let typed_data: Vec<i32> = data
                 .chunks_exact(4)
                 .map(|chunk| i32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect();
-            let array = numpy::PyArray1::<i32>::from_slice_bound(py, &typed_data);
+            let array = numpy::PyArray1::<i32>::from_slice(py, &typed_data);
             let reshaped = array.reshape([bands, rows, cols])?;
-            Ok(reshaped.into_py(py))
+            reshaped.into_pyobject(py).map(|a| a.into_any().unbind()).map_err(|e| e.into())
         }
         PixelType::Float32 => {
             let typed_data: Vec<f32> = data
                 .chunks_exact(4)
                 .map(|chunk| f32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
                 .collect();
-            let array = numpy::PyArray1::<f32>::from_slice_bound(py, &typed_data);
+            let array = numpy::PyArray1::<f32>::from_slice(py, &typed_data);
             let reshaped = array.reshape([bands, rows, cols])?;
-            Ok(reshaped.into_py(py))
+            reshaped.into_pyobject(py).map(|a| a.into_any().unbind()).map_err(|e| e.into())
         }
         PixelType::Float64 => {
             let typed_data: Vec<f64> = data
@@ -415,9 +416,9 @@ pub fn create_numpy_array(
                     ])
                 })
                 .collect();
-            let array = numpy::PyArray1::<f64>::from_slice_bound(py, &typed_data);
+            let array = numpy::PyArray1::<f64>::from_slice(py, &typed_data);
             let reshaped = array.reshape([bands, rows, cols])?;
-            Ok(reshaped.into_py(py))
+            reshaped.into_pyobject(py).map(|a| a.into_any().unbind()).map_err(|e| e.into())
         }
     }
 }

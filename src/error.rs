@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_invalid_resolution_level_range_to_pyerr() {
-        pyo3::prepare_freethreaded_python();
+        Python::initialize();
 
         let err = CodecError::InvalidResolutionLevelRange {
             requested: 10,
@@ -343,7 +343,7 @@ mod tests {
             max_valid: 5,
         };
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_err: PyErr = err.into();
             assert!(py_err.is_instance_of::<PyValueError>(py));
         });
@@ -351,14 +351,14 @@ mod tests {
 
     #[test]
     fn test_j2k_decode_to_pyerr() {
-        pyo3::prepare_freethreaded_python();
+        Python::initialize();
 
         let err = CodecError::J2KDecode {
             message: "Test error".to_string(),
             byte_offset: 100,
         };
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_err: PyErr = err.into();
             assert!(py_err.is_instance_of::<PyIOError>(py));
         });
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_j2k_encode_to_pyerr() {
-        pyo3::prepare_freethreaded_python();
+        Python::initialize();
 
         let err = CodecError::J2KEncode {
             reason: "Test error".to_string(),
@@ -377,7 +377,7 @@ mod tests {
             lossless: false,
         };
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_err: PyErr = err.into();
             assert!(py_err.is_instance_of::<PyIOError>(py));
         });

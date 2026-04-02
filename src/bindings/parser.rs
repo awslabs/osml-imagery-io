@@ -218,10 +218,10 @@ impl PyValue {
     /// :rtype: bytes
     fn as_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         match &self.inner {
-            OwnedValue::String(s) => Ok(PyBytes::new_bound(py, s.as_bytes())),
-            OwnedValue::Bytes(bytes) => Ok(PyBytes::new_bound(py, bytes)),
-            OwnedValue::Unsigned(n) => Ok(PyBytes::new_bound(py, &n.to_be_bytes())),
-            OwnedValue::Struct { data, .. } => Ok(PyBytes::new_bound(py, data)),
+            OwnedValue::String(s) => Ok(PyBytes::new(py, s.as_bytes())),
+            OwnedValue::Bytes(bytes) => Ok(PyBytes::new(py, bytes)),
+            OwnedValue::Unsigned(n) => Ok(PyBytes::new(py, &n.to_be_bytes())),
+            OwnedValue::Struct { data, .. } => Ok(PyBytes::new(py, data)),
             OwnedValue::Array(_) => Err(PyTypeError::new_err("Cannot get bytes from array")),
         }
     }
@@ -490,7 +490,7 @@ impl PyStructureAccessor {
         } else {
             // Try slicing with [:] (works with mmap and other buffer-like objects)
             let py = data.py();
-            let slice = pyo3::types::PySlice::full_bound(py);
+            let slice = pyo3::types::PySlice::full(py);
             let sliced = data.get_item(&slice)?;
             sliced.extract::<Vec<u8>>()?
         };
@@ -560,13 +560,13 @@ impl PyStructureAccessor {
     fn raw_view<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyBytes>> {
         let accessor = self.get_accessor()?;
         let slice = accessor.raw_slice(path)?;
-        Ok(PyBytes::new_bound(py, slice))
+        Ok(PyBytes::new(py, slice))
     }
 
     /// The underlying binary data buffer.
     #[getter]
     fn data<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new_bound(py, &self.data)
+        PyBytes::new(py, &self.data)
     }
 
     /// The :class:`StructureDefinition` used by this accessor.
@@ -705,7 +705,7 @@ impl PyStructureWriter {
             .take()
             .ok_or_else(|| PyRuntimeError::new_err("Writer has been finalized"))?;
         let bytes = writer.finish()?;
-        Ok(PyBytes::new_bound(py, &bytes))
+        Ok(PyBytes::new(py, &bytes))
     }
 
     /// Return the current buffer contents without validation.
@@ -716,7 +716,7 @@ impl PyStructureWriter {
     /// :rtype: bytes
     fn buffer<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let writer = self.get_inner()?;
-        Ok(PyBytes::new_bound(py, writer.buffer()))
+        Ok(PyBytes::new(py, writer.buffer()))
     }
 
     fn __repr__(&self) -> String {

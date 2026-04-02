@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use pyo3::IntoPyObjectExt;
 
 use crate::bindings::PyMetadataProvider;
 use crate::traits::DataAssetProvider;
@@ -96,11 +97,11 @@ impl PyDataAssetProvider {
     }
 
     /// The raw asset bytes as a ``BytesIO`` object.
-    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let bytes = self.inner.raw_asset()?;
-        let py_bytes = PyBytes::new_bound(py, &bytes);
+        let py_bytes = PyBytes::new(py, &bytes);
 
-        let io_module = py.import_bound("io")?;
+        let io_module = py.import("io")?;
         let bytes_io_class = io_module.getattr("BytesIO")?;
         let bytes_io = bytes_io_class.call1((py_bytes,))?;
 
@@ -138,11 +139,11 @@ impl PyDataAssetProvider {
     ///         print(f"XML root tag: {root.tag}")
     ///         for child in root:
     ///             print(f"  {child.tag}")
-    fn parse_as_xml(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn parse_as_xml(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let xml_string = self.inner.parse_as_xml()?;
         
         // Import xml.etree.ElementTree and parse the XML string
-        let et_module = py.import_bound("xml.etree.ElementTree")?;
+        let et_module = py.import("xml.etree.ElementTree")?;
         let fromstring = et_module.getattr("fromstring")?;
         let element = fromstring.call1((xml_string,))?;
         
@@ -165,38 +166,38 @@ impl PyDataAssetProvider {
     ///     if data.mime_type == "application/json":
     ///         obj = data.parse_as_json()
     ///         print(f"Keys: {list(obj.keys())}")
-    fn parse_as_json(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn parse_as_json(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let json_value = self.inner.parse_as_json()?;
         serde_json_value_to_pyobject(py, &json_value)
     }
 }
 
-/// Converts a serde_json::Value to a PyObject.
-fn serde_json_value_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+/// Converts a serde_json::Value to a Py<PyAny>.
+fn serde_json_value_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<PyAny>> {
     match value {
         serde_json::Value::Null => Ok(py.None()),
-        serde_json::Value::Bool(b) => Ok(b.into_py(py)),
+        serde_json::Value::Bool(b) => Ok((*b).into_pyobject(py)?.to_owned().into_any().unbind()),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Ok(i.into_py(py))
+                Ok(i.into_pyobject(py)?.into_any().unbind())
             } else if let Some(u) = n.as_u64() {
-                Ok(u.into_py(py))
+                Ok(u.into_pyobject(py)?.into_any().unbind())
             } else if let Some(f) = n.as_f64() {
-                Ok(f.into_py(py))
+                Ok(f.into_pyobject(py)?.into_any().unbind())
             } else {
                 Ok(py.None())
             }
         }
-        serde_json::Value::String(s) => Ok(s.into_py(py)),
+        serde_json::Value::String(s) => Ok(s.into_pyobject(py)?.into_any().unbind()),
         serde_json::Value::Array(arr) => {
-            let py_list = pyo3::types::PyList::empty_bound(py);
+            let py_list = pyo3::types::PyList::empty(py);
             for item in arr {
                 py_list.append(serde_json_value_to_pyobject(py, item)?)?;
             }
             Ok(py_list.into())
         }
         serde_json::Value::Object(obj) => {
-            let py_dict = pyo3::types::PyDict::new_bound(py);
+            let py_dict = pyo3::types::PyDict::new(py);
             for (k, v) in obj {
                 py_dict.set_item(k, serde_json_value_to_pyobject(py, v)?)?;
             }

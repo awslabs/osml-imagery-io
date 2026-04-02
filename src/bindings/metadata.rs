@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::IntoPyObjectExt;
 
 use crate::traits::MetadataProvider;
 
@@ -55,12 +56,12 @@ impl PyMetadataProvider {
 impl PyMetadataProvider {
     /// The underlying metadata in its original binary format, as a ``BytesIO`` object.
     #[getter]
-    fn raw<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn raw<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let bytes = self.inner.raw();
-        let py_bytes = PyBytes::new_bound(py, bytes);
+        let py_bytes = PyBytes::new(py, bytes);
 
         // Import io.BytesIO and create instance
-        let io_module = py.import_bound("io")?;
+        let io_module = py.import("io")?;
         let bytes_io_class = io_module.getattr("BytesIO")?;
         let bytes_io = bytes_io_class.call1((py_bytes,))?;
 
@@ -83,9 +84,9 @@ impl PyMetadataProvider {
     ///     all_meta = provider.as_dict()
     ///     security = provider.as_dict("FS")
     #[pyo3(signature = (name=None))]
-    fn as_dict<'py>(&self, py: Python<'py>, name: Option<&str>) -> PyResult<PyObject> {
+    fn as_dict<'py>(&self, py: Python<'py>, name: Option<&str>) -> PyResult<Py<PyAny>> {
         let metadata = self.inner.as_dict(name);
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
 
         for (key, value) in metadata {
             let py_value = json_value_to_py(py, &value)?;
@@ -97,32 +98,32 @@ impl PyMetadataProvider {
 }
 
 /// Converts a serde_json::Value to a Python object.
-fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<PyAny>> {
     match value {
         serde_json::Value::Null => Ok(py.None()),
-        serde_json::Value::Bool(b) => Ok(b.to_object(py)),
+        serde_json::Value::Bool(b) => Ok((*b).into_pyobject(py)?.to_owned().into_any().unbind()),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Ok(i.to_object(py))
+                Ok(i.into_pyobject(py)?.into_any().unbind())
             } else if let Some(u) = n.as_u64() {
-                Ok(u.to_object(py))
+                Ok(u.into_pyobject(py)?.into_any().unbind())
             } else if let Some(f) = n.as_f64() {
-                Ok(f.to_object(py))
+                Ok(f.into_pyobject(py)?.into_any().unbind())
             } else {
                 // Fallback: convert to string
-                Ok(n.to_string().to_object(py))
+                Ok(n.to_string().into_pyobject(py)?.into_any().unbind())
             }
         }
-        serde_json::Value::String(s) => Ok(s.to_object(py)),
+        serde_json::Value::String(s) => Ok(s.into_pyobject(py)?.into_any().unbind()),
         serde_json::Value::Array(arr) => {
-            let py_list = PyList::empty_bound(py);
+            let py_list = PyList::empty(py);
             for item in arr {
                 py_list.append(json_value_to_py(py, item)?)?;
             }
             Ok(py_list.into())
         }
         serde_json::Value::Object(obj) => {
-            let py_dict = PyDict::new_bound(py);
+            let py_dict = PyDict::new(py);
             for (k, v) in obj {
                 py_dict.set_item(k, json_value_to_py(py, v)?)?;
             }

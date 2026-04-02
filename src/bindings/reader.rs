@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use pyo3::prelude::*;
+use pyo3::IntoPyObjectExt;
 
 use crate::bindings::{
     PyAssetProvider, PyDataAssetProvider, PyGraphicsAssetProvider, PyImageAssetProvider,
@@ -96,7 +97,7 @@ impl PyDatasetReader {
     /// Example::
     ///
     ///     image = dataset.get_asset("image_segment_0")
-    fn get_asset(&self, py: Python<'_>, key: &str) -> PyResult<PyObject> {
+    fn get_asset(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
         let inner = self.get_inner()?;
         let asset = inner.get_asset(key)?;
 
@@ -105,30 +106,30 @@ impl PyDatasetReader {
             AssetType::Image => {
                 // Try to downcast to ImageAssetProvider
                 if let Some(image_provider) = try_as_image_provider(&asset) {
-                    Ok(PyImageAssetProvider::new(image_provider).into_py(py))
+                    Ok(PyImageAssetProvider::new(image_provider).into_pyobject(py)?.into_any().unbind())
                 } else {
-                    Ok(PyAssetProvider::new(asset).into_py(py))
+                    Ok(PyAssetProvider::new(asset).into_pyobject(py)?.into_any().unbind())
                 }
             }
             AssetType::Text => {
                 if let Some(text_provider) = try_as_text_provider(&asset) {
-                    Ok(PyTextAssetProvider::new(text_provider).into_py(py))
+                    Ok(PyTextAssetProvider::new(text_provider).into_pyobject(py)?.into_any().unbind())
                 } else {
-                    Ok(PyAssetProvider::new(asset).into_py(py))
+                    Ok(PyAssetProvider::new(asset).into_pyobject(py)?.into_any().unbind())
                 }
             }
             AssetType::Data => {
                 if let Some(data_provider) = try_as_data_provider(&asset) {
-                    Ok(PyDataAssetProvider::new(data_provider).into_py(py))
+                    Ok(PyDataAssetProvider::new(data_provider).into_pyobject(py)?.into_any().unbind())
                 } else {
-                    Ok(PyAssetProvider::new(asset).into_py(py))
+                    Ok(PyAssetProvider::new(asset).into_pyobject(py)?.into_any().unbind())
                 }
             }
             AssetType::Graphics => {
                 if let Some(graphics_provider) = try_as_graphics_provider(&asset) {
-                    Ok(PyGraphicsAssetProvider::new(graphics_provider).into_py(py))
+                    Ok(PyGraphicsAssetProvider::new(graphics_provider).into_pyobject(py)?.into_any().unbind())
                 } else {
-                    Ok(PyAssetProvider::new(asset).into_py(py))
+                    Ok(PyAssetProvider::new(asset).into_pyobject(py)?.into_any().unbind())
                 }
             }
         }
@@ -199,9 +200,9 @@ impl PyDatasetReader {
     #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
     fn __exit__(
         &mut self,
-        _exc_type: Option<PyObject>,
-        _exc_val: Option<PyObject>,
-        _exc_tb: Option<PyObject>,
+        _exc_type: Option<Py<PyAny>>,
+        _exc_val: Option<Py<PyAny>>,
+        _exc_tb: Option<Py<PyAny>>,
     ) -> PyResult<bool> {
         self.close()?;
         Ok(false)
