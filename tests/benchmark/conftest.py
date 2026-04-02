@@ -4,6 +4,7 @@ This module provides:
 - Config loading from data/benchmark/benchmark_datasets.yaml
 - Path resolution with OSML_IO_BENCHMARK_DATA env var override
 - dataset_entry parametrized fixture yielding {"path": Path, "label": str} dicts
+- zarr_read_params parametrized fixture for Zarr read benchmarks (local + S3)
 - pytest-benchmark defaults: warmup_rounds=0, min_rounds=5
 
 Benchmark results represent cold-start timing. Each timed iteration opens the
@@ -18,8 +19,9 @@ Usage:
 
 import logging
 import os
+import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 import yaml
@@ -33,6 +35,7 @@ logger = logging.getLogger(__name__)
 _CONFIG_RELATIVE_PATH = Path("data/benchmark/benchmark_datasets.yaml")
 _DEFAULT_BASE_DIR = Path("data/benchmark")
 _ENV_VAR = "OSML_IO_BENCHMARK_DATA"
+_S3_BUCKET_ENV = "OSML_IO_BENCHMARK_S3_BUCKET"
 
 # ---------------------------------------------------------------------------
 # Config loading helpers (module-level, importable for testing)
@@ -153,43 +156,275 @@ def dataset_entry(request) -> Dict[str, Any]:
 # Block read parametrisation
 # ---------------------------------------------------------------------------
 
-def compute_block_positions(grid_rows: int, grid_cols: int) -> List[Dict[str, Any]]:
-    """Compute the five spatial block positions, deduplicating for small grids.
+def compute_access_patterns(
+    grid_rows: int,
+    grid_cols: int,
+    tile_h: int,
+    tile_w: int,
+    total_rows: int,
+    total_cols: int,
+) -> List[Dict[str, Any]]:
+    """Compute access patterns from grid dimensions.
 
     Parameters
     ----------
     grid_rows:
-        Number of block rows in the grid.
+        Number of tile rows in the grid.
     grid_cols:
-        Number of block columns in the grid.
+        Number of tile columns in the grid.
+    tile_h:
+        Height of each tile in pixels.
+    tile_w:
+        Width of each tile in pixels.
+    total_rows:
+        Total image height in pixels.
+    total_cols:
+        Total image width in pixels.
 
     Returns
     -------
-    List of ``{"name": str, "row": int, "col": int}`` dicts with unique positions.
+    List of dicts with ``"name"`` and ``"regions"`` keys. Each region is a
+    ``(row_start, row_end, col_start, col_end)`` tuple satisfying
+    ``0 <= start < end <= total``.
     """
-    positions = [
-        ("UL", 0, 0),
-        ("UR", 0, grid_cols - 1),
-        ("LR", grid_rows - 1, grid_cols - 1),
-        ("LL", grid_rows - 1, 0),
-        ("C", grid_rows // 2, grid_cols // 2),
-    ]
+    patterns: List[Dict[str, Any]] = []
 
-    seen: set = set()
-    result: List[Dict[str, Any]] = []
-    for name, row, col in positions:
-        key = (row, col)
-        if key not in seen:
-            seen.add(key)
-            result.append({"name": name, "row": row, "col": col})
-    return result
+    # Single tile — center of grid
+    cr, cc = grid_rows // 2, grid_cols // 2
+    patterns.append({
+        "name": "single_tile",
+        "regions": [(cr * tile_h, min((cr + 1) * tile_h, total_rows),
+                     cc * tile_w, min((cc + 1) * tile_w, total_cols))],
+    })
+
+    # Small ROI — 3×3 block around center (capped at grid)
+    r0 = max(0, cr - 1)
+    r1 = min(grid_rows, cr + 2)
+    c0 = max(0, cc - 1)
+    c1 = min(grid_cols, cc + 2)
+    patterns.append({
+        "name": "small_roi",
+        "regions": [(r0 * tile_h, min(r1 * tile_h, total_rows),
+                     c0 * tile_w, min(c1 * tile_w, total_cols))],
+    })
+
+    # Large ROI — 10×10 block (only if grid is large enough)
+    if grid_rows >= 10 and grid_cols >= 10:
+        r0 = max(0, cr - 5)
+        r1 = min(grid_rows, cr + 5)
+        c0 = max(0, cc - 5)
+        c1 = min(grid_cols, cc + 5)
+        patterns.append({
+            "name": "large_roi",
+            "regions": [(r0 * tile_h, min(r1 * tile_h, total_rows),
+                         c0 * tile_w, min(c1 * tile_w, total_cols))],
+        })
+
+    return patterns
 
 
-def _discover_block_params():
-    """Build (dataset_entry, position) pairs for all datasets.
+# ---------------------------------------------------------------------------
+# Tile index generation helper and cache
+# ---------------------------------------------------------------------------
 
-    Opens each dataset once at import time to read the block grid size,
-    then computes the five spatial positions (deduplicating for small grids).
+
+def _generate_tile_index(dataset_path: Path, cache: dict, tmp_dir: Path,
+                         source_url: str | None = None) -> Path:
+    """Generate tile index for a dataset, caching the result.
+
+    Uses ``OversightMLParser`` + ``write_tile_index()`` to produce a Kerchunk
+    JSON tile index. Results are cached by (dataset_path, source_url) so
+    repeated calls return the previously generated index.
+
+    Parameters
+    ----------
+    dataset_path:
+        Absolute path to the local imagery file (used for parsing).
+    cache:
+        Dict mapping cache key → ``Path`` of generated index.
+    tmp_dir:
+        Directory where generated index files are written.
+    source_url:
+        URL to embed in the tile index references. When ``None``, uses a
+        ``file://`` URI for the local path. Set to an ``s3://`` URI to
+        produce an index that reads from S3.
+
+    Returns
+    -------
+    Path to the generated tile index JSON file.
+    """
+    url = source_url or str(dataset_path)
+    key = f"{dataset_path}|{url}"
+    if key not in cache:
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
+
+        parser = OversightMLParser(local_path=str(dataset_path))
+        store = parser(url=url)
+        suffix = "_s3" if source_url else ""
+        index_path = tmp_dir / f"{dataset_path.stem}{suffix}.tile_index.json"
+        write_tile_index(store, str(index_path), segments=["image_segment_0"])
+        cache[key] = index_path
+    return cache[key]
+
+
+@pytest.fixture(scope="session")
+def tile_index_cache(tmp_path_factory):
+    """Session-scoped cache for generated tile indices."""
+    return {}
+
+
+# ---------------------------------------------------------------------------
+# S3 benchmark support
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def s3_benchmark_bucket():
+    """Return the S3 bucket URL for benchmarks, or skip if not configured."""
+    bucket = os.environ.get(_S3_BUCKET_ENV)
+    if not bucket:
+        pytest.skip(f"S3 benchmarks require {_S3_BUCKET_ENV} environment variable")
+    return bucket
+
+
+# ---------------------------------------------------------------------------
+# Zarr read parametrisation (local + S3)
+# ---------------------------------------------------------------------------
+
+# Temporary directory for tile indices generated at module load time.
+# We use tempfile.mkdtemp() because pytest fixtures are not available during
+# module-level parametrization.
+_zarr_tmp_dir = Path(tempfile.mkdtemp(prefix="zarr_bench_"))
+_zarr_index_cache: Dict[str, Path] = {}
+
+
+def _discover_zarr_read_params() -> Tuple[
+    List[Tuple[Dict[str, Any], Dict[str, Any], str, Optional[Dict[str, Any]], str]],
+    List[str],
+]:
+    """Build (dataset_entry, access_pattern, index_path, remote_options, backend) tuples.
+
+    Iterates ``_resolved_datasets``, generates a tile index for each, computes
+    access patterns from grid dimensions, and produces parametrization entries
+    for local (always) and S3 (when ``OSML_IO_BENCHMARK_S3_BUCKET`` is set).
+
+    Returns ``(params_list, ids_list)`` or ``([], [])`` when dependencies are
+    missing or no datasets are available.
+    """
+    # Dependency check — if zarr or fsspec are not importable, return empty
+    # so the fixture is defined with no params (test files use importorskip).
+    try:
+        __import__("zarr")
+        __import__("fsspec")
+    except ImportError:
+        return [], []
+
+    s3_bucket = os.environ.get(_S3_BUCKET_ENV)
+
+    params: List[Tuple[Dict[str, Any], Dict[str, Any], str, Optional[Dict[str, Any]], str]] = []
+    ids: List[str] = []
+
+    for entry in _resolved_datasets:
+        dataset_path = entry["path"]
+        label = entry["label"]
+        try:
+            # Generate tile index
+            index_path = _generate_tile_index(dataset_path, _zarr_index_cache, _zarr_tmp_dir)
+
+            # Open dataset to get grid dimensions for access patterns
+            from aws.osml.io import IO, AssetType
+
+            reader = IO.open([str(dataset_path)], "r")
+            image_keys = reader.get_asset_keys(asset_type=AssetType.Image)
+            if not image_keys:
+                reader.close()
+                continue
+            asset = reader.get_asset(image_keys[0])
+            grid_rows, grid_cols = asset.block_grid_size
+            tile_h = asset.num_pixels_per_block_vertical
+            tile_w = asset.num_pixels_per_block_horizontal
+            total_rows = asset.num_rows
+            total_cols = asset.num_columns
+            reader.close()
+
+            # Compute access patterns for this dataset
+            patterns = compute_access_patterns(
+                grid_rows, grid_cols, tile_h, tile_w, total_rows, total_cols,
+            )
+
+            for pattern in patterns:
+                pattern_name = pattern["name"]
+
+                # Always add a local entry
+                params.append((entry, pattern, str(index_path), None, "local"))
+                ids.append(f"{label}-{pattern_name}-local")
+
+                # Add S3 entry when bucket is configured
+                if s3_bucket:
+                    # Build S3 URI for the imagery file by mapping the local
+                    # path relative to the benchmark data directory.
+                    try:
+                        rel = dataset_path.relative_to(_base_dir)
+                    except ValueError:
+                        rel = Path(dataset_path.name)
+                    s3_data_uri = f"{s3_bucket.rstrip('/')}/{rel}"
+
+                    # Generate a separate tile index whose references point
+                    # at the S3 URI instead of the local file.
+                    s3_index_path = _generate_tile_index(
+                        dataset_path, _zarr_index_cache, _zarr_tmp_dir,
+                        source_url=s3_data_uri,
+                    )
+                    remote_options: Dict[str, Any] = {
+                        "remote_protocol": "s3",
+                        "remote_options": {"anon": False, "asynchronous": True},
+                    }
+                    params.append((entry, pattern, str(s3_index_path), remote_options, "s3"))
+                    ids.append(f"{label}-{pattern_name}-s3")
+
+        except Exception:
+            logger.warning("Failed to prepare Zarr read params for %s, skipping.", label, exc_info=True)
+            continue
+
+    return params, ids
+
+
+_zarr_read_params, _zarr_read_ids = (
+    _discover_zarr_read_params() if _resolved_datasets else ([], [])
+)
+
+
+@pytest.fixture(params=_zarr_read_params, ids=_zarr_read_ids)
+def zarr_read_params(request):
+    """Yield ``(dataset_entry, access_pattern, index_path, remote_options, backend)``.
+
+    Local entries are always included. S3 entries are included only when
+    ``OSML_IO_BENCHMARK_S3_BUCKET`` is set.
+    """
+    return request.param
+
+
+# ---------------------------------------------------------------------------
+# Native read parametrisation (access-pattern based)
+# ---------------------------------------------------------------------------
+
+def _compute_block_coords_for_region(
+    row_start: int, row_end: int, col_start: int, col_end: int,
+    tile_h: int, tile_w: int,
+) -> List[Tuple[int, int]]:
+    """Convert a pixel region to a list of (block_row, block_col) coordinates."""
+    br_start = row_start // tile_h
+    br_end = (row_end - 1) // tile_h + 1
+    bc_start = col_start // tile_w
+    bc_end = (col_end - 1) // tile_w + 1
+    return [(r, c) for r in range(br_start, br_end) for c in range(bc_start, bc_end)]
+
+
+def _discover_native_read_params():
+    """Build (dataset_entry, access_pattern, block_coords) tuples.
+
+    Uses the same access patterns as the Zarr read benchmarks so results
+    are directly comparable.
     """
     params = []
     ids = []
@@ -206,23 +441,41 @@ def _discover_block_params():
                 continue
             asset = reader.get_asset(image_keys[0])
             grid_rows, grid_cols = asset.block_grid_size
+            tile_h = asset.num_pixels_per_block_vertical
+            tile_w = asset.num_pixels_per_block_horizontal
+            total_rows = asset.num_rows
+            total_cols = asset.num_columns
             reader.close()
         except Exception:
             continue
 
-        for pos in compute_block_positions(grid_rows, grid_cols):
-            params.append((entry, pos))
-            ids.append(f"{label}-{pos['name']}")
+        patterns = compute_access_patterns(
+            grid_rows, grid_cols, tile_h, tile_w, total_rows, total_cols,
+        )
+        for pattern in patterns:
+            block_coords = []
+            for rs, re, cs, ce in pattern["regions"]:
+                block_coords.extend(
+                    _compute_block_coords_for_region(rs, re, cs, ce, tile_h, tile_w)
+                )
+            params.append((entry, pattern, block_coords))
+            ids.append(f"{label}-{pattern['name']}")
 
     return params, ids
 
 
-_block_params, _block_ids = _discover_block_params() if _resolved_datasets else ([], [])
+_native_read_params, _native_read_ids = (
+    _discover_native_read_params() if _resolved_datasets else ([], [])
+)
 
 
-@pytest.fixture(params=_block_params, ids=_block_ids)
-def block_read_params(request):
-    """Yield ``(dataset_entry, position)`` for each dataset × block position combination."""
+@pytest.fixture(params=_native_read_params, ids=_native_read_ids)
+def native_read_params(request):
+    """Yield ``(dataset_entry, access_pattern, block_coords)`` for native IO benchmarks.
+
+    Uses the same access patterns as ``zarr_read_params`` so results are
+    directly comparable.
+    """
     return request.param
 
 
@@ -232,7 +485,7 @@ def block_read_params(request):
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip all benchmark tests when no datasets are configured."""
+    """Skip benchmark tests that require datasets when none are configured."""
     if _resolved_datasets:
         return
 
@@ -241,7 +494,9 @@ def pytest_collection_modifyitems(config, items):
         "Add entries to data/benchmark/benchmark_datasets.yaml or set OSML_IO_BENCHMARK_DATA."
     )
     for item in items:
-        if "benchmark" in item.keywords:
+        # Only skip tests explicitly marked @pytest.mark.benchmark, not all
+        # tests that happen to live under the tests/benchmark/ directory.
+        if item.get_closest_marker("benchmark") is not None:
             item.add_marker(skip_marker)
 
 

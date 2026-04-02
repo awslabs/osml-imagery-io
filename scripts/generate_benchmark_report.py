@@ -128,6 +128,63 @@ def _extract_operation(name: str) -> str:
     return name
 
 
+_ACCESS_PATTERNS = frozenset({"single_tile", "small_roi", "large_roi"})
+
+
+def _extract_access_pattern(name: str) -> str | None:
+    """Extract access pattern from benchmark name if present.
+
+    Handles two ID formats:
+    - Zarr: ``test_bench_zarr_read[WV Pan J2K-single_tile-local]``
+    - Native: ``test_bench_native_read[WV Pan J2K-single_tile]``
+
+    Returns:
+        A human-readable access pattern string (e.g. ``"single tile"``),
+        or ``None`` for benchmarks that don't carry an access pattern.
+    """
+    label = _extract_dataset_label(name)
+    if "-" not in label:
+        return None
+
+    # Try 3-segment format first: label-pattern-backend
+    rest, last = label.rsplit("-", 1)
+    if last in ("local", "s3") and "-" in rest:
+        _dataset, pattern = rest.rsplit("-", 1)
+        if pattern in _ACCESS_PATTERNS:
+            return pattern.replace("_", " ")
+
+    # Try 2-segment format: label-pattern (no backend suffix)
+    _dataset, pattern = label.rsplit("-", 1)
+    if pattern in _ACCESS_PATTERNS:
+        return pattern.replace("_", " ")
+
+    return None
+
+
+def _strip_access_suffixes(label: str) -> str:
+    """Strip access pattern and optional backend suffix from a dataset label.
+
+    ``"WV Pan J2K-single_tile-local"`` → ``"WV Pan J2K"``
+    ``"WV Pan J2K-single_tile"`` → ``"WV Pan J2K"``
+    """
+    if "-" not in label:
+        return label
+
+    # Try 3-segment: strip backend then pattern
+    rest, last = label.rsplit("-", 1)
+    if last in ("local", "s3") and "-" in rest:
+        maybe_dataset, pattern = rest.rsplit("-", 1)
+        if pattern in _ACCESS_PATTERNS:
+            return maybe_dataset
+
+    # Try 2-segment: strip pattern only
+    maybe_dataset, pattern = label.rsplit("-", 1)
+    if pattern in _ACCESS_PATTERNS:
+        return maybe_dataset
+
+    return label
+
+
 def group_benchmarks(benchmarks: list[dict]) -> dict[str, list[dict]]:
     """Group benchmark entries by their ``group`` field.
 
@@ -140,31 +197,125 @@ def group_benchmarks(benchmarks: list[dict]) -> dict[str, list[dict]]:
     return groups
 
 
-def generate_table(entries: list[dict]) -> str:
+def generate_table(entries: list[dict], group_name: str = "") -> str:
     """Generate a MyST-compatible Markdown table for a list of benchmark entries.
 
-    Columns: Operation | Dataset | Min | Max | Mean | Median | StdDev | Rounds
+    When *group_name* contains ``tile_read``, an extra **Access Pattern** column
+    is inserted between Dataset and Min.  For all other groups the original
+    eight-column format is preserved unchanged.
     """
-    header = "| Operation | Dataset | Min | Max | Mean | Median | StdDev | Rounds |"
-    separator = "| --- | --- | --- | --- | --- | --- | --- | --- |"
+    is_tile_read = "tile_read" in group_name
+
+    if is_tile_read:
+        header = "| Operation | Dataset | Access Pattern | Min | Max | Mean | Median | StdDev | Rounds |"
+        separator = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+    else:
+        header = "| Operation | Dataset | Min | Max | Mean | Median | StdDev | Rounds |"
+        separator = "| --- | --- | --- | --- | --- | --- | --- | --- |"
+
     rows = [header, separator]
 
-    for entry in entries:
+    sorted_entries = sorted(entries, key=lambda e: e.get("stats", {}).get("mean", 0))
+
+    for entry in sorted_entries:
         name = entry.get("name", "")
         stats = entry.get("stats", {})
         operation = _extract_operation(name)
-        dataset = _extract_dataset_label(name)
-        row = (
-            f"| {operation} "
-            f"| {dataset} "
-            f"| {format_time(stats.get('min', 0))} "
-            f"| {format_time(stats.get('max', 0))} "
-            f"| {format_time(stats.get('mean', 0))} "
-            f"| {format_time(stats.get('median', 0))} "
-            f"| {format_time(stats.get('stddev', 0))} "
-            f"| {stats.get('rounds', 0)} |"
-        )
+        label = _extract_dataset_label(name)
+
+        if is_tile_read:
+            access_pattern = _extract_access_pattern(name) or ""
+            # Strip access-pattern and backend suffixes from the label so only
+            # the dataset name is shown (e.g. "WV Pan J2K" instead of
+            # "WV Pan J2K-single_tile-local").
+            dataset = _strip_access_suffixes(label)
+            row = (
+                f"| {operation} "
+                f"| {dataset} "
+                f"| {access_pattern} "
+                f"| {format_time(stats.get('min', 0))} "
+                f"| {format_time(stats.get('max', 0))} "
+                f"| {format_time(stats.get('mean', 0))} "
+                f"| {format_time(stats.get('median', 0))} "
+                f"| {format_time(stats.get('stddev', 0))} "
+                f"| {stats.get('rounds', 0)} |"
+            )
+        else:
+            row = (
+                f"| {operation} "
+                f"| {label} "
+                f"| {format_time(stats.get('min', 0))} "
+                f"| {format_time(stats.get('max', 0))} "
+                f"| {format_time(stats.get('mean', 0))} "
+                f"| {format_time(stats.get('median', 0))} "
+                f"| {format_time(stats.get('stddev', 0))} "
+                f"| {stats.get('rounds', 0)} |"
+            )
         rows.append(row)
+
+    return "\n".join(rows) + "\n\nAll times in milliseconds (ms)."
+
+
+# ---------------------------------------------------------------------------
+# Comparison summary
+# ---------------------------------------------------------------------------
+
+_READ_GROUPS = ("tile_read_native", "tile_read_zarr_local", "tile_read_zarr_s3")
+_GROUP_LABELS = {
+    "tile_read_native": "Native",
+    "tile_read_zarr_local": "Zarr Local",
+    "tile_read_zarr_s3": "Zarr S3",
+}
+
+
+def _comparison_key(entry: dict) -> tuple[str, str]:
+    """Return (dataset, access_pattern) for a tile-read benchmark entry."""
+    name = entry.get("name", "")
+    dataset = _strip_access_suffixes(_extract_dataset_label(name))
+    pattern = _extract_access_pattern(name) or ""
+    return (dataset, pattern)
+
+
+def generate_comparison_table(groups: dict[str, list[dict]]) -> str | None:
+    """Build a side-by-side comparison of mean times across read groups.
+
+    Returns a Markdown table string, or ``None`` if fewer than two read
+    groups are present.
+    """
+    present = [g for g in _READ_GROUPS if g in groups]
+    if len(present) < 2:
+        return None
+
+    # Collect mean times keyed by (dataset, pattern) per group
+    means: dict[str, dict[tuple[str, str], float]] = {}
+    for group_name in present:
+        means[group_name] = {}
+        for entry in groups[group_name]:
+            key = _comparison_key(entry)
+            means[group_name][key] = entry.get("stats", {}).get("mean", 0)
+
+    # Union of all keys, sorted by native mean (or first available)
+    all_keys = sorted(
+        {k for m in means.values() for k in m},
+        key=lambda k: means[present[0]].get(k, float("inf")),
+    )
+
+    if not all_keys:
+        return None
+
+    # Build header
+    col_headers = " | ".join(_GROUP_LABELS[g] for g in present)
+    header = f"| Dataset | Access Pattern | {col_headers} |"
+    separator = "| --- | --- |" + " --- |" * len(present)
+
+    rows = [header, separator]
+    for dataset, pattern in all_keys:
+        values = []
+        for g in present:
+            val = means[g].get((dataset, pattern))
+            values.append(format_time(val) if val is not None else "—")
+        vals_str = " | ".join(values)
+        rows.append(f"| {dataset} | {pattern} | {vals_str} |")
 
     return "\n".join(rows) + "\n\nAll times in milliseconds (ms)."
 
@@ -183,10 +334,18 @@ def generate_report(benchmarks: list[dict]) -> str:
     lines: list[str] = []
     groups = group_benchmarks(benchmarks)
 
+    # Comparison summary at the top
+    comparison = generate_comparison_table(groups)
+    if comparison:
+        lines.append("### Read Performance Comparison")
+        lines.append("")
+        lines.append(comparison)
+        lines.append("")
+
     for group_name, entries in groups.items():
         lines.append(f"### {group_name.replace('_', ' ').title()}")
         lines.append("")
-        lines.append(generate_table(entries))
+        lines.append(generate_table(entries, group_name=group_name))
         lines.append("")
 
     return "\n".join(lines)
