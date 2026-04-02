@@ -170,14 +170,17 @@ pub trait BlockDecoder: Send + Sync {
         bands: Option<&[u32]>,
     ) -> Result<(Vec<u8>, [u32; 3]), CodecError>;
 
-    /// Return per-tile byte ranges relative to the start of the image data buffer.
+    /// Return per-tile byte ranges as lists of (offset, length) pairs.
+    ///
+    /// Each tile maps to a Vec of (offset, length) pairs. For most decoders
+    /// this will be a single-element Vec. For J2K decoders with interleaved
+    /// tile-parts, the Vec contains one entry per tile-part in codestream order.
     ///
     /// Returns `None` if the decoder does not support byte range reporting.
-    /// The returned offsets are relative to the start of the image data
-    /// (i.e., codestream-relative for J2K, buffer-relative for NC/JPEG).
+    /// Offsets are relative to the start of the image data buffer.
     /// The caller (JBPImageAssetProvider) translates these to file-relative
     /// offsets by adding `location.data_offset`.
-    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), Vec<(u64, u64)>>> {
         None
     }
 

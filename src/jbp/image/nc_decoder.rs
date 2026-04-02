@@ -714,13 +714,13 @@ impl BlockDecoder for UncompressedBlockDecoder {
         }
     }
 
-    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), Vec<(u64, u64)>>> {
         let mut ranges = std::collections::HashMap::new();
         let block_size = self.block_size_bytes() as u64;
         for row in 0..self.nbpc {
             for col in 0..self.nbpr {
                 let offset = self.block_offset(row, col);
-                ranges.insert((row, col), (offset, block_size));
+                ranges.insert((row, col), vec![(offset, block_size)]);
             }
         }
         Some(ranges)

@@ -286,17 +286,18 @@ impl ImageAssetProvider for J2KImageAssetProvider {
         0.0
     }
 
-    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), Vec<(u64, u64)>>> {
         let table = self.ensure_tile_part_table().ok()?;
         let base_offset = self.codestream_range.start as u64;
-        let mut ranges = std::collections::HashMap::new();
+        let mut ranges: std::collections::HashMap<(u32, u32), Vec<(u64, u64)>> =
+            std::collections::HashMap::new();
         for entry in table {
             let row = entry.tile_index as u32 / self.num_tiles_x;
             let col = entry.tile_index as u32 % self.num_tiles_x;
             ranges
                 .entry((row, col))
-                .and_modify(|(_, len): &mut (u64, u64)| *len += entry.length)
-                .or_insert((base_offset + entry.offset, entry.length));
+                .or_default()
+                .push((base_offset + entry.offset, entry.length));
         }
         Some(ranges)
     }

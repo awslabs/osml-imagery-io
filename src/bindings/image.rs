@@ -283,21 +283,23 @@ impl PyImageAssetProvider {
     /// Return per-tile byte ranges relative to the source file.
     ///
     /// Returns a dictionary mapping ``(block_row, block_col)`` tuples to
-    /// ``(byte_offset, byte_length)`` tuples, where offsets are relative to
-    /// the start of the source file.
+    /// a list of ``(byte_offset, byte_length)`` tuples, where offsets are
+    /// relative to the start of the source file. Each list contains one
+    /// entry per tile-part; for most formats this is a single-element list.
     ///
     /// Returns ``None`` for providers without a backing file (e.g. in-memory
     /// images created with :class:`BufferedImageAssetProvider`).
     ///
-    /// :returns: Mapping of tile coordinates to byte ranges, or ``None``.
-    /// :rtype: dict[tuple[int, int], tuple[int, int]] | None
+    /// :returns: Mapping of tile coordinates to byte range lists, or ``None``.
+    /// :rtype: dict[tuple[int, int], list[tuple[int, int]]] | None
     fn tile_byte_ranges<'py>(&self, py: Python<'py>) -> PyResult<Option<PyObject>> {
         match self.inner.tile_byte_ranges() {
             None => Ok(None),
             Some(ranges) => {
                 let dict = PyDict::new_bound(py);
-                for ((row, col), (offset, length)) in ranges {
-                    dict.set_item((row, col), (offset, length))?;
+                for ((row, col), range_list) in ranges {
+                    let py_list: Vec<(u64, u64)> = range_list;
+                    dict.set_item((row, col), py_list.into_py(py))?;
                 }
                 Ok(Some(dict.into_py(py)))
             }

@@ -286,7 +286,7 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
         0.0
     }
 
-    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), Vec<(u64, u64)>>> {
         let guard = self.handle.lock().ok()?;
         guard.set_directory(self.ifd_index).ok()?;
 
@@ -322,7 +322,7 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
             let row = idx as u32 / grid_cols;
             let col = idx as u32 % grid_cols;
             // TIFF offsets are already file-relative (no translation needed)
-            ranges.insert((row, col), (offsets[idx], counts[idx]));
+            ranges.insert((row, col), vec![(offsets[idx], counts[idx])]);
         }
 
         Some(ranges)
@@ -992,15 +992,19 @@ mod tests {
         assert!(ranges.contains_key(&(0, 0)));
         assert!(ranges.contains_key(&(1, 0)));
 
+        // Each strip should have a single-element Vec
+        assert_eq!(ranges[&(0, 0)].len(), 1);
+        assert_eq!(ranges[&(1, 0)].len(), 1);
+
         // Each strip is 4 pixels wide × 2 rows × 1 byte = 8 bytes
-        let (_, len0) = ranges[&(0, 0)];
-        let (_, len1) = ranges[&(1, 0)];
+        let (_, len0) = ranges[&(0, 0)][0];
+        let (_, len1) = ranges[&(1, 0)][0];
         assert_eq!(len0, 8);
         assert_eq!(len1, 8);
 
         // Strip 1 offset should be strip 0 offset + strip 0 length
-        let (off0, _) = ranges[&(0, 0)];
-        let (off1, _) = ranges[&(1, 0)];
+        let (off0, _) = ranges[&(0, 0)][0];
+        let (off1, _) = ranges[&(1, 0)][0];
         assert_eq!(off1, off0 + len0);
     }
 
@@ -1099,16 +1103,17 @@ mod tests {
         assert!(ranges.contains_key(&(1, 0)));
         assert!(ranges.contains_key(&(1, 1)));
 
-        // Each tile is 2x2 × 1 byte = 4 bytes
-        for (_, (_, len)) in &ranges {
-            assert_eq!(*len, 4);
+        // Each tile should have a single-element Vec with 2x2 × 1 byte = 4 bytes
+        for (_, range_list) in &ranges {
+            assert_eq!(range_list.len(), 1);
+            assert_eq!(range_list[0].1, 4);
         }
 
         // Tiles should be contiguous in file
-        let (off_00, _) = ranges[&(0, 0)];
-        let (off_01, _) = ranges[&(0, 1)];
-        let (off_10, _) = ranges[&(1, 0)];
-        let (off_11, _) = ranges[&(1, 1)];
+        let off_00 = ranges[&(0, 0)][0].0;
+        let off_01 = ranges[&(0, 1)][0].0;
+        let off_10 = ranges[&(1, 0)][0].0;
+        let off_11 = ranges[&(1, 1)][0].0;
         assert_eq!(off_01, off_00 + 4);
         assert_eq!(off_10, off_01 + 4);
         assert_eq!(off_11, off_10 + 4);

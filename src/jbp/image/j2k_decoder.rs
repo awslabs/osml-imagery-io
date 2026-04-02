@@ -659,21 +659,21 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         Ok((data, [num_bands, result.height, result.width]))
     }
 
-    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), Vec<(u64, u64)>>> {
         if self.is_masked {
             return None; // Delegate to JBPImageAssetProvider's mask-aware logic
         }
         let table = self.ensure_tile_part_table().ok()?;
         let (_, _, num_tiles_x, _) = self.tile_grid_info().ok()?;
 
-        let mut ranges = std::collections::HashMap::new();
+        let mut ranges: std::collections::HashMap<(u32, u32), Vec<(u64, u64)>> = std::collections::HashMap::new();
         for entry in table {
             let row = entry.tile_index as u32 / num_tiles_x;
             let col = entry.tile_index as u32 % num_tiles_x;
             ranges
                 .entry((row, col))
-                .and_modify(|(_, len): &mut (u64, u64)| *len += entry.length)
-                .or_insert((entry.offset, entry.length));
+                .or_default()
+                .push((entry.offset, entry.length));
         }
         Some(ranges)
     }

@@ -51,6 +51,69 @@ def list_segments(path: str) -> int:
     return 0
 
 
+def _patch_multi_range_refs(refs: dict, multi_range_refs: dict) -> dict:
+    """Replace placeholder single-range entries with multi-range entries.
+
+    For each key in *multi_range_refs*, the corresponding entry in *refs*
+    is replaced with the multi-range form ``["url", [[offset, length], ...]]``.
+    Single-range entries not in *multi_range_refs* are left unchanged.
+
+    .. deprecated::
+        Use :func:`aws.osml.io.virtualizarr_parsers._patch_multi_range_refs`
+        or :func:`aws.osml.io.virtualizarr_parsers.write_tile_index` instead.
+    """
+    from aws.osml.io.virtualizarr_parsers import (
+        _patch_multi_range_refs as _patch,
+    )
+
+    return _patch(refs, multi_range_refs)
+
+
+def _write_json(vds, output: str, multi_range_refs: dict) -> None:
+    """Write kerchunk refs as JSON, patching in multi-range entries."""
+    import json
+
+    from virtualizarr.accessor import dataset_to_kerchunk_refs
+
+    kerchunk = dataset_to_kerchunk_refs(vds)
+    if "refs" in kerchunk:
+        kerchunk["refs"] = _patch_multi_range_refs(kerchunk["refs"], multi_range_refs)
+    else:
+        kerchunk = _patch_multi_range_refs(kerchunk, multi_range_refs)
+
+    with open(output, "w") as f:
+        json.dump(kerchunk, f)
+
+
+def _write_parquet(vds, output: str, multi_range_refs: dict | None = None) -> None:
+    """Write kerchunk refs as parquet using pyarrow engine.
+
+    Works around a fastparquet + pandas 3.x + numpy 2.x incompatibility
+    in the default ``to_kerchunk(format='parquet')`` path.
+    """
+    import fsspec
+    from fsspec.implementations.reference import LazyReferenceMapper
+    from virtualizarr.accessor import dataset_to_kerchunk_refs
+
+    refs = dataset_to_kerchunk_refs(vds)
+    if "refs" in refs:
+        refs = refs["refs"]
+
+    if multi_range_refs:
+        refs = _patch_multi_range_refs(refs, multi_range_refs)
+
+    fs, _ = fsspec.core.url_to_fs(output)
+    out = LazyReferenceMapper.create(
+        record_size=100_000,
+        root=output,
+        fs=fs,
+        engine="pyarrow",
+    )
+    for k in sorted(refs):
+        out[k] = refs[k]
+    out.flush()
+
+
 def generate_index(path: str, source_uri: str, output: str, segments: list[str] | None) -> int:
     """Generate a tile index and save it to disk."""
     from aws.osml.io.virtualizarr_parsers import OversightMLParser
@@ -75,29 +138,54 @@ def generate_index(path: str, source_uri: str, output: str, segments: list[str] 
 
     t0 = time.perf_counter()
     try:
+        from virtualizarr.manifests import ManifestGroup, ManifestStore
+
         parser = OversightMLParser(local_path=path)
         ms = parser(url=source_uri)
+
+        # Capture multi-range refs before any filtering
+        multi_range_refs = getattr(ms, "multi_range_refs", {}) or {}
+
+        # Filter segments BEFORE to_virtual_dataset() to avoid dimension
+        # conflicts when segments have different image sizes.
+        if segments:
+            group = ms._group
+            available = list(group.arrays.keys())
+            missing = [s for s in segments if s not in group.arrays]
+            if missing:
+                print(f"Error: Segment(s) not found: {', '.join(missing)}", file=sys.stderr)
+                print(f"Available: {', '.join(available)}", file=sys.stderr)
+                return 1
+            filtered_arrays = {k: v for k, v in group.arrays.items() if k in segments}
+            attrs = group.metadata.attributes if group.metadata else None
+            ms = ManifestStore(
+                group=ManifestGroup(arrays=filtered_arrays, attributes=attrs)
+            )
+            # Filter multi-range refs to only include selected segments
+            multi_range_refs = {
+                k: v for k, v in multi_range_refs.items()
+                if any(k.startswith(seg + "/") for seg in segments)
+            }
+
         vds = ms.to_virtual_dataset()
     except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    if segments:
-        missing = [s for s in segments if s not in vds.data_vars]
-        if missing:
-            print(f"Error: Segment(s) not found: {', '.join(missing)}", file=sys.stderr)
-            print(f"Available: {', '.join(vds.data_vars)}", file=sys.stderr)
-            return 1
-        vds = vds[segments]
-
     elapsed_gen = time.perf_counter() - t0
 
     num_segments = len(vds.data_vars)
+    num_multi = len(multi_range_refs)
     print(f"Generated index: {num_segments} segment(s) ({elapsed_gen:.3f}s)")
+    if num_multi:
+        print(f"  {num_multi} multi-range entries (interleaved tile-parts)")
 
     t1 = time.perf_counter()
     try:
-        vds.vz.to_kerchunk(output, format=fmt)
+        if fmt == "parquet":
+            _write_parquet(vds, output, multi_range_refs)
+        else:
+            _write_json(vds, output, multi_range_refs)
     except (ImportError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1

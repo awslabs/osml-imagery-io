@@ -134,11 +134,13 @@ pub trait ImageAssetProvider: AssetProvider {
 
     /// Return per-tile byte ranges relative to the source file.
     ///
-    /// Keys are `(block_row, block_col)`, values are `(byte_offset, byte_length)`
-    /// where byte_offset is relative to the start of the source file.
+    /// Keys are `(block_row, block_col)`, values are a list of `(byte_offset, byte_length)`
+    /// pairs where byte_offset is relative to the start of the source file. For most
+    /// providers this will be a single-element Vec. For J2K providers with interleaved
+    /// tile-parts, the Vec contains one entry per tile-part in codestream order.
     ///
     /// Returns `None` for providers without a backing file (e.g., BufferedImageAssetProvider).
-    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), Vec<(u64, u64)>>> {
         None
     }
 

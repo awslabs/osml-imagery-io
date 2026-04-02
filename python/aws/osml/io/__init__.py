@@ -62,8 +62,8 @@ __all__ = [
 
 # Optional VirtualiZarr parser exports — only available when virtualizarr is installed
 try:
-    from aws.osml.io.virtualizarr_parsers import OversightMLParser
+    from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
-    __all__ += ["OversightMLParser"]
+    __all__ += ["OversightMLParser", "write_tile_index"]
 except ImportError:
     pass

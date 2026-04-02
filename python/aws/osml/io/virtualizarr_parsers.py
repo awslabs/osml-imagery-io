@@ -148,6 +148,14 @@ def _build_codec_instance(asset):
 # ---------------------------------------------------------------------------
 
 
+def _are_contiguous(ranges: list[tuple[int, int]]) -> bool:
+    """Check if a list of (offset, length) ranges are contiguous in the file."""
+    for i in range(len(ranges) - 1):
+        if ranges[i][0] + ranges[i][1] != ranges[i + 1][0]:
+            return False
+    return True
+
+
 class OversightMLParser:
     """VirtualiZarr parser for any imagery format supported by IO.open().
 
@@ -208,6 +216,7 @@ class OversightMLParser:
         from zarr.core.metadata.v3 import ArrayV3Metadata
 
         arrays: dict[str, ManifestArray] = {}
+        multi_range_refs: dict[str, list] = {}
 
         with IO.open([self.local_path], "r") as reader:
             keys = reader.get_asset_keys(asset_type=AssetType.Image)
@@ -220,11 +229,28 @@ class OversightMLParser:
 
                 # Build chunk manifest entries
                 entries: dict[str, ChunkEntry] = {}
-                for (row, col), (offset, length) in byte_ranges.items():
+                for (row, col), range_list in byte_ranges.items():
                     chunk_key = f"0.{row}.{col}"
-                    entries[chunk_key] = ChunkEntry(
-                        path=url, offset=offset, length=length
-                    )
+                    if len(range_list) == 1:
+                        offset, length = range_list[0]
+                        entries[chunk_key] = ChunkEntry(
+                            path=url, offset=offset, length=length
+                        )
+                    elif _are_contiguous(range_list):
+                        offset = range_list[0][0]
+                        length = sum(l for _, l in range_list)
+                        entries[chunk_key] = ChunkEntry(
+                            path=url, offset=offset, length=length
+                        )
+                    else:
+                        # Non-contiguous — placeholder entry + multi-range ref
+                        offset, length = range_list[0]
+                        entries[chunk_key] = ChunkEntry(
+                            path=url, offset=offset, length=length
+                        )
+                        multi_range_refs[f"{key}/{chunk_key}"] = [
+                            url, [[o, l] for o, l in range_list]
+                        ]
 
                 if not entries:
                     continue
@@ -274,5 +300,133 @@ class OversightMLParser:
         group = ManifestGroup(
             arrays=arrays, attributes={"source": url}
         )
-        return ManifestStore(group=group)
+        store = ManifestStore(group=group)
+        store.multi_range_refs = multi_range_refs
+        return store
 
+
+# ---------------------------------------------------------------------------
+# Tile index serialization with multi-range support
+# ---------------------------------------------------------------------------
+
+
+def _patch_multi_range_refs(refs: dict, multi_range_refs: dict) -> dict:
+    """Replace placeholder single-range entries with multi-range entries.
+
+    For each key in *multi_range_refs*, the corresponding entry in *refs*
+    is replaced with the multi-range form ``["url", [[offset, length], ...]]``.
+    Single-range entries not in *multi_range_refs* are left unchanged.
+    """
+    if not multi_range_refs:
+        return refs
+    patched = dict(refs)
+    patched.update(multi_range_refs)
+    return patched
+
+
+def write_tile_index(store, output: str, segments: list[str] | None = None) -> None:
+    """Write a tile index to JSON or Parquet with multi-range support.
+
+    This is the recommended way to serialize a ``ManifestStore`` produced by
+    :class:`OversightMLParser`.  It handles the multi-range reference entries
+    that VirtualiZarr's built-in serialization does not support.
+
+    Parameters
+    ----------
+    store : ManifestStore
+        The manifest store returned by ``OversightMLParser()``.
+    output : str
+        Output file path.  Extension determines format: ``.json`` for
+        Kerchunk JSON, ``.parquet`` for Kerchunk Parquet.
+    segments : list[str], optional
+        Image segment keys to include.  If ``None``, all segments are
+        included.  Use this when the file contains segments with different
+        image dimensions (which cannot be merged into a single xarray
+        Dataset).
+
+    Raises
+    ------
+    ValueError
+        If the output extension is not ``.json`` or ``.parquet``, or if
+        a requested segment is not found.
+
+    Examples
+    --------
+    ::
+
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
+
+        parser = OversightMLParser(local_path="local/image.ntf")
+        store = parser(url="s3://my-bucket/imagery/image.ntf")
+        write_tile_index(store, "image.tile_index.json")
+
+        # Or index only specific segments
+        write_tile_index(store, "image.tile_index.json", segments=["image_segment_0"])
+    """
+    import json
+    from pathlib import Path
+
+    from virtualizarr.accessor import dataset_to_kerchunk_refs
+    from virtualizarr.manifests import ManifestGroup, ManifestStore
+
+    ext = Path(output).suffix.lower()
+    multi_range_refs = getattr(store, "multi_range_refs", {}) or {}
+
+    # Filter segments if requested
+    if segments:
+        group = store._group
+        available = list(group.arrays.keys())
+        missing = [s for s in segments if s not in group.arrays]
+        if missing:
+            raise ValueError(
+                f"Segment(s) not found: {', '.join(missing)}. "
+                f"Available: {', '.join(available)}"
+            )
+        filtered_arrays = {k: v for k, v in group.arrays.items() if k in segments}
+        attrs = group.metadata.attributes if group.metadata else None
+        store = ManifestStore(
+            group=ManifestGroup(arrays=filtered_arrays, attributes=attrs)
+        )
+        multi_range_refs = {
+            k: v for k, v in multi_range_refs.items()
+            if any(k.startswith(seg + "/") for seg in segments)
+        }
+
+    vds = store.to_virtual_dataset()
+
+    if ext == ".json":
+        kerchunk = dataset_to_kerchunk_refs(vds)
+        if "refs" in kerchunk:
+            kerchunk["refs"] = _patch_multi_range_refs(
+                kerchunk["refs"], multi_range_refs
+            )
+        else:
+            kerchunk = _patch_multi_range_refs(kerchunk, multi_range_refs)
+        with open(output, "w") as f:
+            json.dump(kerchunk, f)
+
+    elif ext == ".parquet":
+        import fsspec
+        from fsspec.implementations.reference import LazyReferenceMapper
+
+        refs = dataset_to_kerchunk_refs(vds)
+        if "refs" in refs:
+            refs = refs["refs"]
+        if multi_range_refs:
+            refs = _patch_multi_range_refs(refs, multi_range_refs)
+
+        fs, _ = fsspec.core.url_to_fs(output)
+        out = LazyReferenceMapper.create(
+            record_size=100_000,
+            root=output,
+            fs=fs,
+            engine="pyarrow",
+        )
+        for k in sorted(refs):
+            out[k] = refs[k]
+        out.flush()
+
+    else:
+        raise ValueError(
+            f"Unsupported output extension '{ext}'. Use .json or .parquet"
+        )

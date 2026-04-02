@@ -56,47 +56,171 @@ them as native chunked arrays.
 
 ## What We Built
 
-This library provides the two components needed to bridge existing imagery formats into the
-Zarr ecosystem: VirtualiZarr parsers for tile indexing and a set of custom codecs.
+Bridging archival imagery formats into the Zarr ecosystem required solving three
+problems that the existing tooling does not handle. Each problem led to a
+component:
+
+1. **Tile Indexing for Geospatial Formats** — Zarr needs to know where each tile
+   lives in the source file. Archival formats store this information in format-specific 
+   structures (SOT markers, IFD tags, length-prefixed headers) that VirtualiZarr cannot
+   parse out of the box.
+
+2. **New Support for Non-contiguous Chunk Data** — The Kerchunk reference spec 
+   assumes each chunk maps to a single contiguous byte range. JPEG 2000 codestreams 
+   with resolution-first progression orders (RLCP, RPCL) interleave tile-parts from
+   different tiles, scattering a single tile's data across multiple
+   non-contiguous locations in the file. Neither Kerchunk nor fsspec's
+   `ReferenceFileSystem` can express or fetch this.
+
+3. **Decoders for Geospatial Formats** — The fetched bytes are still in the source
+   format's native encoding. NITF pixel data uses big-endian byte order and
+   format-specific interleave modes. JPEG 2000 tile-parts are not
+   self-contained codestreams. Standard Zarr codecs cannot decode any of these.
+
+The following sections describe each component in pipeline order: the parser
+produces the tile index, the filesystem fetches the bytes, and the codec decodes
+them into pixels.
 
 ### Tile Indexing with VirtualiZarr Parsers
 
-The library provides `OversightMLParser`, a single VirtualiZarr parser that makes it possible
-to access any imagery format supported by this library as a virtual dataset. The parser scans
-a file using the library's native reader and walks each image segment, determining the byte
-offset and length of every tile relative to the start of the file. 
+The library provides `OversightMLParser`, a single VirtualiZarr parser that makes
+it possible to access any imagery format supported by this library as a virtual
+dataset. The parser scans a file using the library's native reader and walks each
+image segment, determining the byte offset and length of every tile relative to
+the start of the file.
 
 How tile boundaries are calculated depends on the format and compression:
 
-- Uncompressed tiles have fixed sizes. Offsets are computed arithmetically from the
-  image dimensions, pixel type, and interleave mode. Formats that support sparse tile
-  arrays (ex: NITF masked images) may have existing metadata that contains these 
-  boundaries.
-- JPEG tiles are length-prefixed. The parser scans the length headers sequentially
-  to locate each tile boundary.
-- JPEG 2000 codestreams use SOT (Start of Tile-part) markers that record the byte
-  offset and length of each tile-part. If the codestream contains a TLM (Tile-part
-  Length Marker) in its main header, the full tile index is available immediately
-  without scanning. If no TLM is present, the parser performs a sequential SOT scan.
+- Uncompressed tiles have fixed sizes. Offsets are computed arithmetically from
+  the image dimensions, pixel type, and interleave mode. Formats that support
+  sparse tile arrays (ex: NITF masked images) may have existing metadata that
+  contains these boundaries.
+- JPEG tiles are length-prefixed. The parser scans the length headers
+  sequentially to locate each tile boundary.
+- JPEG 2000 codestreams use SOT (Start of Tile-part) markers that record the
+  byte offset and length of each tile-part. If the codestream contains a TLM
+  (Tile-part Length Marker) in its main header, the full tile index is available
+  immediately without scanning. If no TLM is present, the parser performs a
+  sequential SOT scan.
 - TIFF files store tile offsets and byte counts in IFD tags (`TileOffsets` and
   `TileByteCounts`). The parser reads these directly.
 
+When a tile's data spans multiple non-contiguous byte ranges (as with
+interleaved JPEG 2000 tile-parts), the parser detects this and emits a
+multi-range reference entry instead of a single-range entry. Contiguous
+multi-part tiles are merged into a single range automatically.
+
 The parsers produce the `ManifestStore` — a virtual Zarr store backed by chunk
-references into the source file. This can be serialized to create a format-agnostic
-tile index.
+references into the source file. This can be serialized to create a
+format-agnostic tile index.
+
+### MultiReferenceFileSystem: Scatter-Gather I/O for Non-Contiguous Chunks
+
+The standard Kerchunk reference spec supports three forms per chunk key: inline
+data, whole-file references, and single byte-range references. This covers most
+formats, but breaks down for JPEG 2000 codestreams with interleaved tile-parts.
+
+JPEG 2000 supports several progression orders that control how compressed data
+is organized in the codestream. Two of these — RLCP (Resolution-Layer-Component-
+Position) and RPCL (Resolution-Position-Component-Layer) — interleave tile-parts
+from different tiles. Instead of writing all of tile 0's data, then all of tile
+1's data, the encoder writes resolution level 0 for every tile, then resolution
+level 1 for every tile, and so on. A single tile's compressed bytes end up
+scattered across multiple non-contiguous locations in the file.
+
+When the Kerchunk reference for a tile points to only the first tile-part, the
+codec receives an incomplete codestream and fails with errors like "Stream too
+short" or produces corrupted pixels. The standard `ReferenceFileSystem` has no
+way to express "fetch these six byte ranges and concatenate them" for a single
+chunk. This is not a theoretical edge case. Satellite imagery from several
+commercial providers uses RPCL progression order, and the interleaved tile-part
+layout is common in large multi-resolution JPEG 2000 files.
+
+`MultiReferenceFileSystem` is a drop-in subclass of fsspec's
+`ReferenceFileSystem` that extends the Kerchunk reference spec with a fourth
+form:
+
+| Form | Format | Description |
+|------|--------|-------------|
+| Inline | `"base64:..."` or raw bytes | Inline data |
+| Whole file | `["url"]` | Entire file |
+| Single range | `["url", offset, length]` | One contiguous byte range |
+| **Multi-range** | `["url", [[offset, length], ...]]` | **Multiple non-contiguous byte ranges** |
+
+A multi-range entry is a 2-element list where the first element is the URL and
+the second is a list of `[offset, length]` pairs. Each pair identifies one
+tile-part's location in the file. The filesystem fetches all ranges and
+concatenates them in order before handing the bytes to the codec.
+
+For example, a tile with six tile-parts scattered across a file:
+
+```json
+{
+  "image_segment_0/0.0.0": [
+    "s3://bucket/image.ntf",
+    [[66132, 1518], [2534029, 3385], [7216065, 11460],
+     [22566527, 38566], [74210429, 116812], [242293202, 339534]]
+  ]
+}
+```
+
+The URL appears once rather than being repeated for each sub-range. For a file
+with 1,722 tiles and six tile-parts each, this saves roughly 775 KB of redundant
+URL strings compared to a flat list of single-range entries.
+
+`MultiReferenceFileSystem` handles all standard reference types by delegating to
+the parent `ReferenceFileSystem`. When it encounters a multi-range entry, it
+performs scatter-gather I/O:
+
+- **Sync path** (`_cat_common`): fetches each byte range sequentially and
+  concatenates the results. Adequate for local files and testing.
+- **Async path** (`_cat_file`): issues all byte-range fetches concurrently
+  via `asyncio.gather` and concatenates in the original entry order. This is
+  the path used by Zarr's async store and is critical for minimizing latency
+  when reading from S3.
+
+Use `MultiReferenceFileSystem` instead of `ReferenceFileSystem` when your tile
+index may contain multi-range entries. It is fully backward-compatible — tile
+indexes with only standard single-range entries work identically. The index
+generator in this library automatically emits multi-range entries for tiles
+with interleaved tile-parts and single-range entries for everything else, so
+using `MultiReferenceFileSystem` as the default is the simplest approach.
+
+```python
+from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
+
+fs = MultiReferenceFileSystem(
+    fo="s3://bucket/image.tile_index.json",
+    asynchronous=True,
+    remote_options={"asynchronous": True},
+    skip_instance_cache=True,
+)
+```
+
+The constructor accepts the same arguments as `ReferenceFileSystem`. Existing
+code that uses `fsspec.filesystem("reference", ...)` can switch by replacing
+the filesystem instantiation.
+
+```{note}
+This multi-range reference format is a novel extension to the Kerchunk
+reference spec introduced by this project. The standard Kerchunk and Zarr
+ecosystem does not handle the case of non-contiguous byte ranges for a single
+chunk. If you encounter JPEG 2000 imagery with interleaved tile-parts
+elsewhere, `MultiReferenceFileSystem` is the component that makes it work.
+```
 
 ### Custom Codecs
 
-The tile index tells fsspec where to fetch each tile's bytes, but those bytes are
-still in the source format's native encoding. Standard Zarr codecs cannot decode
-them. This library registers three Zarr v3 codecs that handle the format-specific
+Once the filesystem delivers the raw bytes for a chunk, those bytes are still in
+the source format's native encoding. Standard Zarr codecs cannot decode them.
+This library registers three Zarr v3 codecs that handle the format-specific
 decoding:
 
 `JbpBlockCodec` handles uncompressed NITF tiles. NITF raw pixel data uses
-big-endian byte order and one of four interleave modes (band-interleaved by pixel,
-band-interleaved by line, band-interleaved by block, or band-sequential). The
-codec performs the endian swap and interleave conversion to produce standard NumPy
-arrays.
+big-endian byte order and one of four interleave modes (band-interleaved by
+pixel, band-interleaved by line, band-interleaved by block, or
+band-sequential). The codec performs the endian swap and interleave conversion
+to produce standard NumPy arrays.
 
 `JpegCodec` decodes JPEG tiles. It carries format-specific parameters (color
 space, interleave mode, bits per pixel) in its configuration and passes them to
@@ -112,23 +236,29 @@ Zarr JPEG 2000 codecs assume each chunk is a complete, self-contained
 codestream. They cannot decode a bare tile-part without the header.
 
 We solve this by inlining the shared main header (base64-encoded, typically
-100–500 bytes) in the codec configuration stored in `.zarray`. At decode time the
-codec reconstructs a minimal single-tile codestream on the fly:
+100–500 bytes) in the codec configuration stored in `.zarray`. At decode time
+the codec reconstructs a minimal single-tile codestream on the fly:
 
 ```
 [main_header bytes] + [tile-part bytes] + [EOC marker]
 ```
 
-OpenJPEG receives what looks like a normal single-tile codestream and decodes it.
-This approach has precedent in the JPEG 2000 ecosystem. JPIP (the JPEG 2000
+OpenJPEG receives what looks like a normal single-tile codestream and decodes
+it. This approach has precedent in the JPEG 2000 ecosystem. JPIP (the JPEG 2000
 Interactive Protocol) streams individual tile-parts to clients that already hold
-the main header. Because the codec operates on the J2K codestream directly, it 
-works for standalone `.j2k`/`.jp2` files and for J2K codestreams embedded in 
+the main header. Because the codec operates on the J2K codestream directly, it
+works for standalone `.j2k`/`.jp2` files and for J2K codestreams embedded in
 container formats like NITF.
 
+Note that the codec layer is intentionally pure — it performs no I/O. When
+`MultiReferenceFileSystem` fetches and concatenates multiple tile-parts for an
+interleaved codestream, the codec receives the complete concatenated bytes and
+reconstructs the codestream exactly the same way. The filesystem handles the
+scatter-gather complexity so codecs remain simple bytes-to-bytes transforms.
+
 All three codecs are registered with the Zarr codec registry via Python entry
-points. They use URI-based names per the Zarr v3 specification to avoid conflicts
-with existing codecs:
+points. They use URI-based names per the Zarr v3 specification to avoid
+conflicts with existing codecs:
 
 - `https://awslabs.github.io/osml-imagery-io/codecs/jpeg2000`
 - `https://awslabs.github.io/osml-imagery-io/codecs/jpeg`
@@ -143,18 +273,6 @@ TIFF files (Deflate, LZW, and uncompressed) are already supported natively by
 Zarr. The parser handles tile indexing, and Zarr's built-in codecs handle the
 decoding.
 ```
-
-## Results
-
-*TODO: This section will present benchmark results measuring tile access latency and
-throughput through the Zarr/Kerchunk interface. Planned measurements include:*
-
-- *Single-tile access latency from S3 using Zarr/fsspec (cold and warm)*
-- *Comparison of Zarr/fsspec access versus direct local file access*
-- *Memory usage under concurrent tile decoding*
-
-*Benchmarks will use representative NITF files across compression types (C8, C3,
-NC) and image sizes (100 MB, 1 GB, 10 GB+).*
 
 ## End-to-End Example: NITF Imagery in S3
 
@@ -173,15 +291,14 @@ Index generation requires the `virtualizarr` optional dependency:
 ```
 
 ```python
-from aws.osml.io.virtualizarr_parsers import OversightMLParser
+from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
 # Generate index from a local file — works for NITF, JPEG 2000, TIFF, GeoTIFF
 parser = OversightMLParser(local_path="local/image.ntf")
-manifest_store = parser(url="s3://my-bucket/imagery/image.ntf")
+store = parser(url="s3://my-bucket/imagery/image.ntf")
 
-# Convert to xarray virtual dataset and save as Kerchunk Parquet
-vds = manifest_store.to_virtual_dataset()
-vds.vz.to_kerchunk("image.ntf.index.parquet", format="parquet")
+# Serialize as Kerchunk JSON (or .parquet) with multi-range support
+write_tile_index(store, "image.ntf.tile_index.json")
 ```
 
 Upload the index to S3 alongside the image. This assumes the image itself is
@@ -189,40 +306,48 @@ already residing in the cloud.
 
 ```python
 import boto3
-import os
 
 s3 = boto3.client("s3")
-
-# Upload each file in the Parquet directory
-for root, dirs, files in os.walk("image.ntf.index.parquet"):
-    for filename in files:
-        local_path = os.path.join(root, filename)
-        s3_key = f"imagery/{os.path.relpath(local_path, '.')}"
-        s3.upload_file(local_path, "my-bucket", s3_key)
+s3.upload_file(
+    "image.ntf.tile_index.json",
+    "my-bucket",
+    "imagery/image.ntf.tile_index.json",
+)
 ```
 
 ### Step 2: Open and access tiles
 
 Codec registration happens automatically when the package is installed with the
 `zarr` extras (`pip install osml-imagery-io[zarr]`). No explicit import is needed.
-When you slice into the dataset, fsspec issues HTTP range requests for only the
-bytes backing the requested tiles and the registered codec decodes them into NumPy
-arrays.
+
+Use `MultiReferenceFileSystem` to open the tile index. It handles both standard
+single-range entries and multi-range entries for JPEG 2000 images with
+interleaved tile-parts. When you slice into the dataset, the filesystem issues
+HTTP range requests for only the bytes backing the requested tiles and the
+registered codec decodes them into NumPy arrays.
 
 ```python
-import xarray as xr
+import zarr
+from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
+from zarr.storage._fsspec import FsspecStore
 
-ds = xr.open_zarr(
-    "reference://",
-    storage_options={
-        "fo": "s3://my-bucket/imagery/image.ntf.index.parquet/",
-        "remote_protocol": "s3",
-        "remote_options": {"profile": "my-profile"},
-    },
+# MultiReferenceFileSystem is a drop-in replacement for ReferenceFileSystem
+# that adds support for multi-range chunk references
+fs = MultiReferenceFileSystem(
+    fo="s3://my-bucket/imagery/image.ntf.tile_index.json",
+    asynchronous=True,
+    remote_options={"asynchronous": True, "profile": "my-profile"},
+    skip_instance_cache=True,
 )
 
+store = FsspecStore(fs=fs, read_only=True, path="")
+root = zarr.open_group(store, mode="r", zarr_format=2)
+
 # Read a single tile region
-tile = ds["image_segment_0"][0:3, 768:1024, 1024:1280].values
+import numpy as np
+
+arr = root["image_segment_0"]
+tile = np.asarray(arr[0:3, 768:1024, 1024:1280])
 print(tile.shape)  # (3, 256, 256)
 print(tile.dtype)  # uint8
 ```

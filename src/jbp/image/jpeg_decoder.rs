@@ -806,13 +806,13 @@ impl BlockDecoder for JpegNitfBlockDecoder {
         Ok((final_data, [num_bands, actual_rows, actual_cols]))
     }
 
-    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), (u64, u64)>> {
+    fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), Vec<(u64, u64)>>> {
         let offsets = self.get_block_offsets();
         let mut ranges = std::collections::HashMap::new();
         for (idx, &(start, end)) in offsets.iter().enumerate() {
             let row = idx as u32 / self.nbpr;
             let col = idx as u32 % self.nbpr;
-            ranges.insert((row, col), (start as u64, (end - start) as u64));
+            ranges.insert((row, col), vec![(start as u64, (end - start) as u64)]);
         }
         Some(ranges)
     }

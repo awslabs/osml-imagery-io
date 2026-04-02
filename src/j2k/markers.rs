@@ -1637,9 +1637,10 @@ mod tests {
         ///
         /// Property 5: Minimal Codestream Construction
         /// For any decode header and set of tile-part byte ranges,
-        /// `build_minimal_codestream()` shall produce a byte sequence equal to
-        /// `decode_header ++ tile_part_bytes_in_order ++ [0xFF, 0xD9]`, and the
-        /// result shall begin with SOC (0xFF4F) and end with EOC (0xFFD9).
+        /// `build_minimal_codestream()` shall produce a byte sequence that
+        /// begins with SOC (0xFF4F), ends with EOC (0xFFD9), contains the
+        /// (possibly SIZ-rewritten) decode header followed by (possibly
+        /// SOT-patched) tile-part bytes, and has the correct total length.
         #[test]
         fn prop_minimal_codestream_construction(
             header_extra in prop::collection::vec(any::<u8>(), 8..98),
@@ -1668,19 +1669,47 @@ mod tests {
             prop_assert_eq!(result[len - 2], 0xFF);
             prop_assert_eq!(result[len - 1], 0xD9);
 
-            // Verify content: decode_header ++ tile_parts ++ EOC
-            let mut expected = decode_header.clone();
+            // Build expected output accounting for SIZ rewrite and SOT patching.
+            // 1. Determine the isot from the first tile-part (same logic as the function)
+            let isot = tile_parts.first().and_then(|&(offset, length)| {
+                let start = offset as usize;
+                let end = start + length as usize;
+                if end <= codestream_data.len() {
+                    extract_isot(&codestream_data[start..end])
+                } else {
+                    None
+                }
+            });
+            let expected_header = match isot {
+                Some(tile_index) => rewrite_siz_for_tile(&decode_header, tile_index),
+                None => decode_header.clone(),
+            };
+
+            // 2. Build expected with SOT patching
+            let mut expected = expected_header.clone();
             for &(offset, length) in &tile_parts {
-                expected.extend_from_slice(&codestream_data[offset as usize..(offset + length) as usize]);
+                let start = offset as usize;
+                let end = start + length as usize;
+                let tile_part = &codestream_data[start..end];
+                if tile_part.len() >= 6
+                    && tile_part[0] == 0xFF
+                    && tile_part[1] == 0x90
+                {
+                    expected.extend_from_slice(&tile_part[..4]);
+                    expected.extend_from_slice(&[0x00, 0x00]); // Isot = 0
+                    expected.extend_from_slice(&tile_part[6..]);
+                } else {
+                    expected.extend_from_slice(tile_part);
+                }
             }
             expected.extend_from_slice(&[0xFF, 0xD9]);
             prop_assert_eq!(&result, &expected);
 
-            // Verify length: decode_header.len() + sum(tile_part_lengths) + 2
+            // Verify length: header.len() + sum(tile_part_lengths) + 2
             let total_tile_bytes: u64 = tile_parts.iter().map(|(_, l)| l).sum();
             prop_assert_eq!(
                 result.len(),
-                decode_header.len() + total_tile_bytes as usize + 2
+                expected_header.len() + total_tile_bytes as usize + 2
             );
         }
     }
