@@ -1,0 +1,71 @@
+# cargo-deny configuration for osml-imagery-io
+# https://embarkstudios.github.io/cargo-deny/
+#
+# Run: cargo deny check
+
+[graph]
+# Targets to check. If empty, checks all targets.
+targets = []
+# Exclude dev-only dependencies from license/ban checks
+exclude-dev = true
+
+# ── Advisories ────────────────────────────────────────────────
+# Checks for known security vulnerabilities via the RustSec advisory database.
+[advisories]
+# Advisories to ignore (add IDs here if you've evaluated and accepted the risk)
+ignore = []
+
+# ── Licenses ──────────────────────────────────────────────────
+# Enforces the project's strict license requirements.
+# See .kiro/steering/tech.md for the full license policy.
+#
+# With cargo-deny v0.19+, only the allow-list is needed.
+# Any license NOT in the allow list is denied by default.
+[licenses]
+# Confidence threshold for license detection (0.0 - 1.0)
+confidence-threshold = 0.8
+# Don't warn about allowed licenses that no current dependency uses
+unused-allowed-license = "allow"
+# Allow these licenses — anything else is denied
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unlicense",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+]
+
+# Some crates have non-standard license expressions. Handle them here.
+exceptions = []
+
+# ── Bans ──────────────────────────────────────────────────────
+# Deny or allow specific crates, and detect duplicates.
+[bans]
+# Warn on multiple versions of the same crate in the dependency tree
+multiple-versions = "warn"
+# Wildcards in dependency version requirements are not allowed
+wildcards = "deny"
+# List of crates to deny entirely (e.g., known-bad crates)
+deny = []
+# List of crates to allow (overrides deny)
+allow = []
+# Skip specific crate versions from duplicate detection
+skip = []
+skip-tree = []
+
+# ── Sources ───────────────────────────────────────────────────
+# Where crates are allowed to come from.
+[sources]
+# Allow crates from crates.io
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Allow git sources (needed for some dependencies)
+allow-git = []
+# Disallow unknown registries
+unknown-registry = "deny"
+# Warn on unknown git sources
+unknown-git = "warn"

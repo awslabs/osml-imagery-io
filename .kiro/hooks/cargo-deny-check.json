@@ -1,0 +1,12 @@
+{
+  "name": "License & Advisory Check",
+  "version": "1.0.0",
+  "description": "Runs cargo-deny after the agent finishes to catch license violations, security advisories, and banned crates before they get committed.",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check if Cargo.toml was modified during this session. If it was, run `cargo deny check licenses advisories bans` and report any failures. If Cargo.toml was not modified, skip this check silently."
+  }
+}

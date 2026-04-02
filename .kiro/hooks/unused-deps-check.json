@@ -1,0 +1,12 @@
+{
+  "name": "Unused Dependencies Check",
+  "version": "1.0.0",
+  "description": "Runs cargo-machete after the agent finishes to detect unused dependencies that may have been added.",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check if Cargo.toml was modified during this session. If it was, run `cargo machete` and report any unused dependencies found. If Cargo.toml was not modified, skip this check silently."
+  }
+}
