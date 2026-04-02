@@ -1,0 +1,18 @@
+# Clippy configuration for osml-imagery-io
+#
+# Cognitive complexity threshold — measures how hard a function is to understand.
+# Clippy default is 25. Lower values catch overly complex AI-generated code earlier.
+# Adjust this as needed; 25 is a reasonable starting point for this codebase.
+cognitive-complexity-threshold = 25
+
+# Maximum number of lines in a function body (default: 100)
+too-many-lines-threshold = 100
+
+# Maximum number of function arguments (default: 7)
+too-many-arguments-threshold = 7
+
+# Maximum number of struct fields (default: 8)
+max-struct-bools = 3
+
+# Maximum number of enum variants (default: no limit from clippy, but type_complexity has a default)
+type-complexity-threshold = 250
