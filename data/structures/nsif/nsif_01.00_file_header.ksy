@@ -178,6 +178,7 @@ seq:
   # Background Color (FBKGC) - 3 bytes binary
   - id: FBKGC
     size: 3
+    type: bytes
     doc: File background color (RGB).
 
   # Originator Information

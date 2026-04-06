@@ -63,6 +63,120 @@ fn truncate_to_bytes(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
+/// Look up a metadata field by name, returning the value truncated/padded to
+/// `size` bytes. Falls back to `default` when the key is absent.
+///
+/// For string fields the value is space-padded on the right. For binary fields
+/// (like FBKGC) callers should use [`get_metadata_bytes`] instead.
+fn get_metadata_field(
+    metadata_dict: &std::collections::HashMap<String, serde_json::Value>,
+    key: &str,
+    default: &str,
+    size: usize,
+) -> String {
+    let value = metadata_dict
+        .get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or(default);
+    let truncated = truncate_to_bytes(value, size);
+    format!("{:width$}", truncated, width = size)
+}
+
+/// Look up a binary metadata field by name, returning exactly `size` bytes.
+/// Falls back to `default` when the key is absent. Supports JSON arrays of
+/// integers (e.g. `[255, 0, 128]`) and base64-encoded strings.
+fn get_metadata_bytes(
+    metadata_dict: &std::collections::HashMap<String, serde_json::Value>,
+    key: &str,
+    default: &[u8],
+    size: usize,
+) -> Vec<u8> {
+    if let Some(val) = metadata_dict.get(key) {
+        // Try JSON array of integers first
+        if let Some(arr) = val.as_array() {
+            let bytes: Vec<u8> = arr
+                .iter()
+                .filter_map(|v| v.as_u64().map(|n| n as u8))
+                .collect();
+            let mut result = bytes;
+            result.resize(size, 0);
+            result.truncate(size);
+            return result;
+        }
+        // Try raw string bytes (for short binary fields set as strings)
+        if let Some(s) = val.as_str() {
+            let bytes = s.as_bytes();
+            let mut result = bytes.to_vec();
+            result.resize(size, 0);
+            result.truncate(size);
+            return result;
+        }
+    }
+    let mut result = default.to_vec();
+    result.resize(size, 0);
+    result.truncate(size);
+    result
+}
+
+/// Write the 13-field security classification block common to all NITF
+/// subheaders. The `prefix` is the field-name prefix (e.g. "FS", "IS", "TS",
+/// "SS", "DES"). Fields are read from `metadata_dict` with the appropriate
+/// prefixed key names, falling back to "U"/blank defaults.
+fn write_security_fields(
+    buf: &mut Vec<u8>,
+    metadata_dict: &std::collections::HashMap<String, serde_json::Value>,
+    prefix: &str,
+) {
+    // xSCLAS (1)
+    let clas = get_metadata_field(metadata_dict, &format!("{prefix}CLAS"), "U", 1);
+    buf.extend_from_slice(clas.as_bytes());
+    // xSCLSY (2)
+    let clsy = get_metadata_field(metadata_dict, &format!("{prefix}CLSY"), "", 2);
+    buf.extend_from_slice(clsy.as_bytes());
+    // xSCODE (11)
+    let code = get_metadata_field(metadata_dict, &format!("{prefix}CODE"), "", 11);
+    buf.extend_from_slice(code.as_bytes());
+    // xSCTLH (2)
+    let ctlh = get_metadata_field(metadata_dict, &format!("{prefix}CTLH"), "", 2);
+    buf.extend_from_slice(ctlh.as_bytes());
+    // xSREL (20)
+    let rel = get_metadata_field(metadata_dict, &format!("{prefix}REL"), "", 20);
+    buf.extend_from_slice(rel.as_bytes());
+    // xSDCTP (2)
+    let dctp = get_metadata_field(metadata_dict, &format!("{prefix}DCTP"), "", 2);
+    buf.extend_from_slice(dctp.as_bytes());
+    // xSDCDT (8)
+    let dcdt = get_metadata_field(metadata_dict, &format!("{prefix}DCDT"), "", 8);
+    buf.extend_from_slice(dcdt.as_bytes());
+    // xSDCXM (4)
+    let dcxm = get_metadata_field(metadata_dict, &format!("{prefix}DCXM"), "", 4);
+    buf.extend_from_slice(dcxm.as_bytes());
+    // xSDG (1)
+    let dg = get_metadata_field(metadata_dict, &format!("{prefix}DG"), "", 1);
+    buf.extend_from_slice(dg.as_bytes());
+    // xSDGDT (8)
+    let dgdt = get_metadata_field(metadata_dict, &format!("{prefix}DGDT"), "", 8);
+    buf.extend_from_slice(dgdt.as_bytes());
+    // xSCLTX (43)
+    let cltx = get_metadata_field(metadata_dict, &format!("{prefix}CLTX"), "", 43);
+    buf.extend_from_slice(cltx.as_bytes());
+    // xSCATP (1)
+    let catp = get_metadata_field(metadata_dict, &format!("{prefix}CATP"), "", 1);
+    buf.extend_from_slice(catp.as_bytes());
+    // xSCAUT (40)
+    let caut = get_metadata_field(metadata_dict, &format!("{prefix}CAUT"), "", 40);
+    buf.extend_from_slice(caut.as_bytes());
+    // xSCRSN (1)
+    let crsn = get_metadata_field(metadata_dict, &format!("{prefix}CRSN"), "", 1);
+    buf.extend_from_slice(crsn.as_bytes());
+    // xSSRDT (8)
+    let srdt = get_metadata_field(metadata_dict, &format!("{prefix}SRDT"), "", 8);
+    buf.extend_from_slice(srdt.as_bytes());
+    // xSCTLN (15)
+    let ctln = get_metadata_field(metadata_dict, &format!("{prefix}CTLN"), "", 15);
+    buf.extend_from_slice(ctln.as_bytes());
+}
+
 /// Maximum TRE data size for IXSHD field (IXSHDL max 99999 - 3 bytes for IXSOFL).
 #[allow(dead_code)]
 const MAX_IXSHD_TRE_SIZE: usize = 99996;
@@ -1427,38 +1541,8 @@ impl JBPDatasetWriter {
         let iid2_default = truncate_to_bytes(&asset.title, 80);
         let iid2 = format!("{:80}", get_field("IID2", iid2_default, 80));
         subheader.extend_from_slice(iid2.as_bytes());
-        // ISCLAS (1) - Image Security Classification
-        subheader.extend_from_slice(b"U");
-        // ISCLSY (2) - Image Security Classification System
-        subheader.extend_from_slice(b"  ");
-        // ISCODE (11) - Image Codewords
-        subheader.extend_from_slice(&[b' '; 11]);
-        // ISCTLH (2) - Image Control and Handling
-        subheader.extend_from_slice(b"  ");
-        // ISREL (20) - Image Releasing Instructions
-        subheader.extend_from_slice(&[b' '; 20]);
-        // ISDCTP (2) - Image Declassification Type
-        subheader.extend_from_slice(b"  ");
-        // ISDCDT (8) - Image Declassification Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // ISDCXM (4) - Image Declassification Exemption
-        subheader.extend_from_slice(&[b' '; 4]);
-        // ISDG (1) - Image Downgrade
-        subheader.extend_from_slice(b" ");
-        // ISDGDT (8) - Image Downgrade Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // ISCLTX (43) - Image Classification Text
-        subheader.extend_from_slice(&[b' '; 43]);
-        // ISCATP (1) - Image Classification Authority Type
-        subheader.extend_from_slice(b" ");
-        // ISCAUT (40) - Image Classification Authority
-        subheader.extend_from_slice(&[b' '; 40]);
-        // ISCRSN (1) - Image Classification Reason
-        subheader.extend_from_slice(b" ");
-        // ISSRDT (8) - Image Security Source Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // ISCTLN (15) - Image Security Control Number
-        subheader.extend_from_slice(&[b' '; 15]);
+        // ISCLAS through ISCTLN — security classification block
+        write_security_fields(&mut subheader, &metadata_dict, "IS");
         // ENCRYP (1) - Encryption
         subheader.extend_from_slice(b"0");
         // ISORCE (42) - Image Source (use metadata if provided)
@@ -1473,13 +1557,15 @@ impl JBPDatasetWriter {
         // IREP (8) - Image Representation
         subheader.extend_from_slice(format!("{:8}", props.irep).as_bytes());
         // ICAT (8) - Image Category
-        subheader.extend_from_slice(b"VIS     ");
+        let icat = get_field("ICAT", "VIS", 8);
+        subheader.extend_from_slice(format!("{:8}", icat).as_bytes());
         // ABPP (2) - Actual Bits Per Pixel
         subheader.extend_from_slice(format!("{:02}", props.abpp).as_bytes());
         // PJUST (1) - Pixel Justification
         subheader.extend_from_slice(b"R");
         // ICORDS (1) - Image Coordinate Representation
-        subheader.extend_from_slice(b" ");
+        let icords = get_field("ICORDS", "", 1);
+        subheader.extend_from_slice(format!("{:1}", icords).as_bytes());
         // NICOM (1) - Number of Image Comments
         subheader.extend_from_slice(b"0");
         // IC (2) - Image Compression (from encoding hints)
@@ -1657,6 +1743,10 @@ impl JBPDatasetWriter {
     fn create_text_subheader(&self, asset: &QueuedAsset) -> Vec<u8> {
         let mut subheader = Vec::new();
 
+        // Get metadata for user-settable fields
+        let metadata = asset.provider.metadata();
+        let metadata_dict = metadata.as_dict(None);
+
         // TE (2) - File Part Type
         subheader.extend_from_slice(b"TE");
         // TEXTID (7) - Text Identifier
@@ -1665,46 +1755,18 @@ impl JBPDatasetWriter {
         // TXTALVL (3) - Text Attachment Level
         subheader.extend_from_slice(b"000");
         // TXTDT (14) - Text Date and Time
-        subheader.extend_from_slice(b"              ");
+        let txtdt = get_metadata_field(&metadata_dict, "TXTDT", "", 14);
+        subheader.extend_from_slice(txtdt.as_bytes());
         // TXTITL (80) - Text Title
         let txtitl = format!("{:80}", truncate_to_bytes(&asset.title, 80));
         subheader.extend_from_slice(txtitl.as_bytes());
-        // TSCLAS (1) - Text Security Classification
-        subheader.extend_from_slice(b"U");
-        // TSCLSY (2) - Text Security Classification System
-        subheader.extend_from_slice(b"  ");
-        // TSCODE (11) - Text Codewords
-        subheader.extend_from_slice(&[b' '; 11]);
-        // TSCTLH (2) - Text Control and Handling
-        subheader.extend_from_slice(b"  ");
-        // TSREL (20) - Text Releasing Instructions
-        subheader.extend_from_slice(&[b' '; 20]);
-        // TSDCTP (2) - Text Declassification Type
-        subheader.extend_from_slice(b"  ");
-        // TSDCDT (8) - Text Declassification Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // TSDCXM (4) - Text Declassification Exemption
-        subheader.extend_from_slice(&[b' '; 4]);
-        // TSDG (1) - Text Downgrade
-        subheader.extend_from_slice(b" ");
-        // TSDGDT (8) - Text Downgrade Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // TSCLTX (43) - Text Classification Text
-        subheader.extend_from_slice(&[b' '; 43]);
-        // TSCATP (1) - Text Classification Authority Type
-        subheader.extend_from_slice(b" ");
-        // TSCAUT (40) - Text Classification Authority
-        subheader.extend_from_slice(&[b' '; 40]);
-        // TSCRSN (1) - Text Classification Reason
-        subheader.extend_from_slice(b" ");
-        // TSSRDT (8) - Text Security Source Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // TSCTLN (15) - Text Security Control Number
-        subheader.extend_from_slice(&[b' '; 15]);
+        // Security fields (TSCLAS through TSCTLN)
+        write_security_fields(&mut subheader, &metadata_dict, "TS");
         // ENCRYP (1) - Encryption
         subheader.extend_from_slice(b"0");
         // TXTFMT (3) - Text Format
-        subheader.extend_from_slice(b"MTF");
+        let txtfmt = get_metadata_field(&metadata_dict, "TXTFMT", "MTF", 3);
+        subheader.extend_from_slice(txtfmt.as_bytes());
 
         subheader
     }
@@ -1712,6 +1774,10 @@ impl JBPDatasetWriter {
     /// Create a minimal graphic subheader.
     fn create_graphic_subheader(&self, asset: &QueuedAsset) -> Vec<u8> {
         let mut subheader = Vec::new();
+
+        // Get metadata for user-settable fields
+        let metadata = asset.provider.metadata();
+        let metadata_dict = metadata.as_dict(None);
 
         // SY (2) - File Part Type
         subheader.extend_from_slice(b"SY");
@@ -1721,56 +1787,33 @@ impl JBPDatasetWriter {
         // SNAME (20) - Graphic Name
         let sname = format!("{:20}", truncate_to_bytes(&asset.title, 20));
         subheader.extend_from_slice(sname.as_bytes());
-        // SSCLAS (1) - Graphic Security Classification
-        subheader.extend_from_slice(b"U");
-        // SSCLSY (2) - Graphic Security Classification System
-        subheader.extend_from_slice(b"  ");
-        // SSCODE (11) - Graphic Codewords
-        subheader.extend_from_slice(&[b' '; 11]);
-        // SSCTLH (2) - Graphic Control and Handling
-        subheader.extend_from_slice(b"  ");
-        // SSREL (20) - Graphic Releasing Instructions
-        subheader.extend_from_slice(&[b' '; 20]);
-        // SSDCTP (2) - Graphic Declassification Type
-        subheader.extend_from_slice(b"  ");
-        // SSDCDT (8) - Graphic Declassification Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // SSDCXM (4) - Graphic Declassification Exemption
-        subheader.extend_from_slice(&[b' '; 4]);
-        // SSDG (1) - Graphic Downgrade
-        subheader.extend_from_slice(b" ");
-        // SSDGDT (8) - Graphic Downgrade Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // SSCLTX (43) - Graphic Classification Text
-        subheader.extend_from_slice(&[b' '; 43]);
-        // SSCATP (1) - Graphic Classification Authority Type
-        subheader.extend_from_slice(b" ");
-        // SSCAUT (40) - Graphic Classification Authority
-        subheader.extend_from_slice(&[b' '; 40]);
-        // SSCRSN (1) - Graphic Classification Reason
-        subheader.extend_from_slice(b" ");
-        // SSSRDT (8) - Graphic Security Source Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // SSCTLN (15) - Graphic Security Control Number
-        subheader.extend_from_slice(&[b' '; 15]);
+        // Security fields (SSCLAS through SSCTLN)
+        write_security_fields(&mut subheader, &metadata_dict, "SS");
         // ENCRYP (1) - Encryption
         subheader.extend_from_slice(b"0");
         // SFMT (1) - Graphic Type
-        subheader.extend_from_slice(b"C");
+        let sfmt = get_metadata_field(&metadata_dict, "SFMT", "C", 1);
+        subheader.extend_from_slice(sfmt.as_bytes());
         // SSTRUCT (13) - Reserved
         subheader.extend_from_slice(&[0u8; 13]);
         // SDLVL (3) - Graphic Display Level
-        subheader.extend_from_slice(b"001");
+        let sdlvl = get_metadata_field(&metadata_dict, "SDLVL", "001", 3);
+        subheader.extend_from_slice(sdlvl.as_bytes());
         // SALVL (3) - Graphic Attachment Level
-        subheader.extend_from_slice(b"000");
+        let salvl = get_metadata_field(&metadata_dict, "SALVL", "000", 3);
+        subheader.extend_from_slice(salvl.as_bytes());
         // SLOC (10) - Graphic Location
-        subheader.extend_from_slice(b"0000000000");
+        let sloc = get_metadata_field(&metadata_dict, "SLOC", "0000000000", 10);
+        subheader.extend_from_slice(sloc.as_bytes());
         // SBND1 (10) - First Graphic Bound Location
-        subheader.extend_from_slice(b"0000000000");
+        let sbnd1 = get_metadata_field(&metadata_dict, "SBND1", "0000000000", 10);
+        subheader.extend_from_slice(sbnd1.as_bytes());
         // SCOLOR (1) - Graphic Color
-        subheader.extend_from_slice(b"C");
+        let scolor = get_metadata_field(&metadata_dict, "SCOLOR", "C", 1);
+        subheader.extend_from_slice(scolor.as_bytes());
         // SBND2 (10) - Second Graphic Bound Location
-        subheader.extend_from_slice(b"0000000000");
+        let sbnd2 = get_metadata_field(&metadata_dict, "SBND2", "0000000000", 10);
+        subheader.extend_from_slice(sbnd2.as_bytes());
         // SRES2 (2) - Reserved
         subheader.extend_from_slice(b"00");
         // SXSHDL (5) - Graphic Extended Subheader Data Length
@@ -1783,49 +1826,65 @@ impl JBPDatasetWriter {
     fn create_des_subheader(&self, asset: &QueuedAsset) -> Vec<u8> {
         let mut subheader = Vec::new();
 
+        // Get metadata for user-settable fields
+        let metadata = asset.provider.metadata();
+        let metadata_dict = metadata.as_dict(None);
+
         // DE (2) - File Part Type
         subheader.extend_from_slice(b"DE");
         // DESID (25) - DES Identifier
         let desid = format!("{:25}", truncate_to_bytes(&asset.key, 25));
         subheader.extend_from_slice(desid.as_bytes());
         // DESVER (2) - DES Version
-        subheader.extend_from_slice(b"01");
-        // DECLAS (1) - DES Security Classification
-        subheader.extend_from_slice(b"U");
-        // DESCLSY (2) - DES Security Classification System
-        subheader.extend_from_slice(b"  ");
-        // DESCODE (11) - DES Codewords
-        subheader.extend_from_slice(&[b' '; 11]);
-        // DESCTLH (2) - DES Control and Handling
-        subheader.extend_from_slice(b"  ");
-        // DESREL (20) - DES Releasing Instructions
-        subheader.extend_from_slice(&[b' '; 20]);
-        // DESDCTP (2) - DES Declassification Type
-        subheader.extend_from_slice(b"  ");
-        // DESDCDT (8) - DES Declassification Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // DESDCXM (4) - DES Declassification Exemption
-        subheader.extend_from_slice(&[b' '; 4]);
-        // DESDG (1) - DES Downgrade
-        subheader.extend_from_slice(b" ");
-        // DESDGDT (8) - DES Downgrade Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // DESCLTX (43) - DES Classification Text
-        subheader.extend_from_slice(&[b' '; 43]);
-        // DESCATP (1) - DES Classification Authority Type
-        subheader.extend_from_slice(b" ");
-        // DESCAUT (40) - DES Classification Authority
-        subheader.extend_from_slice(&[b' '; 40]);
-        // DESCRSN (1) - DES Classification Reason
-        subheader.extend_from_slice(b" ");
-        // DESSRDT (8) - DES Security Source Date
-        subheader.extend_from_slice(&[b' '; 8]);
-        // DESCTLN (15) - DES Security Control Number
-        subheader.extend_from_slice(&[b' '; 15]);
+        let desver = get_metadata_field(&metadata_dict, "DESVER", "01", 2);
+        subheader.extend_from_slice(desver.as_bytes());
+        // Security fields (DECLAS through DESCTLN) — uses "DES" prefix
+        // Note: DES security fields use "DE" prefix for DECLAS but "DES" for the rest.
+        // The NITF spec names are: DECLAS, DESCLSY, DESCODE, DESCTLH, DESREL,
+        // DESDCTP, DESDCDT, DESDCXM, DESDG, DESDGDT, DESCLTX, DESCATP,
+        // DESCAUT, DESCRSN, DESSRDT, DESCTLN.
+        // Our write_security_fields uses prefix+"CLAS", prefix+"CLSY", etc.
+        // With prefix="DE", that gives DECLAS, DECLSY — but spec says DESCLSY.
+        // We handle this by using prefix "DES" for the xSCLSY..xSCTLN fields
+        // and a separate lookup for DECLAS.
+        let declas = get_metadata_field(&metadata_dict, "DECLAS", "U", 1);
+        subheader.extend_from_slice(declas.as_bytes());
+        let desclsy = get_metadata_field(&metadata_dict, "DESCLSY", "", 2);
+        subheader.extend_from_slice(desclsy.as_bytes());
+        let descode = get_metadata_field(&metadata_dict, "DESCODE", "", 11);
+        subheader.extend_from_slice(descode.as_bytes());
+        let desctlh = get_metadata_field(&metadata_dict, "DESCTLH", "", 2);
+        subheader.extend_from_slice(desctlh.as_bytes());
+        let desrel = get_metadata_field(&metadata_dict, "DESREL", "", 20);
+        subheader.extend_from_slice(desrel.as_bytes());
+        let desdctp = get_metadata_field(&metadata_dict, "DESDCTP", "", 2);
+        subheader.extend_from_slice(desdctp.as_bytes());
+        let desdcdt = get_metadata_field(&metadata_dict, "DESDCDT", "", 8);
+        subheader.extend_from_slice(desdcdt.as_bytes());
+        let desdcxm = get_metadata_field(&metadata_dict, "DESDCXM", "", 4);
+        subheader.extend_from_slice(desdcxm.as_bytes());
+        let desdg = get_metadata_field(&metadata_dict, "DESDG", "", 1);
+        subheader.extend_from_slice(desdg.as_bytes());
+        let desdgdt = get_metadata_field(&metadata_dict, "DESDGDT", "", 8);
+        subheader.extend_from_slice(desdgdt.as_bytes());
+        let descltx = get_metadata_field(&metadata_dict, "DESCLTX", "", 43);
+        subheader.extend_from_slice(descltx.as_bytes());
+        let descatp = get_metadata_field(&metadata_dict, "DESCATP", "", 1);
+        subheader.extend_from_slice(descatp.as_bytes());
+        let descaut = get_metadata_field(&metadata_dict, "DESCAUT", "", 40);
+        subheader.extend_from_slice(descaut.as_bytes());
+        let descrsn = get_metadata_field(&metadata_dict, "DESCRSN", "", 1);
+        subheader.extend_from_slice(descrsn.as_bytes());
+        let dessrdt = get_metadata_field(&metadata_dict, "DESSRDT", "", 8);
+        subheader.extend_from_slice(dessrdt.as_bytes());
+        let desctln = get_metadata_field(&metadata_dict, "DESCTLN", "", 15);
+        subheader.extend_from_slice(desctln.as_bytes());
         // DESOFLW (6) - DES Overflowed Header Type
-        subheader.extend_from_slice(&[b' '; 6]);
+        let desoflw = get_metadata_field(&metadata_dict, "DESOFLW", "", 6);
+        subheader.extend_from_slice(desoflw.as_bytes());
         // DESITEM (3) - DES Data Item Overflowed
-        subheader.extend_from_slice(b"   ");
+        let desitem = get_metadata_field(&metadata_dict, "DESITEM", "", 3);
+        subheader.extend_from_slice(desitem.as_bytes());
         // DESSHL (4) - DES User-Defined Subheader Length
         subheader.extend_from_slice(b"0000");
 
@@ -1915,72 +1974,41 @@ impl JBPDatasetWriter {
         text_info: &[(usize, usize)],
         des_info: &[(usize, usize)],
     ) -> Result<(), CodecError> {
+        // Build metadata dict from file_metadata (empty if not set)
+        let empty_map = std::collections::HashMap::new();
+        let metadata_dict = self
+            .file_metadata
+            .as_ref()
+            .map(|m| m.as_dict(None))
+            .unwrap_or_else(|| empty_map.clone());
+
         // Magic number
         writer.write_all(self.format.magic().as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
 
         // CLEVEL (2)
-        writer.write_all(b"03")
+        let clevel = get_metadata_field(&metadata_dict, "CLEVEL", "03", 2);
+        writer.write_all(clevel.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // STYPE (4)
         writer.write_all(b"BF01")
             .map_err(|e| JBPError::IoError { source: e })?;
         // OSTAID (10)
-        writer.write_all(b"OSML_IO   ")
+        let ostaid = get_metadata_field(&metadata_dict, "OSTAID", "OSML_IO", 10);
+        writer.write_all(ostaid.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
-        // FDT (14) - current date/time placeholder
-        writer.write_all(b"              ")
+        // FDT (14)
+        let fdt = get_metadata_field(&metadata_dict, "FDT", "", 14);
+        writer.write_all(fdt.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // FTITLE (80)
-        writer.write_all(&[b' '; 80])
+        let ftitle = get_metadata_field(&metadata_dict, "FTITLE", "", 80);
+        writer.write_all(ftitle.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
-        // FSCLAS (1)
-        writer.write_all(b"U")
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSCLSY (2)
-        writer.write_all(b"  ")
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSCODE (11)
-        writer.write_all(&[b' '; 11])
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSCTLH (2)
-        writer.write_all(b"  ")
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSREL (20)
-        writer.write_all(&[b' '; 20])
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSDCTP (2)
-        writer.write_all(b"  ")
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSDCDT (8)
-        writer.write_all(&[b' '; 8])
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSDCXM (4)
-        writer.write_all(&[b' '; 4])
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSDG (1)
-        writer.write_all(b" ")
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSDGDT (8)
-        writer.write_all(&[b' '; 8])
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSCLTX (43)
-        writer.write_all(&[b' '; 43])
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSCATP (1)
-        writer.write_all(b" ")
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSCAUT (40)
-        writer.write_all(&[b' '; 40])
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSCRSN (1)
-        writer.write_all(b" ")
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSSRDT (8)
-        writer.write_all(&[b' '; 8])
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // FSCTLN (15)
-        writer.write_all(&[b' '; 15])
+        // Security fields (FSCLAS through FSCTLN) — 13 fields using "FS" prefix
+        let mut security_buf = Vec::new();
+        write_security_fields(&mut security_buf, &metadata_dict, "FS");
+        writer.write_all(&security_buf)
             .map_err(|e| JBPError::IoError { source: e })?;
         // FSCOP (5)
         writer.write_all(b"00000")
@@ -1991,14 +2019,17 @@ impl JBPDatasetWriter {
         // ENCRYP (1)
         writer.write_all(b"0")
             .map_err(|e| JBPError::IoError { source: e })?;
-        // FBKGC (3)
-        writer.write_all(&[0u8; 3])
+        // FBKGC (3) - binary field
+        let fbkgc = get_metadata_bytes(&metadata_dict, "FBKGC", &[0u8; 3], 3);
+        writer.write_all(&fbkgc)
             .map_err(|e| JBPError::IoError { source: e })?;
         // ONAME (24)
-        writer.write_all(&[b' '; 24])
+        let oname = get_metadata_field(&metadata_dict, "ONAME", "", 24);
+        writer.write_all(oname.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // OPHONE (18)
-        writer.write_all(&[b' '; 18])
+        let ophone = get_metadata_field(&metadata_dict, "OPHONE", "", 18);
+        writer.write_all(ophone.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
 
         // FL (12) - File Length
@@ -4266,5 +4297,675 @@ mod bugfix_tests {
                 ic, expected_htj2k, j2k.htj2k
             );
         }
+    }
+}
+
+/// Tests for metadata-aware header and subheader writing.
+///
+/// These tests verify that `write_file_header()`, `create_text_subheader()`,
+/// `create_graphic_subheader()`, `create_des_subheader()`, and
+/// `create_image_subheader_with_tres()` read user-settable fields from
+/// their respective metadata providers instead of hardcoding values.
+#[cfg(test)]
+mod metadata_writing_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    // --- Shared test helpers ---
+
+    struct MetaProvider {
+        data: HashMap<String, serde_json::Value>,
+    }
+
+    impl MetaProvider {
+        fn new() -> Self {
+            Self { data: HashMap::new() }
+        }
+
+        fn set(mut self, key: &str, value: impl Into<serde_json::Value>) -> Self {
+            self.data.insert(key.to_string(), value.into());
+            self
+        }
+    }
+
+    impl MetadataProvider for MetaProvider {
+        fn raw(&self) -> &[u8] { &[] }
+        fn as_dict(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
+            self.data.clone()
+        }
+    }
+
+    struct MetaAssetProvider {
+        key: String,
+        title: String,
+        asset_type: AssetType,
+        metadata: Arc<dyn MetadataProvider>,
+        data: Vec<u8>,
+    }
+
+    impl MetaAssetProvider {
+        fn new(key: &str, asset_type: AssetType, metadata: MetaProvider) -> Self {
+            Self {
+                key: key.to_string(),
+                title: "Test Title".to_string(),
+                asset_type,
+                metadata: Arc::new(metadata),
+                data: vec![0u8; 64],
+            }
+        }
+    }
+
+    impl AssetProvider for MetaAssetProvider {
+        fn key(&self) -> &str { &self.key }
+        fn title(&self) -> &str { &self.title }
+        fn description(&self) -> &str { "" }
+        fn media_type(&self) -> &str { "application/octet-stream" }
+        fn roles(&self) -> &[String] { &[] }
+        fn asset_type(&self) -> AssetType { self.asset_type }
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(self.data.clone()) }
+        fn metadata(&self) -> Arc<dyn MetadataProvider> { self.metadata.clone() }
+        fn as_any(&self) -> &dyn std::any::Any { self }
+    }
+
+    fn make_asset(key: &str, asset_type: AssetType, metadata: MetaProvider) -> QueuedAsset {
+        let provider = MetaAssetProvider::new(key, asset_type, metadata);
+        QueuedAsset {
+            key: key.to_string(),
+            title: "Test Title".to_string(),
+            description: "".to_string(),
+            roles: vec![],
+            segment_type: JBPDatasetWriter::asset_type_to_segment_type(asset_type),
+            provider: Arc::new(provider),
+        }
+    }
+
+    fn make_writer() -> JBPDatasetWriter {
+        let dir = std::env::temp_dir().join("metadata_writing_tests");
+        std::fs::create_dir_all(&dir).ok();
+        JBPDatasetWriter::new(dir.join("test.ntf"), NitfFormat::Nitf21).unwrap()
+    }
+
+    /// Helper: extract a fixed-width ASCII field from a byte buffer at a given offset.
+    fn extract_str(buf: &[u8], offset: usize, len: usize) -> String {
+        String::from_utf8_lossy(&buf[offset..offset + len]).to_string()
+    }
+
+    // =========================================================================
+    // File header tests
+    // =========================================================================
+
+    #[test]
+    fn file_header_honors_ftitle_from_metadata() {
+        let meta = MetaProvider::new().set("FTITLE", "Custom File Title");
+        let mut writer = make_writer();
+        writer.set_metadata(Arc::new(meta)).unwrap();
+
+        let mut buf = Vec::new();
+        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+
+        // FTITLE is at offset: 9(magic) + 2(CLEVEL) + 4(STYPE) + 10(OSTAID) + 14(FDT) = 39
+        let ftitle = extract_str(&buf, 39, 80);
+        assert!(
+            ftitle.starts_with("Custom File Title"),
+            "FTITLE should start with metadata value, got '{}'", ftitle
+        );
+    }
+
+    #[test]
+    fn file_header_honors_oname_from_metadata() {
+        let meta = MetaProvider::new().set("ONAME", "Test Author");
+        let mut writer = make_writer();
+        writer.set_metadata(Arc::new(meta)).unwrap();
+
+        let mut buf = Vec::new();
+        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+
+        // ONAME offset: 39(before FTITLE) + 80(FTITLE) + 167(security+FSCOP+FSCPYS+ENCRYP+FBKGC)
+        // Security block = 1+2+11+2+20+2+8+4+1+8+43+1+40+1+8+15 = 167
+        // FSCOP(5) + FSCPYS(5) + ENCRYP(1) + FBKGC(3) = 14
+        // ONAME offset = 39 + 80 + 167 + 14 = 300
+        let oname = extract_str(&buf, 300, 24);
+        assert!(
+            oname.starts_with("Test Author"),
+            "ONAME should start with metadata value, got '{}'", oname
+        );
+    }
+
+    #[test]
+    fn file_header_honors_ophone_from_metadata() {
+        let meta = MetaProvider::new().set("OPHONE", "555-0100");
+        let mut writer = make_writer();
+        writer.set_metadata(Arc::new(meta)).unwrap();
+
+        let mut buf = Vec::new();
+        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+
+        // OPHONE offset = 300 + 24 = 324
+        let ophone = extract_str(&buf, 324, 18);
+        assert!(
+            ophone.starts_with("555-0100"),
+            "OPHONE should start with metadata value, got '{}'", ophone
+        );
+    }
+
+    #[test]
+    fn file_header_honors_fdt_from_metadata() {
+        let meta = MetaProvider::new().set("FDT", "20260101120000");
+        let mut writer = make_writer();
+        writer.set_metadata(Arc::new(meta)).unwrap();
+
+        let mut buf = Vec::new();
+        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+
+        // FDT offset: 9 + 2 + 4 + 10 = 25
+        let fdt = extract_str(&buf, 25, 14);
+        assert_eq!(fdt, "20260101120000", "FDT should match metadata value");
+    }
+
+    #[test]
+    fn file_header_honors_ostaid_from_metadata() {
+        let meta = MetaProvider::new().set("OSTAID", "CUSTOM");
+        let mut writer = make_writer();
+        writer.set_metadata(Arc::new(meta)).unwrap();
+
+        let mut buf = Vec::new();
+        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+
+        // OSTAID offset: 9 + 2 + 4 = 15
+        let ostaid = extract_str(&buf, 15, 10);
+        assert!(
+            ostaid.starts_with("CUSTOM"),
+            "OSTAID should start with metadata value, got '{}'", ostaid
+        );
+    }
+
+    #[test]
+    fn file_header_honors_clevel_from_metadata() {
+        let meta = MetaProvider::new().set("CLEVEL", "05");
+        let mut writer = make_writer();
+        writer.set_metadata(Arc::new(meta)).unwrap();
+
+        let mut buf = Vec::new();
+        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+
+        // CLEVEL offset: 9
+        let clevel = extract_str(&buf, 9, 2);
+        assert_eq!(clevel, "05", "CLEVEL should match metadata value");
+    }
+
+    #[test]
+    fn file_header_honors_fsclas_from_metadata() {
+        let meta = MetaProvider::new().set("FSCLAS", "S");
+        let mut writer = make_writer();
+        writer.set_metadata(Arc::new(meta)).unwrap();
+
+        let mut buf = Vec::new();
+        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+
+        // FSCLAS offset: 39 + 80 = 119
+        let fsclas = extract_str(&buf, 119, 1);
+        assert_eq!(fsclas, "S", "FSCLAS should match metadata value");
+    }
+
+    #[test]
+    fn file_header_honors_fbkgc_from_metadata() {
+        let meta = MetaProvider::new().set("FBKGC", serde_json::json!([255, 128, 0]));
+        let mut writer = make_writer();
+        writer.set_metadata(Arc::new(meta)).unwrap();
+
+        let mut buf = Vec::new();
+        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+
+        // FBKGC offset: 119 + 167 + 5 + 5 + 1 = 297
+        // security(167) + FSCOP(5) + FSCPYS(5) + ENCRYP(1) = 178
+        // FBKGC at 119 + 178 = 297
+        assert_eq!(buf[297], 255, "FBKGC[0] should be 255");
+        assert_eq!(buf[298], 128, "FBKGC[1] should be 128");
+        assert_eq!(buf[299], 0, "FBKGC[2] should be 0");
+    }
+
+    #[test]
+    fn file_header_defaults_without_metadata() {
+        let writer = make_writer();
+
+        let mut buf = Vec::new();
+        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+
+        // CLEVEL defaults to "03"
+        assert_eq!(extract_str(&buf, 9, 2), "03");
+        // OSTAID defaults to "OSML_IO"
+        assert!(extract_str(&buf, 15, 10).starts_with("OSML_IO"));
+        // FSCLAS defaults to "U"
+        assert_eq!(extract_str(&buf, 119, 1), "U");
+    }
+
+    // =========================================================================
+    // Text subheader tests
+    // =========================================================================
+
+    #[test]
+    fn text_subheader_honors_security_from_metadata() {
+        let meta = MetaProvider::new()
+            .set("TSCLAS", "C")
+            .set("TSCLSY", "US")
+            .set("TSCODE", "SECRET");
+        let asset = make_asset("txt1", AssetType::Text, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_text_subheader(&asset);
+
+        // TE(2) + TEXTID(7) + TXTALVL(3) + TXTDT(14) + TXTITL(80) = 106
+        // TSCLAS at offset 106
+        assert_eq!(extract_str(&subheader, 106, 1), "C", "TSCLAS should be 'C'");
+        // TSCLSY at offset 107
+        assert_eq!(extract_str(&subheader, 107, 2), "US", "TSCLSY should be 'US'");
+        // TSCODE at offset 109, 11 bytes
+        assert!(
+            extract_str(&subheader, 109, 11).starts_with("SECRET"),
+            "TSCODE should start with 'SECRET'"
+        );
+    }
+
+    #[test]
+    fn text_subheader_honors_txtdt_from_metadata() {
+        let meta = MetaProvider::new().set("TXTDT", "20260315093000");
+        let asset = make_asset("txt1", AssetType::Text, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_text_subheader(&asset);
+
+        // TXTDT at offset: 2 + 7 + 3 = 12
+        assert_eq!(
+            extract_str(&subheader, 12, 14),
+            "20260315093000",
+            "TXTDT should match metadata value"
+        );
+    }
+
+    #[test]
+    fn text_subheader_honors_txtfmt_from_metadata() {
+        let meta = MetaProvider::new().set("TXTFMT", "STA");
+        let asset = make_asset("txt1", AssetType::Text, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_text_subheader(&asset);
+
+        // TXTFMT is the last field: total size - 3
+        let len = subheader.len();
+        assert_eq!(
+            extract_str(&subheader, len - 3, 3),
+            "STA",
+            "TXTFMT should match metadata value"
+        );
+    }
+
+    #[test]
+    fn text_subheader_defaults_without_metadata() {
+        let meta = MetaProvider::new();
+        let asset = make_asset("txt1", AssetType::Text, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_text_subheader(&asset);
+
+        // TSCLAS defaults to "U"
+        assert_eq!(extract_str(&subheader, 106, 1), "U");
+        // TXTFMT defaults to "MTF"
+        let len = subheader.len();
+        assert_eq!(extract_str(&subheader, len - 3, 3), "MTF");
+    }
+
+    // =========================================================================
+    // Graphic subheader tests
+    // =========================================================================
+
+    #[test]
+    fn graphic_subheader_honors_security_from_metadata() {
+        let meta = MetaProvider::new()
+            .set("SSCLAS", "S")
+            .set("SSREL", "NATO");
+        let asset = make_asset("gfx1", AssetType::Graphics, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_graphic_subheader(&asset);
+
+        // SY(2) + SID(10) + SNAME(20) = 32
+        // SSCLAS at offset 32
+        assert_eq!(extract_str(&subheader, 32, 1), "S", "SSCLAS should be 'S'");
+        // SSCLSY(2) + SSCODE(11) + SSCTLH(2) = 15 bytes after SSCLAS
+        // SSREL at offset 32 + 1 + 2 + 11 + 2 = 48
+        assert!(
+            extract_str(&subheader, 48, 20).starts_with("NATO"),
+            "SSREL should start with 'NATO'"
+        );
+    }
+
+    #[test]
+    fn graphic_subheader_honors_sfmt_from_metadata() {
+        let meta = MetaProvider::new().set("SFMT", "C");
+        let asset = make_asset("gfx1", AssetType::Graphics, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_graphic_subheader(&asset);
+
+        // SFMT offset: 32(before security) + 167(security) + 1(ENCRYP) = 200
+        assert_eq!(extract_str(&subheader, 200, 1), "C", "SFMT should be 'C'");
+    }
+
+    #[test]
+    fn graphic_subheader_honors_sdlvl_from_metadata() {
+        let meta = MetaProvider::new().set("SDLVL", "005");
+        let asset = make_asset("gfx1", AssetType::Graphics, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_graphic_subheader(&asset);
+
+        // SDLVL offset: 200 + 1(SFMT) + 13(SSTRUCT) = 214
+        assert_eq!(extract_str(&subheader, 214, 3), "005", "SDLVL should be '005'");
+    }
+
+    #[test]
+    fn graphic_subheader_honors_sloc_from_metadata() {
+        let meta = MetaProvider::new().set("SLOC", "0050000100");
+        let asset = make_asset("gfx1", AssetType::Graphics, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_graphic_subheader(&asset);
+
+        // SLOC offset: 214 + 3(SDLVL) + 3(SALVL) = 220
+        assert_eq!(
+            extract_str(&subheader, 220, 10),
+            "0050000100",
+            "SLOC should match metadata value"
+        );
+    }
+
+    #[test]
+    fn graphic_subheader_defaults_without_metadata() {
+        let meta = MetaProvider::new();
+        let asset = make_asset("gfx1", AssetType::Graphics, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_graphic_subheader(&asset);
+
+        // SSCLAS defaults to "U"
+        assert_eq!(extract_str(&subheader, 32, 1), "U");
+        // SFMT defaults to "C"
+        assert_eq!(extract_str(&subheader, 200, 1), "C");
+        // SDLVL defaults to "001"
+        assert_eq!(extract_str(&subheader, 214, 3), "001");
+    }
+
+    // =========================================================================
+    // DES subheader tests
+    // =========================================================================
+
+    #[test]
+    fn des_subheader_honors_security_from_metadata() {
+        let meta = MetaProvider::new()
+            .set("DECLAS", "R")
+            .set("DESCLSY", "US")
+            .set("DESCODE", "RESTRICTED");
+        let asset = make_asset("des1", AssetType::Data, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_des_subheader(&asset);
+
+        // DE(2) + DESID(25) + DESVER(2) = 29
+        // DECLAS at offset 29
+        assert_eq!(extract_str(&subheader, 29, 1), "R", "DECLAS should be 'R'");
+        // DESCLSY at offset 30
+        assert_eq!(extract_str(&subheader, 30, 2), "US", "DESCLSY should be 'US'");
+        // DESCODE at offset 32, 11 bytes
+        assert!(
+            extract_str(&subheader, 32, 11).starts_with("RESTRICTED"),
+            "DESCODE should start with 'RESTRICTED'"
+        );
+    }
+
+    #[test]
+    fn des_subheader_honors_desver_from_metadata() {
+        let meta = MetaProvider::new().set("DESVER", "02");
+        let asset = make_asset("des1", AssetType::Data, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_des_subheader(&asset);
+
+        // DESVER at offset: 2 + 25 = 27
+        assert_eq!(
+            extract_str(&subheader, 27, 2),
+            "02",
+            "DESVER should match metadata value"
+        );
+    }
+
+    #[test]
+    fn des_subheader_defaults_without_metadata() {
+        let meta = MetaProvider::new();
+        let asset = make_asset("des1", AssetType::Data, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_des_subheader(&asset);
+
+        // DESVER defaults to "01"
+        assert_eq!(extract_str(&subheader, 27, 2), "01");
+        // DECLAS defaults to "U"
+        assert_eq!(extract_str(&subheader, 29, 1), "U");
+    }
+
+    // =========================================================================
+    // Image subheader tests (security + ICAT + ICORDS)
+    // =========================================================================
+
+    #[test]
+    fn image_subheader_honors_security_from_metadata() {
+        let meta = MetaProvider::new()
+            .set("ISCLAS", "T")
+            .set("ISCLSY", "US")
+            .set("ISCODE", "TOPSECRET");
+        let asset = make_asset("img1", AssetType::Image, meta);
+        let writer = make_writer();
+        let hints = EncodingHints { nppbh: 1, nppbv: 1, ..EncodingHints::default() };
+
+        let subheader = writer.create_image_subheader_with_tres(&asset, &[], None, &hints);
+
+        // IM(2) + IID1(10) + IDATIM(14) + TGTID(17) + IID2(80) = 123
+        // ISCLAS at offset 123
+        assert_eq!(extract_str(&subheader, 123, 1), "T", "ISCLAS should be 'T'");
+        // ISCLSY at offset 124
+        assert_eq!(extract_str(&subheader, 124, 2), "US", "ISCLSY should be 'US'");
+        // ISCODE at offset 126, 11 bytes
+        assert!(
+            extract_str(&subheader, 126, 11).starts_with("TOPSECRET"),
+            "ISCODE should start with 'TOPSECRET'"
+        );
+    }
+
+    #[test]
+    fn image_subheader_honors_icat_from_metadata() {
+        let meta = MetaProvider::new().set("ICAT", "SAR");
+        let asset = make_asset("img1", AssetType::Image, meta);
+        let writer = make_writer();
+        let hints = EncodingHints { nppbh: 1, nppbv: 1, ..EncodingHints::default() };
+
+        let subheader = writer.create_image_subheader_with_tres(&asset, &[], None, &hints);
+
+        // After security block (123 + 167 = 290), ENCRYP(1), ISORCE(42),
+        // NROWS(8), NCOLS(8), PVTYPE(3), IREP(8) = 70
+        // ICAT at offset 290 + 70 = 360
+        let icat = extract_str(&subheader, 360, 8);
+        assert!(
+            icat.starts_with("SAR"),
+            "ICAT should start with 'SAR', got '{}'", icat
+        );
+    }
+
+    #[test]
+    fn image_subheader_honors_icords_from_metadata() {
+        let meta = MetaProvider::new().set("ICORDS", "G");
+        let asset = make_asset("img1", AssetType::Image, meta);
+        let writer = make_writer();
+        let hints = EncodingHints { nppbh: 1, nppbv: 1, ..EncodingHints::default() };
+
+        let subheader = writer.create_image_subheader_with_tres(&asset, &[], None, &hints);
+
+        // ICORDS at offset: 360 + 8(ICAT) + 2(ABPP) + 1(PJUST) = 371
+        let icords = extract_str(&subheader, 371, 1);
+        assert_eq!(icords, "G", "ICORDS should be 'G'");
+    }
+
+    #[test]
+    fn image_subheader_defaults_without_metadata() {
+        let meta = MetaProvider::new();
+        let asset = make_asset("img1", AssetType::Image, meta);
+        let writer = make_writer();
+        let hints = EncodingHints { nppbh: 1, nppbv: 1, ..EncodingHints::default() };
+
+        let subheader = writer.create_image_subheader_with_tres(&asset, &[], None, &hints);
+
+        // ISCLAS defaults to "U"
+        assert_eq!(extract_str(&subheader, 123, 1), "U");
+        // ICAT defaults to "VIS"
+        assert!(extract_str(&subheader, 360, 8).starts_with("VIS"));
+        // ICORDS defaults to " "
+        assert_eq!(extract_str(&subheader, 371, 1), " ");
+    }
+
+    // =========================================================================
+    // Helper function unit tests
+    // =========================================================================
+
+    #[test]
+    fn get_metadata_field_returns_value_from_dict() {
+        let mut dict = HashMap::new();
+        dict.insert("FTITLE".to_string(), serde_json::json!("My Title"));
+        assert_eq!(get_metadata_field(&dict, "FTITLE", "", 80).trim(), "My Title");
+    }
+
+    #[test]
+    fn get_metadata_field_returns_default_when_missing() {
+        let dict = HashMap::new();
+        let result = get_metadata_field(&dict, "FTITLE", "default", 10);
+        assert!(result.starts_with("default"));
+        assert_eq!(result.len(), 10);
+    }
+
+    #[test]
+    fn get_metadata_field_truncates_long_values() {
+        let mut dict = HashMap::new();
+        dict.insert("FIELD".to_string(), serde_json::json!("This is a very long value"));
+        let result = get_metadata_field(&dict, "FIELD", "", 10);
+        assert_eq!(result.len(), 10);
+        assert_eq!(result, "This is a ");
+    }
+
+    #[test]
+    fn get_metadata_bytes_returns_array_values() {
+        let mut dict = HashMap::new();
+        dict.insert("FBKGC".to_string(), serde_json::json!([255, 128, 64]));
+        let result = get_metadata_bytes(&dict, "FBKGC", &[0, 0, 0], 3);
+        assert_eq!(result, vec![255, 128, 64]);
+    }
+
+    #[test]
+    fn get_metadata_bytes_returns_default_when_missing() {
+        let dict = HashMap::new();
+        let result = get_metadata_bytes(&dict, "FBKGC", &[10, 20, 30], 3);
+        assert_eq!(result, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn get_metadata_bytes_pads_short_arrays() {
+        let mut dict = HashMap::new();
+        dict.insert("FBKGC".to_string(), serde_json::json!([255]));
+        let result = get_metadata_bytes(&dict, "FBKGC", &[0, 0, 0], 3);
+        assert_eq!(result, vec![255, 0, 0]);
+    }
+
+    #[test]
+    fn write_security_fields_produces_correct_size() {
+        let dict = HashMap::new();
+        let mut buf = Vec::new();
+        write_security_fields(&mut buf, &dict, "FS");
+        // 1+2+11+2+20+2+8+4+1+8+43+1+40+1+8+15 = 167
+        assert_eq!(buf.len(), 167, "Security block should be 167 bytes");
+    }
+
+    #[test]
+    fn write_security_fields_honors_metadata() {
+        let mut dict = HashMap::new();
+        dict.insert("FSCLAS".to_string(), serde_json::json!("S"));
+        dict.insert("FSCLSY".to_string(), serde_json::json!("US"));
+        let mut buf = Vec::new();
+        write_security_fields(&mut buf, &dict, "FS");
+        assert_eq!(extract_str(&buf, 0, 1), "S");
+        assert_eq!(extract_str(&buf, 1, 2), "US");
+    }
+
+    // =========================================================================
+    // End-to-end round-trip: write file with metadata, verify fields in output
+    // =========================================================================
+
+    #[test]
+    fn end_to_end_file_header_metadata_round_trip() {
+        let dir = std::env::temp_dir().join("metadata_e2e_test");
+        std::fs::create_dir_all(&dir).ok();
+        let path = dir.join("metadata_test.ntf");
+
+        let file_meta = MetaProvider::new()
+            .set("FTITLE", "E2E Test Title")
+            .set("ONAME", "E2E Author")
+            .set("OPHONE", "555-1234")
+            .set("FSCLAS", "U")
+            .set("OSTAID", "E2ETEST");
+
+        let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
+        writer.set_metadata(Arc::new(file_meta)).unwrap();
+
+        // Add a minimal text asset so the file has content
+        let text_meta = MetaProvider::new().set("TSCLAS", "C");
+        let text_provider = MetaAssetProvider::new("text1", AssetType::Text, text_meta);
+        writer.add_asset(
+            "text1",
+            Arc::new(text_provider),
+            "Test Text",
+            "",
+            &[],
+        ).unwrap();
+        writer.close().unwrap();
+
+        // Read back the file and verify header fields
+        let data = std::fs::read(&path).unwrap();
+        assert!(data.len() > 342, "File should be large enough to contain header");
+
+        // Verify FTITLE
+        let ftitle = extract_str(&data, 39, 80);
+        assert!(
+            ftitle.starts_with("E2E Test Title"),
+            "FTITLE should contain metadata value, got '{}'", ftitle.trim()
+        );
+
+        // Verify OSTAID
+        let ostaid = extract_str(&data, 15, 10);
+        assert!(
+            ostaid.starts_with("E2ETEST"),
+            "OSTAID should contain metadata value, got '{}'", ostaid.trim()
+        );
+
+        // Verify ONAME
+        let oname = extract_str(&data, 300, 24);
+        assert!(
+            oname.starts_with("E2E Author"),
+            "ONAME should contain metadata value, got '{}'", oname.trim()
+        );
+
+        // Verify OPHONE
+        let ophone = extract_str(&data, 324, 18);
+        assert!(
+            ophone.starts_with("555-1234"),
+            "OPHONE should contain metadata value, got '{}'", ophone.trim()
+        );
+
+        // Clean up
+        std::fs::remove_file(&path).ok();
     }
 }

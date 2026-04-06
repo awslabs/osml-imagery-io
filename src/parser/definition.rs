@@ -214,6 +214,7 @@ impl DefinitionLoader {
     ) -> Result<FieldType, LoadError> {
         match type_str {
             None | Some("str") | Some("strz") => Ok(FieldType::String),
+            Some("bytes") => Ok(FieldType::Bytes),
             Some("u1") => Ok(FieldType::UnsignedInt(1)),
             Some("u2") | Some("u2be") | Some("u2le") => Ok(FieldType::UnsignedInt(2)),
             Some("u3") | Some("u3be") => Ok(FieldType::UnsignedInt(3)),
