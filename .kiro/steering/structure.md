@@ -14,6 +14,10 @@
 ├── python/
 │   └── aws/osml/io/        # Python package (namespace package)
 ├── tests/                  # Python tests
+│   ├── unit/               # Python unit tests
+│   │   └── test_*.py       # Unit test modules
+│   ├── benchmark/          # Python benchmark tests (pytest-benchmark)
+│   ├── integration/        # Integration tests (manifest-driven)
 │   └── property/           # Property-based tests (hypothesis)
 │       ├── conftest.py     # Shared fixtures, pytest configuration
 │       ├── strategies.py   # Reusable hypothesis strategies
@@ -82,7 +86,10 @@ Three categories of test data, consolidated under `data/`:
 ## Conventions
 
 - Rust unit tests: inline with source in `src/` using `#[cfg(test)]`
-- Python tests: in `tests/` directory, run with pytest
+- Python unit tests: in `tests/unit/` directory
+- Python property tests: in `tests/property/` directory
+- Python benchmark tests: in `tests/benchmark/` directory
+- Python integration tests: in `tests/integration/` directory
 - Rust benchmarks: in `benches/` directory, run with Criterion
 
 ## Property-Based Testing
