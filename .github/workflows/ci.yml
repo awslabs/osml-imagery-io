@@ -23,6 +23,23 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
 
+  # Static analysis — license compliance, unused deps, complexity metrics
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native deps
+        run: sudo apt-get update && sudo apt-get install -y libopenjp2-7-dev libjpeg-turbo8-dev
+      - name: Install analysis tools
+        run: |
+          cargo install cargo-deny --locked
+          cargo install cargo-machete --locked
+      - name: cargo deny (licenses, advisories, bans)
+        run: cargo deny check
+      - name: cargo machete (unused dependencies)
+        run: cargo machete
+
   test-rust:
     runs-on: ubuntu-latest
     steps:

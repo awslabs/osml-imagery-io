@@ -54,6 +54,60 @@ OpenJPEG (libopenjp2) is BSD-2-Clause licensed, which is compatible. However, so
 - ruff - Linting and formatting
 - hypothesis - Property-based testing framework
 
+## Static Analysis Tools
+
+The project uses several static analysis tools to maintain code quality, enforce license compliance, and detect architectural issues. Each tool is run directly — no wrapper script.
+
+### Tools
+
+- **cargo clippy** — Rust linter with cognitive complexity checking. Config in `clippy.toml` (cognitive complexity threshold, argument limits, etc.). The `clippy::cognitive_complexity` lint is enabled crate-wide in `src/lib.rs`.
+- **cargo-deny** — License compliance, security advisories, duplicate/banned crate detection. Config in `deny.toml`.
+- **cargo-machete** — Detects unused dependencies in `Cargo.toml`. Fast, works on stable.
+- **cargo-geiger** — Audits unsafe code usage across the crate and all dependencies. Informational.
+- **cargo-modules** — Visualizes internal module structure and dependency graph. Outputs DOT format.
+
+### Installing Analysis Tools
+
+```bash
+cargo install cargo-deny --locked
+cargo install cargo-machete --locked
+cargo install cargo-geiger --locked
+cargo install cargo-modules --locked
+```
+
+### Running Analysis
+
+```bash
+# Lint (includes cognitive complexity warnings via #![warn(clippy::cognitive_complexity)] in lib.rs)
+cargo clippy --all-targets -- -D warnings
+
+# License compliance, security advisories, banned crates
+cargo deny check
+
+# Unused dependencies
+cargo machete
+
+# Unsafe code audit (informational)
+cargo geiger
+
+# Module dependency graph (informational)
+cargo modules structure --lib
+cargo modules dependencies --lib > target/metrics/module-deps.dot
+```
+
+### Kiro Hooks
+
+Four hooks are configured in `.kiro/hooks/`:
+
+- **License & Advisory Check** — Runs `cargo deny check` at agent stop, only if Cargo.toml was modified.
+- **Unused Dependencies Check** — Runs `cargo machete` at agent stop, only if Cargo.toml was modified.
+- **Complexity Review** — After agent stops, runs clippy cognitive complexity check on Rust code.
+
+
+### CI Integration
+
+The `static-analysis` job in `.github/workflows/ci.yml` runs cargo-deny and cargo-machete on every push/PR. Cognitive complexity is checked in the `lint` job via clippy (the `#![warn(clippy::cognitive_complexity)]` attribute in `lib.rs` combined with `-D warnings` makes it a hard failure).
+
 ## Common Commands
 
 ```bash
@@ -77,6 +131,9 @@ ruff check .
 
 # Lint Rust
 cargo clippy
+
+# License check only
+cargo deny check
 ```
 
 ## Development Environment Setup
@@ -124,19 +181,9 @@ source /path/to/osml-imagery-io/scripts/setup-dev-env.sh
 
 ## Instructions for Kiro
 
-When running commands that require Python (pytest, maturin, etc.), you MUST ensure the conda environment is activated. Each bash command runs in a fresh shell, so activate the environment as a separate step first, then run subsequent commands.
-
-### Activating the Conda Environment
-
-Before running any Python commands, activate the conda environment:
-
-```bash
-conda activate osml-imagery-io-dev
-```
+The conda environment `osml-imagery-io-dev` is automatically activated in Kiro's bash shell. All Python tools (pytest, maturin, ruff) are on PATH. Run commands directly without any prefix.
 
 ### Running Tests
-
-After activating the conda environment:
 
 ```bash
 # Run Python tests
@@ -148,13 +195,11 @@ pytest -v
 # Run specific test file
 pytest tests/test_reader.py -v
 
-# Run Rust tests (works directly, no conda needed)
+# Run Rust tests
 cargo test
 ```
 
 ### Building
-
-After activating the conda environment:
 
 ```bash
 # Development build
@@ -166,13 +211,11 @@ maturin build --release
 
 ### Linting
 
-After activating the conda environment for Python linting:
-
 ```bash
 # Python linting
 ruff check .
 
-# Rust linting (works directly, no conda needed)
+# Rust linting
 cargo clippy
 ```
 
@@ -180,9 +223,8 @@ cargo clippy
 
 If Python tests fail with import errors or module not found errors:
 1. Ensure the conda env exists: `conda env list`
-2. Activate it: `conda activate osml-imagery-io-dev`
-3. Rebuild if needed: `maturin develop`
-4. Run tests: `pytest`
+2. Rebuild if needed: `maturin develop`
+3. Run tests: `pytest`
 
 ## Documentation Build System
 
@@ -241,6 +283,9 @@ pytest -m property
 
 # Run property tests with CI profile (100 examples, thorough)
 HYPOTHESIS_PROFILE=ci pytest -m property
+
+# Run Python unit tests only
+pytest tests/unit/
 
 # Run unit tests only (exclude property tests)
 pytest -m "not property"

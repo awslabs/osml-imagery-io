@@ -1,0 +1,12 @@
+{
+  "name": "Complexity Review",
+  "version": "2.0.0",
+  "description": "After the agent finishes, runs clippy cognitive complexity check on any Rust code that was written.",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Run `cargo clippy --all-targets -- -W clippy::cognitive_complexity 2>&1` and check the output for any cognitive_complexity warnings. If any are found, list them and suggest how to reduce their complexity. If there are no warnings, skip silently."
+  }
+}

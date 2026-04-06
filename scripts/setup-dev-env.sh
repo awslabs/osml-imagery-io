@@ -14,7 +14,10 @@
 #   - Python 3.9+ with a virtual environment activated (venv or conda)
 #   - Rust toolchain installed
 
-set -e
+# Only set -e when run as a script, not when sourced into an interactive shell
+if [[ ! -o interactive ]]; then
+  set -e
+fi
 
 # Colors for output
 RED='\033[0;31m'

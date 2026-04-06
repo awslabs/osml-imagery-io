@@ -3,6 +3,8 @@
 //! This crate provides Rust implementations of image format decoders and encoders
 //! for geospatial imagery formats including NITF and GeoTIFF.
 
+#![warn(clippy::cognitive_complexity)]
+
 use pyo3::prelude::*;
 
 mod bindings;
