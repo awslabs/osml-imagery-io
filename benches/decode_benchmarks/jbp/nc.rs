@@ -339,3 +339,107 @@ pub fn bench_nc_imode_s(c: &mut Criterion) {
 
     group.finish();
 }
+
+// ===========================================================================
+// Multi-band 16-bit IMODE benchmarks (group: "jbp_nc_multiband")
+//
+// 1024×1024×15 bands × 2 bytes = 30 MiB per block.  This stresses the
+// allocation and traversal patterns that the TODO targets: separate Vec
+// allocations for swap + band-select (S/B) and BIL→BSQ + swap (R).
+// ===========================================================================
+
+/// Helper: build a decoder for a single 1024×1024×15 block at the given IMODE.
+fn create_multiband_decoder(data: Arc<[u8]>, imode: InterleaveMode) -> UncompressedBlockDecoder {
+    UncompressedBlockDecoder::from_raw_params(
+        data,
+        NROWS,
+        NCOLS,
+        1,     // nbpr
+        1,     // nbpc
+        NCOLS, // nppbh
+        NROWS, // nppbv
+        NBANDS,
+        NBPP,
+        NBPP,
+        PixelValueType::UnsignedInt,
+        PixelJustification::Right,
+        imode,
+        "NC".to_string(),
+    )
+}
+
+pub fn bench_nc_multiband_imode_b(c: &mut Criterion) {
+    let data = generate_bip_data(); // 30 MiB, deterministic pattern
+    let decoder = create_multiband_decoder(Arc::from(data.as_slice()), InterleaveMode::B);
+
+    let mut group = c.benchmark_group("jbp_nc_multiband");
+    group.throughput(Throughput::Bytes(DATA_SIZE as u64));
+    group.sample_size(20);
+
+    group.bench_function(BenchmarkId::new("imode_b", "1024x1024x15_u16"), |b| {
+        b.iter(|| {
+            decoder
+                .decode_block(0, 0, 0, None)
+                .expect("decode_block IMODE=B failed")
+        });
+    });
+
+    group.finish();
+}
+
+pub fn bench_nc_multiband_imode_p(c: &mut Criterion) {
+    let data = generate_bip_data();
+    let decoder = create_multiband_decoder(Arc::from(data.as_slice()), InterleaveMode::P);
+
+    let mut group = c.benchmark_group("jbp_nc_multiband");
+    group.throughput(Throughput::Bytes(DATA_SIZE as u64));
+    group.sample_size(20);
+
+    group.bench_function(BenchmarkId::new("imode_p", "1024x1024x15_u16"), |b| {
+        b.iter(|| {
+            decoder
+                .decode_block(0, 0, 0, None)
+                .expect("decode_block IMODE=P failed")
+        });
+    });
+
+    group.finish();
+}
+
+pub fn bench_nc_multiband_imode_r(c: &mut Criterion) {
+    let data = generate_bip_data();
+    let decoder = create_multiband_decoder(Arc::from(data.as_slice()), InterleaveMode::R);
+
+    let mut group = c.benchmark_group("jbp_nc_multiband");
+    group.throughput(Throughput::Bytes(DATA_SIZE as u64));
+    group.sample_size(20);
+
+    group.bench_function(BenchmarkId::new("imode_r", "1024x1024x15_u16"), |b| {
+        b.iter(|| {
+            decoder
+                .decode_block(0, 0, 0, None)
+                .expect("decode_block IMODE=R failed")
+        });
+    });
+
+    group.finish();
+}
+
+pub fn bench_nc_multiband_imode_s(c: &mut Criterion) {
+    let data = generate_bip_data();
+    let decoder = create_multiband_decoder(Arc::from(data.as_slice()), InterleaveMode::S);
+
+    let mut group = c.benchmark_group("jbp_nc_multiband");
+    group.throughput(Throughput::Bytes(DATA_SIZE as u64));
+    group.sample_size(20);
+
+    group.bench_function(BenchmarkId::new("imode_s", "1024x1024x15_u16"), |b| {
+        b.iter(|| {
+            decoder
+                .decode_block(0, 0, 0, None)
+                .expect("decode_block IMODE=S failed")
+        });
+    });
+
+    group.finish();
+}

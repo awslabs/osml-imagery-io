@@ -25,6 +25,11 @@ criterion_group!(
     decode_benchmarks::jbp::nc::bench_nc_imode_p,
     decode_benchmarks::jbp::nc::bench_nc_imode_r,
     decode_benchmarks::jbp::nc::bench_nc_imode_s,
+    // Multi-band 16-bit IMODE benchmarks (1024×1024×15, u16)
+    decode_benchmarks::jbp::nc::bench_nc_multiband_imode_b,
+    decode_benchmarks::jbp::nc::bench_nc_multiband_imode_p,
+    decode_benchmarks::jbp::nc::bench_nc_multiband_imode_r,
+    decode_benchmarks::jbp::nc::bench_nc_multiband_imode_s,
 );
 
 // JBP C3 (JPEG DCT) — requires libjpeg-turbo
