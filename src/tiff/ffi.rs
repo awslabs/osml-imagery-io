@@ -2049,7 +2049,7 @@ mod tests {
 
     #[test]
     fn test_enumerate_ifd_tags_real_tiff_file() {
-        let data = std::fs::read("data/unit/small.tif").unwrap();
+        let data = std::fs::read("data/unit/tiff-256x256-1band-8bit-tiled-deflate.tif").unwrap();
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let entries = handle.enumerate_ifd_tags().unwrap();
 

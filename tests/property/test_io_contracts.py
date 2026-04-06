@@ -19,11 +19,11 @@ from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider
 # =============================================================================
 
 UNIT_DATA_DIR = Path("data/unit")
-SMALL_NTF = UNIT_DATA_DIR / "small.ntf"
-SMALL_TIF = UNIT_DATA_DIR / "small.tif"
-SAMPLE_NITF21 = UNIT_DATA_DIR / "sample_nitf21.ntf"
-SAMPLE_NSIF10 = UNIT_DATA_DIR / "sample_nsif10.nsif"
-MULTI_SEGMENT = UNIT_DATA_DIR / "multi_segment.ntf"
+SMALL_NTF = UNIT_DATA_DIR / "nitf21-256x256-3band-8bit-nc.ntf"
+SMALL_TIF = UNIT_DATA_DIR / "tiff-256x256-1band-8bit-tiled-deflate.tif"
+SAMPLE_NITF21 = UNIT_DATA_DIR / "nitf21-8x8-1band-8bit-nc.ntf"
+SAMPLE_NSIF10 = UNIT_DATA_DIR / "nsif10-8x8-1band-8bit-nc.nsif"
+MULTI_SEGMENT = UNIT_DATA_DIR / "nitf21-multisegment-2img-1txt-1des.ntf"
 
 
 # =============================================================================
@@ -550,7 +550,7 @@ class TestTiffFormatDetection:
         if not SMALL_TIF.exists():
             pytest.skip("Test data file not available")
 
-        # Copy small.tif to a .tiff extension
+        # Copy tiled TIFF to a .tiff extension
         tiff_path = tmp_path / "test.tiff"
         tiff_path.write_bytes(SMALL_TIF.read_bytes())
 

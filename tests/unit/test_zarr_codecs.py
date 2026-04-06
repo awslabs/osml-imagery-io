@@ -183,9 +183,8 @@ class TestCodecConfigRoundTrip:
 
 
 # Test data paths
-DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "unit"
-J2K_NTF = DATA_DIR / "test_j2k.ntf"
-NC_NTF = DATA_DIR / "test_nc.ntf"
+DATA_DIR = Path("data/unit")
+J2K_NTF = DATA_DIR / "nitf21-64x64-3band-8bit-j2k.ntf"
 
 
 class TestDecodeCorrectness:

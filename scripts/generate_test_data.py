@@ -1,258 +1,367 @@
 #!/usr/bin/env python3
-"""Generate synthetic test data files for JBP round-trip testing.
+"""Generate synthetic test data files for unit and property tests.
 
-This script creates minimal valid NITF/NSIF files using the JBPDatasetWriter
-for use in unit tests and round-trip consistency verification.
+This script creates all test data files in data/unit/ using the IO library.
+Now that the JBP writer honors metadata (see BUG_JBP_WRITER_FILE_METADATA.md),
+every generated file has populated header fields (FTITLE, ONAME, OSTAID, etc.).
 
 Generated files:
-- data/unit/sample_nitf21.ntf - Minimal NITF 2.1 with one image segment
-- data/unit/sample_nsif10.nsif - Minimal NSIF 1.0 with one image segment
-- data/unit/multi_segment.ntf - NITF with multiple segment types
+  nitf21-8x8-1band-8bit-nc.ntf
+      Minimal NITF 2.1, 8x8 grayscale, no compression.
+      Used by: round-trip tests (test_io_contracts.py)
+
+  nsif10-8x8-1band-8bit-nc.nsif
+      Minimal NSIF 1.0, 8x8 grayscale, no compression.
+      Used by: round-trip tests (test_io_contracts.py)
+
+  nitf21-multisegment-2img-1txt-1des.ntf
+      NITF 2.1 with 2 image segments, 1 text, 1 DES.
+      Used by: multi-segment round-trip tests (test_io_contracts.py)
+
+  nitf21-64x64-3band-8bit-j2k.ntf
+      NITF 2.1, 64x64 RGB, JPEG 2000 compression (IC=C8).
+      Used by: J2K decode tests (test_zarr_codecs.py)
+
+  nitf21-64x64-3band-8bit-jpeg.ntf
+      NITF 2.1, 64x64 RGB, JPEG compression (IC=C3).
+      Used by: JPEG decode tests (test_zarr_codecs.py)
+
+  nitf21-256x256-3band-8bit-nc.ntf
+      NITF 2.1, 256x256 RGB, no compression. Populated metadata.
+      Used by: parser tests (test_parser.py), format auto-detection,
+               IO contract tests (test_io_contracts.py)
+
+  tiff-256x256-1band-8bit-tiled-deflate.tif
+      Tiled TIFF, 256x256, 1-band uint8, 128x128 tiles, Deflate.
+      Used by: TIFF API tests, IFD tag enumeration (Rust ffi.rs)
+
+Run:
+    python scripts/generate_test_data.py
 """
 
 import sys
 from pathlib import Path
 
-# Add the project root to the path
+import numpy as np
+
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from aws.osml.io import IO, AssetProvider, AssetType  # noqa: E402
+from aws.osml.io import (  # noqa: E402
+    IO,
+    AssetProvider,
+    AssetType,
+    BufferedImageAssetProvider,
+    BufferedMetadataProvider,
+    PixelType,
+)
 
 
-def generate_sample_nitf21(output_path: Path) -> None:
-    """Generate a minimal valid NITF 2.1 file with one image segment.
+# ── Shared metadata helpers ──────────────────────────────────────────────────
 
-    Args:
-        output_path: Path to write the output file
-    """
-    print(f"Generating {output_path}...")
+def _nitf_file_metadata(ftitle: str) -> BufferedMetadataProvider:
+    """Create a BufferedMetadataProvider with standard NITF file-level fields."""
+    meta = BufferedMetadataProvider()
+    meta.set("FTITLE", ftitle)
+    meta.set("ONAME", "OSML Test Generator")
+    meta.set("OPHONE", "555-000-0000")
+    meta.set("OSTAID", "OSML_IO")
+    meta.set("FDT", "20260101120000")
+    meta.set("FSCLAS", "U")
+    return meta
 
-    # Create writer for NITF 2.1 format
+
+def _nitf_image_metadata(*, ic: str = "NC", imode: str = "B",
+                          icat: str = "VIS") -> BufferedMetadataProvider:
+    """Create a BufferedMetadataProvider with NITF image-segment fields."""
+    meta = BufferedMetadataProvider()
+    meta.set("IC", ic)
+    meta.set("IMODE", imode)
+    meta.set("ICAT", icat)
+    return meta
+
+
+# ── Generator functions ──────────────────────────────────────────────────────
+
+def generate_nitf21_8x8(output_path: Path) -> None:
+    """Minimal NITF 2.1 with one 8x8 grayscale image, no compression."""
+    print(f"  {output_path.name} ...")
+
+    file_meta = _nitf_file_metadata("Minimal 8x8 grayscale NITF 2.1")
     writer = IO.open([str(output_path)], "w", "nitf")
+    writer.metadata = file_meta
 
-    # Create a simple 8x8 grayscale image (64 bytes)
     image_data = bytes([(x + y) % 256 for y in range(8) for x in range(8)])
-
-    # Create an asset provider from bytes
-    image_asset = AssetProvider.from_bytes(
+    asset = AssetProvider.from_bytes(
         key="image_segment_0",
         data=image_data,
         asset_type=AssetType.Image,
-        title="Sample Image",
-        description="A minimal test image",
+        title="8x8 Grayscale",
+        description="Minimal test image",
     )
-
-    # Add the image segment
-    writer.add_asset(
-        key="image_segment_0",
-        provider=image_asset,
-        title="Sample Image",
-        description="A minimal test image",
-        roles=["data"]
-    )
-
-    # Close to write the file
+    writer.add_asset("image_segment_0", asset, "8x8 Grayscale",
+                     "Minimal test image", ["data"])
     writer.close()
 
-    print(f"  Created {output_path} ({output_path.stat().st_size} bytes)")
 
+def generate_nsif10_8x8(output_path: Path) -> None:
+    """Minimal NSIF 1.0 with one 8x8 grayscale image, no compression."""
+    print(f"  {output_path.name} ...")
 
-def generate_sample_nsif10(output_path: Path) -> None:
-    """Generate a minimal valid NSIF 1.0 file with one image segment.
-
-    Args:
-        output_path: Path to write the output file
-    """
-    print(f"Generating {output_path}...")
-
-    # Create writer for NSIF 1.0 format
+    file_meta = _nitf_file_metadata("Minimal 8x8 grayscale NSIF 1.0")
     writer = IO.open([str(output_path)], "w", "nsif")
+    writer.metadata = file_meta
 
-    # Create a simple 8x8 grayscale image (64 bytes)
     image_data = bytes([(x + y) % 256 for y in range(8) for x in range(8)])
-
-    # Create an asset provider from bytes
-    image_asset = AssetProvider.from_bytes(
+    asset = AssetProvider.from_bytes(
         key="image_segment_0",
         data=image_data,
         asset_type=AssetType.Image,
-        title="Sample Image",
-        description="A minimal test image",
+        title="8x8 Grayscale",
+        description="Minimal test image",
     )
-
-    # Add the image segment
-    writer.add_asset(
-        key="image_segment_0",
-        provider=image_asset,
-        title="Sample Image",
-        description="A minimal test image",
-        roles=["data"]
-    )
-
-    # Close to write the file
+    writer.add_asset("image_segment_0", asset, "8x8 Grayscale",
+                     "Minimal test image", ["data"])
     writer.close()
 
-    print(f"  Created {output_path} ({output_path.stat().st_size} bytes)")
 
+def generate_multisegment(output_path: Path) -> None:
+    """NITF 2.1 with 2 images, 1 text, 1 DES."""
+    print(f"  {output_path.name} ...")
 
-def generate_multi_segment_nitf(output_path: Path) -> None:
-    """Generate a NITF file with multiple segments of different types.
-
-    Creates a file with:
-    - 2 image segments
-    - 1 text segment
-    - 1 DES segment
-
-    Args:
-        output_path: Path to write the output file
-    """
-    print(f"Generating {output_path}...")
-
-    # Create writer for NITF 2.1 format
+    file_meta = _nitf_file_metadata("Multi-segment NITF 2.1 test file")
     writer = IO.open([str(output_path)], "w", "nitf")
+    writer.metadata = file_meta
 
-    # Add 2 image segments
-    image1_data = bytes([(x + y) % 256 for y in range(16) for x in range(16)])
-    image1_asset = AssetProvider.from_bytes(
-        key="image_segment_0",
-        data=image1_data,
-        asset_type=AssetType.Image,
-        title="First Image",
-        description="First test image (16x16)",
-    )
+    # Image 1: 16x16
+    img1 = bytes([(x + y) % 256 for y in range(16) for x in range(16)])
     writer.add_asset(
-        key="image_segment_0",
-        provider=image1_asset,
-        title="First Image",
-        description="First test image (16x16)",
-        roles=["data"]
+        "image_segment_0",
+        AssetProvider.from_bytes("image_segment_0", img1, AssetType.Image,
+                                "First Image", "16x16 grayscale"),
+        "First Image", "16x16 grayscale", ["data"],
     )
 
-    image2_data = bytes([(x * y) % 256 for y in range(8) for x in range(8)])
-    image2_asset = AssetProvider.from_bytes(
-        key="image_segment_1",
-        data=image2_data,
-        asset_type=AssetType.Image,
-        title="Second Image",
-        description="Second test image (8x8)",
-    )
+    # Image 2: 8x8
+    img2 = bytes([(x * y) % 256 for y in range(8) for x in range(8)])
     writer.add_asset(
-        key="image_segment_1",
-        provider=image2_asset,
-        title="Second Image",
-        description="Second test image (8x8)",
-        roles=["data"]
+        "image_segment_1",
+        AssetProvider.from_bytes("image_segment_1", img2, AssetType.Image,
+                                "Second Image", "8x8 grayscale"),
+        "Second Image", "8x8 grayscale", ["data"],
     )
 
-    # Add 1 text segment
-    text_data = b"This is sample text content for testing."
-    text_asset = AssetProvider.from_bytes(
-        key="text_segment_0",
-        data=text_data,
-        asset_type=AssetType.Text,
-        title="Sample Text",
-        description="Test text segment",
-    )
+    # Text segment
     writer.add_asset(
-        key="text_segment_0",
-        provider=text_asset,
-        title="Sample Text",
-        description="Test text segment",
-        roles=["metadata"]
+        "text_segment_0",
+        AssetProvider.from_bytes("text_segment_0",
+                                b"This is sample text content for testing.",
+                                AssetType.Text, "Sample Text", "Test text"),
+        "Sample Text", "Test text", ["metadata"],
     )
 
-    # Add 1 DES segment
-    des_data = b"Sample DES data content"
-    des_asset = AssetProvider.from_bytes(
-        key="data_segment_0",
-        data=des_data,
-        asset_type=AssetType.Data,
-        title="Sample DES",
-        description="Test DES segment",
-    )
+    # DES segment
     writer.add_asset(
-        key="data_segment_0",
-        provider=des_asset,
-        title="Sample DES",
-        description="Test DES segment",
-        roles=["metadata"]
+        "data_segment_0",
+        AssetProvider.from_bytes("data_segment_0",
+                                b"Sample DES data content",
+                                AssetType.Data, "Sample DES", "Test DES"),
+        "Sample DES", "Test DES", ["metadata"],
     )
 
-    # Close to write the file
     writer.close()
 
-    print(f"  Created {output_path} ({output_path.stat().st_size} bytes)")
 
+def generate_nitf21_j2k(output_path: Path) -> None:
+    """NITF 2.1, 64x64 RGB, JPEG 2000 compression."""
+    print(f"  {output_path.name} ...")
+
+    file_meta = _nitf_file_metadata("64x64 3-band J2K NITF 2.1")
+
+    img_meta = _nitf_image_metadata(ic="C8", imode="B")
+
+    provider = BufferedImageAssetProvider.create(
+        key="image_segment_0",
+        num_columns=64,
+        num_rows=64,
+        num_bands=3,
+        block_width=64,
+        block_height=64,
+        pixel_type=PixelType.UInt8,
+        metadata=img_meta,
+        title="64x64 RGB J2K",
+        description="JPEG 2000 compressed test image",
+    )
+
+    # Deterministic checkerboard pattern
+    rng = np.random.RandomState(42)
+    array = rng.randint(0, 256, (3, 64, 64), dtype=np.uint8)
+    provider.set_full_image(array)
+
+    writer = IO.open([str(output_path)], "w", "nitf")
+    writer.metadata = file_meta
+    writer.add_asset("image_segment_0", provider, "64x64 RGB J2K",
+                     "JPEG 2000 compressed test image", ["data"])
+    writer.close()
+
+
+def generate_nitf21_jpeg(output_path: Path) -> None:
+    """NITF 2.1, 64x64 RGB, JPEG compression (IC=C3)."""
+    print(f"  {output_path.name} ...")
+
+    file_meta = _nitf_file_metadata("64x64 3-band JPEG NITF 2.1")
+
+    img_meta = _nitf_image_metadata(ic="C3", imode="P")
+
+    provider = BufferedImageAssetProvider.create(
+        key="image_segment_0",
+        num_columns=64,
+        num_rows=64,
+        num_bands=3,
+        block_width=64,
+        block_height=64,
+        pixel_type=PixelType.UInt8,
+        metadata=img_meta,
+        title="64x64 RGB JPEG",
+        description="JPEG compressed test image",
+    )
+
+    rng = np.random.RandomState(42)
+    array = rng.randint(0, 256, (3, 64, 64), dtype=np.uint8)
+    provider.set_full_image(array)
+
+    writer = IO.open([str(output_path)], "w", "nitf")
+    writer.metadata = file_meta
+    writer.add_asset("image_segment_0", provider, "64x64 RGB JPEG",
+                     "JPEG compressed test image", ["data"])
+    writer.close()
+
+
+def generate_nitf21_256x256(output_path: Path) -> None:
+    """NITF 2.1, 256x256 RGB, no compression, with populated metadata.
+
+    This file replaces the old synthetic_nitf_header.bin and small.ntf.
+    It has real metadata fields that parser tests can validate.
+    """
+    print(f"  {output_path.name} ...")
+
+    file_meta = _nitf_file_metadata("Synthetic 256x256 RGB NITF 2.1")
+
+    img_meta = _nitf_image_metadata(ic="NC", imode="B", icat="VIS")
+
+    provider = BufferedImageAssetProvider.create(
+        key="image_segment_0",
+        num_columns=256,
+        num_rows=256,
+        num_bands=3,
+        block_width=256,
+        block_height=256,
+        pixel_type=PixelType.UInt8,
+        metadata=img_meta,
+        title="256x256 RGB",
+        description="Uncompressed 256x256 3-band test image",
+    )
+
+    rng = np.random.RandomState(99)
+    array = rng.randint(0, 256, (3, 256, 256), dtype=np.uint8)
+    provider.set_full_image(array)
+
+    writer = IO.open([str(output_path)], "w", "nitf")
+    writer.metadata = file_meta
+    writer.add_asset("image_segment_0", provider, "256x256 RGB",
+                     "Uncompressed 256x256 3-band test image", ["data"])
+    writer.close()
+
+
+def generate_tiff_tiled(output_path: Path) -> None:
+    """Tiled TIFF, 256x256, 1-band uint8, 128x128 tiles, Deflate."""
+    print(f"  {output_path.name} ...")
+
+    metadata = BufferedMetadataProvider()
+    metadata.set_json("322", 128)   # TileWidth
+    metadata.set_json("323", 128)   # TileLength
+    metadata.set_json("259", 8)     # Compression = Deflate
+
+    provider = BufferedImageAssetProvider.create(
+        key="image_segment_0",
+        num_columns=256,
+        num_rows=256,
+        num_bands=1,
+        block_width=128,
+        block_height=128,
+        pixel_type=PixelType.UInt8,
+        metadata=metadata,
+        title="256x256 Tiled TIFF",
+        description="Tiled Deflate 1-band uint8",
+    )
+
+    rng = np.random.RandomState(77)
+    array = rng.randint(0, 256, (1, 256, 256), dtype=np.uint8)
+    provider.set_full_image(array)
+
+    writer = IO.open([str(output_path)], "w", "tiff")
+    writer.metadata = metadata
+    writer.add_asset("image_segment_0", provider, "256x256 Tiled TIFF",
+                     "Tiled Deflate 1-band uint8", ["data"])
+    writer.close()
+
+
+# ── Verification ─────────────────────────────────────────────────────────────
 
 def verify_file(file_path: Path) -> bool:
-    """Verify that a generated file can be read back.
-
-    Args:
-        file_path: Path to the file to verify
-
-    Returns:
-        True if verification passed, False otherwise
-    """
-    print(f"  Verifying {file_path}...")
-
+    """Read back a generated file and verify it has accessible assets."""
     try:
         reader = IO.open([str(file_path)], "r")
         keys = reader.get_asset_keys()
-
-        print(f"    Found {len(keys)} asset(s): {keys}")
-
-        # Verify each asset can be accessed
         for key in keys:
-            assert reader.has_asset(key), f"has_asset('{key}') should return True"
-            asset = reader.get_asset(key)
-            assert asset is not None, f"get_asset('{key}') should return an asset"
-            print(f"    - {key}: {asset.media_type}")
-
-        print("  ✓ Verification passed")
+            assert reader.has_asset(key)
+            assert reader.get_asset(key) is not None
+        print(f"    ✓ {len(keys)} asset(s)")
         return True
-
     except Exception as e:
-        print(f"  ✗ Verification failed: {e}")
+        print(f"    ✗ {e}")
         return False
 
 
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+FILES = [
+    ("nitf21-8x8-1band-8bit-nc.ntf", generate_nitf21_8x8),
+    ("nsif10-8x8-1band-8bit-nc.nsif", generate_nsif10_8x8),
+    ("nitf21-multisegment-2img-1txt-1des.ntf", generate_multisegment),
+    ("nitf21-64x64-3band-8bit-j2k.ntf", generate_nitf21_j2k),
+    ("nitf21-64x64-3band-8bit-jpeg.ntf", generate_nitf21_jpeg),
+    ("nitf21-256x256-3band-8bit-nc.ntf", generate_nitf21_256x256),
+    ("tiff-256x256-1band-8bit-tiled-deflate.tif", generate_tiff_tiled),
+]
+
+
 def main():
-    """Generate all synthetic test data files."""
-    # Ensure output directory exists
     output_dir = project_root / "data" / "unit"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("=" * 60)
-    print("Generating synthetic test data files")
-    print("=" * 60)
+    print("Generating unit test data files")
+    print("=" * 50)
 
-    # Generate files
-    files_to_generate = [
-        (output_dir / "sample_nitf21.ntf", generate_sample_nitf21),
-        (output_dir / "sample_nsif10.nsif", generate_sample_nsif10),
-        (output_dir / "multi_segment.ntf", generate_multi_segment_nitf),
-    ]
-
-    success = True
-    for output_path, generator_func in files_to_generate:
+    ok = True
+    for name, gen_fn in FILES:
+        path = output_dir / name
         try:
-            generator_func(output_path)
-            if not verify_file(output_path):
-                success = False
+            gen_fn(path)
+            if not verify_file(path):
+                ok = False
         except Exception as e:
-            print(f"  ✗ Failed to generate {output_path}: {e}")
+            print(f"    ✗ FAILED: {e}")
             import traceback
             traceback.print_exc()
-            success = False
+            ok = False
 
-    print("=" * 60)
-    if success:
-        print("All files generated and verified successfully!")
-        return 0
+    print("=" * 50)
+    if ok:
+        print("All files generated and verified.")
     else:
-        print("Some files failed to generate or verify.")
-        return 1
+        print("Some files failed.")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ from aws.osml.io import (
 
 UNIT_DATA_DIR = Path("data/unit")
 STRUCTURES_DIR = Path("data/structures")
-SYNTHETIC_NITF_HEADER = UNIT_DATA_DIR / "synthetic_nitf_header.bin"
+SYNTHETIC_NITF = UNIT_DATA_DIR / "nitf21-256x256-3band-8bit-nc.ntf"
 
 
 # =============================================================================
@@ -157,7 +157,7 @@ class TestStructureAccessor:
     @pytest.fixture
     def synthetic_data(self):
         """Load synthetic NITF header data."""
-        with open(SYNTHETIC_NITF_HEADER, "rb") as f:
+        with open(SYNTHETIC_NITF, "rb") as f:
             return f.read()
 
     def test_accessor_creation(self, nitf_definition, synthetic_data):
@@ -305,7 +305,7 @@ class TestValue:
         registry.add_search_path(str(STRUCTURES_DIR))
         definition = registry.get("nitf_02.10_file_header")
 
-        with open(SYNTHETIC_NITF_HEADER, "rb") as f:
+        with open(SYNTHETIC_NITF, "rb") as f:
             data = f.read()
 
         return StructureAccessor(definition, data)
@@ -378,7 +378,7 @@ class TestRawView:
         registry.add_search_path(str(STRUCTURES_DIR))
         definition = registry.get("nitf_02.10_file_header")
 
-        with open(SYNTHETIC_NITF_HEADER, "rb") as f:
+        with open(SYNTHETIC_NITF, "rb") as f:
             data = f.read()
 
         return StructureAccessor(definition, data)
@@ -422,7 +422,7 @@ class TestMmapSupport:
 
     def test_accessor_with_mmap(self, nitf_definition):
         """Test creating accessor from memory-mapped file."""
-        with open(SYNTHETIC_NITF_HEADER, "rb") as f:
+        with open(SYNTHETIC_NITF, "rb") as f:
             mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
             try:
                 accessor = StructureAccessor(nitf_definition, mm)
@@ -435,7 +435,7 @@ class TestMmapSupport:
 
     def test_accessor_with_memoryview(self, nitf_definition):
         """Test creating accessor from memoryview."""
-        with open(SYNTHETIC_NITF_HEADER, "rb") as f:
+        with open(SYNTHETIC_NITF, "rb") as f:
             data = f.read()
 
         mv = memoryview(data)
@@ -446,7 +446,7 @@ class TestMmapSupport:
 
     def test_accessor_with_bytearray(self, nitf_definition):
         """Test creating accessor from bytearray."""
-        with open(SYNTHETIC_NITF_HEADER, "rb") as f:
+        with open(SYNTHETIC_NITF, "rb") as f:
             data = bytearray(f.read())
 
         accessor = StructureAccessor(nitf_definition, data)
@@ -472,7 +472,7 @@ class TestRoundTrip:
     @pytest.fixture
     def synthetic_data(self):
         """Load synthetic NITF header data."""
-        with open(SYNTHETIC_NITF_HEADER, "rb") as f:
+        with open(SYNTHETIC_NITF, "rb") as f:
             return f.read()
 
     def test_read_write_simple_fields(self, nitf_definition, synthetic_data):

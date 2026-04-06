@@ -9,8 +9,9 @@ This module tests correctness properties for the TIFF reader API:
 - IFD-level metadata keys are numeric strings
 - Custom tags coexist with structural tags
 
-Tests use the existing data/unit/small.tif (tiled, 1024x1024, uint8, 1-band,
-256x256 tiles, Deflate) and PIL-generated stripped TIFFs.
+Tests use the existing data/unit/tiff-256x256-1band-8bit-tiled-deflate.tif
+(tiled, 256x256, uint8, 1-band, 128x128 tiles, Deflate) and PIL-generated
+stripped TIFFs.
 """
 
 import tempfile
@@ -34,7 +35,7 @@ from ..conftest import pbt_settings
 from ..strategies import get_numpy_dtype, tiff_image_config
 
 UNIT_DATA_DIR = Path("data/unit")
-SMALL_TIF = UNIT_DATA_DIR / "small.tif"
+SMALL_TIF = UNIT_DATA_DIR / "tiff-256x256-1band-8bit-tiled-deflate.tif"
 
 # PIL mode mapping (dtype_name, bands) -> PIL mode
 _PIL_MODE = {
@@ -330,8 +331,8 @@ class TestTiffPerIFDMetadata:
         meta = asset.get_metadata().as_dict()
 
         # Metadata keys are numeric tag ID strings after the metadata refactor
-        assert meta["256"] == 1024   # ImageWidth
-        assert meta["257"] == 1024   # ImageLength
+        assert meta["256"] == 256    # ImageWidth
+        assert meta["257"] == 256    # ImageLength
         assert meta["258"] == 8      # BitsPerSample
         assert meta["277"] == 1      # SamplesPerPixel
 

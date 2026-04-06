@@ -1067,7 +1067,7 @@ def tiff_layout() -> st.SearchStrategy[str]:
     """Strategy for TIFF data layout.
 
     Returns 'tiled' or 'stripped'.
-    Note: PIL only writes stripped. Tiled tests use the existing small.tif fixture.
+    Note: PIL only writes stripped. Tiled tests use the existing tiff-256x256 fixture.
     """
     return st.sampled_from(["tiled", "stripped"])
 
