@@ -385,11 +385,51 @@ mod tests {
 
     // =========================================================================
     // Signature validation tests
+    //
+    // These use from_bytes_with_codec with a stub codec so they compile and
+    // run regardless of feature flags. The validation logic rejects the input
+    // before any codec method is called.
     // =========================================================================
+
+    use crate::j2k::codec::{
+        J2KCodecCapabilities, J2KDecodeParams, J2KDecodeResult, J2KEncodeParams, J2KEncodeState,
+    };
+
+    /// Stub codec for tests that exercise pre-codec validation paths.
+    /// All methods panic because they should never be reached.
+    struct StubCodec;
+
+    impl J2KCodec for StubCodec {
+        fn capabilities(&self) -> J2KCodecCapabilities {
+            unimplemented!("stub: not expected to be called")
+        }
+        fn decode(&self, _: &[u8], _: &J2KDecodeParams) -> Result<J2KDecodeResult, CodecError> {
+            unimplemented!("stub: not expected to be called")
+        }
+        fn start_encode(&self, _: &J2KEncodeParams) -> Result<Box<dyn J2KEncodeState>, CodecError> {
+            unimplemented!("stub: not expected to be called")
+        }
+        fn get_resolution_levels(&self, _: &[u8]) -> Result<u32, CodecError> {
+            unimplemented!("stub: not expected to be called")
+        }
+        fn get_dimensions(&self, _: &[u8]) -> Result<(u32, u32, u32), CodecError> {
+            unimplemented!("stub: not expected to be called")
+        }
+        fn get_tile_info(&self, _: &[u8]) -> Result<(u32, u32, u32, u32), CodecError> {
+            unimplemented!("stub: not expected to be called")
+        }
+        fn decode_tile(&self, _: &[u8], _: u32, _: &J2KDecodeParams) -> Result<J2KDecodeResult, CodecError> {
+            unimplemented!("stub: not expected to be called")
+        }
+    }
+
+    fn stub_codec() -> Arc<dyn J2KCodec> {
+        Arc::new(StubCodec)
+    }
 
     #[test]
     fn test_from_bytes_empty_data() {
-        let result = J2KDatasetReader::from_bytes(&[]);
+        let result = J2KDatasetReader::from_bytes_with_codec(&[], stub_codec());
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("too short"), "got: {}", msg);
@@ -400,7 +440,7 @@ mod tests {
 
     #[test]
     fn test_from_bytes_single_byte() {
-        let result = J2KDatasetReader::from_bytes(&[0xFF]);
+        let result = J2KDatasetReader::from_bytes_with_codec(&[0xFF], stub_codec());
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("too short"), "got: {}", msg);
@@ -412,7 +452,7 @@ mod tests {
     #[test]
     fn test_from_bytes_invalid_signature() {
         let data = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
-        let result = J2KDatasetReader::from_bytes(&data);
+        let result = J2KDatasetReader::from_bytes_with_codec(&data, stub_codec());
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("invalid signature"), "got: {}", msg);
