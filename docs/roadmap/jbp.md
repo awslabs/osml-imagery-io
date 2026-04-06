@@ -1,6 +1,6 @@
 # JBP Implementation Roadmap
 
-This roadmap addresses gaps in CLEVEL conformance identified in the JBP CLEVEL Assessment (see `internal/JBP_CLEVEL_ASSESSMENT.md`).
+This roadmap addresses gaps in CLEVEL conformance and known limitations in the JBP implementation.
 
 ## Vector Quantization (IC=C4/M4)
 
@@ -169,3 +169,182 @@ All GEOSDE TREs are optional per JBP CLEVEL Table G-1.
 - FACCBB (Table P-15, Feature Attribute Coding Catalog) was listed in the appendix but is rarely encountered in practice; defer unless needed.
 - Follow the existing `.ksy` format conventions established by `tre_geolob.ksy` and other definitions in `data/structures/tre/`.
 - Each TRE definition should include doc comments referencing the specific STDI-0002 table number.
+
+## CLEVEL Conformance Status
+
+The JBP defines Complexity Levels (CLEVELs) to enable implementation across hardware platforms with varying resources. CLEVELs constrain file features like image dimensions, file size, number of segments, and supported compression formats. See JBP Section 5.20, Annex G (Table G-1).
+
+### CLEVEL Overview
+
+| CLEVEL | CCS Extent | Max File Size | Max Image Size | Max Bands | Image Segments | DES |
+|--------|------------|---------------|----------------|-----------|----------------|-----|
+| 03 | 2048×2048 | 50 MB | 2048×2048 | 9 | 0-20 | 0-10 |
+| 05 | 8192×8192 | 1 GB | 8192×8192 | 255 | 0-20 | 0-50 |
+| 06 | 65536×65536 | 2 GB | 65536×65536 | 999 | 0-100 | 0-100 |
+| 07 | 99999999×99999999 | 10 GB | 99999999×99999999 | 999 | 0-100 | 0-100 |
+| 09 | Unrestricted | Unrestricted | Unrestricted | >999 | >100 | >100 |
+
+### Feature Support Matrix
+
+Legend: ✅ Implemented, ⚠️ Partial, ❌ Not implemented, Req = Required, Opt = Optional
+
+#### File Structure & Core Features
+
+| Feature | CL03-07 | Status | Notes |
+|---------|---------|--------|-------|
+| NITF 2.1 File Header | Req | ✅ | Full header parsing and generation |
+| NSIF 1.0 File Header | Req | ✅ | Variant support included |
+| Security Fields | Req | ✅ | All classification fields supported |
+| TRE Support | Req | ✅ | Generic TRE parsing with field definitions |
+| DES Support | Req | ✅ | Data Extension Segments supported |
+| TRE_OVERFLOW DES | Req | ✅ | Overflow handling implemented |
+| RES Support | — | ❌ | No RES currently approved by NTB |
+
+#### Uncompressed Imagery (IC=NC/NM)
+
+| Feature | CL03 | CL05 | CL06 | CL07 | Status |
+|---------|------|------|------|------|--------|
+| Monochrome (1,8,12,16,32,64-bit) | Req | Req | Req | Req | ✅ |
+| RGB/LUT (1,8-bit with LUT) | Req | Req | Req | Req | ✅ |
+| RGB 3-band (8-bit) | Req | — | — | — | ✅ |
+| RGB 3-band (8,16,32-bit) | — | Req | Req | Req | ✅ |
+| Multiband 2-9 bands | Req | — | — | — | ✅ |
+| Multiband 2-255 bands | — | Req | — | — | ✅ |
+| Multiband 2-999 bands | — | — | Req | Req | ✅ |
+| IMODE B, P, R, S | Req | Req | Req | Req | ✅ |
+| Image Blocking | Req | Req | Req | Req | ✅ |
+| Image Data Mask (NM) | Req | Req | Req | Req | ✅ |
+
+#### JPEG 2000 Compression (IC=C8/M8/CD/MD)
+
+| Feature | CL03 | CL05 | CL06 | CL07 | Status |
+|---------|------|------|------|------|--------|
+| Monochrome 1-32 bit | Req | Req | Req | Req | ✅ |
+| RGB/LUT 1-32 bit | Req | Req | Req | Req | ✅ |
+| RGB 3-band | Req | Req | Req | Req | ✅ |
+| YCbCr601 3-band | Req | Req | Req | Req | ⚠️ No internal color transform |
+| Multiband 2-9 bands | Req | — | — | — | ✅ |
+| Multiband 2-255 bands | — | Req | — | — | ✅ |
+| Multiband 2-999 bands | — | — | Req | Req | ✅ |
+| HTJ2K (CD/MD) | Req | Req | Req | Req | ✅ |
+| Masked variants (M8/MD) | Req | Req | Req | Req | ✅ |
+
+#### JPEG DCT Compression (IC=C3/M3)
+
+| Feature | CL03-07 | Status | Notes |
+|---------|---------|--------|-------|
+| Monochrome 8-bit | Req | ✅ | Full encoding and decoding |
+| Monochrome 12-bit | Req | ❌ | See [12-bit JPEG limitation](#12-bit-jpeg-limitation) below |
+| RGB 24-bit (IMODE=P) | Req | ✅ | Full encoding and decoding |
+| YCbCr601 24-bit (IMODE=P) | Req | ✅ | Full encoding and decoding with color space conversion |
+| Multiband individual JPEG (IMODE=B,S) | Req | ✅ | Full encoding and decoding |
+
+#### Downsampled JPEG (IC=I1)
+
+| Feature | CL03-07 | Status | Notes |
+|---------|---------|--------|-------|
+| Mono 8-bit, single block ≤2048×2048 | Req | ✅ | Full encoding and decoding with dimension validation |
+
+#### Vector Quantization (IC=C4/M4)
+
+| Feature | CL03-07 | Status | Notes |
+|---------|---------|--------|-------|
+| Monochrome 8-bit with 4×4 kernel | Req | ❌ | See VQ roadmap item above |
+| RGB/LUT 8-bit with 4×4 kernel | Req | ❌ | See VQ roadmap item above |
+
+#### Optional Compression Formats
+
+| Feature | CL03-07 | Status | Notes |
+|---------|---------|--------|-------|
+| JPEG Lossless (C5/M5) Mono 8,12,16-bit | Opt | ❌ | See roadmap item above |
+| JPEG Lossless (C5/M5) RGB 24-bit | Opt | ❌ | See roadmap item above |
+| Bi-Level (C1/M1) 1-bit | Opt | ❌ | See roadmap item above |
+| ZLIB (CC/MC) 32,64-bit | Opt | ❌ | See roadmap item above |
+| SARZip (C7/M7) complex | Opt | ❌ | See roadmap item above |
+| SARZip (C7/M7) magnitude | Opt | ❌ | See roadmap item above |
+
+#### Special Data Types
+
+| Feature | CL03-07 | Status | Notes |
+|---------|---------|--------|-------|
+| Elevation Data (ICAT=DTEM) | Opt | ⚠️ | Missing GEOSDE TRE support |
+| Location Grid (ICAT=LOCG) | Opt | ❌ | |
+| Matrix Data uncompressed | Opt | ⚠️ | Basic support only |
+| Matrix Data J2K lossless | Opt | ⚠️ | Basic support only |
+| Polar Coordinates (IREP=POLAR) | Req | ❌ | |
+
+#### Graphic Segments
+
+| Feature | CL03-07 | Status | Notes |
+|---------|---------|--------|-------|
+| CGM Graphic Subheader | Req | ✅ | Full subheader parsing per Table 5.15-1 |
+| CGM Data (BPCGM01.00 profile) | Req | ✅ | Raw CGM data extraction via `raw_asset()` |
+| Aggregate size limit (1-2 MB) | Req | ⚠️ | Validation not implemented |
+
+#### Text Segments
+
+| Feature | CL03-07 | Status | Notes |
+|---------|---------|--------|-------|
+| Text Subheader | Req | ✅ | Full subheader parsing per Table 5.17-1 |
+| Text Format Codes (STA, MTF, UT1, U8S) | Req | ✅ | Encoding-aware decoding via `text` property |
+| Text Data (1-99999 bytes) | Req | ✅ | Raw data via `raw_asset()`, decoded via `text` |
+
+### Conformance Summary
+
+Fully conformant: file structure, uncompressed imagery, JPEG 2000 including HTJ2K, JPEG DCT (8-bit), downsampled JPEG, image masking, TRE/DES extensions, graphic segments, text segments.
+
+Remaining for full CLEVEL conformance: Vector Quantization (C4/M4).
+
+## Known Limitations
+
+### 12-bit JPEG Limitation
+
+12-bit JPEG encoding and decoding is not supported due to architectural constraints in libjpeg-turbo. The TurboJPEG API only supports 8-bit samples. 12-bit JPEG requires a separately compiled `libjpeg12` library with `BITS_IN_JSAMPLE=12` and renamed symbols. Supporting both 8-bit and 12-bit in the same application requires linking against two separate libraries.
+
+Impact: files with 12-bit JPEG imagery (IC=C3/M3 with NBPP=12) cannot be decoded. 12-bit JPEG is relatively rare in NITF files.
+
+Workarounds: convert to JPEG 2000 (IC=C8) which fully supports 12-bit, or use uncompressed format (IC=NC).
+
+### KSY Structure Definition Limitations
+
+The Kaitai Struct definitions under `data/structures/` have the following known gaps:
+
+#### Partially Expanded TREs
+
+| TRE | Limitation |
+|-----|------------|
+| BCHIPA | Sections B and C remain as raw bytes. Section B has nested conditionals; Section C has variable-length fields. |
+| ILLUMB | Illumination set loop data remains as raw bytes. Per-set conditional fields reference parent scope not supported by KSY parser. |
+| BANDSB | Auxiliary data (EXISTENCE_MASK bit 0) remains as raw bytes due to switch-on-value logic. All other 26 conditional field groups are fully parsed. |
+
+Resolution: implement `_parent` scope resolution and variable-length field support in the KSY parser.
+
+#### DES Workarounds
+
+| DES | Limitation |
+|-----|------------|
+| CSSHPA | CC_SOURCE conditional uses size-based proxy instead of checking `SHAPE_USE == "CLOUD_SHAPES"`. |
+| CSSHPB | NUM_SUPPORTING_FILES section (DESVER=02 only) captured as raw bytes because DESVER is not available in KSY scope. |
+| XML_DATA_CONTENT | Conditional fields use `_root._io.size` checks as a proxy for DESSHL value. |
+
+#### Unavailable Specifications
+
+| Name | Status |
+|------|--------|
+| PIVECA | Spec marked "To Be Determined" in STDI-0002 |
+| STDIDA / STDIDB | Referenced in NSDE collection (STDI-0001), not implemented |
+| DPPDB | Reference to MIL-PRF-89034 (not publicly available) |
+| WBRD_Frame | Specification not publicly available |
+
+#### Missing NITF Structures
+
+| Structure | Notes |
+|-----------|-------|
+| NITF 2.0 File Header | Different security field structure, different field sizes vs 2.1 |
+| NITF 2.0 Image Subheader | Different security fields, no XBANDS |
+| NITF 2.0 DES Subheader | Different DESID usage and security field layout |
+| NSIF 1.0 segment subheaders | Structurally identical to NITF 2.1 — can reuse those definitions |
+
+### Semantic Limitations
+
+RPC00A polynomial term order differs from RPC00B; exact order is defined in STDI-0001 (not publicly available). Fields can be read/written correctly, but geolocation calculations using RPC00A coefficients will produce incorrect results without the term order mapping.

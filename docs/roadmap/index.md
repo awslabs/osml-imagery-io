@@ -9,4 +9,5 @@ jbp
 tiff
 cog
 image-pyramid
+possible-extensions
 ```
