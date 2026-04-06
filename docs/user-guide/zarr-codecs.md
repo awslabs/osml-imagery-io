@@ -6,7 +6,7 @@ Geospatial imagery archives are massive. Government and commercial satellite pro
 produce hundreds of petabytes of imagery, growing at tens to hundreds of terabytes per 
 day. The traditional workflow of downloading entire multi-GB files before accessing 
 any pixels is giving way to distributed access patterns. Machine Learning inference,
-tile-level analytics running on data lakehouse architectures, and interactive 
+tile-level analytics pulling from global data lakehouses, and interactive 
 visualizations, all benefit from services that can quickly fetch only the compressed 
 bytes for the tiles they care about, decode them, and move on.
 
@@ -15,7 +15,7 @@ cloud object stores existed. Their internal structure — headers, offset tables
 interleaved bands, shared compression state — was built for fast local disk access, 
 not HTTP range requests with network delays. At best consumers of these images execute 
 multiple reads to gather header and pixel information from different parts of a file. 
-In some cases entire files must be scanned to locate the region of interst. 
+In some cases entire files must be scanned sequentially to locate the region of interst. 
 
 ## Where Zarr Fits In
 
@@ -120,6 +120,12 @@ The standard Kerchunk reference spec supports three forms per chunk key: inline
 data, whole-file references, and single byte-range references. This covers most
 formats, but breaks down for JPEG 2000 codestreams with interleaved tile-parts.
 
+```{image} /_static/images/kerchunk-singlerange.png
+:alt: Figure showing how J2K tile parts grouped by tile are referenced by kerchunk index.
+:width: 700px
+:align: center
+```
+
 JPEG 2000 supports several progression orders that control how compressed data
 is organized in the codestream. Two of these — RLCP (Resolution-Layer-Component-
 Position) and RPCL (Resolution-Position-Component-Layer) — interleave tile-parts
@@ -128,13 +134,11 @@ from different tiles. Instead of writing all of tile 0's data, then all of tile
 level 1 for every tile, and so on. A single tile's compressed bytes end up
 scattered across multiple non-contiguous locations in the file.
 
-When the Kerchunk reference for a tile points to only the first tile-part, the
-codec receives an incomplete codestream and fails with errors like "Stream too
-short" or produces corrupted pixels. The standard `ReferenceFileSystem` has no
-way to express "fetch these six byte ranges and concatenate them" for a single
-chunk. This is not a theoretical edge case. Satellite imagery from several
-commercial providers uses RPCL progression order, and the interleaved tile-part
-layout is common in large multi-resolution JPEG 2000 files.
+The standard `ReferenceFileSystem` has no way to express "fetch these six byte 
+ranges and concatenate them" for a single chunk. This is not a theoretical edge 
+case. Satellite imagery from several commercial providers uses RPCL progression 
+order, and the interleaved tile-part layout is common in large multi-resolution 
+JPEG 2000 files.
 
 `MultiReferenceFileSystem` is a drop-in subclass of fsspec's
 `ReferenceFileSystem` that extends the Kerchunk reference spec with a fourth
@@ -167,6 +171,12 @@ For example, a tile with six tile-parts scattered across a file:
 The URL appears once rather than being repeated for each sub-range. For a file
 with 1,722 tiles and six tile-parts each, this saves roughly 775 KB of redundant
 URL strings compared to a flat list of single-range entries.
+
+```{image} /_static/images/kerchunk-multirange.png
+:alt: Figure showing how J2K tile parts interleaved by resolution level are referenced by kerchunk index.
+:width: 700px
+:align: center
+```
 
 `MultiReferenceFileSystem` handles all standard reference types by delegating to
 the parent `ReferenceFileSystem`. When it encounters a multi-range entry, it
