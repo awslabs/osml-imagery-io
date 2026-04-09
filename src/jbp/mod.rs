@@ -26,7 +26,6 @@
 //! ```
 
 pub mod asset;
-pub mod datetime;
 mod error;
 pub mod format;
 pub mod graphics;
@@ -44,7 +43,6 @@ pub use asset::{
     generate_asset_key, parse_asset_key, JBPDataAssetProvider, JBPGraphicsAssetProvider,
     JBPImageAssetProvider, JBPTextAssetProvider,
 };
-pub use datetime::{parse_nitf_datetime, DateTimeParseError, NitfDateTime};
 pub use error::{JBPError, ValidationCode, ValidationWarning};
 pub use format::{is_nitf_extension, validate_nitf_magic};
 pub use graphics::GraphicSubheaderFacade;
