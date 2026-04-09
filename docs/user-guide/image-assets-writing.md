@@ -83,7 +83,7 @@ from GeoTIFF GeoKeys and coordinate transformation tags:
 
 ```python
 from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
-from aws.osml.io.tiff import TagNameResolver
+from aws.osml.io.tiff.utils import TagNameResolver
 import numpy as np
 
 # Set up TIFF encoding hints using TagNameResolver for readable names
@@ -356,7 +356,7 @@ These control the georeferencing of the image:
 
 ```python
 # Deflate-compressed GeoTIFF with UTM Zone 18N georeferencing
-from aws.osml.io.tiff import TagNameResolver
+from aws.osml.io.tiff.utils import TagNameResolver
 
 metadata = BufferedMetadataProvider()
 tag_dict = metadata.as_dict()

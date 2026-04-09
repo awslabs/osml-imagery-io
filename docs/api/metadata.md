@@ -57,7 +57,7 @@ below.
 ## TagNameResolver
 
 ```{eval-rst}
-.. autoclass:: aws.osml.io.tiff.TagNameResolver
+.. autoclass:: aws.osml.io.tiff.utils.TagNameResolver
    :members:
    :undoc-members:
    :show-inheritance:
@@ -70,7 +70,7 @@ baseline TIFF 6.0 tags, GeoTIFF tags, and common GDAL tags.
 
 ```python
 from aws.osml.io import IO
-from aws.osml.io.tiff import TagNameResolver
+from aws.osml.io.tiff.utils import TagNameResolver
 
 with IO.open(["image.tif"], "r") as dataset:
     meta = dataset.metadata.as_dict()

@@ -22,7 +22,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from aws.osml.io import IO, AssetType  # noqa: E402
-from aws.osml.io.tiff import TagNameResolver  # noqa: E402
+from aws.osml.io.tiff.utils import TagNameResolver  # noqa: E402
 
 # TIFF tags that are internal file-structure lookup tables, not useful for
 # human inspection.  These are skipped when formatting TIFF metadata.

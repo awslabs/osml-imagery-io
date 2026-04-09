@@ -418,7 +418,7 @@ corresponding numeric key (`"256"`) behind the scenes.
 
 ```python
 from aws.osml.io import IO
-from aws.osml.io.tiff import TagNameResolver
+from aws.osml.io.tiff.utils import TagNameResolver
 
 with IO.open(["image.tif"], "r") as dataset:
     meta = dataset.metadata.as_dict()
@@ -501,7 +501,7 @@ string values are resolved to their numeric equivalents automatically:
 
 ```python
 from aws.osml.io import IO, BufferedMetadataProvider
-from aws.osml.io.tiff import TagNameResolver
+from aws.osml.io.tiff.utils import TagNameResolver
 
 metadata = BufferedMetadataProvider()
 tag_dict = metadata.as_dict()

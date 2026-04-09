@@ -610,7 +610,7 @@ class ImageWriter:
         # TIFF-specific metadata: use TagNameResolver to convert human-readable
         # tag names to the numeric string keys the writer expects.
         if config.io_format == "tiff":
-            from aws.osml.io.tiff import TagNameResolver
+            from aws.osml.io.tiff.utils import TagNameResolver
 
             tag_dict = metadata.as_dict()
             resolver = TagNameResolver(tag_dict)

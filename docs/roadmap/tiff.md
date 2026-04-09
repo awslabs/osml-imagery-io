@@ -140,7 +140,7 @@ Encoding hints use numeric TIFF tag IDs as keys (e.g. `"259"` for Compression, `
 Use `TagNameResolver` to convert human-readable names to numeric keys:
 
 ```python
-from aws.osml.io.tiff import TagNameResolver
+from aws.osml.io.tiff.utils import TagNameResolver
 tag_dict = metadata.as_dict()
 resolver = TagNameResolver(tag_dict)
 resolver["TileWidth"] = "256"       # stores under key "322"
