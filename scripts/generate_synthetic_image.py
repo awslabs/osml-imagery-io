@@ -643,7 +643,7 @@ class ImageWriter:
         # Create BufferedImageAssetProvider with the correct configuration
         try:
             image_provider = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=config.width,
                 num_rows=config.height,
                 num_bands=config.num_bands,
@@ -700,7 +700,7 @@ class ImageWriter:
                 writer.metadata = metadata
             # Add image asset to writer using the BufferedImageAssetProvider
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=image_provider,
                 title="Synthetic Test Image",
                 description="Generated checkerboard test pattern",

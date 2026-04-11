@@ -70,7 +70,7 @@ class TestBlockAccessCompleteness:
 
             # Create image provider with specified block size
             provider = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=num_cols,
                 num_rows=num_rows,
                 num_bands=num_bands,
@@ -86,7 +86,7 @@ class TestBlockAccessCompleteness:
             # Write to NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="Property test image for block access",
@@ -96,7 +96,7 @@ class TestBlockAccessCompleteness:
 
             # Read back and verify block access
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             # Get block grid dimensions from the asset
             block_grid_rows, block_grid_cols = asset.block_grid_size
@@ -197,7 +197,7 @@ class TestBlockReassembly:
 
             # Create image provider with specified block size
             provider = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=num_cols,
                 num_rows=num_rows,
                 num_bands=num_bands,
@@ -213,7 +213,7 @@ class TestBlockReassembly:
             # Write to NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="Property test image for block reassembly",
@@ -223,7 +223,7 @@ class TestBlockReassembly:
 
             # Read back and reassemble blocks
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             # Get block grid dimensions from the asset
             block_grid_rows, block_grid_cols = asset.block_grid_size
@@ -315,7 +315,7 @@ class TestInvalidBlockCoordinates:
 
             # Create image provider with specified block size
             provider = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=num_cols,
                 num_rows=num_rows,
                 num_bands=num_bands,
@@ -331,7 +331,7 @@ class TestInvalidBlockCoordinates:
             # Write to NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="Property test image for invalid block coordinates",
@@ -341,7 +341,7 @@ class TestInvalidBlockCoordinates:
 
             # Read back and test invalid block access
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             # Get block grid dimensions from the asset
             block_grid_rows, block_grid_cols = asset.block_grid_size
@@ -438,7 +438,7 @@ class TestResolutionLevels:
 
             # Create image provider
             provider = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=num_cols,
                 num_rows=num_rows,
                 num_bands=num_bands,
@@ -454,7 +454,7 @@ class TestResolutionLevels:
             # Write to NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="Property test image for resolution levels",
@@ -464,7 +464,7 @@ class TestResolutionLevels:
 
             # Read back and verify resolution levels
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             # Requirement 7.1: Verify multiple resolution levels exist
             num_levels = asset.num_resolution_levels
@@ -608,7 +608,7 @@ class TestBandSelection:
                 metadata.set(k, v)
 
             provider = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=num_cols,
                 num_rows=num_rows,
                 num_bands=num_bands,
@@ -621,7 +621,7 @@ class TestBandSelection:
 
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="Property test image for band selection",
@@ -630,7 +630,7 @@ class TestBandSelection:
             writer.close()
 
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             # Read block (0,0) with all bands
             full_block = asset.get_block(0, 0, 0)
@@ -711,7 +711,7 @@ class TestBandSelection:
                 block_h = num_rows
 
             provider = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=num_cols,
                 num_rows=num_rows,
                 num_bands=num_bands,
@@ -724,7 +724,7 @@ class TestBandSelection:
 
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="Property test image for empty band selection",
@@ -733,7 +733,7 @@ class TestBandSelection:
             writer.close()
 
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             try:
                 block = asset.get_block(0, 0, 0, bands=[])

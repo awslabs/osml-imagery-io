@@ -96,7 +96,7 @@ impl PyDatasetReader {
     ///
     /// Example::
     ///
-    ///     image = dataset.get_asset("image_segment_0")
+    ///     image = dataset.get_asset("image:0")
     fn get_asset(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
         let inner = self.get_inner()?;
         let asset = inner.get_asset(key)?;

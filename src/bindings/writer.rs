@@ -30,7 +30,7 @@ use crate::traits::{AssetProvider, DatasetWriter};
 ///     with IO.open(["output.ntf"], "w", "nitf") as writer:
 ///         writer.metadata = metadata
 ///         writer.add_asset(
-///             "image_segment_0", image_provider,
+///             "image:0", image_provider,
 ///             "Primary Image", "RGB scene", ["data"],
 ///         )
 #[pyclass(name = "DatasetWriter")]
@@ -81,7 +81,7 @@ impl PyDatasetWriter {
     /// Example::
     ///
     ///     writer.add_asset(
-    ///         "image_segment_0", image_provider,
+    ///         "image:0", image_provider,
     ///         "Primary Image", "RGB scene", ["data"],
     ///     )
     #[pyo3(signature = (key, provider, title, description, roles))]

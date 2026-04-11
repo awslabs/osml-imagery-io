@@ -16,7 +16,7 @@ with IO.open(["image.ntf"], "r") as dataset:
     all_meta = dataset.metadata.as_dict()
 
     # Asset-level metadata
-    image = dataset.get_asset("image_segment_0")
+    image = dataset.get_asset("image:0")
     image_meta = image.metadata.as_dict()
 ```
 
@@ -63,7 +63,7 @@ with IO.open(["image.ntf"], "r") as dataset:
     classification = file_meta["FSCLAS"]       # "U", "C", "S", "TS", etc.
 
     # Image subheader fields
-    image = dataset.get_asset("image_segment_0")
+    image = dataset.get_asset("image:0")
     image_meta = image.metadata.as_dict()
 
     image_id = image_meta["IID1"]              # "IMG_00001"

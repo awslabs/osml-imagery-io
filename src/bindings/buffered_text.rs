@@ -43,7 +43,7 @@ use crate::types::AssetType;
 ///
 ///     # Create a text asset with title, description, and roles
 ///     provider = BufferedTextAssetProvider.create(
-///         key="text_segment_0",
+///         key="text:0",
 ///         text_content="Mission report content...",
 ///         encoding="UTF-8",
 ///         title="Mission Report",

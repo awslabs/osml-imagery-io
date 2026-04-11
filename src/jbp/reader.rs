@@ -560,7 +560,7 @@ impl JBPDatasetReader {
                     key,
                     title,
                     description,
-                    vec!["annotation".to_string()],
+                    vec!["graphic".to_string()],
                     *location,
                     self.data.clone(),
                     metadata,
@@ -1372,7 +1372,7 @@ mod tests {
         
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
         assert_eq!(keys.len(), 3);
-        assert!(keys.iter().all(|k| k.starts_with("image_")));
+        assert!(keys.iter().all(|k| k.starts_with("image:")));
     }
 
     #[test]
@@ -1382,7 +1382,7 @@ mod tests {
         
         let keys = reader.get_asset_keys(Some(AssetType::Text), None);
         assert_eq!(keys.len(), 2);
-        assert!(keys.iter().all(|k| k.starts_with("text_")));
+        assert!(keys.iter().all(|k| k.starts_with("text:")));
     }
 
     #[test]
@@ -1392,7 +1392,7 @@ mod tests {
         
         let keys = reader.get_asset_keys(Some(AssetType::Graphics), None);
         assert_eq!(keys.len(), 2);
-        assert!(keys.iter().all(|k| k.starts_with("graphic_")));
+        assert!(keys.iter().all(|k| k.starts_with("graphic:")));
     }
 
     #[test]
@@ -1409,9 +1409,9 @@ mod tests {
         let data = create_minimal_nitf_header(2, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         
-        assert!(reader.has_asset("image_segment_0"));
-        assert!(reader.has_asset("image_segment_1"));
-        assert!(!reader.has_asset("image_segment_2"));
+        assert!(reader.has_asset("image:0"));
+        assert!(reader.has_asset("image:1"));
+        assert!(!reader.has_asset("image:2"));
     }
 
     #[test]
@@ -1420,7 +1420,7 @@ mod tests {
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         
         assert!(!reader.has_asset("invalid_key"));
-        assert!(!reader.has_asset("text_segment_0"));
+        assert!(!reader.has_asset("text:0"));
     }
 
     #[test]
@@ -1428,10 +1428,10 @@ mod tests {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         
-        let asset = reader.get_asset("image_segment_0");
+        let asset = reader.get_asset("image:0");
         assert!(asset.is_ok());
         let asset = asset.unwrap();
-        assert_eq!(asset.key(), "image_segment_0");
+        assert_eq!(asset.key(), "image:0");
         assert_eq!(asset.asset_type(), AssetType::Image);
         assert_eq!(asset.media_type(), "application/vnd.nitf.image");
     }
@@ -1441,7 +1441,7 @@ mod tests {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         
-        let asset = reader.get_asset("image_segment_5");
+        let asset = reader.get_asset("image:5");
         assert!(asset.is_err());
     }
 
@@ -1451,9 +1451,9 @@ mod tests {
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         
         // First access
-        let asset1 = reader.get_asset("image_segment_0").unwrap();
+        let asset1 = reader.get_asset("image:0").unwrap();
         // Second access (should be cached)
-        let asset2 = reader.get_asset("image_segment_0").unwrap();
+        let asset2 = reader.get_asset("image:0").unwrap();
         
         // Both should point to the same Arc
         assert!(Arc::ptr_eq(&asset1, &asset2));
@@ -1493,7 +1493,7 @@ mod tests {
         let mut reader = JBPDatasetReader::from_bytes(&data).unwrap();
         
         // Access an asset to populate cache
-        let _ = reader.get_asset("image_segment_0");
+        let _ = reader.get_asset("image:0");
         
         // Close should succeed
         let result = reader.close();
@@ -1571,10 +1571,10 @@ mod property_tests {
 
             // Test some non-existent keys
             let non_existent_keys = vec![
-                "image_segment_999",
-                "text_segment_999",
+                "image:999",
+                "text:999",
                 "invalid_key",
-                "graphic_segment_999",
+                "graphic:999",
             ];
 
             for key in non_existent_keys {
@@ -1607,7 +1607,7 @@ mod property_tests {
 
             // Test image segments
             for i in 0..numi {
-                let key = format!("image_segment_{}", i);
+                let key = format!("image:{}", i);
                 let asset = reader.get_asset(&key).unwrap();
 
                 // Verify asset type
@@ -1639,7 +1639,7 @@ mod property_tests {
 
             // Test graphic segments
             for i in 0..nums {
-                let key = format!("graphic_segment_{}", i);
+                let key = format!("graphic:{}", i);
                 let asset = reader.get_asset(&key).unwrap();
 
                 prop_assert_eq!(
@@ -1667,7 +1667,7 @@ mod property_tests {
 
             // Test text segments
             for i in 0..numt {
-                let key = format!("text_segment_{}", i);
+                let key = format!("text:{}", i);
                 let asset = reader.get_asset(&key).unwrap();
 
                 prop_assert_eq!(
@@ -1696,7 +1696,7 @@ mod property_tests {
 
             // Test DES segments
             for i in 0..numdes {
-                let key = format!("des_segment_{}", i);
+                let key = format!("des:{}", i);
                 let asset = reader.get_asset(&key).unwrap();
 
                 prop_assert_eq!(
@@ -1741,8 +1741,8 @@ mod debug_tests {
         assert_eq!(offsets.des.len(), 2);
         
         // Verify we can get both DES assets
-        assert!(reader.get_asset("des_segment_0").is_ok());
-        assert!(reader.get_asset("des_segment_1").is_ok());
+        assert!(reader.get_asset("des:0").is_ok());
+        assert!(reader.get_asset("des:1").is_ok());
     }
 }
 
@@ -2029,7 +2029,7 @@ mod tre_property_tests {
             
             // Access all image segments - TRE extraction should not error
             for i in 0..numi {
-                let key = format!("image_segment_{}", i);
+                let key = format!("image:{}", i);
                 let asset = reader.get_asset(&key);
                 prop_assert!(
                     asset.is_ok(),
@@ -2050,7 +2050,7 @@ mod tre_property_tests {
             
             // Access all graphic segments - TRE extraction should not error
             for i in 0..nums {
-                let key = format!("graphic_segment_{}", i);
+                let key = format!("graphic:{}", i);
                 let asset = reader.get_asset(&key);
                 prop_assert!(
                     asset.is_ok(),
@@ -2060,7 +2060,7 @@ mod tre_property_tests {
             
             // Access all text segments - TRE extraction should not error
             for i in 0..numt {
-                let key = format!("text_segment_{}", i);
+                let key = format!("text:{}", i);
                 let asset = reader.get_asset(&key);
                 prop_assert!(
                     asset.is_ok(),
@@ -2086,7 +2086,7 @@ mod tre_property_tests {
             let reader = JBPDatasetReader::from_bytes(&data).unwrap();
             
             // Access image segment
-            let asset = reader.get_asset("image_segment_0").unwrap();
+            let asset = reader.get_asset("image:0").unwrap();
             let metadata = asset.metadata();
             
             // Get all metadata fields
@@ -2114,13 +2114,13 @@ mod tre_property_tests {
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         
         // Access each segment type - should succeed without TRE errors
-        let image = reader.get_asset("image_segment_0");
+        let image = reader.get_asset("image:0");
         assert!(image.is_ok(), "Image segment should be accessible");
         
-        let graphic = reader.get_asset("graphic_segment_0");
+        let graphic = reader.get_asset("graphic:0");
         assert!(graphic.is_ok(), "Graphic segment should be accessible");
         
-        let text = reader.get_asset("text_segment_0");
+        let text = reader.get_asset("text:0");
         assert!(text.is_ok(), "Text segment should be accessible");
     }
 
@@ -2130,7 +2130,7 @@ mod tre_property_tests {
         let data = tests::create_minimal_nitf_header(1, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let metadata = asset.metadata();
         
         // Verify we can call as_dict without errors
@@ -2238,7 +2238,7 @@ mod nitf_integration_tests {
             let keys = reader.get_asset_keys(None, None);
             
             // Check each image segment for TRE metadata
-            for key in keys.iter().filter(|k| k.starts_with("image_segment_")) {
+            for key in keys.iter().filter(|k| k.starts_with("image:")) {
                 let asset = match reader.get_asset(key) {
                     Ok(a) => a,
                     Err(e) => {
@@ -2346,7 +2346,7 @@ mod nitf_integration_tests {
             // Get image segment keys
             let image_keys: Vec<_> = reader.get_asset_keys(None, None)
                 .into_iter()
-                .filter(|k| k.starts_with("image_segment_"))
+                .filter(|k| k.starts_with("image:"))
                 .collect();
             
             for key in &image_keys {

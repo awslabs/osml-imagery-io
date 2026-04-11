@@ -40,7 +40,7 @@ from PIL import Image
 from aws.osml.io import IO
 
 with IO.open(["image.ntf"], "r") as dataset:
-    image = dataset.get_asset("image_segment_0")
+    image = dataset.get_asset("image:0")
     block_chw = image.get_block(0, 0, resolution_level=0)
 
     # Convert to channels-last for display
@@ -163,7 +163,7 @@ with IO.open(["output.tif"], "w", "tiff") as writer:
 
 # Read it back — pixels are RGB, not YCbCr
 with IO.open(["output.tif"], "r") as reader:
-    image = reader.get_asset("image_segment_0")
+    image = reader.get_asset("image:0")
     block = image.get_block(0, 0, resolution_level=0)
     print(block.dtype)   # uint8
     print(block.shape)   # (3, 256, 256) — RGB channels
@@ -192,7 +192,7 @@ pixel is a single-byte index and the actual RGB colors are defined in a separate
 from aws.osml.io import IO
 
 with IO.open(["indexed_image.tif"], "r") as dataset:
-    image = dataset.get_asset("image_segment_0")
+    image = dataset.get_asset("image:0")
     print(image.num_bands)          # 1
     print(image.pixel_value_type)   # PixelType.UInt8
 

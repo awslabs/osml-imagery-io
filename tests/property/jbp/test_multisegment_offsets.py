@@ -54,7 +54,7 @@ class TestMultiSegmentOffsets:
             expected_keys = []
 
             for i in range(counts["images"]):
-                key = f"image_segment_{i}"
+                key = f"image:{i}"
                 asset = AssetProvider.from_bytes(
                     key=key,
                     data=bytes([i] * 64),
@@ -65,7 +65,7 @@ class TestMultiSegmentOffsets:
                 expected_keys.append(key)
 
             for i in range(counts["text"]):
-                key = f"text_segment_{i}"
+                key = f"text:{i}"
                 asset = AssetProvider.from_bytes(
                     key=key,
                     data=f"Text content {i}".encode(),
@@ -76,7 +76,7 @@ class TestMultiSegmentOffsets:
                 expected_keys.append(key)
 
             for i in range(counts["graphics"]):
-                key = f"graphic_segment_{i}"
+                key = f"graphic:{i}"
                 asset = AssetProvider.from_bytes(
                     key=key,
                     data=bytes([i + 10] * 32),
@@ -87,7 +87,7 @@ class TestMultiSegmentOffsets:
                 expected_keys.append(key)
 
             for i in range(counts["des"]):
-                key = f"des_segment_{i}"
+                key = f"des:{i}"
                 asset = AssetProvider.from_bytes(
                     key=key,
                     data=bytes([i + 20] * 16),
@@ -143,10 +143,10 @@ class TestMultiSegmentOffsets:
             writer = IO.open([str(path)], "w", "nitf")
 
             segments = [
-                ("image_segment_0", image_bytes, AssetType.Image),
-                ("text_segment_0", text_bytes, AssetType.Text),
-                ("graphic_segment_0", graphics_bytes, AssetType.Graphics),
-                ("des_segment_0", des_bytes, AssetType.Data),
+                ("image:0", image_bytes, AssetType.Image),
+                ("text:0", text_bytes, AssetType.Text),
+                ("graphic:0", graphics_bytes, AssetType.Graphics),
+                ("des:0", des_bytes, AssetType.Data),
             ]
 
             for key, data, asset_type in segments:
@@ -189,28 +189,28 @@ class TestMultiSegmentOffsets:
             writer = IO.open([str(path)], "w", "nitf")
 
             for i in range(counts["images"]):
-                key = f"image_segment_{i}"
+                key = f"image:{i}"
                 asset = AssetProvider.from_bytes(
                     key=key, data=bytes(64), asset_type=AssetType.Image, title=key,
                 )
                 writer.add_asset(key, asset, key, "", ["data"])
 
             for i in range(counts["text"]):
-                key = f"text_segment_{i}"
+                key = f"text:{i}"
                 asset = AssetProvider.from_bytes(
                     key=key, data=b"text", asset_type=AssetType.Text, title=key,
                 )
                 writer.add_asset(key, asset, key, "", ["data"])
 
             for i in range(counts["graphics"]):
-                key = f"graphic_segment_{i}"
+                key = f"graphic:{i}"
                 asset = AssetProvider.from_bytes(
                     key=key, data=bytes(16), asset_type=AssetType.Graphics, title=key,
                 )
                 writer.add_asset(key, asset, key, "", ["data"])
 
             for i in range(counts["des"]):
-                key = f"des_segment_{i}"
+                key = f"des:{i}"
                 asset = AssetProvider.from_bytes(
                     key=key, data=bytes(8), asset_type=AssetType.Data, title=key,
                 )

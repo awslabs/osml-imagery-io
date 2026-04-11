@@ -68,7 +68,7 @@ def _write_nitf(
         metadata.set(k, v)
 
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=num_cols,
         num_rows=num_rows,
         num_bands=num_bands,
@@ -81,7 +81,7 @@ def _write_nitf(
 
     writer = IO.open([str(path)], "w", "nitf")
     writer.add_asset(
-        key="image_segment_0",
+        key="image:0",
         provider=provider,
         title="Test Image",
         description="Zarr end-to-end test",
@@ -114,7 +114,7 @@ def _write_tiff(
     tile_h = int(hints.get("323", "256"))
 
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=num_cols,
         num_rows=num_rows,
         num_bands=num_bands,
@@ -128,7 +128,7 @@ def _write_tiff(
     writer = IO.open([str(path)], "w", "tiff")
     writer.metadata = metadata
     writer.add_asset(
-        key="image_segment_0",
+        key="image:0",
         provider=provider,
         title="Test Image",
         description="Zarr end-to-end test",

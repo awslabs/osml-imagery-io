@@ -1,9 +1,11 @@
 //! TIFFDatasetReader — implements DatasetReader for TIFF files.
 //!
 //! Opens a TIFF from a byte slice, enumerates IFDs, classifies each by
-//! `NewSubfileType`, and creates one `TIFFImageAssetProvider` per
-//! full-resolution IFD. Dataset-level metadata contains byte order, directory
-//! count, and image segment count.
+//! `NewSubfileType`, and creates one `TIFFImageAssetProvider` per IFD.
+//! Full-resolution IFDs get keys like `image:0` with role `"data"`;
+//! overview IFDs get keys like `image:0:overview:1` with role `"overview"`.
+//! Dataset-level metadata contains byte order, directory count, and image
+//! segment count.
 
 use std::sync::{Arc, Mutex};
 
@@ -39,9 +41,9 @@ pub struct TIFFDatasetReader {
     /// Shared libtiff handle protected by a mutex.
     #[allow(dead_code)]
     handle: Arc<Mutex<TiffHandle>>,
-    /// One image asset provider per full-resolution IFD.
+    /// One image asset provider per IFD (full-resolution and overview).
     image_assets: Vec<Arc<TIFFImageAssetProvider>>,
-    /// Ordered keys for the image assets (e.g. "image_segment_0").
+    /// Ordered keys for the image assets (e.g. "image:0", "image:0:overview:1").
     asset_keys: Vec<String>,
     /// Dataset-level metadata (byte order, directory count, segment count).
     dataset_metadata: Arc<TIFFMetadataProvider>,
@@ -98,10 +100,12 @@ impl TIFFDatasetReader {
 
         let single_ifd = num_directories == 1;
 
-        // Enumerate IFDs and build image asset providers for full-resolution IFDs
+        // Enumerate IFDs and build image asset providers for all IFDs
         let mut image_assets: Vec<Arc<TIFFImageAssetProvider>> = Vec::new();
         let mut asset_keys: Vec<String> = Vec::new();
         let mut segment_index: usize = 0;
+        let mut current_parent_index: usize = 0;
+        let mut overview_index: u32 = 1;
 
         for ifd_index in 0..num_directories {
             let guard = handle.lock().map_err(|e| {
@@ -131,17 +135,35 @@ impl TIFFDatasetReader {
                 }
             }
 
-            // Classify by NewSubfileType
+            // Classify by NewSubfileType (tag 254)
             let new_subfile_type = guard.get_field_u32(tags::NEW_SUBFILE_TYPE).unwrap_or(0);
             let is_full_res = (new_subfile_type & 1) == 0;
 
             // Drop the guard before creating the provider (it acquires its own lock)
             drop(guard);
 
-            // Single-IFD files always become image_segment_0 regardless of NewSubfileType
-            if is_full_res || single_ifd {
-                let key = format!("image_segment_{}", segment_index);
+            // Determine key and roles based on IFD classification
+            let (key, roles) = if is_full_res || single_ifd {
+                // Full-resolution IFD (or single-IFD override)
+                let key = format!("image:{}", segment_index);
+                let roles = vec!["data".to_string()];
+                current_parent_index = segment_index;
+                segment_index += 1;
+                overview_index = 1;
+                (key, roles)
+            } else {
+                // Overview IFD
+                let key = format!(
+                    "image:{}:overview:{}",
+                    current_parent_index, overview_index
+                );
+                let roles = vec!["overview".to_string()];
+                overview_index += 1;
+                (key, roles)
+            };
 
+            // Build metadata and create the provider
+            {
                 let guard = handle.lock().map_err(|e| {
                     CodecError::Decode(format!(
                         "Failed to acquire TIFF handle lock: {}",
@@ -174,11 +196,11 @@ impl TIFFDatasetReader {
                     ifd_index,
                     Arc::clone(&handle),
                     metadata,
+                    roles,
                 )?;
 
                 asset_keys.push(key);
                 image_assets.push(Arc::new(provider));
-                segment_index += 1;
             }
         }
 
@@ -212,15 +234,24 @@ impl DatasetReader for TIFFDatasetReader {
     fn get_asset_keys(
         &self,
         asset_type: Option<AssetType>,
-        _roles: Option<&[String]>,
+        roles: Option<&[String]>,
     ) -> Vec<String> {
-        match asset_type {
-            None | Some(AssetType::Image) => self.asset_keys.clone(),
-            // TIFF has no text, graphics, or data segments
-            Some(AssetType::Text) | Some(AssetType::Graphics) | Some(AssetType::Data) => {
-                Vec::new()
-            }
-        }
+        self.asset_keys
+            .iter()
+            .enumerate()
+            .filter(|(_, _)| match asset_type {
+                None | Some(AssetType::Image) => true,
+                Some(AssetType::Text) | Some(AssetType::Graphics) | Some(AssetType::Data) => false,
+            })
+            .filter(|(i, _)| match roles {
+                None => true,
+                Some(requested) => {
+                    let asset_roles = self.image_assets[*i].roles();
+                    requested.iter().any(|r| asset_roles.contains(r))
+                }
+            })
+            .map(|(_, k)| k.clone())
+            .collect()
     }
 
     fn has_asset(&self, key: &str) -> bool {
@@ -305,7 +336,7 @@ mod tests {
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
 
         assert_eq!(reader.asset_keys.len(), 1);
-        assert_eq!(reader.asset_keys[0], "image_segment_0");
+        assert_eq!(reader.asset_keys[0], "image:0");
         assert_eq!(reader.image_assets.len(), 1);
     }
 
@@ -345,18 +376,18 @@ mod tests {
     fn test_get_asset_valid_key() {
         let data = make_single_ifd_tiff();
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0");
+        let asset = reader.get_asset("image:0");
         assert!(asset.is_ok());
-        assert_eq!(asset.unwrap().key(), "image_segment_0");
+        assert_eq!(asset.unwrap().key(), "image:0");
     }
 
     #[test]
     fn test_get_asset_invalid_key() {
         let data = make_single_ifd_tiff();
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
-        let result = reader.get_asset("image_segment_99");
+        let result = reader.get_asset("image:99");
         match result {
-            Err(CodecError::AssetNotFound(key)) => assert_eq!(key, "image_segment_99"),
+            Err(CodecError::AssetNotFound(key)) => assert_eq!(key, "image:99"),
             _ => panic!("Expected AssetNotFound"),
         }
     }
@@ -366,7 +397,7 @@ mod tests {
         let data = make_single_ifd_tiff();
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
-        assert_eq!(keys, vec!["image_segment_0"]);
+        assert_eq!(keys, vec!["image:0"]);
     }
 
     #[test]
@@ -397,15 +428,15 @@ mod tests {
         let data = make_single_ifd_tiff();
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
         let keys = reader.get_asset_keys(None, None);
-        assert_eq!(keys, vec!["image_segment_0"]);
+        assert_eq!(keys, vec!["image:0"]);
     }
 
     #[test]
     fn test_has_asset() {
         let data = make_single_ifd_tiff();
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
-        assert!(reader.has_asset("image_segment_0"));
-        assert!(!reader.has_asset("image_segment_1"));
+        assert!(reader.has_asset("image:0"));
+        assert!(!reader.has_asset("image:1"));
         assert!(!reader.has_asset("bogus_key"));
     }
 
@@ -436,7 +467,7 @@ mod tests {
     fn test_image_asset_provider_accessible() {
         let data = make_single_ifd_tiff();
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
 
         // Downcast to ImageAssetProvider to verify it's the right type
         let image = asset
@@ -490,5 +521,156 @@ mod tests {
     #[test]
     fn test_compression_name_jpeg() {
         assert_eq!(compression_name(7), "JPEG");
+    }
+
+    /// Build a multi-IFD TIFF where each IFD is 4×4 grayscale uncompressed.
+    /// `new_subfile_types` specifies the NewSubfileType value for each IFD.
+    fn make_multi_ifd_tiff(new_subfile_types: &[u32]) -> Vec<u8> {
+        let width: u32 = 4;
+        let height: u32 = 4;
+        let pixel_data = vec![0u8; (width * height) as usize];
+        let num_ifds = new_subfile_types.len();
+
+        // We need to know the total size to compute offsets.
+        // Each IFD has 10 entries (9 standard + NewSubfileType).
+        let num_entries: u16 = 10;
+        let ifd_byte_size = 2 + num_entries as u32 * 12 + 4; // entry count + entries + next-IFD ptr
+
+        // Layout: header (8) | IFD_0 | pixel_0 | IFD_1 | pixel_1 | ...
+        let mut buf = Vec::new();
+
+        // TIFF Header
+        buf.extend_from_slice(b"II");
+        buf.extend_from_slice(&42u16.to_le_bytes());
+        // First IFD offset = 8
+        buf.extend_from_slice(&8u32.to_le_bytes());
+
+        for i in 0..num_ifds {
+            let ifd_start = buf.len() as u32;
+            let pixel_data_offset = ifd_start + ifd_byte_size;
+            let next_ifd_offset = if i + 1 < num_ifds {
+                pixel_data_offset + pixel_data.len() as u32
+            } else {
+                0
+            };
+
+            buf.extend_from_slice(&num_entries.to_le_bytes());
+
+            // Tag 254: NewSubfileType (LONG)
+            write_ifd_entry(&mut buf, 254, 4, 1, new_subfile_types[i]);
+            // Tag 256: ImageWidth
+            write_ifd_entry(&mut buf, 256, 3, 1, width);
+            // Tag 257: ImageLength
+            write_ifd_entry(&mut buf, 257, 3, 1, height);
+            // Tag 258: BitsPerSample
+            write_ifd_entry(&mut buf, 258, 3, 1, 8);
+            // Tag 259: Compression = None
+            write_ifd_entry(&mut buf, 259, 3, 1, 1);
+            // Tag 262: PhotometricInterpretation = MinIsBlack
+            write_ifd_entry(&mut buf, 262, 3, 1, 1);
+            // Tag 273: StripOffsets
+            write_ifd_entry(&mut buf, 273, 4, 1, pixel_data_offset);
+            // Tag 277: SamplesPerPixel
+            write_ifd_entry(&mut buf, 277, 3, 1, 1);
+            // Tag 278: RowsPerStrip
+            write_ifd_entry(&mut buf, 278, 3, 1, height);
+            // Tag 279: StripByteCounts
+            write_ifd_entry(&mut buf, 279, 4, 1, pixel_data.len() as u32);
+
+            // Next IFD offset
+            buf.extend_from_slice(&next_ifd_offset.to_le_bytes());
+
+            // Pixel data for this IFD
+            buf.extend_from_slice(&pixel_data);
+        }
+
+        buf
+    }
+
+    /// Req 2.3: Single-IFD with NewSubfileType=1 should still be keyed as
+    /// `image:0` with role `"data"` (single-IFD override).
+    #[test]
+    fn test_single_ifd_overview_bit_treated_as_primary() {
+        let data = make_multi_ifd_tiff(&[1]); // single IFD, NewSubfileType=1
+        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+
+        assert_eq!(reader.asset_keys.len(), 1);
+        assert_eq!(reader.asset_keys[0], "image:0");
+
+        let asset = reader.get_asset("image:0").unwrap();
+        assert_eq!(asset.roles(), &["data".to_string()]);
+    }
+
+    /// Req 6.1, 6.2: 3-IFD COG (1 full-res + 2 overviews) produces the
+    /// correct keys and roles.
+    #[test]
+    fn test_three_ifd_cog_keys_and_roles() {
+        // IFD 0: full-res (NewSubfileType=0)
+        // IFD 1: overview (NewSubfileType=1)
+        // IFD 2: overview (NewSubfileType=1)
+        let data = make_multi_ifd_tiff(&[0, 1, 1]);
+        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+
+        assert_eq!(
+            reader.asset_keys,
+            vec!["image:0", "image:0:overview:1", "image:0:overview:2"]
+        );
+
+        // Verify roles
+        let full_res = reader.get_asset("image:0").unwrap();
+        assert_eq!(full_res.roles(), &["data".to_string()]);
+
+        let ov1 = reader.get_asset("image:0:overview:1").unwrap();
+        assert_eq!(ov1.roles(), &["overview".to_string()]);
+
+        let ov2 = reader.get_asset("image:0:overview:2").unwrap();
+        assert_eq!(ov2.roles(), &["overview".to_string()]);
+    }
+
+    /// Req 1.7: Old-format key `image_segment_0` returns `AssetNotFound`.
+    #[test]
+    fn test_old_format_key_returns_asset_not_found() {
+        let data = make_single_ifd_tiff();
+        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+
+        let result = reader.get_asset("image_segment_0");
+        match result {
+            Err(CodecError::AssetNotFound(key)) => {
+                assert_eq!(key, "image_segment_0");
+            }
+            Ok(_) => panic!("Expected AssetNotFound for old-format key, got Ok"),
+            Err(e) => panic!("Expected AssetNotFound for old-format key, got: {:?}", e),
+        }
+    }
+
+    /// Req 2.5, 2.6: Role-based filtering in `get_asset_keys()`.
+    #[test]
+    fn test_role_based_filtering() {
+        let data = make_multi_ifd_tiff(&[0, 1, 1]);
+        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+
+        // Filter by "overview" role → only overview keys
+        let overview_keys = reader.get_asset_keys(
+            Some(AssetType::Image),
+            Some(&["overview".to_string()]),
+        );
+        assert_eq!(
+            overview_keys,
+            vec!["image:0:overview:1", "image:0:overview:2"]
+        );
+
+        // Filter by "data" role → only full-res key
+        let data_keys = reader.get_asset_keys(
+            Some(AssetType::Image),
+            Some(&["data".to_string()]),
+        );
+        assert_eq!(data_keys, vec!["image:0"]);
+
+        // No role filter → all keys
+        let all_keys = reader.get_asset_keys(Some(AssetType::Image), None);
+        assert_eq!(
+            all_keys,
+            vec!["image:0", "image:0:overview:1", "image:0:overview:2"]
+        );
     }
 }

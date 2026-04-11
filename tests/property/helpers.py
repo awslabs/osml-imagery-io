@@ -114,7 +114,7 @@ def write_and_read_jbp(
             metadata.set(k, v)
 
         provider = BufferedImageAssetProvider.create(
-            key="image_segment_0",
+            key="image:0",
             num_columns=num_cols,
             num_rows=num_rows,
             num_bands=num_bands,
@@ -127,7 +127,7 @@ def write_and_read_jbp(
 
         writer = IO.open([str(path)], "w", format)
         writer.add_asset(
-            key="image_segment_0",
+            key="image:0",
             provider=provider,
             title="Test Image",
             description="Property test image",
@@ -136,7 +136,7 @@ def write_and_read_jbp(
         writer.close()
 
         reader = IO.open([str(path)], "r")
-        asset = reader.get_asset("image_segment_0")
+        asset = reader.get_asset("image:0")
         decoded = read_full_image(asset, num_bands, num_rows, num_cols)
         reader.close()
 
@@ -183,7 +183,7 @@ def write_and_read_tiff(
         tile_h = int(hints.get("323", "256"))   # TileLength
 
         provider = BufferedImageAssetProvider.create(
-            key="image_segment_0",
+            key="image:0",
             num_columns=num_cols,
             num_rows=num_rows,
             num_bands=num_bands,
@@ -197,7 +197,7 @@ def write_and_read_tiff(
         writer = IO.open([str(path)], "w", "tiff")
         writer.metadata = metadata
         writer.add_asset(
-            key="image_segment_0",
+            key="image:0",
             provider=provider,
             title="Test Image",
             description="Property test",
@@ -206,7 +206,7 @@ def write_and_read_tiff(
         writer.close()
 
         reader = IO.open([str(path)], "r")
-        asset = reader.get_asset("image_segment_0")
+        asset = reader.get_asset("image:0")
         decoded = read_full_image(asset, num_bands, num_rows, num_cols)
         reader.close()
 
@@ -330,7 +330,7 @@ def write_masked_jbp(
         metadata.set(k, v)
 
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=num_cols,
         num_rows=num_rows,
         num_bands=num_bands,
@@ -350,7 +350,7 @@ def write_masked_jbp(
 
     writer = IO.open([str(path)], "w", "nitf")
     writer.add_asset(
-        key="image_segment_0",
+        key="image:0",
         provider=provider,
         title="Test Masked Image",
         description="Property test masked image",
@@ -433,7 +433,7 @@ def write_and_read_j2k(
         metadata.set("J2K_LOSSLESS", str(lossless).lower())
 
         provider = BufferedImageAssetProvider.create(
-            key="image_segment_0",
+            key="image:0",
             num_columns=num_cols,
             num_rows=num_rows,
             num_bands=num_bands,
@@ -447,7 +447,7 @@ def write_and_read_j2k(
         writer = IO.open([str(path)], "w", "j2k")
         writer.metadata = metadata
         writer.add_asset(
-            key="image_segment_0",
+            key="image:0",
             provider=provider,
             title="Test Image",
             description="Property test",
@@ -456,7 +456,7 @@ def write_and_read_j2k(
         writer.close()
 
         reader = IO.open([str(path)], "r")
-        asset = reader.get_asset("image_segment_0")
+        asset = reader.get_asset("image:0")
         decoded = read_full_image(asset, num_bands, num_rows, num_cols)
         reader.close()
 
@@ -498,7 +498,7 @@ def write_and_read_jpeg(
         metadata.set("JPEG_QUALITY", str(quality))
 
         provider = BufferedImageAssetProvider.create(
-            key="image_segment_0",
+            key="image:0",
             num_columns=num_cols,
             num_rows=num_rows,
             num_bands=num_bands,
@@ -512,7 +512,7 @@ def write_and_read_jpeg(
         writer = IO.open([str(path)], "w", "jpeg")
         writer.metadata = metadata
         writer.add_asset(
-            key="image_segment_0",
+            key="image:0",
             provider=provider,
             title="Test Image",
             description="Property test",
@@ -521,7 +521,7 @@ def write_and_read_jpeg(
         writer.close()
 
         reader = IO.open([str(path)], "r")
-        asset = reader.get_asset("image_segment_0")
+        asset = reader.get_asset("image:0")
         decoded = read_full_image(asset, num_bands, num_rows, num_cols)
         reader.close()
 
@@ -568,7 +568,7 @@ def write_and_read_png(
                     metadata.set_json(k, v)
 
         provider = BufferedImageAssetProvider.create(
-            key="image_segment_0",
+            key="image:0",
             num_columns=num_cols,
             num_rows=num_rows,
             num_bands=num_bands,
@@ -582,7 +582,7 @@ def write_and_read_png(
         writer = IO.open([str(path)], "w", "png")
         writer.metadata = metadata
         writer.add_asset(
-            key="image_segment_0",
+            key="image:0",
             provider=provider,
             title="Test Image",
             description="Property test",
@@ -591,7 +591,7 @@ def write_and_read_png(
         writer.close()
 
         reader = IO.open([str(path)], "r")
-        asset = reader.get_asset("image_segment_0")
+        asset = reader.get_asset("image:0")
         decoded = read_full_image(asset, num_bands, num_rows, num_cols)
         reader.close()
 

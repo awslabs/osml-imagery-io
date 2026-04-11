@@ -34,7 +34,7 @@ use crate::types::{AssetType, PixelType};
 ///     from aws.osml.io import IO
 ///
 ///     with IO.open(["image.ntf"], "r") as dataset:
-///         image = dataset.get_asset("image_segment_0")
+///         image = dataset.get_asset("image:0")
 ///
 ///         # Read an RGB composite from a multispectral image
 ///         rgb = image.get_block(0, 0, resolution_level=0, bands=[3, 2, 1])

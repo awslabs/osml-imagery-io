@@ -43,7 +43,7 @@ class TestGraphicSegmentProperties:
         try:
             # Create a graphic segment with the generated CGM data
             graphic_asset = AssetProvider.from_bytes(
-                key="graphic_segment_0",
+                key="graphic:0",
                 data=cgm_data,
                 asset_type=AssetType.Graphics,
                 title="Test Graphic",
@@ -53,7 +53,7 @@ class TestGraphicSegmentProperties:
             # Write the NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                "graphic_segment_0",
+                "graphic:0",
                 graphic_asset,
                 "Test Graphic",
                 "Property test graphic segment",
@@ -119,7 +119,7 @@ class TestGraphicSegmentProperties:
         try:
             # Create a graphic segment with the generated CGM data
             graphic_asset = AssetProvider.from_bytes(
-                key="graphic_segment_0",
+                key="graphic:0",
                 data=cgm_data,
                 asset_type=AssetType.Graphics,
                 title=title,
@@ -129,7 +129,7 @@ class TestGraphicSegmentProperties:
             # Write the NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                "graphic_segment_0",
+                "graphic:0",
                 graphic_asset,
                 title,
                 description,

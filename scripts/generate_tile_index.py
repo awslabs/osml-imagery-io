@@ -226,7 +226,7 @@ Examples:
     # Index only specific segments
     python scripts/generate_tile_index.py multi_segment.ntf \\
         --source-uri s3://my-bucket/multi_segment.ntf \\
-        --segments image_segment_0 image_segment_2
+        --segments image:0 image:2
 
     # List available segments without generating an index
     python scripts/generate_tile_index.py image.ntf --list-segments

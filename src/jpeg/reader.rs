@@ -2,7 +2,7 @@
 //!
 //! Opens a `.jpg` or `.jpeg` file from a byte slice, validates the SOI marker
 //! (0xFFD8), parses the SOF marker to extract metadata (dimensions, bands,
-//! color space), and exposes a single image asset keyed as `"image_segment_0"`.
+//! color space), and exposes a single image asset keyed as `"image:0"`.
 //! Pixel decoding is deferred to `get_block()` time on the ImageAssetProvider.
 //!
 //! The entire input buffer is stored once as `Arc<[u8]>` that is shared with
@@ -103,11 +103,12 @@ impl JPEGDatasetReader {
         let buffer: Arc<[u8]> = Arc::from(data);
 
         let image_asset = JPEGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             width as u32,
             height as u32,
             num_bands,
             buffer,
+            vec!["data".to_string()],
             metadata.clone(),
         );
 
@@ -133,14 +134,24 @@ impl DatasetReader for JPEGDatasetReader {
     fn get_asset_keys(
         &self,
         asset_type: Option<AssetType>,
-        _roles: Option<&[String]>,
+        roles: Option<&[String]>,
     ) -> Vec<String> {
         match asset_type {
             None | Some(AssetType::Image) => {
-                if self.image_asset.is_some() {
-                    vec!["image_segment_0".to_string()]
-                } else {
-                    Vec::new()
+                match &self.image_asset {
+                    Some(asset) => {
+                        if let Some(requested) = roles {
+                            let asset_roles = asset.roles();
+                            if requested.iter().any(|r| asset_roles.contains(r)) {
+                                vec!["image:0".to_string()]
+                            } else {
+                                Vec::new()
+                            }
+                        } else {
+                            vec!["image:0".to_string()]
+                        }
+                    }
+                    None => Vec::new(),
                 }
             }
             Some(AssetType::Text) | Some(AssetType::Graphics) | Some(AssetType::Data) => {
@@ -246,11 +257,11 @@ mod tests {
         let (jpeg_data, _src) = make_jpeg(16, 16, 1, 95);
 
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
-        assert!(reader.has_asset("image_segment_0"));
+        assert!(reader.has_asset("image:0"));
         assert!(!reader.has_asset("nonexistent"));
 
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
-        assert_eq!(keys, vec!["image_segment_0"]);
+        assert_eq!(keys, vec!["image:0"]);
         assert!(reader.get_asset_keys(Some(AssetType::Text), None).is_empty());
 
         // Check metadata
@@ -266,7 +277,7 @@ mod tests {
         );
 
         // Decode and verify shape
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<JPEGImageAssetProvider>()
@@ -297,7 +308,7 @@ mod tests {
             Some("RGB")
         );
 
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<JPEGImageAssetProvider>()
@@ -326,10 +337,10 @@ mod tests {
         let (jpeg_data, _) = make_jpeg(8, 8, 1, 90);
         let mut reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
 
-        assert!(reader.has_asset("image_segment_0"));
+        assert!(reader.has_asset("image:0"));
         reader.close().unwrap();
-        assert!(!reader.has_asset("image_segment_0"));
-        assert!(reader.get_asset("image_segment_0").is_err());
+        assert!(!reader.has_asset("image:0"));
+        assert!(reader.get_asset("image:0").is_err());
         assert!(reader
             .get_asset_keys(Some(AssetType::Image), None)
             .is_empty());
@@ -339,7 +350,7 @@ mod tests {
     fn test_invalid_block_coordinates() {
         let (jpeg_data, _) = make_jpeg(8, 8, 1, 90);
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<JPEGImageAssetProvider>()
@@ -356,7 +367,7 @@ mod tests {
     fn test_invalid_resolution_level() {
         let (jpeg_data, _) = make_jpeg(8, 8, 1, 90);
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<JPEGImageAssetProvider>()
@@ -370,7 +381,7 @@ mod tests {
     fn test_has_block() {
         let (jpeg_data, _) = make_jpeg(8, 8, 1, 90);
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<JPEGImageAssetProvider>()
@@ -386,7 +397,7 @@ mod tests {
     fn test_band_subset_rgb() {
         let (jpeg_data, _) = make_jpeg(8, 8, 3, 95);
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<JPEGImageAssetProvider>()
@@ -420,7 +431,7 @@ mod tests {
         let jpeg_data = compress_8bit(&src, width, height, num_bands, 95).unwrap();
 
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<JPEGImageAssetProvider>()
@@ -455,7 +466,7 @@ mod tests {
         let jpeg_data = compress_8bit(&src, width, height, 3, 100).unwrap();
 
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<JPEGImageAssetProvider>()

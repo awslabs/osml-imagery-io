@@ -228,7 +228,7 @@ class TestProperty7EndToEndDecodeEquivalence:
         metadata.set("IMODE", "B")
 
         provider = BufferedImageAssetProvider.create(
-            key="image_segment_0",
+            key="image:0",
             num_columns=num_cols,
             num_rows=num_rows,
             num_bands=num_bands,
@@ -245,7 +245,7 @@ class TestProperty7EndToEndDecodeEquivalence:
         try:
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="Property test image",

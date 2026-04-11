@@ -78,7 +78,7 @@ class TestTextSegmentRoundtrip:
 
             # Create a text segment using AssetProvider.from_bytes
             text_asset = AssetProvider.from_bytes(
-                key="text_segment_0",
+                key="text:0",
                 data=text_bytes,
                 asset_type=AssetType.Text,
                 title="Test Text",
@@ -88,7 +88,7 @@ class TestTextSegmentRoundtrip:
             # Write the NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                "text_segment_0",
+                "text:0",
                 text_asset,
                 "Test Text",
                 "Property test text segment",
@@ -140,7 +140,7 @@ class TestTextSegmentRoundtrip:
         """
         # Create a BufferedTextAssetProvider to test line ending normalization
         text_asset = BufferedTextAssetProvider.create(
-            key="text_segment_0",
+            key="text:0",
             text_content=text_content,
             encoding="UTF-8",
         )
@@ -206,7 +206,7 @@ class TestTextSegmentRoundtrip:
 
             # Create a text segment using AssetProvider.from_bytes
             text_asset = AssetProvider.from_bytes(
-                key="text_segment_0",
+                key="text:0",
                 data=text_bytes,
                 asset_type=AssetType.Text,
                 title=title,
@@ -216,7 +216,7 @@ class TestTextSegmentRoundtrip:
             # Write the NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                "text_segment_0",
+                "text:0",
                 text_asset,
                 title,
                 description,
@@ -611,7 +611,7 @@ class TestTextMetadataAccess:
 
             # Create a text segment
             text_asset = AssetProvider.from_bytes(
-                key="text_segment_0",
+                key="text:0",
                 data=text_bytes,
                 asset_type=AssetType.Text,
                 title="Test Text",
@@ -621,7 +621,7 @@ class TestTextMetadataAccess:
             # Write the NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                "text_segment_0",
+                "text:0",
                 text_asset,
                 "Test Text",
                 "Format code test",
@@ -678,7 +678,7 @@ class TestTextMetadataAccess:
 
             # Create a text segment
             text_asset = AssetProvider.from_bytes(
-                key="text_segment_0",
+                key="text:0",
                 data=text_bytes,
                 asset_type=AssetType.Text,
                 title="Test Text",
@@ -688,7 +688,7 @@ class TestTextMetadataAccess:
             # Write the NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                "text_segment_0",
+                "text:0",
                 text_asset,
                 "Test Text",
                 "Attachment level test",

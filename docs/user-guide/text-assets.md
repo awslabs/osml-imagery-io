@@ -20,13 +20,13 @@ with IO.open(["image.ntf"], "r") as dataset:
 from aws.osml.io import IO, BufferedTextAssetProvider
 
 text_asset = BufferedTextAssetProvider(
-    key="text_segment_0",
+    key="text:0",
     text_content="Mission report content...",
     encoding="UTF-8",
 ).with_title("Mission Report")
 
 with IO.open(["output.ntf"], "w", "nitf") as writer:
-    writer.add_asset("text_segment_0", text_asset,
+    writer.add_asset("text:0", text_asset,
                      title="Mission Report",
                      description="Operational text",
                      roles=["data", "annotation"])

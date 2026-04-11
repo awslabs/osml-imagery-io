@@ -88,7 +88,7 @@ provider = BufferedImageAssetProvider.create(
 provider.set_full_image(image_data)
 
 with IO.open(["output.ntf"], "w", "nitf") as writer:
-    writer.add_asset("image_segment_0", provider)
+    writer.add_asset("image:0", provider)
 ```
 
 ## Common Commands

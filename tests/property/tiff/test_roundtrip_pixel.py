@@ -100,7 +100,7 @@ class TestTiffPixelRoundtrip:
 
         try:
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             assert asset.num_columns == width
             assert asset.num_rows == height
@@ -208,7 +208,7 @@ class TestTiffBandSubsetting:
 
         try:
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             full_block = asset.get_block(0, 0, 0, None)
 

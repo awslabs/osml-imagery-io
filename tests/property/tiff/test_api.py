@@ -101,7 +101,7 @@ class TestTiffBlockCoordinateValidation:
             pytest.skip("Test data not available")
 
         reader = IO.open([str(SMALL_TIF)], "r")
-        asset = reader.get_asset("image_segment_0")
+        asset = reader.get_asset("image:0")
         grid_rows, grid_cols = asset.block_grid_size
 
         for r in range(grid_rows):
@@ -116,7 +116,7 @@ class TestTiffBlockCoordinateValidation:
             pytest.skip("Test data not available")
 
         reader = IO.open([str(SMALL_TIF)], "r")
-        asset = reader.get_asset("image_segment_0")
+        asset = reader.get_asset("image:0")
         grid_rows, grid_cols = asset.block_grid_size
 
         # has_block returns False for out-of-bounds
@@ -138,7 +138,7 @@ class TestTiffBlockCoordinateValidation:
 
         try:
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
             grid_rows, grid_cols = asset.block_grid_size
 
             for r in range(grid_rows):
@@ -158,7 +158,7 @@ class TestTiffBlockCoordinateValidation:
             pytest.skip("Test data not available")
 
         reader = IO.open([str(SMALL_TIF)], "r")
-        asset = reader.get_asset("image_segment_0")
+        asset = reader.get_asset("image:0")
 
         with pytest.raises(Exception):
             asset.get_block(0, 0, 1, None)
@@ -186,9 +186,9 @@ class TestTiffIFDEnumeration:
         reader = IO.open([str(SMALL_TIF)], "r")
         keys = reader.get_asset_keys(asset_type=AssetType.Image)
 
-        assert keys == ["image_segment_0"]
+        assert keys == ["image:0"]
 
-        asset = reader.get_asset("image_segment_0")
+        asset = reader.get_asset("image:0")
         assert asset.num_resolution_levels == 1
 
     @given(config=tiff_image_config(min_size=16, max_size=48))
@@ -201,9 +201,9 @@ class TestTiffIFDEnumeration:
         try:
             reader = IO.open([str(path)], "r")
             keys = reader.get_asset_keys(asset_type=AssetType.Image)
-            assert keys == ["image_segment_0"]
+            assert keys == ["image:0"]
 
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
             assert asset.num_resolution_levels == 1
         finally:
             path.unlink(missing_ok=True)
@@ -229,7 +229,7 @@ class TestTiffNonImageAssetAccess:
 
         reader = IO.open([str(SMALL_TIF)], "r")
 
-        for key in ["nonexistent", "image_segment_99", "", "text_segment_0"]:
+        for key in ["nonexistent", "image_segment_99", "", "text:0"]:
             with pytest.raises(Exception):
                 reader.get_asset(key)
 
@@ -327,7 +327,7 @@ class TestTiffPerIFDMetadata:
             pytest.skip("Test data not available")
 
         reader = IO.open([str(SMALL_TIF)], "r")
-        asset = reader.get_asset("image_segment_0")
+        asset = reader.get_asset("image:0")
         meta = asset.get_metadata().as_dict()
 
         # Metadata keys are numeric tag ID strings after the metadata refactor
@@ -342,7 +342,7 @@ class TestTiffPerIFDMetadata:
             pytest.skip("Test data not available")
 
         reader = IO.open([str(SMALL_TIF)], "r")
-        asset = reader.get_asset("image_segment_0")
+        asset = reader.get_asset("image:0")
         provider = asset.get_metadata()
 
         assert provider.as_dict("unknown") == {}
@@ -364,7 +364,7 @@ class TestTiffPerIFDMetadata:
 
         try:
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
             meta = asset.get_metadata().as_dict()
 
             # Metadata keys are numeric tag ID strings
@@ -414,7 +414,7 @@ def _write_tiff_with_metadata(path, metadata_dict):
 
     array = np.zeros((1, 16, 16), dtype=np.uint8)
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=16,
         num_rows=16,
         num_bands=1,
@@ -428,7 +428,7 @@ def _write_tiff_with_metadata(path, metadata_dict):
     writer = IO.open([str(path)], "w", "tiff")
     writer.metadata = meta
     writer.add_asset(
-        key="image_segment_0",
+        key="image:0",
         provider=provider,
         title="Test",
         description="Property test",
@@ -440,7 +440,7 @@ def _write_tiff_with_metadata(path, metadata_dict):
 def _read_tiff_metadata(path):
     """Read per-IFD metadata from a TIFF file."""
     reader = IO.open([str(path)], "r")
-    asset = reader.get_asset("image_segment_0")
+    asset = reader.get_asset("image:0")
     return asset.get_metadata().as_dict()
 
 
@@ -569,21 +569,21 @@ class TestTiffNonImageAssetRejection:
     def test_text_asset_rejected(self):
         writer = IO.open(["reject_text.tif"], "w", "tiff")
         asset = AssetProvider.from_bytes(
-            key="text_segment_0",
+            key="text:0",
             data=b"Hello world",
             asset_type=AssetType.Text,
             title="Text",
         )
         with pytest.raises(Exception):
-            writer.add_asset("text_segment_0", asset, "Text", "desc", ["metadata"])
+            writer.add_asset("text:0", asset, "Text", "desc", ["metadata"])
 
     def test_data_asset_rejected(self):
         writer = IO.open(["reject_data.tif"], "w", "tiff")
         asset = AssetProvider.from_bytes(
-            key="des_segment_0",
+            key="des:0",
             data=b"\x00\x01\x02",
             asset_type=AssetType.Data,
             title="DES",
         )
         with pytest.raises(Exception):
-            writer.add_asset("des_segment_0", asset, "DES", "desc", ["data"])
+            writer.add_asset("des:0", asset, "DES", "desc", ["data"])

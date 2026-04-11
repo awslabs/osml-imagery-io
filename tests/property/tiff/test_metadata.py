@@ -51,7 +51,7 @@ def _write_tiff(path, array, pixel_type, num_bands, num_rows, num_cols, hints):
     tile_h = int(hints.get("323", "256"))   # TileLength
 
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=num_cols,
         num_rows=num_rows,
         num_bands=num_bands,
@@ -65,7 +65,7 @@ def _write_tiff(path, array, pixel_type, num_bands, num_rows, num_cols, hints):
     writer = IO.open([str(path)], "w", "tiff")
     writer.metadata = metadata
     writer.add_asset(
-        key="image_segment_0",
+        key="image:0",
         provider=provider,
         title="Test Image",
         description="Property test",
@@ -100,7 +100,7 @@ class TestTiffMetadataRoundtrip:
             _write_tiff(path, array, pixel_type, num_bands, num_rows, num_cols, hints)
 
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
             meta = asset.get_metadata().as_dict()
 
             assert meta["256"] == num_cols       # ImageWidth
@@ -166,7 +166,7 @@ def _write_tiff_with_metadata(path, metadata_dict):
 
     array = np.zeros((1, 16, 16), dtype=np.uint8)
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=16,
         num_rows=16,
         num_bands=1,
@@ -180,7 +180,7 @@ def _write_tiff_with_metadata(path, metadata_dict):
     writer = IO.open([str(path)], "w", "tiff")
     writer.metadata = meta
     writer.add_asset(
-        key="image_segment_0",
+        key="image:0",
         provider=provider,
         title="Test",
         description="Property test",
@@ -192,7 +192,7 @@ def _write_tiff_with_metadata(path, metadata_dict):
 def _read_tiff_metadata(path):
     """Read per-IFD metadata from a TIFF file."""
     reader = IO.open([str(path)], "r")
-    asset = reader.get_asset("image_segment_0")
+    asset = reader.get_asset("image:0")
     return asset.get_metadata().as_dict()
 
 

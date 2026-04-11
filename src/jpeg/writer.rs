@@ -308,7 +308,7 @@ mod tests {
             .with_bands(num_bands)
             .with_block_size(width, height)
             .with_pixel_type(pixel_type);
-        let provider = BufferedImageAssetProvider::new("image_segment_0", config);
+        let provider = BufferedImageAssetProvider::new("image:0", config);
         provider.set_block(0, 0, bsq_data).unwrap();
         Arc::new(provider)
     }
@@ -337,7 +337,7 @@ mod tests {
         let provider = make_image_provider(2, 2, 1, PixelType::UInt8, &[10, 20, 30, 40]);
 
         let result =
-            writer.add_asset("image_segment_0", provider, "Test", "Test image", &[]);
+            writer.add_asset("image:0", provider, "Test", "Test image", &[]);
         assert!(result.is_ok());
         assert!(writer.image_queued);
         assert_eq!(writer.assets.len(), 1);
@@ -466,7 +466,7 @@ mod tests {
 
         let mut writer = JPEGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image_segment_0", provider, "Test", "Test", &[])
+            .add_asset("image:0", provider, "Test", "Test", &[])
             .unwrap();
 
         assert!(writer.close().is_ok());
@@ -489,14 +489,14 @@ mod tests {
 
         let mut writer = JPEGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image_segment_0", provider, "Test", "Test", &[])
+            .add_asset("image:0", provider, "Test", "Test", &[])
             .unwrap();
         writer.close().unwrap();
 
         // Read back
         let data = std::fs::read(&path).unwrap();
         let reader = JPEGDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<JPEGImageAssetProvider>()
@@ -533,13 +533,13 @@ mod tests {
 
         let mut writer = JPEGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image_segment_0", provider, "Test", "Test", &[])
+            .add_asset("image:0", provider, "Test", "Test", &[])
             .unwrap();
         writer.close().unwrap();
 
         let data = std::fs::read(&path).unwrap();
         let reader = JPEGDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<JPEGImageAssetProvider>()
@@ -574,7 +574,7 @@ mod tests {
             .with_bands(num_bands)
             .with_block_size(block_w, block_h)
             .with_pixel_type(PixelType::UInt8);
-        let provider = BufferedImageAssetProvider::new("image_segment_0", config);
+        let provider = BufferedImageAssetProvider::new("image:0", config);
 
         // Fill each block with BSQ data
         let blk_pixels = (block_h * block_w) as usize;
@@ -594,14 +594,14 @@ mod tests {
         let provider = Arc::new(provider);
         let mut writer = JPEGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image_segment_0", provider, "Test", "Test", &[])
+            .add_asset("image:0", provider, "Test", "Test", &[])
             .unwrap();
         writer.close().unwrap();
 
         // Read back and verify dimensions
         let data = std::fs::read(&path).unwrap();
         let reader = JPEGDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<JPEGImageAssetProvider>()

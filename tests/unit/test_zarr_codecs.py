@@ -251,7 +251,7 @@ class TestDecodeCorrectness:
         metadata.set("IMODE", "P")
 
         provider = BufferedImageAssetProvider.create(
-            key="image_segment_0",
+            key="image:0",
             num_columns=cols,
             num_rows=rows,
             num_bands=bands,
@@ -268,7 +268,7 @@ class TestDecodeCorrectness:
         try:
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="JPEG decode test",

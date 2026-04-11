@@ -2,7 +2,7 @@
 //!
 //! Opens a PNG from a byte slice, validates the signature, decodes the full
 //! image eagerly using the `png` crate, and exposes a single image asset
-//! keyed as `"image_segment_0"`. Dataset-level metadata includes width,
+//! keyed as `"image:0"`. Dataset-level metadata includes width,
 //! height, bit_depth, color_type, and any ancillary chunk data.
 
 use std::collections::HashMap;
@@ -129,13 +129,14 @@ impl PNGDatasetReader {
         let metadata = Arc::new(PNGMetadataProvider::new(metadata_entries));
 
         let image_asset = PNGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             width,
             height,
             num_bands,
             pixel_type,
             bit_depth_val,
             bsq_pixels,
+            vec!["data".to_string()],
             metadata.clone(),
         );
 
@@ -355,14 +356,24 @@ impl DatasetReader for PNGDatasetReader {
     fn get_asset_keys(
         &self,
         asset_type: Option<AssetType>,
-        _roles: Option<&[String]>,
+        roles: Option<&[String]>,
     ) -> Vec<String> {
         match asset_type {
             None | Some(AssetType::Image) => {
-                if self.image_asset.is_some() {
-                    vec!["image_segment_0".to_string()]
-                } else {
-                    Vec::new()
+                match &self.image_asset {
+                    Some(asset) => {
+                        if let Some(requested) = roles {
+                            let asset_roles = asset.roles();
+                            if requested.iter().any(|r| asset_roles.contains(r)) {
+                                vec!["image:0".to_string()]
+                            } else {
+                                Vec::new()
+                            }
+                        } else {
+                            vec!["image:0".to_string()]
+                        }
+                    }
+                    None => Vec::new(),
                 }
             }
             Some(AssetType::Text) | Some(AssetType::Graphics) | Some(AssetType::Data) => {
@@ -432,11 +443,11 @@ mod tests {
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
 
         assert!(reader.image_asset.is_some());
-        assert!(reader.has_asset("image_segment_0"));
-        assert!(!reader.has_asset("image_segment_1"));
+        assert!(reader.has_asset("image:0"));
+        assert!(!reader.has_asset("image:1"));
 
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
-        assert_eq!(keys, vec!["image_segment_0"]);
+        assert_eq!(keys, vec!["image:0"]);
     }
 
     // =========================================================================
@@ -497,9 +508,9 @@ mod tests {
     fn test_get_asset_valid_key() {
         let data = make_gray_2x2();
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0");
+        let asset = reader.get_asset("image:0");
         assert!(asset.is_ok());
-        assert_eq!(asset.unwrap().key(), "image_segment_0");
+        assert_eq!(asset.unwrap().key(), "image:0");
     }
 
     // =========================================================================
@@ -526,11 +537,11 @@ mod tests {
         let data = make_gray_2x2();
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
-        assert_eq!(keys, vec!["image_segment_0"]);
+        assert_eq!(keys, vec!["image:0"]);
 
         // None also returns image keys
         let keys_none = reader.get_asset_keys(None, None);
-        assert_eq!(keys_none, vec!["image_segment_0"]);
+        assert_eq!(keys_none, vec!["image:0"]);
     }
 
     // =========================================================================
@@ -556,11 +567,11 @@ mod tests {
     fn test_close_clears_assets() {
         let data = make_gray_2x2();
         let mut reader = PNGDatasetReader::from_bytes(&data).unwrap();
-        assert!(reader.has_asset("image_segment_0"));
+        assert!(reader.has_asset("image:0"));
 
         reader.close().unwrap();
-        assert!(!reader.has_asset("image_segment_0"));
-        assert!(reader.get_asset("image_segment_0").is_err());
+        assert!(!reader.has_asset("image:0"));
+        assert!(reader.get_asset("image:0").is_err());
         assert!(reader.get_asset_keys(Some(AssetType::Image), None).is_empty());
     }
 
@@ -572,7 +583,7 @@ mod tests {
     fn test_grayscale_8bit_pixels() {
         let data = make_gray_2x2();
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<PNGImageAssetProvider>()
@@ -599,7 +610,7 @@ mod tests {
         ];
         let data = make_png(2, 2, png::ColorType::Rgb, png::BitDepth::Eight, &interleaved);
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<PNGImageAssetProvider>()
@@ -623,7 +634,7 @@ mod tests {
         ];
         let data = make_png(2, 1, png::ColorType::Rgba, png::BitDepth::Eight, &interleaved);
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<PNGImageAssetProvider>()
@@ -649,7 +660,7 @@ mod tests {
             &interleaved,
         );
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<PNGImageAssetProvider>()
@@ -678,7 +689,7 @@ mod tests {
         }
         let data = make_png(1, 2, png::ColorType::Rgb, png::BitDepth::Sixteen, &interleaved);
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<PNGImageAssetProvider>()
@@ -748,7 +759,7 @@ mod tests {
         }
 
         let reader = PNGDatasetReader::from_bytes(&buf).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<PNGImageAssetProvider>()

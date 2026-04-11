@@ -44,7 +44,7 @@ class TestIdempotentEncoding:
             metadata.set("IC", "NC")
 
             provider = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=num_cols,
                 num_rows=num_rows,
                 num_bands=num_bands,
@@ -57,7 +57,7 @@ class TestIdempotentEncoding:
 
             writer = IO.open([str(path1)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="Property test image",
@@ -70,7 +70,7 @@ class TestIdempotentEncoding:
 
             # Decode: decode(encode(image))
             reader = IO.open([str(path1)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
             decoded = read_full_image(asset, num_bands, num_rows, num_cols)
             reader.close()
 
@@ -79,7 +79,7 @@ class TestIdempotentEncoding:
             metadata2.set("IC", "NC")
 
             provider2 = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=num_cols,
                 num_rows=num_rows,
                 num_bands=num_bands,
@@ -92,7 +92,7 @@ class TestIdempotentEncoding:
 
             writer2 = IO.open([str(path2)], "w", "nitf")
             writer2.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider2,
                 title="Test Image",
                 description="Property test image",

@@ -91,7 +91,7 @@ class TestTiffStrippedBlockDimensions:
 
         try:
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
             asset.get_metadata().as_dict()
 
             assert asset.num_pixels_per_block_horizontal == width, (

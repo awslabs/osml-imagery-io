@@ -9,7 +9,7 @@ TIFF/GeoTIFF (.tif, .tiff), and PNG (.png).
 Usage:
     python scripts/chip_image.py input.ntf output.png --bbox 0 0 512 512
     python scripts/chip_image.py input.tif output.png --bbox 0 0 512 512
-    python scripts/chip_image.py input.ntf output.png --bbox 100 200 300 400 --asset image_segment_0
+    python scripts/chip_image.py input.ntf output.png --bbox 100 200 300 400 --asset image:0
 
 The bounding box is specified as: x_min y_min x_max y_max (column/row coordinates)
 """
@@ -153,7 +153,7 @@ def save_as_png(chip: np.ndarray, output_path: Path) -> None:
 
     # Create a BufferedImageAssetProvider and write via IO
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=width,
         num_rows=height,
         num_bands=num_bands,
@@ -172,7 +172,7 @@ def save_as_png(chip: np.ndarray, output_path: Path) -> None:
 
     writer = IO.open([str(output_path)], "w", "png")
     writer.add_asset(
-        key="image_segment_0",
+        key="image:0",
         provider=provider,
         title="Chip",
         description="Extracted chip",
@@ -265,7 +265,7 @@ Examples:
     python scripts/chip_image.py input.tif output.png --bbox 0 0 512 512
 
     # Extract a region from a specific asset
-    python scripts/chip_image.py input.ntf output.png --bbox 100 200 400 500 --asset image_segment_1
+    python scripts/chip_image.py input.ntf output.png --bbox 100 200 400 500 --asset image:1
 """
     )
     parser.add_argument(

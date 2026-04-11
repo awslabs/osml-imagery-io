@@ -155,7 +155,7 @@ Both can be copied from the original file and selectively overridden:
 from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider
 
 with IO.open(["input.ntf"], "r") as reader:
-    image = reader.get_asset("image_segment_0")
+    image = reader.get_asset("image:0")
     block = image.get_block(0, 0, resolution_level=0)
 
     # Copy file-level metadata from the original dataset
@@ -186,6 +186,47 @@ with IO.open(["compressed.ntf"], "w", "nitf") as writer:
                      description="JPEG 2000 compressed copy",
                      roles=["data"])
 ```
+
+
+## Asset Roles and COG Writing
+
+The `roles` parameter on `add_asset()` assigns semantic labels to each asset. Roles
+affect how the writer encodes the asset — most importantly, the TIFF writer uses roles
+to set `NewSubfileType` and control GeoTIFF tag propagation:
+
+- Assets with role `"data"` get `NewSubfileType = 0` (full-resolution image) and
+  receive GeoTIFF tags from the dataset metadata.
+- Assets with role `"overview"` get `NewSubfileType = 1` (reduced-resolution image)
+  and GeoTIFF tags are suppressed on that IFD, per the OGC COG standard.
+
+To write a COG with overviews, add the full-resolution image with role `"data"` and
+each overview with role `"overview"`:
+
+```python
+from aws.osml.io import IO, BufferedImageAssetProvider, PixelType
+import numpy as np
+
+with IO.open(["output_cog.tif"], "w", "tiff") as writer:
+    writer.metadata = geo_metadata  # GeoTIFF tags applied to data IFDs only
+
+    # Full-resolution image
+    writer.add_asset("image:0", full_res_provider,
+                     title="Full Resolution", description="Primary image",
+                     roles=["data"])
+
+    # First overview (2x downsampled)
+    writer.add_asset("image:0:overview:1", overview_1_provider,
+                     title="Overview 1", description="2x reduced",
+                     roles=["overview"])
+
+    # Second overview (4x downsampled)
+    writer.add_asset("image:0:overview:2", overview_2_provider,
+                     title="Overview 2", description="4x reduced",
+                     roles=["overview"])
+```
+
+If roles are empty but the key contains `:overview:`, the writer falls back to
+inferring `NewSubfileType = 1` from the key pattern. Explicit roles are preferred.
 
 
 ## Format-Specific Encoding Options
@@ -391,7 +432,7 @@ x_min, y_min = 100, 200   # top-left corner
 x_max, y_max = 612, 456   # bottom-right corner (exclusive)
 
 with IO.open(["input.ntf"], "r") as reader:
-    image = reader.get_asset("image_segment_0")
+    image = reader.get_asset("image:0")
 
     # Get image and block dimensions
     img_width = image.num_columns

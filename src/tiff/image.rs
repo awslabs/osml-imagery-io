@@ -54,7 +54,7 @@ pub(crate) fn map_pixel_type(
 /// trait. Supports both tiled and stripped TIFF layouts, chunky-to-BSQ
 /// deinterleaving, and band subsetting.
 pub struct TIFFImageAssetProvider {
-    /// Unique key identifying this asset (e.g., "image_segment_0")
+    /// Unique key identifying this asset (e.g., "image:0")
     key: String,
     /// IFD index within the TIFF file
     ifd_index: u16,
@@ -80,6 +80,8 @@ pub struct TIFFImageAssetProvider {
     compression: u16,
     /// Shared libtiff handle (Arc for thread-safe sharing between providers)
     handle: Arc<Mutex<TiffHandle>>,
+    /// STAC-aligned roles (e.g., "data", "overview")
+    roles: Vec<String>,
     /// Per-IFD metadata
     metadata: Arc<TIFFMetadataProvider>,
 }
@@ -94,6 +96,7 @@ impl TIFFImageAssetProvider {
         ifd_index: u16,
         handle: Arc<Mutex<TiffHandle>>,
         metadata: Arc<TIFFMetadataProvider>,
+        roles: Vec<String>,
     ) -> Result<Self, CodecError> {
         let guard = handle.lock().map_err(|e| {
             CodecError::Decode(format!("Failed to acquire TIFF handle lock: {}", e))
@@ -144,6 +147,7 @@ impl TIFFImageAssetProvider {
             planar_config,
             compression,
             handle,
+            roles,
             metadata,
         })
     }
@@ -181,7 +185,7 @@ impl AssetProvider for TIFFImageAssetProvider {
     }
 
     fn roles(&self) -> &[String] {
-        &[]
+        &self.roles
     }
 
     fn asset_type(&self) -> AssetType {
@@ -863,7 +867,7 @@ mod tests {
         );
 
         let provider =
-            TIFFImageAssetProvider::new("image_segment_0".to_string(), 0, handle, metadata)
+            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
                 .unwrap();
 
         assert_eq!(provider.num_columns(), 4);
@@ -885,7 +889,7 @@ mod tests {
         );
 
         let provider =
-            TIFFImageAssetProvider::new("image_segment_0".to_string(), 0, handle, metadata)
+            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
                 .unwrap();
 
         // Valid blocks
@@ -909,7 +913,7 @@ mod tests {
         );
 
         let provider =
-            TIFFImageAssetProvider::new("image_segment_0".to_string(), 0, handle, metadata)
+            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
                 .unwrap();
 
         // Read strip 0 (rows 0-1)
@@ -932,7 +936,7 @@ mod tests {
         );
 
         let provider =
-            TIFFImageAssetProvider::new("image_segment_0".to_string(), 0, handle, metadata)
+            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
                 .unwrap();
 
         let result = provider.get_block(2, 0, 0, None);
@@ -956,7 +960,7 @@ mod tests {
         );
 
         let provider =
-            TIFFImageAssetProvider::new("image_segment_0".to_string(), 0, handle, metadata)
+            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
                 .unwrap();
 
         let result = provider.get_block(0, 0, 1, None);
@@ -980,7 +984,7 @@ mod tests {
         );
 
         let provider =
-            TIFFImageAssetProvider::new("image_segment_0".to_string(), 0, handle, metadata)
+            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
                 .unwrap();
 
         let ranges = provider.tile_byte_ranges();
@@ -1086,7 +1090,7 @@ mod tests {
         );
 
         let provider =
-            TIFFImageAssetProvider::new("image_segment_0".to_string(), 0, handle, metadata)
+            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
                 .unwrap();
 
         assert!(provider.is_tiled);
@@ -1128,7 +1132,7 @@ mod tests {
         );
 
         let provider =
-            TIFFImageAssetProvider::new("image_segment_0".to_string(), 0, handle, metadata)
+            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
                 .unwrap();
 
         // Uncompressed TIFF should return None for codec_configuration

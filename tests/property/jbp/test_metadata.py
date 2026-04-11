@@ -134,7 +134,7 @@ class TestMetadataRoundtrip:
 
             # Create image provider
             provider = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=num_cols,
                 num_rows=num_rows,
                 num_bands=num_bands,
@@ -150,7 +150,7 @@ class TestMetadataRoundtrip:
             # Write to NITF file
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="Property test image for metadata roundtrip",
@@ -160,7 +160,7 @@ class TestMetadataRoundtrip:
 
             # Read back
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             # Get metadata from decoded asset
             decoded_metadata = asset.get_metadata()
@@ -224,7 +224,7 @@ class TestMetadataStructure:
                 metadata.set(key, value)
 
             provider = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=num_cols,
                 num_rows=num_rows,
                 num_bands=num_bands,
@@ -237,7 +237,7 @@ class TestMetadataStructure:
 
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="Property test for metadata structure",
@@ -246,7 +246,7 @@ class TestMetadataStructure:
             writer.close()
 
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
             decoded_dict = asset.get_metadata().as_dict()
             reader.close()
 
@@ -315,7 +315,7 @@ class TestMetadataRawBytes:
             metadata.set("IC", "NC")
 
             provider = BufferedImageAssetProvider.create(
-                key="image_segment_0",
+                key="image:0",
                 num_columns=num_cols,
                 num_rows=num_rows,
                 num_bands=num_bands,
@@ -328,7 +328,7 @@ class TestMetadataRawBytes:
 
             writer = IO.open([str(path)], "w", "nitf")
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test Image",
                 description="Property test image for metadata raw bytes",
@@ -337,7 +337,7 @@ class TestMetadataRawBytes:
             writer.close()
 
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             raw_metadata = asset.get_metadata()
             raw_io = raw_metadata.raw

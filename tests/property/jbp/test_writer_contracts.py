@@ -78,13 +78,13 @@ class TestIdempotentClose:
         try:
             provider, metadata = _make_provider(
                 array, pixel_type, num_bands, num_rows, num_cols,
-                "image_segment_0", hints,
+                "image:0", hints,
             )
 
             writer = IO.open([str(path)], "w", fmt)
             writer.metadata = metadata
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider,
                 title="Test",
                 description="",
@@ -131,11 +131,11 @@ class TestDuplicateKeyRejection:
         hints = {"IC": "NC"} if fmt == "nitf" else {}
         provider1, metadata = _make_provider(
             array, pixel_type, num_bands, num_rows, num_cols,
-            "image_segment_0", hints,
+            "image:0", hints,
         )
         provider2, _ = _make_provider(
             array, pixel_type, num_bands, num_rows, num_cols,
-            "image_segment_0", hints,
+            "image:0", hints,
         )
 
         writer = IO.open([f"dup_test{ext}"], "w", fmt)
@@ -143,7 +143,7 @@ class TestDuplicateKeyRejection:
 
         # First add should succeed
         writer.add_asset(
-            key="image_segment_0",
+            key="image:0",
             provider=provider1,
             title="Image 0",
             description="",
@@ -153,7 +153,7 @@ class TestDuplicateKeyRejection:
         # Second add with same key should fail
         with pytest.raises(Exception):
             writer.add_asset(
-                key="image_segment_0",
+                key="image:0",
                 provider=provider2,
                 title="Image 0 dup",
                 description="",
@@ -202,7 +202,7 @@ class TestMultiImageOrdering:
             writer.metadata = metadata
 
             for i, img in enumerate(images):
-                key = f"image_segment_{i}"
+                key = f"image:{i}"
                 provider, _ = _make_provider(
                     img, pixel_type, num_bands, num_rows, num_cols, key, hints,
                 )
@@ -220,7 +220,7 @@ class TestMultiImageOrdering:
             reader = IO.open([str(path)], "r")
 
             for i, expected in enumerate(images):
-                key = f"image_segment_{i}"
+                key = f"image:{i}"
                 asset = reader.get_asset(key)
                 decoded = read_full_image(asset, num_bands, num_rows, num_cols)
 

@@ -22,7 +22,7 @@ use crate::types::{AssetType, PixelType};
 /// Retains the raw JPEG bytes and decodes on demand when `get_block()` is
 /// called. JPEG images have a single resolution level and a 1×1 block grid.
 pub struct JPEGImageAssetProvider {
-    /// Unique key identifying this asset (always "image_segment_0")
+    /// Unique key identifying this asset (e.g., "image:0")
     key: String,
     /// Image width in pixels
     width: u32,
@@ -32,6 +32,8 @@ pub struct JPEGImageAssetProvider {
     num_bands: u32,
     /// Raw JPEG file bytes, retained for on-demand decode
     jpeg_data: Arc<[u8]>,
+    /// STAC-aligned roles (e.g., "data")
+    roles: Vec<String>,
     /// Per-image metadata
     metadata: Arc<JPEGMetadataProvider>,
 }
@@ -44,6 +46,7 @@ impl JPEGImageAssetProvider {
         height: u32,
         num_bands: u32,
         jpeg_data: Arc<[u8]>,
+        roles: Vec<String>,
         metadata: Arc<JPEGMetadataProvider>,
     ) -> Self {
         Self {
@@ -52,6 +55,7 @@ impl JPEGImageAssetProvider {
             height,
             num_bands,
             jpeg_data,
+            roles,
             metadata,
         }
     }
@@ -101,7 +105,7 @@ impl AssetProvider for JPEGImageAssetProvider {
     }
 
     fn roles(&self) -> &[String] {
-        &[]
+        &self.roles
     }
 
     fn asset_type(&self) -> AssetType {

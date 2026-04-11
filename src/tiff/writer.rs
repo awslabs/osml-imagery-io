@@ -717,6 +717,21 @@ impl TIFFDatasetWriter {
         pad_value as u8
     }
 
+    /// Determine the `NewSubfileType` value for an image asset.
+    ///
+    /// Returns `1` (reduced-resolution image) if the asset's roles include
+    /// `"overview"`, or as a fallback if the asset key contains the substring
+    /// `:overview:`. Returns `0` (full-resolution image) otherwise.
+    fn new_subfile_type_for_asset(roles: &[String], key: &str) -> u32 {
+        if roles.iter().any(|r| r == "overview") {
+            1
+        } else if key.contains(":overview:") {
+            1
+        } else {
+            0
+        }
+    }
+
 
     /// Write a single image asset as one IFD.
     fn write_image_ifd(
@@ -724,6 +739,8 @@ impl TIFFDatasetWriter {
         image: &dyn ImageAssetProvider,
         hints: &TiffEncodingHints,
         metadata: Option<&dyn MetadataProvider>,
+        roles: &[String],
+        key: &str,
     ) -> Result<(), CodecError> {
         let num_cols = image.num_columns();
         let num_rows = image.num_rows();
@@ -764,6 +781,11 @@ impl TIFFDatasetWriter {
             Self::photometric_interpretation(num_bands)
         };
         handle.set_field_u16(tags::PHOTOMETRIC_INTERPRETATION, photometric)?;
+
+        // Set NewSubfileType based on roles and key
+        let nsft = Self::new_subfile_type_for_asset(roles, key);
+        handle.set_field_u32(tags::NEW_SUBFILE_TYPE, nsft)?;
+
         handle.set_field_u32(tags::TILE_WIDTH, tile_width)?;
         handle.set_field_u32(tags::TILE_LENGTH, tile_height)?;
         handle.set_field_u16(tags::COMPRESSION, hints.compression)?;
@@ -841,10 +863,12 @@ impl TIFFDatasetWriter {
             }
         }
 
-        // Write GeoTIFF tags from metadata encoding hints
+        // Write GeoTIFF tags from metadata encoding hints.
+        // Overview IFDs (nsft == 1) do NOT get GeoTIFF tags per OGC COG Standard.
         if let Some(meta) = metadata {
             let dict = meta.as_dict(None);
 
+            if nsft == 0 {
             // Build and write GeoKey directory (tags 34735, 34736, 34737)
             let (directory, double_params, ascii_params) =
                 geotiff::build_geokey_directory(&dict)?;
@@ -870,11 +894,13 @@ impl TIFFDatasetWriter {
             if let Some(tf) = transformation {
                 handle.set_field_f64_array(tags::MODEL_TRANSFORMATION_TAG, &tf)?;
             }
+            } // end nsft == 0
 
             // Write user-provided tags from numeric keys in the Tag_Dictionary.
             // Tags managed by the writer or libtiff are skipped to avoid conflicts.
             let structural_tags: HashSet<u32> = [
                 // Tags set explicitly by write_image_ifd from image properties
+                tags::NEW_SUBFILE_TYPE,
                 tags::IMAGE_WIDTH,
                 tags::IMAGE_LENGTH,
                 tags::BITS_PER_SAMPLE,
@@ -1034,6 +1060,8 @@ impl DatasetWriter for TIFFDatasetWriter {
                 image,
                 &hints,
                 self.metadata.as_ref().map(|m| m.as_ref() as &dyn MetadataProvider),
+                &asset.roles,
+                &asset.key,
             )?;
         }
 
@@ -1089,9 +1117,9 @@ mod tests {
     #[test]
     fn writer_add_image_asset_succeeds() {
         let mut writer = TIFFDatasetWriter::new("/tmp/test.tif").unwrap();
-        let provider = make_image_provider("image_segment_0");
+        let provider = make_image_provider("image:0");
         let result = writer.add_asset(
-            "image_segment_0",
+            "image:0",
             provider,
             "Image 0",
             "Test image",
@@ -1099,7 +1127,7 @@ mod tests {
         );
         assert!(result.is_ok());
         assert_eq!(writer.assets.len(), 1);
-        assert!(writer.asset_keys.contains("image_segment_0"));
+        assert!(writer.asset_keys.contains("image:0"));
     }
 
     #[test]
@@ -1124,9 +1152,9 @@ mod tests {
         let p1 = make_image_provider("img_0");
         let p2 = make_image_provider("img_1");
         writer
-            .add_asset("image_segment_0", p1, "Image 0", "desc", &[])
+            .add_asset("image:0", p1, "Image 0", "desc", &[])
             .unwrap();
-        let result = writer.add_asset("image_segment_0", p2, "Image 0 dup", "desc", &[]);
+        let result = writer.add_asset("image:0", p2, "Image 0 dup", "desc", &[]);
         assert!(result.is_err());
         assert!(
             matches!(result.unwrap_err(), CodecError::DuplicateKey(_)),
@@ -1141,14 +1169,14 @@ mod tests {
         let path = dir.path().join("test.tif");
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
         // Add one asset so close() has something to write
-        let provider = make_image_provider("image_segment_0");
+        let provider = make_image_provider("image:0");
         writer
-            .add_asset("image_segment_0", provider, "Image", "desc", &[])
+            .add_asset("image:0", provider, "Image", "desc", &[])
             .unwrap();
         writer.close().unwrap();
 
         let p2 = make_image_provider("img_1");
-        let result = writer.add_asset("image_segment_1", p2, "Image 1", "desc", &[]);
+        let result = writer.add_asset("image:1", p2, "Image 1", "desc", &[]);
         assert!(result.is_err());
         assert!(
             matches!(result.unwrap_err(), CodecError::Io(_)),
@@ -1165,9 +1193,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test_idempotent.tif");
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
-        let provider = make_image_provider("image_segment_0");
+        let provider = make_image_provider("image:0");
         writer
-            .add_asset("image_segment_0", provider, "Image", "desc", &[])
+            .add_asset("image:0", provider, "Image", "desc", &[])
             .unwrap();
 
         assert!(writer.close().is_ok());
@@ -1513,9 +1541,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("geotiff_test.tif");
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
-        let provider = make_image_provider("image_segment_0");
+        let provider = make_image_provider("image:0");
         writer
-            .add_asset("image_segment_0", provider, "Image", "desc", &[])
+            .add_asset("image:0", provider, "Image", "desc", &[])
             .unwrap();
         writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(meta))).unwrap();
         writer.close().unwrap();
@@ -1537,7 +1565,7 @@ mod tests {
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.as_dict(None);
 
@@ -1558,7 +1586,7 @@ mod tests {
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.as_dict(None);
 
@@ -1575,9 +1603,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad_epsg.tif");
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
-        let provider = make_image_provider("image_segment_0");
+        let provider = make_image_provider("image:0");
         writer
-            .add_asset("image_segment_0", provider, "Image", "desc", &[])
+            .add_asset("image:0", provider, "Image", "desc", &[])
             .unwrap();
         writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta))).unwrap();
         let result = writer.close();
@@ -1598,9 +1626,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad_scale.tif");
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
-        let provider = make_image_provider("image_segment_0");
+        let provider = make_image_provider("image:0");
         writer
-            .add_asset("image_segment_0", provider, "Image", "desc", &[])
+            .add_asset("image:0", provider, "Image", "desc", &[])
             .unwrap();
         writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta))).unwrap();
         let result = writer.close();
@@ -1729,7 +1757,7 @@ mod tests {
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.as_dict(None);
 
@@ -1746,7 +1774,7 @@ mod tests {
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.as_dict(None);
 
@@ -1764,7 +1792,7 @@ mod tests {
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.as_dict(None);
 
@@ -1792,7 +1820,7 @@ mod tests {
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.as_dict(None);
 
@@ -1813,12 +1841,122 @@ mod tests {
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.as_dict(None);
 
         // ImageWidth should be 256 (from the image provider), not 9999
         assert_eq!(dict.get("256"), Some(&serde_json::json!(256)));
+    }
+
+    // =========================================================================
+    // NewSubfileType and GeoTIFF tag suppression tests
+    // =========================================================================
+
+    #[test]
+    fn writer_overview_asset_gets_new_subfile_type_1() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overview_nsft.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        let provider = make_image_provider("image:0:overview:1");
+        writer
+            .add_asset(
+                "image:0:overview:1",
+                provider,
+                "Overview",
+                "desc",
+                &["overview".to_string()],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        // Tag 254 = NewSubfileType should be 1 (reduced-resolution image)
+        assert_eq!(dict.get("254"), Some(&serde_json::json!(1)));
+    }
+
+    #[test]
+    fn writer_overview_ifd_has_no_geotiff_tags() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overview_no_geo.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        let provider = make_image_provider("image:0:overview:1");
+        writer
+            .add_asset(
+                "image:0:overview:1",
+                provider,
+                "Overview",
+                "desc",
+                &["overview".to_string()],
+            )
+            .unwrap();
+
+        // Set GeoTIFF metadata on the dataset
+        let meta = BufferedMetadataProvider::new();
+        meta.set_json(
+            "34735",
+            serde_json::json!([1, 1, 1, 2, 1024, 0, 1, 1, 3072, 0, 1, 32618]),
+        );
+        meta.set_json("33550", serde_json::json!([0.5, 0.5, 0.0]));
+        meta.set_json("33922", serde_json::json!([0.0, 0.0, 0.0, 500000.0, 4000000.0, 0.0]));
+        writer.set_metadata(Arc::new(meta)).unwrap();
+        writer.close().unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        // Single-IFD file → reader assigns key "image:0" regardless of NewSubfileType
+        let asset = reader.get_asset("image:0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        // Overview IFD should NOT have any GeoTIFF tags
+        assert!(!dict.contains_key("33550"), "Overview should not have ModelPixelScaleTag");
+        assert!(!dict.contains_key("33922"), "Overview should not have ModelTiepointTag");
+        assert!(!dict.contains_key("34264"), "Overview should not have ModelTransformationTag");
+        assert!(!dict.contains_key("34735"), "Overview should not have GeoKeyDirectoryTag");
+        assert!(!dict.contains_key("34736"), "Overview should not have GeoDoubleParamsTag");
+        assert!(!dict.contains_key("34737"), "Overview should not have GeoAsciiParamsTag");
+    }
+
+    #[test]
+    fn writer_data_asset_gets_new_subfile_type_0() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data_nsft.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        let provider = make_image_provider("image:0");
+        writer
+            .add_asset(
+                "image:0",
+                provider,
+                "Data",
+                "desc",
+                &["data".to_string()],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        // Tag 254 = NewSubfileType should be 0 (full-resolution image)
+        assert_eq!(dict.get("254"), Some(&serde_json::json!(0)));
     }
 
     mod prop {
@@ -1963,7 +2101,7 @@ mod tests {
 
                 let bytes = write_tiff_with_metadata(&meta);
                 let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
-                let asset = reader.get_asset("image_segment_0").unwrap();
+                let asset = reader.get_asset("image:0").unwrap();
                 let ifd_meta = asset.metadata();
                 let dict = ifd_meta.as_dict(None);
 

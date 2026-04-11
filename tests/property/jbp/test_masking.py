@@ -88,7 +88,7 @@ class TestMaskPatternPreservation:
 
         try:
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
             assert_mask_preserved(asset, provided_blocks, num_block_rows, num_block_cols)
             reader.close()
         finally:
@@ -128,7 +128,7 @@ class TestMaskedBlockDataCorrectness:
 
         try:
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             for block_row, block_col in provided_blocks:
                 assert asset.has_block(block_row, block_col, 0), (
@@ -177,7 +177,7 @@ class TestMaskedBlockDataCorrectness:
 
         try:
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             for block_row, block_col in provided_blocks:
                 assert asset.has_block(block_row, block_col, 0), (
@@ -235,7 +235,7 @@ class TestPadPixelPreservation:
 
         try:
             reader = IO.open([str(path)], "r")
-            asset = reader.get_asset("image_segment_0")
+            asset = reader.get_asset("image:0")
 
             pad_value = asset.pad_pixel_value
             assert isinstance(pad_value, (int, float)), (

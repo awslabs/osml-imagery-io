@@ -66,7 +66,7 @@ def _write_geotiff(path, hints):
     array = np.zeros((num_bands, num_rows, num_cols), dtype=np.uint8)
 
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=num_cols,
         num_rows=num_rows,
         num_bands=num_bands,
@@ -80,7 +80,7 @@ def _write_geotiff(path, hints):
     writer = IO.open([str(path)], "w", "tiff")
     writer.metadata = metadata
     writer.add_asset(
-        key="image_segment_0",
+        key="image:0",
         provider=provider,
         title="GeoTIFF Test",
         description="Property test",
@@ -100,7 +100,7 @@ def _read_geo_metadata(path):
     the first image segment.
     """
     reader = IO.open([str(path)], "r")
-    asset = reader.get_asset("image_segment_0")
+    asset = reader.get_asset("image:0")
     full = asset.get_metadata().as_dict()
     return {k: v for k, v in full.items() if k in _GEOTIFF_TAGS}
 

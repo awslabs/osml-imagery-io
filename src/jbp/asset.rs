@@ -11,14 +11,14 @@
 //!
 //! # Asset Key Generation
 //!
-//! Asset keys follow a consistent naming pattern: `{type}_segment_{index}`
+//! Asset keys follow a consistent naming pattern: `{type}:{index}`
 //!
 //! Examples:
-//! - `image_segment_0` - First image segment
-//! - `text_segment_1` - Second text segment
-//! - `graphic_segment_0` - First graphic segment
-//! - `des_segment_0` - First DES segment
-//! - `res_segment_0` - First reserved extension segment
+//! - `image:0` - First image segment
+//! - `text:1` - Second text segment
+//! - `graphic:0` - First graphic segment
+//! - `des:0` - First DES segment
+//! - `res:0` - First reserved extension segment
 //!
 //! Use [`generate_asset_key`] to create keys and [`parse_asset_key`] to parse them.
 
@@ -38,7 +38,7 @@ use crate::types::{AssetType, PixelType};
 
 /// Generate an asset key from segment type and index.
 ///
-/// Asset keys follow the pattern `{type}_segment_{index}` where:
+/// Asset keys follow the pattern `{type}:{index}` where:
 /// - `type` is the segment type prefix (image, graphic, text, des, res)
 /// - `index` is the zero-based segment index within that type
 ///
@@ -47,7 +47,7 @@ use crate::types::{AssetType, PixelType};
 /// * `index` - Zero-based index of the segment within its type
 ///
 /// # Returns
-/// A string key in the format `{type}_segment_{index}`
+/// A string key in the format `{type}:{index}`
 ///
 /// # Examples
 ///
@@ -55,17 +55,17 @@ use crate::types::{AssetType, PixelType};
 /// use _io::jbp::asset::generate_asset_key;
 /// use _io::jbp::types::SegmentType;
 ///
-/// assert_eq!(generate_asset_key(SegmentType::Image, 0), "image_segment_0");
-/// assert_eq!(generate_asset_key(SegmentType::Text, 2), "text_segment_2");
-/// assert_eq!(generate_asset_key(SegmentType::DataExtension, 0), "des_segment_0");
+/// assert_eq!(generate_asset_key(SegmentType::Image, 0), "image:0");
+/// assert_eq!(generate_asset_key(SegmentType::Text, 2), "text:2");
+/// assert_eq!(generate_asset_key(SegmentType::DataExtension, 0), "des:0");
 /// ```
 pub fn generate_asset_key(segment_type: SegmentType, index: usize) -> String {
-    format!("{}_segment_{}", segment_type.key_prefix(), index)
+    format!("{}:{}", segment_type.key_prefix(), index)
 }
 
 /// Parse an asset key to extract segment type and index.
 ///
-/// This function parses keys in the format `{type}_segment_{index}` and returns
+/// This function parses keys in the format `{type}:{index}` and returns
 /// the corresponding segment type and index. Returns `None` if the key format
 /// is invalid.
 ///
@@ -81,23 +81,16 @@ pub fn generate_asset_key(segment_type: SegmentType, index: usize) -> String {
 /// use _io::jbp::asset::parse_asset_key;
 /// use _io::jbp::types::SegmentType;
 ///
-/// assert_eq!(parse_asset_key("image_segment_0"), Some((SegmentType::Image, 0)));
-/// assert_eq!(parse_asset_key("text_segment_5"), Some((SegmentType::Text, 5)));
-/// assert_eq!(parse_asset_key("des_segment_0"), Some((SegmentType::DataExtension, 0)));
+/// assert_eq!(parse_asset_key("image:0"), Some((SegmentType::Image, 0)));
+/// assert_eq!(parse_asset_key("text:5"), Some((SegmentType::Text, 5)));
+/// assert_eq!(parse_asset_key("des:0"), Some((SegmentType::DataExtension, 0)));
 /// assert_eq!(parse_asset_key("invalid_key"), None);
-/// assert_eq!(parse_asset_key("image_segment_abc"), None);
+/// assert_eq!(parse_asset_key("image:abc"), None);
 /// ```
 pub fn parse_asset_key(key: &str) -> Option<(SegmentType, usize)> {
-    let parts: Vec<&str> = key.split('_').collect();
-    
-    // Expected format: {type}_segment_{index} -> 3 parts
-    if parts.len() != 3 || parts[1] != "segment" {
-        return None;
-    }
-    
-    let segment_type = SegmentType::from_key_prefix(parts[0])?;
-    let index = parts[2].parse().ok()?;
-    
+    let (prefix, rest) = key.split_once(':')?;
+    let index = rest.parse().ok()?;
+    let segment_type = SegmentType::from_key_prefix(prefix)?;
     Some((segment_type, index))
 }
 
@@ -110,7 +103,7 @@ pub fn parse_asset_key(key: &str) -> Option<(SegmentType, usize)> {
 /// # Example
 ///
 /// ```ignore
-/// let asset = reader.get_asset("image_segment_0")?;
+/// let asset = reader.get_asset("image:0")?;
 /// assert_eq!(asset.asset_type(), AssetType::Image);
 /// assert_eq!(asset.media_type(), "application/vnd.nitf.image");
 ///
@@ -516,7 +509,7 @@ impl ImageAssetProvider for JBPImageAssetProvider {
 /// # Example
 ///
 /// ```ignore
-/// let asset = reader.get_asset("text_segment_0")?;
+/// let asset = reader.get_asset("text:0")?;
 /// assert_eq!(asset.asset_type(), AssetType::Text);
 /// assert_eq!(asset.media_type(), "text/plain");
 ///
@@ -664,7 +657,7 @@ impl TextAssetProvider for JBPTextAssetProvider {
 /// # Example
 ///
 /// ```ignore
-/// let asset = reader.get_asset("graphic_segment_0")?;
+/// let asset = reader.get_asset("graphic:0")?;
 /// assert_eq!(asset.asset_type(), AssetType::Graphics);
 /// assert_eq!(asset.media_type(), "image/cgm");
 ///
@@ -781,7 +774,7 @@ impl GraphicsAssetProvider for JBPGraphicsAssetProvider {}
 /// # Example
 ///
 /// ```ignore
-/// let asset = reader.get_asset("des_segment_0")?;
+/// let asset = reader.get_asset("des:0")?;
 /// assert_eq!(asset.asset_type(), AssetType::Data);
 /// assert_eq!(asset.media_type(), "application/octet-stream");
 ///
@@ -924,85 +917,82 @@ mod tests {
     // Asset key generation tests
     #[test]
     fn generate_asset_key_image() {
-        assert_eq!(generate_asset_key(SegmentType::Image, 0), "image_segment_0");
-        assert_eq!(generate_asset_key(SegmentType::Image, 5), "image_segment_5");
-        assert_eq!(generate_asset_key(SegmentType::Image, 999), "image_segment_999");
+        assert_eq!(generate_asset_key(SegmentType::Image, 0), "image:0");
+        assert_eq!(generate_asset_key(SegmentType::Image, 5), "image:5");
+        assert_eq!(generate_asset_key(SegmentType::Image, 999), "image:999");
     }
 
     #[test]
     fn generate_asset_key_graphic() {
-        assert_eq!(generate_asset_key(SegmentType::Graphic, 0), "graphic_segment_0");
-        assert_eq!(generate_asset_key(SegmentType::Graphic, 3), "graphic_segment_3");
+        assert_eq!(generate_asset_key(SegmentType::Graphic, 0), "graphic:0");
+        assert_eq!(generate_asset_key(SegmentType::Graphic, 3), "graphic:3");
     }
 
     #[test]
     fn generate_asset_key_text() {
-        assert_eq!(generate_asset_key(SegmentType::Text, 0), "text_segment_0");
-        assert_eq!(generate_asset_key(SegmentType::Text, 1), "text_segment_1");
+        assert_eq!(generate_asset_key(SegmentType::Text, 0), "text:0");
+        assert_eq!(generate_asset_key(SegmentType::Text, 1), "text:1");
     }
 
     #[test]
     fn generate_asset_key_des() {
-        assert_eq!(generate_asset_key(SegmentType::DataExtension, 0), "des_segment_0");
-        assert_eq!(generate_asset_key(SegmentType::DataExtension, 2), "des_segment_2");
+        assert_eq!(generate_asset_key(SegmentType::DataExtension, 0), "des:0");
+        assert_eq!(generate_asset_key(SegmentType::DataExtension, 2), "des:2");
     }
 
     #[test]
     fn generate_asset_key_res() {
-        assert_eq!(generate_asset_key(SegmentType::ReservedExtension, 0), "res_segment_0");
-        assert_eq!(generate_asset_key(SegmentType::ReservedExtension, 1), "res_segment_1");
+        assert_eq!(generate_asset_key(SegmentType::ReservedExtension, 0), "res:0");
+        assert_eq!(generate_asset_key(SegmentType::ReservedExtension, 1), "res:1");
     }
 
     #[test]
     fn parse_asset_key_image() {
-        assert_eq!(parse_asset_key("image_segment_0"), Some((SegmentType::Image, 0)));
-        assert_eq!(parse_asset_key("image_segment_5"), Some((SegmentType::Image, 5)));
-        assert_eq!(parse_asset_key("image_segment_999"), Some((SegmentType::Image, 999)));
+        assert_eq!(parse_asset_key("image:0"), Some((SegmentType::Image, 0)));
+        assert_eq!(parse_asset_key("image:5"), Some((SegmentType::Image, 5)));
+        assert_eq!(parse_asset_key("image:999"), Some((SegmentType::Image, 999)));
     }
 
     #[test]
     fn parse_asset_key_graphic() {
-        assert_eq!(parse_asset_key("graphic_segment_0"), Some((SegmentType::Graphic, 0)));
-        assert_eq!(parse_asset_key("graphic_segment_3"), Some((SegmentType::Graphic, 3)));
+        assert_eq!(parse_asset_key("graphic:0"), Some((SegmentType::Graphic, 0)));
+        assert_eq!(parse_asset_key("graphic:3"), Some((SegmentType::Graphic, 3)));
     }
 
     #[test]
     fn parse_asset_key_text() {
-        assert_eq!(parse_asset_key("text_segment_0"), Some((SegmentType::Text, 0)));
-        assert_eq!(parse_asset_key("text_segment_1"), Some((SegmentType::Text, 1)));
+        assert_eq!(parse_asset_key("text:0"), Some((SegmentType::Text, 0)));
+        assert_eq!(parse_asset_key("text:1"), Some((SegmentType::Text, 1)));
     }
 
     #[test]
     fn parse_asset_key_des() {
-        assert_eq!(parse_asset_key("des_segment_0"), Some((SegmentType::DataExtension, 0)));
-        assert_eq!(parse_asset_key("des_segment_2"), Some((SegmentType::DataExtension, 2)));
+        assert_eq!(parse_asset_key("des:0"), Some((SegmentType::DataExtension, 0)));
+        assert_eq!(parse_asset_key("des:2"), Some((SegmentType::DataExtension, 2)));
     }
 
     #[test]
     fn parse_asset_key_res() {
-        assert_eq!(parse_asset_key("res_segment_0"), Some((SegmentType::ReservedExtension, 0)));
-        assert_eq!(parse_asset_key("res_segment_1"), Some((SegmentType::ReservedExtension, 1)));
+        assert_eq!(parse_asset_key("res:0"), Some((SegmentType::ReservedExtension, 0)));
+        assert_eq!(parse_asset_key("res:1"), Some((SegmentType::ReservedExtension, 1)));
     }
 
     #[test]
     fn parse_asset_key_invalid_format() {
-        // Wrong number of parts
+        // No colon separator
         assert_eq!(parse_asset_key("image"), None);
-        assert_eq!(parse_asset_key("image_segment"), None);
-        assert_eq!(parse_asset_key("image_segment_0_extra"), None);
-        
-        // Wrong middle part
-        assert_eq!(parse_asset_key("image_seg_0"), None);
-        assert_eq!(parse_asset_key("image_data_0"), None);
         
         // Invalid type prefix
-        assert_eq!(parse_asset_key("unknown_segment_0"), None);
-        assert_eq!(parse_asset_key("img_segment_0"), None);
+        assert_eq!(parse_asset_key("unknown:0"), None);
+        assert_eq!(parse_asset_key("img:0"), None);
         
         // Invalid index
-        assert_eq!(parse_asset_key("image_segment_abc"), None);
-        assert_eq!(parse_asset_key("image_segment_-1"), None);
-        assert_eq!(parse_asset_key("image_segment_"), None);
+        assert_eq!(parse_asset_key("image:abc"), None);
+        assert_eq!(parse_asset_key("image:-1"), None);
+        assert_eq!(parse_asset_key("image:"), None);
+        
+        // Old format no longer recognized
+        assert_eq!(parse_asset_key("image_segment_0"), None);
         
         // Empty string
         assert_eq!(parse_asset_key(""), None);
@@ -1217,7 +1207,7 @@ mod tests {
         let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             "Test Image".to_string(),
             "A test image segment".to_string(),
             vec!["data".to_string()],
@@ -1228,7 +1218,7 @@ mod tests {
             test_format(),
         ).unwrap();
 
-        assert_eq!(provider.key(), "image_segment_0");
+        assert_eq!(provider.key(), "image:0");
     }
 
     #[test]
@@ -1243,7 +1233,7 @@ mod tests {
         let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             "Test Image".to_string(),
             "A test image segment".to_string(),
             vec!["data".to_string()],
@@ -1269,7 +1259,7 @@ mod tests {
         let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             "Test Image".to_string(),
             "A test image segment".to_string(),
             vec!["data".to_string()],
@@ -1295,7 +1285,7 @@ mod tests {
         let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             "Test Image".to_string(),
             "A test image segment".to_string(),
             vec!["data".to_string()],
@@ -1321,7 +1311,7 @@ mod tests {
         let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             "Test Image".to_string(),
             "A test image segment".to_string(),
             vec!["data".to_string(), "thumbnail".to_string()],
@@ -1347,7 +1337,7 @@ mod tests {
         let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             "Test Image".to_string(),
             "A test image segment".to_string(),
             vec!["data".to_string()],
@@ -1373,7 +1363,7 @@ mod tests {
         let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             "Test Image".to_string(),
             "A test image segment".to_string(),
             vec!["data".to_string()],
@@ -1403,7 +1393,7 @@ mod tests {
         let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             "Test Image".to_string(),
             "A test image segment".to_string(),
             vec!["data".to_string()],
@@ -1430,7 +1420,7 @@ mod tests {
         let registry = create_test_registry();
 
         let provider = JBPImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             "Test Image".to_string(),
             "A test image segment".to_string(),
             vec!["data".to_string()],
@@ -1457,7 +1447,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1479,7 +1469,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1501,7 +1491,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1524,7 +1514,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1546,7 +1536,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1568,7 +1558,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1590,7 +1580,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1612,7 +1602,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1634,7 +1624,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1656,7 +1646,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1678,7 +1668,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1700,7 +1690,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1722,7 +1712,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1744,7 +1734,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1767,7 +1757,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1790,7 +1780,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPTextAssetProvider::new(
-            "text_segment_0".to_string(),
+            "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
             vec!["metadata".to_string()],
@@ -1819,7 +1809,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPGraphicsAssetProvider::new(
-            "graphic_segment_0".to_string(),
+            "graphic:0".to_string(),
             "Test Graphic".to_string(),
             "A test graphic segment".to_string(),
             vec!["annotation".to_string()],
@@ -1840,7 +1830,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPGraphicsAssetProvider::new(
-            "graphic_segment_0".to_string(),
+            "graphic:0".to_string(),
             "Test Graphic".to_string(),
             "A test graphic segment".to_string(),
             vec!["annotation".to_string()],
@@ -1861,7 +1851,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPGraphicsAssetProvider::new(
-            "graphic_segment_0".to_string(),
+            "graphic:0".to_string(),
             "Test Graphic".to_string(),
             "A test graphic segment".to_string(),
             vec!["annotation".to_string()],
@@ -1884,7 +1874,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPDataAssetProvider::new(
-            "des_segment_0".to_string(),
+            "des:0".to_string(),
             "Test DES".to_string(),
             "A test DES segment".to_string(),
             vec!["metadata".to_string()],
@@ -1905,7 +1895,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPDataAssetProvider::new(
-            "des_segment_0".to_string(),
+            "des:0".to_string(),
             "Test DES".to_string(),
             "A test DES segment".to_string(),
             vec!["metadata".to_string()],
@@ -1926,7 +1916,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
         let provider = JBPDataAssetProvider::new(
-            "des_segment_0".to_string(),
+            "des:0".to_string(),
             "Test DES".to_string(),
             "A test DES segment".to_string(),
             vec!["metadata".to_string()],
@@ -1949,7 +1939,7 @@ mod tests {
         let location = SegmentLocation::new(0, 30, 30, 1000);
 
         let provider = JBPDataAssetProvider::new(
-            "des_segment_0".to_string(),
+            "des:0".to_string(),
             "Test DES".to_string(),
             "A test DES segment".to_string(),
             vec!["metadata".to_string()],
@@ -1987,7 +1977,7 @@ mod property_tests {
     /// Property 4: Asset Key Enumeration Completeness
     /// For any NITF file with segment counts (NUMI, NUMS, NUMT, NUMDES, NUMRES),
     /// the `get_asset_keys(None, None)` SHALL return exactly NUMI + NUMS + NUMT + NUMDES + NUMRES keys,
-    /// and each key SHALL match the pattern `{type}_segment_{index}`.
+    /// and each key SHALL match the pattern `{type}:{index}`.
     /// **Validates: Requirements 3.1, 3.6**
     ///
     /// Note: Since JBPDatasetReader is not yet implemented, we test the underlying
@@ -2044,7 +2034,7 @@ mod property_tests {
                     "Expected {} keys, got {}", expected_total, keys.len());
             }
 
-            /// All generated keys match the pattern {type}_segment_{index}
+            /// All generated keys match the pattern {type}:{index}
             #[test]
             fn all_keys_match_pattern(
                 numi in 0usize..5,
@@ -2056,8 +2046,8 @@ mod property_tests {
                 let keys = generate_all_asset_keys(numi, nums, numt, numdes, numres);
 
                 for key in &keys {
-                    prop_assert!(key.contains("_segment_"),
-                        "Key '{}' does not contain '_segment_'", key);
+                    prop_assert!(key.contains(':'),
+                        "Key '{}' does not contain ':'", key);
 
                     // Verify key can be parsed back
                     let parsed = parse_asset_key(key);
@@ -2087,7 +2077,7 @@ mod property_tests {
             fn image_key_count_correct(numi in 0usize..20) {
                 let keys = generate_all_asset_keys(numi, 0, 0, 0, 0);
                 let image_keys: Vec<_> = keys.iter()
-                    .filter(|k| k.starts_with("image_"))
+                    .filter(|k| k.starts_with("image:"))
                     .collect();
 
                 prop_assert_eq!(image_keys.len(), numi,
@@ -2099,7 +2089,7 @@ mod property_tests {
             fn graphic_key_count_correct(nums in 0usize..20) {
                 let keys = generate_all_asset_keys(0, nums, 0, 0, 0);
                 let graphic_keys: Vec<_> = keys.iter()
-                    .filter(|k| k.starts_with("graphic_"))
+                    .filter(|k| k.starts_with("graphic:"))
                     .collect();
 
                 prop_assert_eq!(graphic_keys.len(), nums,
@@ -2111,7 +2101,7 @@ mod property_tests {
             fn text_key_count_correct(numt in 0usize..20) {
                 let keys = generate_all_asset_keys(0, 0, numt, 0, 0);
                 let text_keys: Vec<_> = keys.iter()
-                    .filter(|k| k.starts_with("text_"))
+                    .filter(|k| k.starts_with("text:"))
                     .collect();
 
                 prop_assert_eq!(text_keys.len(), numt,
@@ -2123,7 +2113,7 @@ mod property_tests {
             fn des_key_count_correct(numdes in 0usize..20) {
                 let keys = generate_all_asset_keys(0, 0, 0, numdes, 0);
                 let des_keys: Vec<_> = keys.iter()
-                    .filter(|k| k.starts_with("des_"))
+                    .filter(|k| k.starts_with("des:"))
                     .collect();
 
                 prop_assert_eq!(des_keys.len(), numdes,
@@ -2135,7 +2125,7 @@ mod property_tests {
             fn res_key_count_correct(numres in 0usize..20) {
                 let keys = generate_all_asset_keys(0, 0, 0, 0, numres);
                 let res_keys: Vec<_> = keys.iter()
-                    .filter(|k| k.starts_with("res_"))
+                    .filter(|k| k.starts_with("res:"))
                     .collect();
 
                 prop_assert_eq!(res_keys.len(), numres,
@@ -2235,7 +2225,7 @@ mod property_tests {
 
                 prop_assert_eq!(keys.len(), numi);
                 for key in &keys {
-                    prop_assert!(key.starts_with("image_segment_"));
+                prop_assert!(key.starts_with("image:"));
                 }
             }
 
@@ -2246,7 +2236,7 @@ mod property_tests {
 
                 prop_assert_eq!(keys.len(), nums);
                 for key in &keys {
-                    prop_assert!(key.starts_with("graphic_segment_"));
+                prop_assert!(key.starts_with("graphic:"));
                 }
             }
 
@@ -2257,7 +2247,7 @@ mod property_tests {
 
                 prop_assert_eq!(keys.len(), numt);
                 for key in &keys {
-                    prop_assert!(key.starts_with("text_segment_"));
+                prop_assert!(key.starts_with("text:"));
                 }
             }
 
@@ -2268,7 +2258,7 @@ mod property_tests {
 
                 prop_assert_eq!(keys.len(), numdes);
                 for key in &keys {
-                    prop_assert!(key.starts_with("des_segment_"));
+                prop_assert!(key.starts_with("des:"));
                 }
             }
 
@@ -2279,7 +2269,7 @@ mod property_tests {
 
                 prop_assert_eq!(keys.len(), numres);
                 for key in &keys {
-                    prop_assert!(key.starts_with("res_segment_"));
+                prop_assert!(key.starts_with("res:"));
                 }
             }
 
@@ -2330,7 +2320,7 @@ mod property_tests {
                 index in 0usize..1000,
             ) {
                 let key = generate_asset_key(segment_type, index);
-                let expected = format!("{}_segment_{}", segment_type.key_prefix(), index);
+                let expected = format!("{}:{}", segment_type.key_prefix(), index);
 
                 prop_assert_eq!(key, expected);
             }
@@ -2339,26 +2329,20 @@ mod property_tests {
             #[test]
             fn parse_rejects_malformed(
                 prefix in "[a-z]{1,10}",
-                middle in "[a-z]{1,10}",
                 suffix in "[a-z0-9]{1,10}",
             ) {
                 // Skip if we accidentally generate a valid key
-                let key = format!("{}_{}_{}",  prefix, middle, suffix);
-                if middle == "segment" {
-                    if SegmentType::from_key_prefix(&prefix).is_some() {
-                        if suffix.parse::<usize>().is_ok() {
-                            // This is actually a valid key, skip
-                            return Ok(());
-                        }
+                let key = format!("{}:{}", prefix, suffix);
+                if SegmentType::from_key_prefix(&prefix).is_some() {
+                    if suffix.parse::<usize>().is_ok() {
+                        // This is actually a valid key, skip
+                        return Ok(());
                     }
                 }
 
                 let parsed = parse_asset_key(&key);
-                // Either None or the middle part wasn't "segment"
-                if middle != "segment" {
-                    prop_assert_eq!(parsed, None,
-                        "Expected None for malformed key '{}', got {:?}", key, parsed);
-                }
+                prop_assert_eq!(parsed, None,
+                    "Expected None for malformed key '{}', got {:?}", key, parsed);
             }
         }
     }
@@ -2608,7 +2592,7 @@ mod property_tests {
                 );
 
                 let provider = JBPImageAssetProvider::new(
-                    "image_segment_0".to_string(),
+                    "image:0".to_string(),
                     "Test Image".to_string(),
                     "Test".to_string(),
                     vec!["data".to_string()],
@@ -2651,7 +2635,7 @@ mod property_tests {
                 );
 
                 let provider = JBPImageAssetProvider::new(
-                    "image_segment_0".to_string(),
+                    "image:0".to_string(),
                     "Test Image".to_string(),
                     "Test".to_string(),
                     vec!["data".to_string()],
@@ -2695,7 +2679,7 @@ mod property_tests {
                 );
 
                 let provider = JBPImageAssetProvider::new(
-                    "image_segment_0".to_string(),
+                    "image:0".to_string(),
                     "Test Image".to_string(),
                     "Test".to_string(),
                     vec!["data".to_string()],
@@ -2740,7 +2724,7 @@ mod property_tests {
                 );
 
                 let provider = JBPImageAssetProvider::new(
-                    "image_segment_0".to_string(),
+                    "image:0".to_string(),
                     "Test Image".to_string(),
                     "Test".to_string(),
                     vec!["data".to_string()],
@@ -2822,7 +2806,7 @@ mod property_tests {
                 );
                 
                 let provider = JBPGraphicsAssetProvider::new(
-                    "graphic_segment_0".to_string(),
+                    "graphic:0".to_string(),
                     "Test Graphic".to_string(),
                     "Test graphic segment".to_string(),
                     vec!["annotation".to_string()],
@@ -2871,7 +2855,7 @@ mod property_tests {
                 );
                 
                 let provider = JBPGraphicsAssetProvider::new(
-                    "graphic_segment_0".to_string(),
+                    "graphic:0".to_string(),
                     "Test Graphic".to_string(),
                     "Test graphic segment".to_string(),
                     vec!["annotation".to_string()],

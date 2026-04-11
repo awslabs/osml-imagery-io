@@ -93,13 +93,13 @@ def generate_nitf21_8x8(output_path: Path) -> None:
 
     image_data = bytes([(x + y) % 256 for y in range(8) for x in range(8)])
     asset = AssetProvider.from_bytes(
-        key="image_segment_0",
+        key="image:0",
         data=image_data,
         asset_type=AssetType.Image,
         title="8x8 Grayscale",
         description="Minimal test image",
     )
-    writer.add_asset("image_segment_0", asset, "8x8 Grayscale",
+    writer.add_asset("image:0", asset, "8x8 Grayscale",
                      "Minimal test image", ["data"])
     writer.close()
 
@@ -114,13 +114,13 @@ def generate_nsif10_8x8(output_path: Path) -> None:
 
     image_data = bytes([(x + y) % 256 for y in range(8) for x in range(8)])
     asset = AssetProvider.from_bytes(
-        key="image_segment_0",
+        key="image:0",
         data=image_data,
         asset_type=AssetType.Image,
         title="8x8 Grayscale",
         description="Minimal test image",
     )
-    writer.add_asset("image_segment_0", asset, "8x8 Grayscale",
+    writer.add_asset("image:0", asset, "8x8 Grayscale",
                      "Minimal test image", ["data"])
     writer.close()
 
@@ -136,8 +136,8 @@ def generate_multisegment(output_path: Path) -> None:
     # Image 1: 16x16
     img1 = bytes([(x + y) % 256 for y in range(16) for x in range(16)])
     writer.add_asset(
-        "image_segment_0",
-        AssetProvider.from_bytes("image_segment_0", img1, AssetType.Image,
+        "image:0",
+        AssetProvider.from_bytes("image:0", img1, AssetType.Image,
                                 "First Image", "16x16 grayscale"),
         "First Image", "16x16 grayscale", ["data"],
     )
@@ -145,16 +145,16 @@ def generate_multisegment(output_path: Path) -> None:
     # Image 2: 8x8
     img2 = bytes([(x * y) % 256 for y in range(8) for x in range(8)])
     writer.add_asset(
-        "image_segment_1",
-        AssetProvider.from_bytes("image_segment_1", img2, AssetType.Image,
+        "image:1",
+        AssetProvider.from_bytes("image:1", img2, AssetType.Image,
                                 "Second Image", "8x8 grayscale"),
         "Second Image", "8x8 grayscale", ["data"],
     )
 
     # Text segment
     writer.add_asset(
-        "text_segment_0",
-        AssetProvider.from_bytes("text_segment_0",
+        "text:0",
+        AssetProvider.from_bytes("text:0",
                                 b"This is sample text content for testing.",
                                 AssetType.Text, "Sample Text", "Test text"),
         "Sample Text", "Test text", ["metadata"],
@@ -162,8 +162,8 @@ def generate_multisegment(output_path: Path) -> None:
 
     # DES segment
     writer.add_asset(
-        "data_segment_0",
-        AssetProvider.from_bytes("data_segment_0",
+        "des:0",
+        AssetProvider.from_bytes("des:0",
                                 b"Sample DES data content",
                                 AssetType.Data, "Sample DES", "Test DES"),
         "Sample DES", "Test DES", ["metadata"],
@@ -181,7 +181,7 @@ def generate_nitf21_j2k(output_path: Path) -> None:
     img_meta = _nitf_image_metadata(ic="C8", imode="B")
 
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=64,
         num_rows=64,
         num_bands=3,
@@ -200,7 +200,7 @@ def generate_nitf21_j2k(output_path: Path) -> None:
 
     writer = IO.open([str(output_path)], "w", "nitf")
     writer.metadata = file_meta
-    writer.add_asset("image_segment_0", provider, "64x64 RGB J2K",
+    writer.add_asset("image:0", provider, "64x64 RGB J2K",
                      "JPEG 2000 compressed test image", ["data"])
     writer.close()
 
@@ -214,7 +214,7 @@ def generate_nitf21_jpeg(output_path: Path) -> None:
     img_meta = _nitf_image_metadata(ic="C3", imode="P")
 
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=64,
         num_rows=64,
         num_bands=3,
@@ -232,7 +232,7 @@ def generate_nitf21_jpeg(output_path: Path) -> None:
 
     writer = IO.open([str(output_path)], "w", "nitf")
     writer.metadata = file_meta
-    writer.add_asset("image_segment_0", provider, "64x64 RGB JPEG",
+    writer.add_asset("image:0", provider, "64x64 RGB JPEG",
                      "JPEG compressed test image", ["data"])
     writer.close()
 
@@ -250,7 +250,7 @@ def generate_nitf21_256x256(output_path: Path) -> None:
     img_meta = _nitf_image_metadata(ic="NC", imode="B", icat="VIS")
 
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=256,
         num_rows=256,
         num_bands=3,
@@ -268,7 +268,7 @@ def generate_nitf21_256x256(output_path: Path) -> None:
 
     writer = IO.open([str(output_path)], "w", "nitf")
     writer.metadata = file_meta
-    writer.add_asset("image_segment_0", provider, "256x256 RGB",
+    writer.add_asset("image:0", provider, "256x256 RGB",
                      "Uncompressed 256x256 3-band test image", ["data"])
     writer.close()
 
@@ -283,7 +283,7 @@ def generate_tiff_tiled(output_path: Path) -> None:
     metadata.set_json("259", 8)     # Compression = Deflate
 
     provider = BufferedImageAssetProvider.create(
-        key="image_segment_0",
+        key="image:0",
         num_columns=256,
         num_rows=256,
         num_bands=1,
@@ -301,7 +301,7 @@ def generate_tiff_tiled(output_path: Path) -> None:
 
     writer = IO.open([str(output_path)], "w", "tiff")
     writer.metadata = metadata
-    writer.add_asset("image_segment_0", provider, "256x256 Tiled TIFF",
+    writer.add_asset("image:0", provider, "256x256 Tiled TIFF",
                      "Tiled Deflate 1-band uint8", ["data"])
     writer.close()
 

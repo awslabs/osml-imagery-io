@@ -26,7 +26,7 @@ use crate::types::{AssetType, PixelType};
 /// For raw `.j2k` files the range spans the entire buffer; for `.jp2` files
 /// it points to the contents of the `jp2c` box, avoiding a copy.
 pub struct J2KImageAssetProvider {
-    /// Unique key identifying this asset (always "image_segment_0")
+    /// Unique key identifying this asset (always "image:0")
     key: String,
     /// Image width in pixels at full resolution
     width: u32,
@@ -50,6 +50,8 @@ pub struct J2KImageAssetProvider {
     buffer: Arc<[u8]>,
     /// Byte range within `buffer` that contains the raw J2K codestream
     codestream_range: Range<usize>,
+    /// STAC-aligned roles (e.g., "data")
+    roles: Vec<String>,
     /// Per-image metadata
     metadata: Arc<J2KMetadataProvider>,
     /// Number of resolution levels available in the codestream
@@ -80,6 +82,7 @@ impl J2KImageAssetProvider {
         num_tiles_y: u32,
         buffer: Arc<[u8]>,
         codestream_range: Range<usize>,
+        roles: Vec<String>,
         metadata: Arc<J2KMetadataProvider>,
         num_resolution_levels: u32,
         codec: Arc<dyn J2KCodec>,
@@ -100,6 +103,7 @@ impl J2KImageAssetProvider {
             num_tiles_y,
             buffer,
             codestream_range,
+            roles,
             metadata,
             num_resolution_levels,
             codec,
@@ -148,7 +152,7 @@ impl AssetProvider for J2KImageAssetProvider {
     }
 
     fn roles(&self) -> &[String] {
-        &[]
+        &self.roles
     }
 
     fn asset_type(&self) -> AssetType {

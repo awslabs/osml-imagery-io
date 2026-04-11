@@ -23,7 +23,7 @@ use crate::types::{AssetType, PixelType};
 /// serves it as a single 1×1 block. Supports band subsetting via
 /// `get_block`.
 pub struct PNGImageAssetProvider {
-    /// Unique key identifying this asset (always "image_segment_0")
+    /// Unique key identifying this asset (e.g., "image:0")
     key: String,
     /// Image width in pixels
     width: u32,
@@ -37,6 +37,8 @@ pub struct PNGImageAssetProvider {
     bit_depth: u8,
     /// Decoded pixels in BSQ format: all band-0 pixels, then band-1, etc.
     pixels: Vec<u8>,
+    /// STAC-aligned roles (e.g., "data")
+    roles: Vec<String>,
     /// Per-image metadata
     metadata: Arc<PNGMetadataProvider>,
 }
@@ -46,13 +48,14 @@ impl PNGImageAssetProvider {
     ///
     /// # Arguments
     ///
-    /// * `key` - Asset key (typically "image_segment_0")
+    /// * `key` - Asset key (e.g., "image:0")
     /// * `width` - Image width in pixels
     /// * `height` - Image height in pixels
     /// * `num_bands` - Number of bands
     /// * `pixel_type` - Pixel data type (UInt8 or UInt16)
     /// * `bit_depth` - Original PNG bit depth (1, 2, 4, 8, or 16)
     /// * `pixels` - Decoded pixel data in BSQ format
+    /// * `roles` - STAC-aligned roles (e.g., vec!["data"])
     /// * `metadata` - PNG metadata provider
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -63,6 +66,7 @@ impl PNGImageAssetProvider {
         pixel_type: PixelType,
         bit_depth: u8,
         pixels: Vec<u8>,
+        roles: Vec<String>,
         metadata: Arc<PNGMetadataProvider>,
     ) -> Self {
         Self {
@@ -73,6 +77,7 @@ impl PNGImageAssetProvider {
             pixel_type,
             bit_depth,
             pixels,
+            roles,
             metadata,
         }
     }
@@ -113,7 +118,7 @@ impl AssetProvider for PNGImageAssetProvider {
     }
 
     fn roles(&self) -> &[String] {
-        &[]
+        &self.roles
     }
 
     fn asset_type(&self) -> AssetType {
@@ -268,13 +273,14 @@ mod tests {
         let metadata = make_metadata(width, height, 8, "Grayscale");
 
         let provider = PNGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             width,
             height,
             1,
             PixelType::UInt8,
             8,
             pixels.clone(),
+            vec!["data".to_string()],
             metadata,
         );
 
@@ -325,13 +331,14 @@ mod tests {
 
         let metadata = make_metadata(width, height, 16, "RGB");
         let provider = PNGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             width,
             height,
             num_bands,
             PixelType::UInt16,
             16,
             pixels.clone(),
+            vec!["data".to_string()],
             metadata,
         );
 
@@ -356,13 +363,14 @@ mod tests {
     fn test_get_block_out_of_bounds() {
         let metadata = make_metadata(2, 2, 8, "Grayscale");
         let provider = PNGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             2,
             2,
             1,
             PixelType::UInt8,
             8,
             vec![0; 4],
+            vec!["data".to_string()],
             metadata,
         );
 
@@ -387,13 +395,14 @@ mod tests {
     fn test_get_block_invalid_resolution() {
         let metadata = make_metadata(2, 2, 8, "Grayscale");
         let provider = PNGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             2,
             2,
             1,
             PixelType::UInt8,
             8,
             vec![0; 4],
+            vec!["data".to_string()],
             metadata,
         );
 
@@ -423,13 +432,14 @@ mod tests {
 
         let metadata = make_metadata(width, height, 8, "RGBA");
         let provider = PNGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             width,
             height,
             4,
             PixelType::UInt8,
             8,
             pixels,
+            vec!["data".to_string()],
             metadata,
         );
 
@@ -464,13 +474,14 @@ mod tests {
 
         let metadata = make_metadata(width, height, 8, "Indexed");
         let provider = PNGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             width,
             height,
             1,
             PixelType::UInt8,
             8,
             indices.clone(),
+            vec!["data".to_string()],
             metadata,
         );
 
@@ -491,13 +502,14 @@ mod tests {
     fn test_has_block() {
         let metadata = make_metadata(2, 2, 8, "Grayscale");
         let provider = PNGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             2,
             2,
             1,
             PixelType::UInt8,
             8,
             vec![0; 4],
+            vec!["data".to_string()],
             metadata,
         );
 
@@ -519,13 +531,14 @@ mod tests {
         let metadata = make_metadata(4, 1, 4, "Grayscale");
 
         let provider = PNGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             4,
             1,
             1,
             PixelType::UInt8,
             4,
             pixels.clone(),
+            vec!["data".to_string()],
             metadata,
         );
 
@@ -547,22 +560,23 @@ mod tests {
     fn test_asset_provider_methods() {
         let metadata = make_metadata(2, 2, 8, "RGB");
         let provider = PNGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             2,
             2,
             3,
             PixelType::UInt8,
             8,
             vec![0; 12],
+            vec!["data".to_string()],
             metadata,
         );
 
-        assert_eq!(provider.key(), "image_segment_0");
-        assert_eq!(provider.title(), "image_segment_0");
+        assert_eq!(provider.key(), "image:0");
+        assert_eq!(provider.title(), "image:0");
         assert_eq!(provider.description(), "PNG image segment");
         assert_eq!(provider.media_type(), "image/png");
         assert_eq!(provider.asset_type(), AssetType::Image);
-        assert!(provider.roles().is_empty());
+        assert_eq!(provider.roles(), &["data".to_string()]);
         assert!(provider.raw_asset().is_err());
     }
 
@@ -578,13 +592,14 @@ mod tests {
         let metadata = make_metadata(2, 2, 8, "GrayscaleAlpha");
 
         let provider = PNGImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             2,
             2,
             2,
             PixelType::UInt8,
             8,
             pixels.clone(),
+            vec!["data".to_string()],
             metadata,
         );
 

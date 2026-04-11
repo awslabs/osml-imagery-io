@@ -19,7 +19,7 @@ Examples:
     # Specify a segment name (default: first segment)
     python scripts/test_zarr_read.py \
         s3://bucket/image.tile_index.json 0 0 512 512 \
-        --segment image_segment_0
+        --segment image:0
 """
 
 import argparse

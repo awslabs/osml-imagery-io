@@ -160,7 +160,7 @@ For example, a tile with six tile-parts scattered across a file:
 
 ```json
 {
-  "image_segment_0/0.0.0": [
+  "image:0/0.0.0": [
     "s3://bucket/image.ntf",
     [[66132, 1518], [2534029, 3385], [7216065, 11460],
      [22566527, 38566], [74210429, 116812], [242293202, 339534]]
@@ -356,7 +356,7 @@ root = zarr.open_group(store, mode="r", zarr_format=2)
 # Read a single tile region
 import numpy as np
 
-arr = root["image_segment_0"]
+arr = root["image:0"]
 tile = np.asarray(arr[0:3, 768:1024, 1024:1280])
 print(tile.shape)  # (3, 256, 256)
 print(tile.dtype)  # uint8

@@ -2,7 +2,7 @@
 //!
 //! Opens a `.j2k` or `.jp2` file from a byte slice, validates the signature,
 //! parses the SIZ marker to extract metadata (dimensions, bands, bit depth,
-//! tile grid), and exposes a single image asset keyed as `"image_segment_0"`.
+//! tile grid), and exposes a single image asset keyed as `"image:0"`.
 //! Pixel decoding is deferred to `get_block()` time on the ImageAssetProvider.
 //!
 //! The entire input buffer is stored once as `Arc<[u8]>`. For JP2 files the
@@ -145,7 +145,7 @@ impl J2KDatasetReader {
         }
 
         let image_asset = J2KImageAssetProvider::new(
-            "image_segment_0".to_string(),
+            "image:0".to_string(),
             siz.width,
             siz.height,
             siz.num_components,
@@ -157,6 +157,7 @@ impl J2KDatasetReader {
             num_tiles_y,
             buffer,
             cs_range,
+            vec!["data".to_string()],
             metadata.clone(),
             num_resolution_levels,
             codec,
@@ -341,14 +342,24 @@ impl DatasetReader for J2KDatasetReader {
     fn get_asset_keys(
         &self,
         asset_type: Option<AssetType>,
-        _roles: Option<&[String]>,
+        roles: Option<&[String]>,
     ) -> Vec<String> {
         match asset_type {
             None | Some(AssetType::Image) => {
-                if self.image_asset.is_some() {
-                    vec!["image_segment_0".to_string()]
-                } else {
-                    Vec::new()
+                match &self.image_asset {
+                    Some(asset) => {
+                        if let Some(requested) = roles {
+                            let asset_roles = asset.roles();
+                            if requested.iter().any(|r| asset_roles.contains(r)) {
+                                vec!["image:0".to_string()]
+                            } else {
+                                Vec::new()
+                            }
+                        } else {
+                            vec!["image:0".to_string()]
+                        }
+                    }
+                    None => Vec::new(),
                 }
             }
             Some(AssetType::Text) | Some(AssetType::Graphics) | Some(AssetType::Data) => {
@@ -618,11 +629,11 @@ mod tests {
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
 
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
-        assert!(reader.has_asset("image_segment_0"));
+        assert!(reader.has_asset("image:0"));
         assert!(!reader.has_asset("nonexistent"));
 
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
-        assert_eq!(keys, vec!["image_segment_0"]);
+        assert_eq!(keys, vec!["image:0"]);
         assert!(reader.get_asset_keys(Some(AssetType::Text), None).is_empty());
 
         // Check metadata
@@ -636,7 +647,7 @@ mod tests {
         assert_eq!(dict.get("compression_type").and_then(|v| v.as_str()), Some("j2k"));
 
         // Decode and verify pixels
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<J2KImageAssetProvider>()
@@ -665,7 +676,7 @@ mod tests {
         let cs = make_j2k_codestream(64, 64, 3, 8, false, &pixels);
 
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<J2KImageAssetProvider>()
@@ -698,10 +709,10 @@ mod tests {
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
         let mut reader = J2KDatasetReader::from_bytes(&cs).unwrap();
 
-        assert!(reader.has_asset("image_segment_0"));
+        assert!(reader.has_asset("image:0"));
         reader.close().unwrap();
-        assert!(!reader.has_asset("image_segment_0"));
-        assert!(reader.get_asset("image_segment_0").is_err());
+        assert!(!reader.has_asset("image:0"));
+        assert!(reader.get_asset("image:0").is_err());
         assert!(reader.get_asset_keys(Some(AssetType::Image), None).is_empty());
     }
 
@@ -711,7 +722,7 @@ mod tests {
         let pixels: Vec<u8> = vec![0; 64 * 64];
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<J2KImageAssetProvider>()
@@ -730,7 +741,7 @@ mod tests {
         let pixels: Vec<u8> = vec![0; 64 * 64];
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<J2KImageAssetProvider>()
@@ -753,7 +764,7 @@ mod tests {
         }
         let cs = make_j2k_codestream(64, 64, 3, 8, false, &pixels);
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<J2KImageAssetProvider>()
@@ -777,7 +788,7 @@ mod tests {
         let pixels: Vec<u8> = vec![0; 64 * 64];
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<J2KImageAssetProvider>()
@@ -806,7 +817,7 @@ mod tests {
         assert_eq!(dict.get("bits_per_component").and_then(|v| v.as_u64()), Some(16));
         assert_eq!(dict.get("is_signed").and_then(|v| v.as_bool()), Some(false));
 
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<J2KImageAssetProvider>()

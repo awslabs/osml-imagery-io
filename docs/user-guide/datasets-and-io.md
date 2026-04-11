@@ -67,10 +67,39 @@ Each asset within a dataset has a type and a key that uniquely identifies it:
 | `text` | Plain text content | Mission reports, annotations |
 | `graphics` | Vector graphics | CGM overlays |
 
+### Asset Roles
+
+Every asset also carries one or more semantic roles that describe its purpose. Roles
+are aligned with the [STAC asset roles](https://github.com/radiantearth/stac-spec/blob/master/best-practices.md#asset-roles)
+convention — short strings that communicate what an asset is for, independent of the
+underlying file format.
+
+| Role | Meaning | Assigned To |
+|------|---------|-------------|
+| `data` | Full-resolution image data | TIFF full-res IFDs, NITF image segments, JPEG, PNG |
+| `overview` | Reduced-resolution image | TIFF overview IFDs (COG) |
+| `metadata` | Metadata asset | NITF text segments, data extension segments |
+| `graphic` | Graphic/annotation overlay | NITF graphic segments |
+
+Roles are the primary way to distinguish between different kinds of assets without
+parsing key strings. A Cloud Optimized GeoTIFF (COG) might contain a full-resolution
+image and two overview images — all three are `image` type assets, but their roles
+tell you which is the primary data and which are reduced-resolution versions:
+
+```python
+with IO.open(["cog.tif"], "r") as dataset:
+    for key in dataset.get_asset_keys(asset_type="image"):
+        asset = dataset.get_asset(key)
+        print(f"{key}: roles={asset.roles}")
+    # image:0: roles=['data']
+    # image:0:overview:1: roles=['overview']
+    # image:0:overview:2: roles=['overview']
+```
+
 ## Discovering Assets
 
-Use `get_asset_keys()` to list available assets by type, then `get_asset()` to retrieve
-a specific one:
+Use `get_asset_keys()` to list available assets, then `get_asset()` to retrieve
+a specific one. You can filter by asset type, by role, or both:
 
 ```python
 from aws.osml.io import IO
@@ -86,15 +115,37 @@ with IO.open(["complex_dataset.ntf"], "r") as dataset:
           f"Data: {len(data_keys)}, Graphics: {len(graphics_keys)}")
 
     # Retrieve a specific asset
-    image = dataset.get_asset("image_segment_0")
+    image = dataset.get_asset("image:0")
 ```
+
+### Filtering by Role
+
+The `roles` parameter on `get_asset_keys()` lets you filter assets by their semantic
+purpose. This is particularly useful for COG files where you want to separate
+full-resolution images from overviews:
+
+```python
+with IO.open(["cog.tif"], "r") as dataset:
+    # Only full-resolution images
+    data_keys = dataset.get_asset_keys(asset_type="image", roles=["data"])
+
+    # Only overview images
+    overview_keys = dataset.get_asset_keys(asset_type="image", roles=["overview"])
+
+    # All image assets (no role filter)
+    all_keys = dataset.get_asset_keys(asset_type="image")
+```
+
+When `roles` is omitted or `None`, all assets matching the `asset_type` filter are
+returned. When both `asset_type` and `roles` are provided, both filters apply — only
+assets that match the type and have at least one of the requested roles are returned.
 
 NITF files can contain all four asset types. TIFF files contain only image assets —
 each IFD (Image File Directory) in the file becomes a separate image asset keyed as
-`"image_segment_0"`, `"image_segment_1"`, etc. PNG files also contain only image assets —
-a single image keyed as `"image_segment_0"`. Text, data, and graphics asset queries
-will return empty lists for TIFF and PNG datasets.
-```
+`"image:0"`, `"image:1"`, etc. Cloud Optimized GeoTIFFs additionally expose overview
+IFDs as `"image:0:overview:1"`, `"image:0:overview:2"`, etc. PNG files contain a
+single image keyed as `"image:0"`. Text, data, and graphics asset queries will return
+empty lists for TIFF and PNG datasets.
 
 ## Dataset-Level Metadata
 

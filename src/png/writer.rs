@@ -446,7 +446,7 @@ mod tests {
             .with_bands(num_bands)
             .with_block_size(width, height)
             .with_pixel_type(pixel_type);
-        let provider = BufferedImageAssetProvider::new("image_segment_0", config);
+        let provider = BufferedImageAssetProvider::new("image:0", config);
         provider.set_block(0, 0, bsq_data).unwrap();
         Arc::new(provider)
     }
@@ -475,7 +475,7 @@ mod tests {
         let provider = make_image_provider(2, 2, 1, PixelType::UInt8, &[10, 20, 30, 40]);
 
         let result = writer.add_asset(
-            "image_segment_0",
+            "image:0",
             provider,
             "Test",
             "Test image",
@@ -555,7 +555,7 @@ mod tests {
             9, 10, 11, 12, // B
         ]);
         writer
-            .add_asset("image_segment_0", provider, "Test", "Test", &[])
+            .add_asset("image:0", provider, "Test", "Test", &[])
             .unwrap();
 
         // First close should succeed
@@ -580,14 +580,14 @@ mod tests {
 
         let mut writer = PNGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image_segment_0", provider, "Test", "Test", &[])
+            .add_asset("image:0", provider, "Test", "Test", &[])
             .unwrap();
         writer.close().unwrap();
 
         // Read back
         let data = std::fs::read(&path).unwrap();
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<PNGImageAssetProvider>()
@@ -613,13 +613,13 @@ mod tests {
 
         let mut writer = PNGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image_segment_0", provider, "Test", "Test", &[])
+            .add_asset("image:0", provider, "Test", "Test", &[])
             .unwrap();
         writer.close().unwrap();
 
         let data = std::fs::read(&path).unwrap();
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
-        let asset = reader.get_asset("image_segment_0").unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
         let image = asset
             .as_any()
             .downcast_ref::<PNGImageAssetProvider>()
