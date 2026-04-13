@@ -174,12 +174,14 @@ IO.open(["image.ntf", "image.ntf.r2", "image.ntf.r1"], "r")
 ```
 
 R-set detection is format-agnostic. Each file in the list is opened with its own
-auto-detected format reader, so the convention works for any supported format.
+auto-detected format reader, so users are free to select other encodings for the
+overview files if desired.
 
 :::{note}
-R-sets are a de facto industry convention used by commercial data providers. They are
-not part of the JBP/NITF specification — there is no internal metadata linking an
-R-set file to its parent. The relationship is purely by filename convention.
+R-sets are a de facto industry convention used by some data providers and image
+analysis tools. They are not part of the JBP/NITF specification — there is no 
+internal metadata linking an R-set file to its parent. The relationship is purely
+by filename convention.
 :::
 
 Some things to keep in mind with multi-file pyramids:
@@ -190,6 +192,8 @@ Some things to keep in mind with multi-file pyramids:
 - R-set overviews are associated with `image:0` (the primary image segment). If the
   base file contains multiple image segments, the R-sets apply to the primary image
   only.
+- The same multi-path pattern works for writing — see
+  [Writing Multi-File R-Set Pyramids](image-assets-writing.md#writing-multi-file-r-set-pyramids).
 
 ## Discovering Assets
 

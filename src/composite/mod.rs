@@ -7,6 +7,8 @@
 
 mod reader;
 mod wrapper;
+mod writer;
 
 pub use reader::CompositeDatasetReader;
 pub use wrapper::OverviewAssetWrapper;
+pub use writer::CompositeDatasetWriter;

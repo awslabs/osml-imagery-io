@@ -1613,3 +1613,142 @@ def jpeg_writable_image(
     array = draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
 
     return (array, pixel_type, num_bands, num_rows, num_cols)
+
+# =============================================================================
+# Multi-File R-Set Pyramid Strategies
+# =============================================================================
+
+# Pixel types supported by NITF IC=NC (uncompressed) for lossless round-trip
+NITF_NC_PIXEL_TYPES = [
+    PixelType.UInt8,
+    PixelType.UInt16,
+    PixelType.UInt32,
+    PixelType.Int8,
+    PixelType.Int16,
+    PixelType.Int32,
+    PixelType.Float32,
+    PixelType.Float64,
+]
+
+
+def nitf_nc_pixel_types() -> st.SearchStrategy[PixelType]:
+    """Strategy for pixel types supported by NITF IC=NC (uncompressed).
+
+    Includes the full set suitable for lossless NITF round-trip:
+    UInt8, UInt16, UInt32, Int8, Int16, Int32, Float32, Float64.
+    """
+    return st.sampled_from(NITF_NC_PIXEL_TYPES)
+
+
+def overview_levels(
+    num_rows: int,
+    num_cols: int,
+    min_levels: int = 1,
+    max_levels: int = 3,
+) -> st.SearchStrategy[list]:
+    """Strategy for generating overview level dimensions.
+
+    Generates 1–3 overview levels where each level has dimensions halved
+    from the previous level (minimum 1 pixel per dimension).
+
+    Args:
+        num_rows: Base image number of rows.
+        num_cols: Base image number of columns.
+        min_levels: Minimum number of overview levels (default 1).
+        max_levels: Maximum number of overview levels (default 3).
+
+    Returns:
+        Strategy producing a list of (level, ovr_rows, ovr_cols) tuples
+        where level is 1-indexed and dimensions are halved at each step.
+    """
+    # Calculate the maximum feasible levels (both dims must stay >= 1)
+    feasible = 0
+    r, c = num_rows, num_cols
+    while r > 1 and c > 1:
+        r = max(1, r // 2)
+        c = max(1, c // 2)
+        feasible += 1
+
+    effective_max = min(max_levels, max(min_levels, feasible))
+
+    @st.composite
+    def _build(draw):
+        n = draw(st.integers(min_value=min_levels, max_value=effective_max))
+        levels = []
+        prev_rows, prev_cols = num_rows, num_cols
+        for level in range(1, n + 1):
+            ovr_rows = max(1, prev_rows // 2)
+            ovr_cols = max(1, prev_cols // 2)
+            levels.append((level, ovr_rows, ovr_cols))
+            prev_rows, prev_cols = ovr_rows, ovr_cols
+        return levels
+
+    return _build()
+
+
+@st.composite
+def pyramid_image(
+    draw,
+    min_size: int = 32,
+    max_size: int = 256,
+    min_bands: int = 1,
+    max_bands: int = 8,
+    min_levels: int = 1,
+    max_levels: int = 3,
+) -> Tuple[np.ndarray, dict, list]:
+    """Composite strategy for generating a pyramid image with overview levels.
+
+    Draws a random base image (pixel type, dimensions, bands) and generates
+    overview-level images with proportionally smaller dimensions (halved at
+    each level). Pixel types are limited to those supported by NITF IC=NC
+    (uncompressed) for lossless round-trip testing.
+
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        min_size: Minimum base image dimension (default 32)
+        max_size: Maximum base image dimension (default 256)
+        min_bands: Minimum band count (default 1)
+        max_bands: Maximum band count (default 8)
+        min_levels: Minimum overview levels (default 1)
+        max_levels: Maximum overview levels (default 3)
+
+    Returns:
+        Tuple of (base_array, base_config, overviews) where:
+        - base_array: numpy array with shape (num_bands, num_rows, num_cols)
+        - base_config: dict with keys num_columns, num_rows, num_bands,
+          block_width, block_height, pixel_type
+        - overviews: list of (level, ovr_array, ovr_config) tuples, each
+          ovr_config having the same keys as base_config
+    """
+    pixel_type = draw(nitf_nc_pixel_types())
+    num_rows, num_cols = draw(image_dimensions(min_size=min_size, max_size=max_size))
+    num_bands = draw(band_counts(min_bands=min_bands, max_bands=max_bands))
+
+    base_array = draw(image_arrays(pixel_type, num_bands, num_rows, num_cols))
+
+    base_config = {
+        "num_columns": num_cols,
+        "num_rows": num_rows,
+        "num_bands": num_bands,
+        "block_width": min(num_cols, 256),
+        "block_height": min(num_rows, 256),
+        "pixel_type": pixel_type,
+    }
+
+    levels = draw(overview_levels(num_rows, num_cols,
+                                  min_levels=min_levels, max_levels=max_levels))
+
+    overviews = []
+    for level, ovr_rows, ovr_cols in levels:
+        ovr_array = draw(image_arrays(pixel_type, num_bands, ovr_rows, ovr_cols))
+        ovr_config = {
+            "num_columns": ovr_cols,
+            "num_rows": ovr_rows,
+            "num_bands": num_bands,
+            "block_width": min(ovr_cols, 256),
+            "block_height": min(ovr_rows, 256),
+            "pixel_type": pixel_type,
+        }
+        overviews.append((level, ovr_array, ovr_config))
+
+    return (base_array, base_config, overviews)

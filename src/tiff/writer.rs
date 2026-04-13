@@ -4,7 +4,7 @@
 //! trait for creating tiled TIFF files. The writer assembles the TIFF in memory
 //! via `TIFFClientOpen` with custom write callbacks, then flushes to disk on `close()`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -723,13 +723,105 @@ impl TIFFDatasetWriter {
     /// `"overview"`, or as a fallback if the asset key contains the substring
     /// `:overview:`. Returns `0` (full-resolution image) otherwise.
     fn new_subfile_type_for_asset(roles: &[String], key: &str) -> u32 {
-        if roles.iter().any(|r| r == "overview") {
-            1
-        } else if key.contains(":overview:") {
+        if roles.iter().any(|r| r == "overview") || key.contains(":overview:") {
             1
         } else {
             0
         }
+    }
+
+    /// Extract the parent key from an overview key by stripping `:overview:M`.
+    ///
+    /// For example, `image:0:overview:1` → `image:0`.
+    /// If the key does not contain `:overview:`, returns the key unchanged.
+    fn extract_parent_key(key: &str) -> String {
+        if let Some((parent, _)) = key.rsplit_once(":overview:") {
+            parent.to_string()
+        } else {
+            key.to_string()
+        }
+    }
+
+    /// Return the image area (num_rows × num_columns) for a queued asset.
+    ///
+    /// Falls back to 0 if the provider cannot be downcast to `ImageAssetProvider`.
+    fn get_image_area(asset: &QueuedImageAsset) -> u64 {
+        if let Some(image) = Self::get_image_provider(&asset.provider) {
+            image.num_rows() as u64 * image.num_columns() as u64
+        } else {
+            0
+        }
+    }
+
+    /// Sort `self.assets` in-place for COG-compliant IFD ordering.
+    ///
+    /// The sort produces:
+    /// 1. Full-resolution assets (NewSubfileType=0) in insertion order
+    /// 2. Each full-res asset is immediately followed by its associated
+    ///    overview assets (NewSubfileType=1), sorted by decreasing area
+    /// 3. Orphan overviews (no matching full-res parent) are appended at the end
+    fn sort_assets_for_cog(&mut self) {
+        if self.assets.len() <= 1 {
+            return;
+        }
+
+        // Partition into full-res and overview indices
+        let mut full_res_indices: Vec<usize> = Vec::new();
+        let mut overview_groups: HashMap<String, Vec<usize>> = HashMap::new();
+
+        for (i, asset) in self.assets.iter().enumerate() {
+            let nst = Self::new_subfile_type_for_asset(&asset.roles, &asset.key);
+            if nst == 0 {
+                full_res_indices.push(i);
+            } else {
+                let parent = Self::extract_parent_key(&asset.key);
+                overview_groups.entry(parent).or_default().push(i);
+            }
+        }
+
+        // Sort each overview group by decreasing area
+        for group in overview_groups.values_mut() {
+            group.sort_by(|&a, &b| {
+                let area_a = Self::get_image_area(&self.assets[a]);
+                let area_b = Self::get_image_area(&self.assets[b]);
+                area_b.cmp(&area_a) // Decreasing
+            });
+        }
+
+        // Rebuild order: full-res (insertion order) interleaved with overviews
+        let mut sorted_indices: Vec<usize> = Vec::with_capacity(self.assets.len());
+        let mut used_parents: HashSet<String> = HashSet::new();
+
+        for &idx in &full_res_indices {
+            sorted_indices.push(idx);
+            let parent_key = &self.assets[idx].key;
+            used_parents.insert(parent_key.clone());
+            if let Some(ovrs) = overview_groups.get(parent_key) {
+                for &oidx in ovrs {
+                    sorted_indices.push(oidx);
+                }
+            }
+        }
+
+        // Append orphan overviews (no matching full-res parent)
+        for (parent, ovrs) in &overview_groups {
+            if !used_parents.contains(parent) {
+                for &oidx in ovrs {
+                    sorted_indices.push(oidx);
+                }
+            }
+        }
+
+        // Reorder assets in-place using sorted_indices
+        let mut slots: Vec<Option<QueuedImageAsset>> =
+            self.assets.drain(..).map(Some).collect();
+        let mut new_assets: Vec<QueuedImageAsset> = Vec::with_capacity(slots.len());
+        for &idx in &sorted_indices {
+            if let Some(asset) = slots[idx].take() {
+                new_assets.push(asset);
+            }
+        }
+        self.assets = new_assets;
     }
 
 
@@ -1029,6 +1121,9 @@ impl DatasetWriter for TIFFDatasetWriter {
         if self.closed {
             return Ok(());
         }
+
+        // Sort assets for COG-compliant IFD ordering before writing
+        self.sort_assets_for_cog();
 
         // Parse encoding hints from dataset-level metadata
         let mut hints = match &self.metadata {
@@ -1957,6 +2052,156 @@ mod tests {
 
         // Tag 254 = NewSubfileType should be 0 (full-resolution image)
         assert_eq!(dict.get("254"), Some(&serde_json::json!(0)));
+    }
+
+    // =========================================================================
+    // COG IFD ordering tests
+    // =========================================================================
+
+    /// Helper: create a minimal image provider with specific dimensions.
+    fn make_sized_image_provider(
+        key: &str,
+        num_columns: u32,
+        num_rows: u32,
+    ) -> Arc<BufferedImageAssetProvider> {
+        let config = MemoryImageConfig::new(num_columns, num_rows)
+            .with_bands(1)
+            .with_block_size(num_columns, num_rows)
+            .with_pixel_type(PixelType::UInt8);
+        let provider = BufferedImageAssetProvider::new(key, config);
+        let data = vec![0u8; (num_columns * num_rows) as usize];
+        provider.set_block(0, 0, &data).unwrap();
+        Arc::new(provider)
+    }
+
+    #[test]
+    fn test_cog_ordering_basic() {
+        // Add overview first, then full-res — verify sort puts full-res first
+        let mut writer = TIFFDatasetWriter::new("/tmp/cog_basic.tif").unwrap();
+
+        let ovr = make_sized_image_provider("image:0:overview:1", 128, 128);
+        writer
+            .add_asset(
+                "image:0:overview:1",
+                ovr,
+                "Overview",
+                "desc",
+                &["overview".to_string()],
+            )
+            .unwrap();
+
+        let full = make_sized_image_provider("image:0", 256, 256);
+        writer
+            .add_asset("image:0", full, "Full", "desc", &["data".to_string()])
+            .unwrap();
+
+        writer.sort_assets_for_cog();
+
+        assert_eq!(writer.assets.len(), 2);
+        assert_eq!(writer.assets[0].key, "image:0");
+        assert_eq!(writer.assets[1].key, "image:0:overview:1");
+    }
+
+    #[test]
+    fn test_cog_multi_image_grouping() {
+        // Two full-res images, each with two overviews in wrong order
+        let mut writer = TIFFDatasetWriter::new("/tmp/cog_multi.tif").unwrap();
+
+        // Add in scrambled order
+        let ovr_0_2 = make_sized_image_provider("image:0:overview:2", 64, 64);
+        writer
+            .add_asset(
+                "image:0:overview:2",
+                ovr_0_2,
+                "Ovr 0-2",
+                "desc",
+                &["overview".to_string()],
+            )
+            .unwrap();
+
+        let full_1 = make_sized_image_provider("image:1", 512, 512);
+        writer
+            .add_asset("image:1", full_1, "Full 1", "desc", &["data".to_string()])
+            .unwrap();
+
+        let ovr_1_1 = make_sized_image_provider("image:1:overview:1", 256, 256);
+        writer
+            .add_asset(
+                "image:1:overview:1",
+                ovr_1_1,
+                "Ovr 1-1",
+                "desc",
+                &["overview".to_string()],
+            )
+            .unwrap();
+
+        let full_0 = make_sized_image_provider("image:0", 512, 512);
+        writer
+            .add_asset("image:0", full_0, "Full 0", "desc", &["data".to_string()])
+            .unwrap();
+
+        let ovr_0_1 = make_sized_image_provider("image:0:overview:1", 256, 256);
+        writer
+            .add_asset(
+                "image:0:overview:1",
+                ovr_0_1,
+                "Ovr 0-1",
+                "desc",
+                &["overview".to_string()],
+            )
+            .unwrap();
+
+        writer.sort_assets_for_cog();
+
+        // Expected order:
+        // image:1 (first full-res by insertion order)
+        // image:1:overview:1 (its overview)
+        // image:0 (second full-res by insertion order)
+        // image:0:overview:1 (larger overview, 256×256)
+        // image:0:overview:2 (smaller overview, 64×64)
+        let keys: Vec<&str> = writer.assets.iter().map(|a| a.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "image:1",
+                "image:1:overview:1",
+                "image:0",
+                "image:0:overview:1",
+                "image:0:overview:2",
+            ]
+        );
+
+        // Verify overview ordering by area: image:0:overview:1 (256×256=65536) > image:0:overview:2 (64×64=4096)
+        let area_ovr1 = TIFFDatasetWriter::get_image_area(&writer.assets[3]);
+        let area_ovr2 = TIFFDatasetWriter::get_image_area(&writer.assets[4]);
+        assert!(area_ovr1 > area_ovr2);
+    }
+
+    #[test]
+    fn test_cog_insertion_order_preserved() {
+        // Multiple full-res images added in specific order — verify relative order preserved
+        let mut writer = TIFFDatasetWriter::new("/tmp/cog_order.tif").unwrap();
+
+        let img_2 = make_sized_image_provider("image:2", 100, 100);
+        writer
+            .add_asset("image:2", img_2, "Image 2", "desc", &["data".to_string()])
+            .unwrap();
+
+        let img_0 = make_sized_image_provider("image:0", 200, 200);
+        writer
+            .add_asset("image:0", img_0, "Image 0", "desc", &["data".to_string()])
+            .unwrap();
+
+        let img_1 = make_sized_image_provider("image:1", 150, 150);
+        writer
+            .add_asset("image:1", img_1, "Image 1", "desc", &["data".to_string()])
+            .unwrap();
+
+        writer.sort_assets_for_cog();
+
+        // Insertion order: image:2, image:0, image:1 — should be preserved
+        let keys: Vec<&str> = writer.assets.iter().map(|a| a.key.as_str()).collect();
+        assert_eq!(keys, vec!["image:2", "image:0", "image:1"]);
     }
 
     mod prop {

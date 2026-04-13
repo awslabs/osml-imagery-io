@@ -2,42 +2,45 @@
 
 ## Choosing the Output Format
 
-This library supports writing imagery in multiple formats. NITF 2.1, NSIF 1.0, and
-GeoTIFF are fully supported. When opening a file for writing you must pass the 
-`format` parameter to `IO.open`. The format is not inferred from the file extension 
-— you choose it explicitly:
+This library supports writing imagery in multiple formats. NITF 2.1, NSIF 1.0,
+GeoTIFF, PNG, JPEG 2000, and JPEG are supported. You can either specify the format
+explicitly or let `IO.open` auto-detect it from the file extension:
 
 ```python
 from aws.osml.io import IO
 
-# Write a NITF 2.1 file
+# Explicit format — always works
 with IO.open(["output.ntf"], "w", "nitf") as writer:
     ...
 
-# Write an NSIF 1.0 file
-with IO.open(["output.nsf"], "w", "nsif") as writer:
-    ...
+# Auto-detected from extension — format parameter omitted
+with IO.open(["output.ntf"], "w") as writer:
+    ...  # Detected as NITF from .ntf extension
 
-# Write a GeoTIFF file
-with IO.open(["output.tif"], "w", "geotiff") as writer:
-    ...
+with IO.open(["output.tif"], "w") as writer:
+    ...  # Detected as TIFF from .tif extension
 ```
 
-The format flag is required because the file may not exist yet and the extension alone
-is ambiguous — for example, `.ntf` could be NITF 2.1 or NSIF 1.0. Always specify the
-format explicitly.
+When `format` is omitted, the extension of the first path determines the format. For
+R-set paths like `output.ntf.r1`, the `.rN` suffix is stripped before detection so the
+underlying `.ntf` extension is used. If the extension is not recognized, a `ValueError`
+is raised — pass the format explicitly in that case.
 
-Accepted format strings:
+When `format` is provided, it takes precedence over the file extension.
 
-| Format string | Output |
-|---------------|--------|
-| `"nitf"`, `"nitf21"`, `"nitf2.1"` | NITF 2.1 |
-| `"nsif"`, `"nsif10"`, `"nsif1.0"` | NSIF 1.0 |
-| `"geotiff"` | GeoTIFF |
+Accepted format strings and auto-detected extensions:
 
-For reading, `IO.open` auto-detects the format from the file extension (`.ntf`, `.nitf`,
-`.nsf`, `.nsif`, `.tif`, `.tiff`) or from magic bytes in the file header. You can also
-override detection with the `format` parameter.
+| Format string | Output | Auto-detected extensions |
+|---------------|--------|--------------------------|
+| `"nitf"`, `"nitf21"`, `"nitf2.1"` | NITF 2.1 | `.ntf`, `.nitf` |
+| `"nsif"`, `"nsif10"`, `"nsif1.0"` | NSIF 1.0 | `.nsf`, `.nsif` |
+| `"tiff"`, `"tif"`, `"geotiff"`, `"gtiff"` | GeoTIFF | `.tif`, `.tiff`, `.gtif`, `.gtiff` |
+| `"png"` | PNG | `.png` |
+| `"j2k"`, `"jp2"` | JPEG 2000 | `.j2k`, `.jp2` |
+| `"jpeg"`, `"jpg"` | JPEG | `.jpg`, `.jpeg` |
+
+For reading, `IO.open` auto-detects the format from the file extension or from magic
+bytes in the file header. You can also override detection with the `format` parameter.
 
 ## Metadata Controls Encoding
 
@@ -227,6 +230,82 @@ with IO.open(["output_cog.tif"], "w", "tiff") as writer:
 
 If roles are empty but the key contains `:overview:`, the writer falls back to
 inferring `NewSubfileType = 1` from the key pattern. Explicit roles are preferred.
+
+
+## Writing Multi-File R-Set Pyramids
+
+To write a multi-file R-set pyramid (separate files per resolution level), pass
+multiple output paths to `IO.open()` — the same pattern used for reading. The first
+path is the base file, and additional paths must follow the `.rN` naming convention:
+
+```python
+from aws.osml.io import IO, BufferedImageAssetProvider, PixelType
+import numpy as np
+
+# Create providers for each resolution level
+full_res = np.random.randint(0, 255, (3, 1024, 1024), dtype=np.uint8)
+overview_1 = np.random.randint(0, 255, (3, 512, 512), dtype=np.uint8)
+overview_2 = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
+
+base_provider = BufferedImageAssetProvider.create(
+    key="image:0", num_columns=1024, num_rows=1024, num_bands=3,
+    block_width=256, block_height=256, pixel_type=PixelType.UInt8,
+)
+base_provider.set_full_image(full_res)
+
+ovr1_provider = BufferedImageAssetProvider.create(
+    key="image:0", num_columns=512, num_rows=512, num_bands=3,
+    block_width=256, block_height=256, pixel_type=PixelType.UInt8,
+)
+ovr1_provider.set_full_image(overview_1)
+
+ovr2_provider = BufferedImageAssetProvider.create(
+    key="image:0", num_columns=256, num_rows=256, num_bands=3,
+    block_width=256, block_height=256, pixel_type=PixelType.UInt8,
+)
+ovr2_provider.set_full_image(overview_2)
+
+# Write — each overview is routed to its own file
+with IO.open(
+    ["output.ntf", "output.ntf.r1", "output.ntf.r2"], "w", "nitf"
+) as writer:
+    writer.add_asset("image:0", base_provider,
+                     title="Full Resolution", description="Base image",
+                     roles=["data"])
+    writer.add_asset("image:0:overview:1", ovr1_provider,
+                     title="Overview 1", description="2x reduced",
+                     roles=["overview"])
+    writer.add_asset("image:0:overview:2", ovr2_provider,
+                     title="Overview 2", description="4x reduced",
+                     roles=["overview"])
+```
+
+The overview level in the asset key (`image:0:overview:1`) determines which output
+file receives the data — it is matched to the `.r1` suffix in the path list. The
+key is re-mapped to `image:0` before writing to the inner file, so each R-set file
+contains a standard single-image dataset.
+
+Reading the pyramid back uses the same multi-path pattern:
+
+```python
+with IO.open(
+    ["output.ntf", "output.ntf.r1", "output.ntf.r2"], "r"
+) as dataset:
+    for key in dataset.get_asset_keys(asset_type="image"):
+        asset = dataset.get_asset(key)
+        print(f"{key}: {asset.num_columns}x{asset.num_rows}")
+    # image:0: 1024x1024
+    # image:0:overview:1: 512x512
+    # image:0:overview:2: 256x256
+```
+
+Some things to keep in mind:
+
+- All files in the R-set use the same format. The format is specified once and applied
+  to every path.
+- Additional paths must have a `.rN` suffix. Paths without it raise a `ValueError`.
+- File-level metadata set via `writer.metadata` is forwarded to all output files.
+- The writer closes files in order: base first, then R-set files in ascending level.
 
 
 ## Format-Specific Encoding Options

@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 use pyo3::IntoPyObjectExt;
 
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
-use crate::composite::CompositeDatasetReader;
+use crate::composite::{CompositeDatasetReader, CompositeDatasetWriter};
 use crate::error::CodecError;
 #[cfg(feature = "openjpeg")]
 use crate::j2k::{J2KDatasetReader, J2KDatasetWriter};
@@ -21,7 +21,7 @@ use crate::jbp::{JBPDatasetReader, JBPDatasetWriter, NitfFormat};
 #[cfg(feature = "libjpeg-turbo")]
 use crate::jpeg::{JPEGDatasetReader, JPEGDatasetWriter};
 use crate::png::{PNGDatasetReader, PNGDatasetWriter};
-use crate::traits::{AssetProvider, DatasetReader, ImageAssetProvider};
+use crate::traits::{AssetProvider, DatasetReader, DatasetWriter, ImageAssetProvider};
 use crate::types::AssetType;
 #[cfg(feature = "libtiff")]
 use crate::tiff;
@@ -159,12 +159,26 @@ impl IO {
                 }
             }
             "w" => {
-                // Create a writer based on the URI scheme and format
-                let format_str = format.ok_or_else(|| {
-                    PyValueError::new_err("Format must be specified when opening for writing")
-                })?;
-                let writer = create_writer(&parsed, format_str)?;
-                Ok(writer.into_pyobject(py)?.into_any().unbind())
+                // Resolve format: use explicit format if provided, otherwise
+                // auto-detect from the file extension (stripping .rN suffix).
+                let format_str = match format {
+                    Some(f) => f.to_string(),
+                    None => detect_write_format(&parsed)
+                        .ok_or_else(|| PyValueError::new_err(
+                            "Cannot determine output format: no format specified \
+                             and file extension is not recognized"
+                        ))?,
+                };
+
+                if paths.len() > 1 {
+                    // Multi-path: create composite writer for R-set files
+                    let writer = create_multi_path_writer(&paths, &format_str)?;
+                    Ok(writer.into_pyobject(py)?.into_any().unbind())
+                } else {
+                    // Single-path: existing behavior
+                    let writer = create_writer(&parsed, &format_str)?;
+                    Ok(writer.into_pyobject(py)?.into_any().unbind())
+                }
             }
             _ => Err(PyValueError::new_err(format!(
                 "Invalid mode '{}'. Expected 'r' for reading or 'w' for writing.",
@@ -437,6 +451,60 @@ fn create_multi_path_reader_boxed(
     Ok(Box::new(composite))
 }
 
+/// Detect the output format from a parsed URI's file extension.
+///
+/// Strips any `.rN` R-set suffix before checking the extension, so that
+/// paths like `output.ntf.r1` are correctly detected as `"nitf"`.
+///
+/// Returns `None` if the extension is not recognized.
+fn detect_write_format(parsed: &ParsedUri) -> Option<String> {
+    let effective_path = strip_rset_suffix(&parsed.path);
+    let effective_parsed = ParsedUri::parse(&effective_path);
+
+    effective_parsed.extension().and_then(|ext| {
+        match ext.to_lowercase().as_str() {
+            "ntf" | "nitf" => Some("nitf".to_string()),
+            "nsf" | "nsif" => Some("nsif".to_string()),
+            "tif" | "tiff" | "gtif" | "gtiff" => Some("tiff".to_string()),
+            "png" => Some("png".to_string()),
+            "j2k" | "jp2" => Some("j2k".to_string()),
+            "jpg" | "jpeg" => Some("jpeg".to_string()),
+            _ => None,
+        }
+    })
+}
+
+/// Creates a composite writer from multiple output paths with R-set detection.
+///
+/// The first path is opened as the base writer. Additional paths must match
+/// the `.rN` filename pattern; each is opened independently and paired with
+/// its overview level. The resulting `CompositeDatasetWriter` routes assets
+/// by key: overview assets go to the matching R-set writer, non-overview
+/// assets go to the base writer.
+fn create_multi_path_writer(
+    paths: &[String],
+    format: &str,
+) -> PyResult<PyDatasetWriter> {
+    let base_parsed = ParsedUri::parse(&paths[0]);
+    let base_writer = create_writer_boxed(&base_parsed, format)?;
+
+    let mut rset_writers = Vec::new();
+    for path in &paths[1..] {
+        let level = extract_rset_level(path).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "Additional path '{}' does not match R-set pattern '.rN'",
+                path
+            ))
+        })?;
+        let parsed = ParsedUri::parse(path);
+        let writer = create_writer_boxed(&parsed, format)?;
+        rset_writers.push((level, writer));
+    }
+
+    let composite = CompositeDatasetWriter::new(base_writer, rset_writers);
+    Ok(PyDatasetWriter::new(Box::new(composite)))
+}
+
 /// Creates a DatasetReader for the given URI.
 ///
 /// This function determines the appropriate reader implementation based on
@@ -598,6 +666,19 @@ fn create_reader_boxed(
 /// This function determines the appropriate writer implementation based on
 /// the URI scheme and file format.
 fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> {
+    let boxed = create_writer_boxed(parsed, format)?;
+    Ok(PyDatasetWriter::new(boxed))
+}
+
+/// Internal: creates a boxed DatasetWriter for the given URI.
+///
+/// This is the core writer creation logic, returning a `Box<dyn DatasetWriter>`
+/// that can be used directly (e.g., in composite writers) or wrapped in
+/// `PyDatasetWriter` for Python exposure.
+fn create_writer_boxed(
+    parsed: &ParsedUri,
+    format: &str,
+) -> PyResult<Box<dyn DatasetWriter>> {
     // Validate scheme is supported
     match parsed.scheme.as_str() {
         "file" => {}
@@ -619,16 +700,16 @@ fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> 
     match format.to_lowercase().as_str() {
         "nitf" | "nitf21" | "nitf2.1" => {
             let writer = JBPDatasetWriter::new(&parsed.path, NitfFormat::Nitf21)?;
-            Ok(PyDatasetWriter::new(Box::new(writer)))
+            Ok(Box::new(writer))
         }
         "nsif" | "nsif10" | "nsif1.0" => {
             let writer = JBPDatasetWriter::new(&parsed.path, NitfFormat::Nsif10)?;
-            Ok(PyDatasetWriter::new(Box::new(writer)))
+            Ok(Box::new(writer))
         }
         #[cfg(feature = "libtiff")]
         "tif" | "tiff" | "gtif" | "gtiff" | "geotiff" => {
             let writer = tiff::TIFFDatasetWriter::new(&parsed.path)?;
-            Ok(PyDatasetWriter::new(Box::new(writer)))
+            Ok(Box::new(writer))
         }
         #[cfg(not(feature = "libtiff"))]
         "tif" | "tiff" | "gtif" | "gtiff" | "geotiff" => {
@@ -639,12 +720,12 @@ fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> 
         }
         "png" => {
             let writer = PNGDatasetWriter::new(&parsed.path)?;
-            Ok(PyDatasetWriter::new(Box::new(writer)))
+            Ok(Box::new(writer))
         }
         #[cfg(feature = "openjpeg")]
         "j2k" | "jp2" | "jpeg2000" => {
             let writer = J2KDatasetWriter::new(&parsed.path)?;
-            Ok(PyDatasetWriter::new(Box::new(writer)))
+            Ok(Box::new(writer))
         }
         #[cfg(not(feature = "openjpeg"))]
         "j2k" | "jp2" | "jpeg2000" => {
@@ -656,7 +737,7 @@ fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> 
         #[cfg(feature = "libjpeg-turbo")]
         "jpg" | "jpeg" => {
             let writer = JPEGDatasetWriter::new(&parsed.path)?;
-            Ok(PyDatasetWriter::new(Box::new(writer)))
+            Ok(Box::new(writer))
         }
         #[cfg(not(feature = "libjpeg-turbo"))]
         "jpg" | "jpeg" => {
@@ -1110,5 +1191,154 @@ mod tests {
         // Text filter should NOT include overviews
         let text_keys = reader.get_asset_keys(Some(AssetType::Text), None);
         assert!(!text_keys.contains(&"image:0:overview:1".to_string()));
+    }
+
+    // =========================================================================
+    // Write-mode format auto-detection tests
+    // =========================================================================
+
+    #[test]
+    fn test_detect_write_format_nitf_extensions() {
+        let parsed = ParsedUri::parse("output.ntf");
+        assert_eq!(detect_write_format(&parsed), Some("nitf".to_string()));
+
+        let parsed = ParsedUri::parse("output.nitf");
+        assert_eq!(detect_write_format(&parsed), Some("nitf".to_string()));
+    }
+
+    #[test]
+    fn test_detect_write_format_nsif_extensions() {
+        let parsed = ParsedUri::parse("output.nsf");
+        assert_eq!(detect_write_format(&parsed), Some("nsif".to_string()));
+
+        let parsed = ParsedUri::parse("output.nsif");
+        assert_eq!(detect_write_format(&parsed), Some("nsif".to_string()));
+    }
+
+    #[test]
+    fn test_detect_write_format_tiff_extensions() {
+        for ext in &["tif", "tiff", "gtif", "gtiff"] {
+            let parsed = ParsedUri::parse(&format!("output.{}", ext));
+            assert_eq!(
+                detect_write_format(&parsed),
+                Some("tiff".to_string()),
+                "Failed for extension: {}",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn test_detect_write_format_png() {
+        let parsed = ParsedUri::parse("output.png");
+        assert_eq!(detect_write_format(&parsed), Some("png".to_string()));
+    }
+
+    #[test]
+    fn test_detect_write_format_j2k_extensions() {
+        let parsed = ParsedUri::parse("output.j2k");
+        assert_eq!(detect_write_format(&parsed), Some("j2k".to_string()));
+
+        let parsed = ParsedUri::parse("output.jp2");
+        assert_eq!(detect_write_format(&parsed), Some("j2k".to_string()));
+    }
+
+    #[test]
+    fn test_detect_write_format_jpeg_extensions() {
+        let parsed = ParsedUri::parse("output.jpg");
+        assert_eq!(detect_write_format(&parsed), Some("jpeg".to_string()));
+
+        let parsed = ParsedUri::parse("output.jpeg");
+        assert_eq!(detect_write_format(&parsed), Some("jpeg".to_string()));
+    }
+
+    #[test]
+    fn test_detect_write_format_rset_suffix_stripped() {
+        // .ntf.r1 should strip .r1 and detect "nitf"
+        let parsed = ParsedUri::parse("output.ntf.r1");
+        assert_eq!(detect_write_format(&parsed), Some("nitf".to_string()));
+    }
+
+    #[test]
+    fn test_detect_write_format_tiff_rset_suffix_stripped() {
+        // .tiff.r3 should strip .r3 and detect "tiff"
+        let parsed = ParsedUri::parse("output.tiff.r3");
+        assert_eq!(detect_write_format(&parsed), Some("tiff".to_string()));
+    }
+
+    #[test]
+    fn test_detect_write_format_unrecognized() {
+        let parsed = ParsedUri::parse("output.xyz");
+        assert_eq!(detect_write_format(&parsed), None);
+    }
+
+    #[test]
+    fn test_detect_write_format_no_extension() {
+        let parsed = ParsedUri::parse("output");
+        assert_eq!(detect_write_format(&parsed), None);
+    }
+
+    // =========================================================================
+    // Property-based tests
+    // =========================================================================
+
+    mod property_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        // Feature: multifile-rset-writing, Property 5: Write-mode format auto-detection
+        //
+        // **Validates: Requirements 6.1**
+        //
+        // For any recognized extension, `detect_write_format()` returns the
+        // expected format string. Also verifies that appending an `.rN` suffix
+        // still produces the same result after rset stripping.
+        proptest! {
+            #[test]
+            fn prop_detect_write_format_recognized_extensions(
+                (ext, expected) in prop::sample::select(vec![
+                    ("ntf", "nitf"),
+                    ("nitf", "nitf"),
+                    ("nsf", "nsif"),
+                    ("nsif", "nsif"),
+                    ("tif", "tiff"),
+                    ("tiff", "tiff"),
+                    ("gtif", "tiff"),
+                    ("gtiff", "tiff"),
+                    ("png", "png"),
+                    ("j2k", "j2k"),
+                    ("jp2", "j2k"),
+                    ("jpg", "jpeg"),
+                    ("jpeg", "jpeg"),
+                ]),
+                rset_level in 1u32..=20,
+            ) {
+                // Test direct extension detection
+                let path = format!("output.{}", ext);
+                let parsed = ParsedUri::parse(&path);
+                let result = detect_write_format(&parsed);
+                prop_assert_eq!(
+                    result.as_deref(),
+                    Some(expected),
+                    "Extension '{}' should map to '{}'",
+                    ext,
+                    expected,
+                );
+
+                // Test with .rN suffix appended — rset stripping should
+                // still yield the same format
+                let rset_path = format!("output.{}.r{}", ext, rset_level);
+                let rset_parsed = ParsedUri::parse(&rset_path);
+                let rset_result = detect_write_format(&rset_parsed);
+                prop_assert_eq!(
+                    rset_result.as_deref(),
+                    Some(expected),
+                    "Extension '{}.r{}' should strip rset suffix and map to '{}'",
+                    ext,
+                    rset_level,
+                    expected,
+                );
+            }
+        }
     }
 }

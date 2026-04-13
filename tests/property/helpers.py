@@ -16,12 +16,14 @@ Helpers are split into three categories:
    and verifying mask patterns survive roundtrip.
 """
 
+import shutil
 import tempfile
 from pathlib import Path
 
 import numpy as np
 from aws.osml.io import (
     IO,
+    AssetType,
     BufferedImageAssetProvider,
     BufferedMetadataProvider,
 )
@@ -599,3 +601,164 @@ def write_and_read_png(
     finally:
         if path.exists():
             path.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Multi-file R-set and COG helpers
+# ---------------------------------------------------------------------------
+
+
+def write_and_read_rset(
+    base_array: np.ndarray,
+    base_config: dict,
+    overviews: list,
+) -> dict:
+    """Write multi-file NITF R-set and read back.
+
+    Creates a temporary directory, writes the base image and overview images
+    as separate NITF files via ``IO.open()`` with multiple paths, reads them
+    back via multi-path ``IO.open()``, and returns decoded arrays keyed by
+    asset key.
+
+    Args:
+        base_array: numpy array (bands, rows, cols) for base image.
+        base_config: dict with num_columns, num_rows, num_bands,
+            block_width, block_height, pixel_type.
+        overviews: list of (level, ovr_array, ovr_config) tuples where
+            each ovr_config has the same keys as base_config.
+
+    Returns:
+        dict mapping asset keys (e.g. ``"image:0"``,
+        ``"image:0:overview:1"``) to decoded numpy arrays.
+    """
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        base_path = str(Path(tmp_dir) / "base.ntf")
+        rset_paths = [
+            str(Path(tmp_dir) / f"base.ntf.r{level}")
+            for level, _, _ in overviews
+        ]
+        all_paths = [base_path] + rset_paths
+
+        # -- Write --
+        writer = IO.open(all_paths, "w", "nitf")
+
+        base_provider = BufferedImageAssetProvider.create(
+            key="image:0",
+            num_columns=base_config["num_columns"],
+            num_rows=base_config["num_rows"],
+            num_bands=base_config["num_bands"],
+            block_width=base_config["block_width"],
+            block_height=base_config["block_height"],
+            pixel_type=base_config["pixel_type"],
+        )
+        base_provider.set_full_image(base_array)
+        writer.add_asset("image:0", base_provider, "Base", "base image", ["data"])
+
+        for level, ovr_array, ovr_config in overviews:
+            ovr_key = f"image:0:overview:{level}"
+            ovr_provider = BufferedImageAssetProvider.create(
+                key="image:0",
+                num_columns=ovr_config["num_columns"],
+                num_rows=ovr_config["num_rows"],
+                num_bands=ovr_config["num_bands"],
+                block_width=ovr_config["block_width"],
+                block_height=ovr_config["block_height"],
+                pixel_type=ovr_config["pixel_type"],
+            )
+            ovr_provider.set_full_image(ovr_array)
+            writer.add_asset(ovr_key, ovr_provider, f"Overview {level}", "overview", ["overview"])
+
+        writer.close()
+
+        # -- Read --
+        reader = IO.open(all_paths, "r")
+        image_keys = reader.get_asset_keys(asset_type=AssetType.Image)
+
+        result = {}
+        for key in image_keys:
+            asset = reader.get_asset(key)
+            decoded = read_full_image(
+                asset, asset.num_bands, asset.num_rows, asset.num_columns
+            )
+            result[key] = decoded
+
+        reader.close()
+        return result
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def write_and_read_cog(
+    base_array: np.ndarray,
+    base_config: dict,
+    overviews: list,
+) -> dict:
+    """Write single COG TIFF with overviews and read back.
+
+    Creates a temporary directory, writes the base image and overview images
+    into a single TIFF file via ``IO.open()``, reads it back, and returns
+    decoded arrays with their roles keyed by asset key.
+
+    Args:
+        base_array: numpy array (bands, rows, cols) for base image.
+        base_config: dict with num_columns, num_rows, num_bands,
+            block_width, block_height, pixel_type.
+        overviews: list of (level, ovr_array, ovr_config) tuples where
+            each ovr_config has the same keys as base_config.
+
+    Returns:
+        dict mapping asset keys to ``(decoded_array, roles)`` tuples where
+        roles is a list of strings (e.g. ``["data"]`` or ``["overview"]``).
+    """
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        tiff_path = str(Path(tmp_dir) / "output.tif")
+
+        # -- Write --
+        writer = IO.open([tiff_path], "w", "tiff")
+
+        base_provider = BufferedImageAssetProvider.create(
+            key="image:0",
+            num_columns=base_config["num_columns"],
+            num_rows=base_config["num_rows"],
+            num_bands=base_config["num_bands"],
+            block_width=base_config["block_width"],
+            block_height=base_config["block_height"],
+            pixel_type=base_config["pixel_type"],
+        )
+        base_provider.set_full_image(base_array)
+        writer.add_asset("image:0", base_provider, "Base", "base image", ["data"])
+
+        for level, ovr_array, ovr_config in overviews:
+            ovr_key = f"image:0:overview:{level}"
+            ovr_provider = BufferedImageAssetProvider.create(
+                key=ovr_key,
+                num_columns=ovr_config["num_columns"],
+                num_rows=ovr_config["num_rows"],
+                num_bands=ovr_config["num_bands"],
+                block_width=ovr_config["block_width"],
+                block_height=ovr_config["block_height"],
+                pixel_type=ovr_config["pixel_type"],
+            )
+            ovr_provider.set_full_image(ovr_array)
+            writer.add_asset(ovr_key, ovr_provider, f"Overview {level}", "overview", ["overview"])
+
+        writer.close()
+
+        # -- Read --
+        reader = IO.open([tiff_path], "r")
+        image_keys = reader.get_asset_keys(asset_type=AssetType.Image)
+
+        result = {}
+        for key in image_keys:
+            asset = reader.get_asset(key)
+            decoded = read_full_image(
+                asset, asset.num_bands, asset.num_rows, asset.num_columns
+            )
+            result[key] = (decoded, list(asset.roles))
+
+        reader.close()
+        return result
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
