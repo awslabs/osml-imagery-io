@@ -5,6 +5,7 @@
 
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 
 use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
@@ -12,6 +13,7 @@ use pyo3::prelude::*;
 use pyo3::IntoPyObjectExt;
 
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
+use crate::composite::CompositeDatasetReader;
 use crate::error::CodecError;
 #[cfg(feature = "openjpeg")]
 use crate::j2k::{J2KDatasetReader, J2KDatasetWriter};
@@ -19,6 +21,8 @@ use crate::jbp::{JBPDatasetReader, JBPDatasetWriter, NitfFormat};
 #[cfg(feature = "libjpeg-turbo")]
 use crate::jpeg::{JPEGDatasetReader, JPEGDatasetWriter};
 use crate::png::{PNGDatasetReader, PNGDatasetWriter};
+use crate::traits::{AssetProvider, DatasetReader, ImageAssetProvider};
+use crate::types::AssetType;
 #[cfg(feature = "libtiff")]
 use crate::tiff;
 
@@ -144,9 +148,15 @@ impl IO {
 
         match mode {
             "r" => {
-                // Create a reader based on the URI scheme and format
-                let reader = create_reader(&parsed, format)?;
-                Ok(reader.into_pyobject(py)?.into_any().unbind())
+                if paths.len() > 1 {
+                    // Multi-path: detect R-set files and build composite reader
+                    let reader = create_multi_path_reader(&paths, format)?;
+                    Ok(reader.into_pyobject(py)?.into_any().unbind())
+                } else {
+                    // Single-path: existing behavior
+                    let reader = create_reader(&parsed, format)?;
+                    Ok(reader.into_pyobject(py)?.into_any().unbind())
+                }
             }
             "w" => {
                 // Create a writer based on the URI scheme and format
@@ -175,12 +185,277 @@ fn mmap_file(path: &str) -> Result<Mmap, CodecError> {
     unsafe { Ok(Mmap::map(&file)?) }
 }
 
+/// Extract the R-set level from a filename, if it matches the `.rN` pattern.
+///
+/// Returns `Some(N)` if the filename ends with `.rN` where N is a positive
+/// integer. Returns `None` otherwise.
+///
+/// # Examples
+/// - `"image.ntf.r1"` → `Some(1)`
+/// - `"image.ntf.r12"` → `Some(12)`
+/// - `"image.ntf.r0"` → `None` (level 0 is the base, not an overview)
+/// - `"image.ntf"` → `None`
+/// - `"image.r1.ntf"` → `None` (`.r1` is not the final extension)
+fn extract_rset_level(path: &str) -> Option<u32> {
+    let filename = Path::new(path)
+        .file_name()
+        .and_then(|f| f.to_str())?;
+
+    // Find the last '.' in the filename
+    let dot_pos = filename.rfind('.')?;
+    let suffix = &filename[dot_pos + 1..];
+
+    // Check if suffix starts with 'r' followed by digits only
+    if !suffix.starts_with('r') || suffix.len() < 2 {
+        return None;
+    }
+    let digits = &suffix[1..];
+    if !digits.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+
+    let level: u32 = digits.parse().ok()?;
+    if level == 0 {
+        None // .r0 is the base, not an overview
+    } else {
+        Some(level)
+    }
+}
+
+/// Strip the `.rN` suffix from a path to get the base path for format detection.
+///
+/// # Examples
+/// - `"image.ntf.r1"` → `"image.ntf"`
+/// - `"image.ntf"` → `"image.ntf"` (unchanged)
+fn strip_rset_suffix(path: &str) -> String {
+    // Find the last '.' in the path
+    if let Some(dot_pos) = path.rfind('.') {
+        let suffix = &path[dot_pos + 1..];
+        if suffix.starts_with('r')
+            && suffix.len() >= 2
+            && suffix[1..].chars().all(|c| c.is_ascii_digit())
+        {
+            return path[..dot_pos].to_string();
+        }
+    }
+    path.to_string()
+}
+
+/// Extract the primary image asset from a reader as an `Arc<dyn ImageAssetProvider>`.
+///
+/// Looks for the first `image:0` asset and attempts to get it as an
+/// `ImageAssetProvider`. Returns `None` if no image asset is found.
+fn extract_primary_image(reader: &dyn DatasetReader) -> Option<Arc<dyn ImageAssetProvider>> {
+    let keys = reader.get_asset_keys(Some(AssetType::Image), None);
+    let key = keys.first()?;
+    let asset = reader.get_asset(key).ok()?;
+    try_as_image_provider_from_asset(&asset)
+}
+
+/// Try to convert an `Arc<dyn AssetProvider>` to `Arc<dyn ImageAssetProvider>`.
+///
+/// This duplicates the downcasting logic from `reader.rs` but operates on
+/// `AssetProvider` rather than requiring the Python binding context.
+fn try_as_image_provider_from_asset(
+    asset: &Arc<dyn AssetProvider>,
+) -> Option<Arc<dyn ImageAssetProvider>> {
+    use crate::jbp::JBPImageAssetProvider;
+    use crate::png::PNGImageAssetProvider;
+
+    if asset.asset_type() != AssetType::Image {
+        return None;
+    }
+
+    // Try JBPImageAssetProvider
+    if asset.as_any().downcast_ref::<JBPImageAssetProvider>().is_some() {
+        let ptr = Arc::as_ptr(asset);
+        unsafe {
+            Arc::increment_strong_count(ptr);
+            let concrete_ptr = ptr as *const JBPImageAssetProvider;
+            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
+        }
+    }
+
+    // Try TIFFImageAssetProvider
+    #[cfg(feature = "libtiff")]
+    if asset.as_any().downcast_ref::<crate::tiff::TIFFImageAssetProvider>().is_some() {
+        let ptr = Arc::as_ptr(asset);
+        unsafe {
+            Arc::increment_strong_count(ptr);
+            let concrete_ptr = ptr as *const crate::tiff::TIFFImageAssetProvider;
+            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
+        }
+    }
+
+    // Try PNGImageAssetProvider
+    if asset.as_any().downcast_ref::<PNGImageAssetProvider>().is_some() {
+        let ptr = Arc::as_ptr(asset);
+        unsafe {
+            Arc::increment_strong_count(ptr);
+            let concrete_ptr = ptr as *const PNGImageAssetProvider;
+            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
+        }
+    }
+
+    // Try J2KImageAssetProvider
+    #[cfg(feature = "openjpeg")]
+    if asset.as_any().downcast_ref::<crate::j2k::J2KImageAssetProvider>().is_some() {
+        let ptr = Arc::as_ptr(asset);
+        unsafe {
+            Arc::increment_strong_count(ptr);
+            let concrete_ptr = ptr as *const crate::j2k::J2KImageAssetProvider;
+            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
+        }
+    }
+
+    // Try JPEGImageAssetProvider
+    #[cfg(feature = "libjpeg-turbo")]
+    if asset.as_any().downcast_ref::<crate::jpeg::JPEGImageAssetProvider>().is_some() {
+        let ptr = Arc::as_ptr(asset);
+        unsafe {
+            Arc::increment_strong_count(ptr);
+            let concrete_ptr = ptr as *const crate::jpeg::JPEGImageAssetProvider;
+            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
+        }
+    }
+
+    None
+}
+
+/// Creates a composite reader from multiple paths with R-set detection.
+///
+/// The first path is opened as the base reader. Additional paths matching
+/// the `.rN` filename pattern are opened independently, and their primary
+/// image assets are re-keyed as `image:0:overview:N` with role `"overview"`.
+fn create_multi_path_reader(
+    paths: &[String],
+    format: Option<&str>,
+) -> PyResult<PyDatasetReader> {
+    let boxed = create_multi_path_reader_boxed(paths, format)?;
+    Ok(PyDatasetReader::new(boxed))
+}
+
+/// Internal: creates a boxed composite reader from multiple paths.
+fn create_multi_path_reader_boxed(
+    paths: &[String],
+    format: Option<&str>,
+) -> PyResult<Box<dyn DatasetReader>> {
+    // Open the base reader from the first path
+    let base_parsed = ParsedUri::parse(&paths[0]);
+    let base_reader = create_reader_boxed(&base_parsed, format)?;
+
+    // Collect overview entries: (level, ImageAssetProvider)
+    let mut overview_entries: Vec<(u32, Arc<dyn ImageAssetProvider>)> = Vec::new();
+
+    for path in &paths[1..] {
+        let level = extract_rset_level(path).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "Additional path '{}' does not match R-set pattern '.rN' \
+                 (where N is a positive integer)",
+                path
+            ))
+        })?;
+
+        // Strip the .rN suffix for format detection
+        let base_path = strip_rset_suffix(path);
+        let parsed = ParsedUri::parse(&base_path);
+
+        // Create a reader for this R-set file using the actual file path
+        let rset_parsed = ParsedUri::parse(path);
+
+        // Use the base path's extension for format detection, but open the actual file
+        let rset_reader: Box<dyn DatasetReader> = {
+            // Determine format from the stripped path's extension (or explicit format)
+            let rset_format = format.or_else(|| {
+                parsed.extension().map(|e| match e.to_lowercase().as_str() {
+                    "ntf" | "nitf" | "nsif" | "nsf" => "nitf",
+                    "tif" | "tiff" | "gtif" | "gtiff" => "tiff",
+                    "png" => "png",
+                    "j2k" | "jp2" => "j2k",
+                    "jpg" | "jpeg" => "jpeg",
+                    _ => "",
+                })
+            });
+
+            match rset_format {
+                Some("nitf") | Some("nitf21") | Some("nitf2.1") | Some("nsif")
+                | Some("nsif10") | Some("nsif1.0") | Some("jbp") => {
+                    let mmap = mmap_file(&rset_parsed.path)?;
+                    let reader = JBPDatasetReader::from_bytes(&mmap)?;
+                    Box::new(reader)
+                }
+                #[cfg(feature = "libtiff")]
+                Some("tiff") | Some("tif") => {
+                    let mmap = mmap_file(&rset_parsed.path)?;
+                    let reader = tiff::TIFFDatasetReader::from_bytes(&mmap)?;
+                    Box::new(reader)
+                }
+                Some("png") => {
+                    let mmap = mmap_file(&rset_parsed.path)?;
+                    let reader = PNGDatasetReader::from_bytes(&mmap)?;
+                    Box::new(reader)
+                }
+                #[cfg(feature = "openjpeg")]
+                Some("j2k") | Some("jp2") | Some("jpeg2000") => {
+                    let mmap = mmap_file(&rset_parsed.path)?;
+                    let reader = J2KDatasetReader::from_bytes(&mmap)?;
+                    Box::new(reader)
+                }
+                #[cfg(feature = "libjpeg-turbo")]
+                Some("jpg") | Some("jpeg") => {
+                    let mmap = mmap_file(&rset_parsed.path)?;
+                    let reader = JPEGDatasetReader::from_bytes(&mmap)?;
+                    Box::new(reader)
+                }
+                _ => {
+                    return Err(CodecError::InvalidFormat(format!(
+                        "Cannot determine format for R-set file: '{}'",
+                        path
+                    ))
+                    .into());
+                }
+            }
+        };
+
+        // Extract the primary image asset from the R-set reader
+        let image_provider = extract_primary_image(rset_reader.as_ref()).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "R-set file '{}' does not contain an image asset",
+                path
+            ))
+        })?;
+
+        overview_entries.push((level, image_provider));
+    }
+
+    // Build the composite reader
+    let composite = CompositeDatasetReader::new(
+        base_reader,
+        overview_entries,
+    );
+
+    Ok(Box::new(composite))
+}
+
 /// Creates a DatasetReader for the given URI.
 ///
 /// This function determines the appropriate reader implementation based on
 /// the URI scheme and file format. Files are memory-mapped and passed as
 /// byte slices to the format-specific readers.
 fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDatasetReader> {
+    let boxed = create_reader_boxed(parsed, format)?;
+    Ok(PyDatasetReader::new(boxed))
+}
+
+/// Internal: creates a boxed DatasetReader for the given URI.
+///
+/// This is the core reader creation logic, returning a `Box<dyn DatasetReader>`
+/// that can be used directly (e.g., in composite readers) or wrapped in
+/// `PyDatasetReader` for Python exposure.
+fn create_reader_boxed(
+    parsed: &ParsedUri,
+    format: Option<&str>,
+) -> PyResult<Box<dyn DatasetReader>> {
     // Validate scheme is supported
     match parsed.scheme.as_str() {
         "file" => {}
@@ -205,30 +480,30 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
             "nitf" | "nitf21" | "nitf2.1" | "nsif" | "nsif10" | "nsif1.0" | "jbp" => {
                 let mmap = mmap_file(&parsed.path)?;
                 let reader = JBPDatasetReader::from_bytes(&mmap)?;
-                return Ok(PyDatasetReader::new(Box::new(reader)));
+                return Ok(Box::new(reader));
             }
             #[cfg(feature = "libtiff")]
             "tiff" | "tif" => {
                 let mmap = mmap_file(&parsed.path)?;
                 let reader = tiff::TIFFDatasetReader::from_bytes(&mmap)?;
-                return Ok(PyDatasetReader::new(Box::new(reader)));
+                return Ok(Box::new(reader));
             }
             "png" => {
                 let mmap = mmap_file(&parsed.path)?;
                 let reader = PNGDatasetReader::from_bytes(&mmap)?;
-                return Ok(PyDatasetReader::new(Box::new(reader)));
+                return Ok(Box::new(reader));
             }
             #[cfg(feature = "openjpeg")]
             "j2k" | "jp2" | "jpeg2000" => {
                 let mmap = mmap_file(&parsed.path)?;
                 let reader = J2KDatasetReader::from_bytes(&mmap)?;
-                return Ok(PyDatasetReader::new(Box::new(reader)));
+                return Ok(Box::new(reader));
             }
             #[cfg(feature = "libjpeg-turbo")]
             "jpg" | "jpeg" => {
                 let mmap = mmap_file(&parsed.path)?;
                 let reader = JPEGDatasetReader::from_bytes(&mmap)?;
-                return Ok(PyDatasetReader::new(Box::new(reader)));
+                return Ok(Box::new(reader));
             }
             _ => {
                 return Err(CodecError::InvalidFormat(format!(
@@ -247,14 +522,14 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
         Some("ntf") | Some("nitf") | Some("nsif") | Some("nsf") => {
             let mmap = mmap_file(&parsed.path)?;
             let reader = JBPDatasetReader::from_bytes(&mmap)?;
-            Ok(PyDatasetReader::new(Box::new(reader)))
+            Ok(Box::new(reader))
         }
         Some("tif") | Some("tiff") | Some("gtif") | Some("gtiff") => {
             #[cfg(feature = "libtiff")]
             {
                 let mmap = mmap_file(&parsed.path)?;
                 let reader = tiff::TIFFDatasetReader::from_bytes(&mmap)?;
-                Ok(PyDatasetReader::new(Box::new(reader)))
+                Ok(Box::new(reader))
             }
             #[cfg(not(feature = "libtiff"))]
             {
@@ -268,14 +543,14 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
         Some("png") => {
             let mmap = mmap_file(&parsed.path)?;
             let reader = PNGDatasetReader::from_bytes(&mmap)?;
-            Ok(PyDatasetReader::new(Box::new(reader)))
+            Ok(Box::new(reader))
         }
         Some("j2k") | Some("jp2") => {
             #[cfg(feature = "openjpeg")]
             {
                 let mmap = mmap_file(&parsed.path)?;
                 let reader = J2KDatasetReader::from_bytes(&mmap)?;
-                Ok(PyDatasetReader::new(Box::new(reader)))
+                Ok(Box::new(reader))
             }
             #[cfg(not(feature = "openjpeg"))]
             {
@@ -291,7 +566,7 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
             {
                 let mmap = mmap_file(&parsed.path)?;
                 let reader = JPEGDatasetReader::from_bytes(&mmap)?;
-                Ok(PyDatasetReader::new(Box::new(reader)))
+                Ok(Box::new(reader))
             }
             #[cfg(not(feature = "libjpeg-turbo"))]
             {
@@ -598,5 +873,242 @@ mod tests {
         let parsed = ParsedUri::parse("/tmp/test_output.tif");
         let result = create_writer(&parsed, "tif");
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
+    }
+
+    // =========================================================================
+    // R-set filename detection tests
+    // =========================================================================
+
+    #[test]
+    fn test_extract_rset_level_valid() {
+        assert_eq!(extract_rset_level("image.ntf.r1"), Some(1));
+        assert_eq!(extract_rset_level("image.ntf.r5"), Some(5));
+        assert_eq!(extract_rset_level("image.ntf.r12"), Some(12));
+        assert_eq!(extract_rset_level("/path/to/image.ntf.r3"), Some(3));
+    }
+
+    #[test]
+    fn test_extract_rset_level_r0_returns_none() {
+        // .r0 is the base, not an overview
+        assert_eq!(extract_rset_level("image.ntf.r0"), None);
+    }
+
+    #[test]
+    fn test_extract_rset_level_no_rset() {
+        assert_eq!(extract_rset_level("image.ntf"), None);
+        assert_eq!(extract_rset_level("image.tif"), None);
+        assert_eq!(extract_rset_level("image"), None);
+    }
+
+    #[test]
+    fn test_extract_rset_level_not_final_extension() {
+        // .r1 is not the final extension
+        assert_eq!(extract_rset_level("image.r1.ntf"), None);
+    }
+
+    #[test]
+    fn test_extract_rset_level_non_numeric() {
+        assert_eq!(extract_rset_level("image.ntf.rabc"), None);
+        assert_eq!(extract_rset_level("image.ntf.r"), None);
+        assert_eq!(extract_rset_level("image.ntf.r1a"), None);
+    }
+
+    #[test]
+    fn test_strip_rset_suffix_with_rset() {
+        assert_eq!(strip_rset_suffix("image.ntf.r1"), "image.ntf");
+        assert_eq!(strip_rset_suffix("image.ntf.r12"), "image.ntf");
+        assert_eq!(strip_rset_suffix("/path/to/image.ntf.r3"), "/path/to/image.ntf");
+    }
+
+    #[test]
+    fn test_strip_rset_suffix_without_rset() {
+        assert_eq!(strip_rset_suffix("image.ntf"), "image.ntf");
+        assert_eq!(strip_rset_suffix("image.tif"), "image.tif");
+    }
+
+    // =========================================================================
+    // Multi-path R-set reader tests
+    // =========================================================================
+
+    #[test]
+    fn test_multi_path_rset_reader() {
+        // Use existing test NITF files, copying them to temp dir with R-set names
+        let base_path = std::path::Path::new("data/unit/nitf21-256x256-3band-8bit-nc.ntf");
+        let rset_path = std::path::Path::new("data/unit/nitf21-8x8-1band-8bit-nc.ntf");
+        if !base_path.exists() || !rset_path.exists() {
+            return; // Skip if test data not available
+        }
+
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let base_file = tmp_dir.path().join("large.ntf");
+        let rset_file = tmp_dir.path().join("large.ntf.r1");
+
+        std::fs::copy(base_path, &base_file).unwrap();
+        std::fs::copy(rset_path, &rset_file).unwrap();
+
+        let paths = vec![
+            base_file.to_str().unwrap().to_string(),
+            rset_file.to_str().unwrap().to_string(),
+        ];
+
+        // Use create_multi_path_reader_boxed to get a Box<dyn DatasetReader>
+        let reader = create_multi_path_reader_boxed(&paths, None).unwrap();
+
+        // Should have base image + overview
+        let all_keys = reader.get_asset_keys(None, None);
+        assert!(all_keys.contains(&"image:0".to_string()), "Missing image:0 key");
+        assert!(
+            all_keys.contains(&"image:0:overview:1".to_string()),
+            "Missing image:0:overview:1 key"
+        );
+
+        // Verify image:0 has the larger dimensions (256x256)
+        let base_asset = reader.get_asset("image:0").unwrap();
+        assert_eq!(base_asset.asset_type(), AssetType::Image);
+        assert!(base_asset.roles().contains(&"data".to_string()));
+
+        // Verify image:0:overview:1 has the smaller dimensions (8x8)
+        let ovr_asset = reader.get_asset("image:0:overview:1").unwrap();
+        assert_eq!(ovr_asset.asset_type(), AssetType::Image);
+        assert!(ovr_asset.roles().contains(&"overview".to_string()));
+
+        // Verify has_asset works
+        assert!(reader.has_asset("image:0"));
+        assert!(reader.has_asset("image:0:overview:1"));
+        assert!(!reader.has_asset("image:0:overview:2"));
+    }
+
+    #[test]
+    fn test_multi_path_rset_out_of_order() {
+        // Test that overview levels come from filenames, not list position
+        let base_path = std::path::Path::new("data/unit/nitf21-256x256-3band-8bit-nc.ntf");
+        let rset_path = std::path::Path::new("data/unit/nitf21-8x8-1band-8bit-nc.ntf");
+        if !base_path.exists() || !rset_path.exists() {
+            return;
+        }
+
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let base_file = tmp_dir.path().join("img.ntf");
+        let rset1_file = tmp_dir.path().join("img.ntf.r1");
+        let rset3_file = tmp_dir.path().join("img.ntf.r3");
+
+        std::fs::copy(base_path, &base_file).unwrap();
+        std::fs::copy(rset_path, &rset1_file).unwrap();
+        std::fs::copy(rset_path, &rset3_file).unwrap();
+
+        // Pass in reverse order: r3 before r1
+        let paths = vec![
+            base_file.to_str().unwrap().to_string(),
+            rset3_file.to_str().unwrap().to_string(),
+            rset1_file.to_str().unwrap().to_string(),
+        ];
+
+        let reader = create_multi_path_reader_boxed(&paths, None).unwrap();
+
+        let all_keys = reader.get_asset_keys(None, None);
+        assert!(all_keys.contains(&"image:0".to_string()));
+        assert!(all_keys.contains(&"image:0:overview:1".to_string()));
+        assert!(all_keys.contains(&"image:0:overview:3".to_string()));
+        // Should NOT have overview:2 (no .r2 file)
+        assert!(!all_keys.contains(&"image:0:overview:2".to_string()));
+    }
+
+    #[test]
+    fn test_single_path_unchanged_behavior() {
+        // Single path should work identically to current behavior
+        let base_path = std::path::Path::new("data/unit/nitf21-256x256-3band-8bit-nc.ntf");
+        if !base_path.exists() {
+            return;
+        }
+
+        let parsed = ParsedUri::parse(base_path.to_str().unwrap());
+        let reader = create_reader_boxed(&parsed, None).unwrap();
+
+        let keys = reader.get_asset_keys(Some(AssetType::Image), None);
+        assert_eq!(keys, vec!["image:0"]);
+        assert!(!reader.has_asset("image:0:overview:1"));
+    }
+
+    #[test]
+    fn test_multi_path_rset_tile_byte_ranges() {
+        // Verify that tile_byte_ranges() works for both base and overview assets
+        let base_path = std::path::Path::new("data/unit/nitf21-256x256-3band-8bit-nc.ntf");
+        let rset_path = std::path::Path::new("data/unit/nitf21-8x8-1band-8bit-nc.ntf");
+        if !base_path.exists() || !rset_path.exists() {
+            return;
+        }
+
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let base_file = tmp_dir.path().join("large.ntf");
+        let rset_file = tmp_dir.path().join("large.ntf.r1");
+
+        std::fs::copy(base_path, &base_file).unwrap();
+        std::fs::copy(rset_path, &rset_file).unwrap();
+
+        let paths = vec![
+            base_file.to_str().unwrap().to_string(),
+            rset_file.to_str().unwrap().to_string(),
+        ];
+
+        let reader = create_multi_path_reader_boxed(&paths, None).unwrap();
+
+        // Get the overview asset and verify it has tile_byte_ranges
+        // (NC compression should have tile byte ranges)
+        let ovr_asset = reader.get_asset("image:0:overview:1").unwrap();
+        assert_eq!(ovr_asset.asset_type(), AssetType::Image);
+
+        // The overview asset should retain its original tile_byte_ranges
+        // pointing to its own source file (the .r1 file)
+    }
+
+    #[test]
+    fn test_multi_path_non_rset_rejected() {
+        // Additional paths that don't match .rN should be rejected
+        let base_path = std::path::Path::new("data/unit/nitf21-256x256-3band-8bit-nc.ntf");
+        let other_path = std::path::Path::new("data/unit/nitf21-8x8-1band-8bit-nc.ntf");
+        if !base_path.exists() || !other_path.exists() {
+            return;
+        }
+
+        let paths = vec![
+            base_path.to_str().unwrap().to_string(),
+            other_path.to_str().unwrap().to_string(),
+        ];
+
+        let result = create_multi_path_reader_boxed(&paths, None);
+        assert!(result.is_err(), "Should reject non-R-set additional paths");
+    }
+
+    #[test]
+    fn test_multi_path_rset_image_keys_filter() {
+        // Verify that get_asset_keys with Image filter includes overviews
+        let base_path = std::path::Path::new("data/unit/nitf21-256x256-3band-8bit-nc.ntf");
+        let rset_path = std::path::Path::new("data/unit/nitf21-8x8-1band-8bit-nc.ntf");
+        if !base_path.exists() || !rset_path.exists() {
+            return;
+        }
+
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let base_file = tmp_dir.path().join("large.ntf");
+        let rset_file = tmp_dir.path().join("large.ntf.r1");
+
+        std::fs::copy(base_path, &base_file).unwrap();
+        std::fs::copy(rset_path, &rset_file).unwrap();
+
+        let paths = vec![
+            base_file.to_str().unwrap().to_string(),
+            rset_file.to_str().unwrap().to_string(),
+        ];
+
+        let reader = create_multi_path_reader_boxed(&paths, None).unwrap();
+
+        // Image filter should include both base and overview
+        let image_keys = reader.get_asset_keys(Some(AssetType::Image), None);
+        assert!(image_keys.contains(&"image:0".to_string()));
+        assert!(image_keys.contains(&"image:0:overview:1".to_string()));
+
+        // Text filter should NOT include overviews
+        let text_keys = reader.get_asset_keys(Some(AssetType::Text), None);
+        assert!(!text_keys.contains(&"image:0:overview:1".to_string()));
     }
 }

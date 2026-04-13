@@ -115,61 +115,7 @@ for level in range(image.num_resolution_levels):
     print(f"Level {level}: {cols}x{rows} ({bands} bands)")
 ```
 
-## Cloud Optimized GeoTIFF (COG) Overviews
-
-Cloud Optimized GeoTIFFs store reduced-resolution overview images as additional IFDs
-alongside the full-resolution image. These overviews are pre-computed downsampled
-versions of the primary image, useful for quick previews and multi-scale visualization
-without decoding the full-resolution data.
-
-The library exposes each overview IFD as a separate `ImageAssetProvider` with its own
-key and role. Overview keys follow the pattern `image:{parent}:overview:{level}`, where
-`{parent}` is the index of the full-resolution image and `{level}` is a one-based
-overview index (1 = largest overview, 2 = next smaller, etc.):
-
-```python
-from aws.osml.io import IO
-
-with IO.open(["cog.tif"], "r") as dataset:
-    # List all image assets (full-res + overviews)
-    all_keys = dataset.get_asset_keys(asset_type="image")
-    # ['image:0', 'image:0:overview:1', 'image:0:overview:2']
-
-    # Use roles to get only the full-resolution images
-    data_keys = dataset.get_asset_keys(asset_type="image", roles=["data"])
-    # ['image:0']
-
-    # Use roles to get only the overviews
-    overview_keys = dataset.get_asset_keys(asset_type="image", roles=["overview"])
-    # ['image:0:overview:1', 'image:0:overview:2']
-```
-
-Each overview is a fully functional `ImageAssetProvider` — you can read blocks, check
-dimensions, and access metadata just like a full-resolution image:
-
-```python
-    # Compare dimensions across levels
-    for key in all_keys:
-        asset = dataset.get_asset(key)
-        print(f"{key}: {asset.num_columns}x{asset.num_rows}, roles={asset.roles}")
-    # image:0: 4096x4096, roles=['data']
-    # image:0:overview:1: 2048x2048, roles=['overview']
-    # image:0:overview:2: 1024x1024, roles=['overview']
-
-    # Read a block from an overview
-    overview = dataset.get_asset("image:0:overview:1")
-    block = overview.get_block(0, 0, resolution_level=0)
-```
-
-This is different from the `resolution_level` parameter on `get_block()`. Block-level
-resolution levels are a JPEG 2000 decompression feature that produces smaller versions
-of the same block. COG overviews are separate images with their own tile grids and
-dimensions. The two mechanisms are complementary — a COG overview that uses JPEG 2000
-compression could itself support multiple block-level resolution levels.
-
-### Single-IFD Edge Case
-
-If a TIFF file contains only one IFD and that IFD has `NewSubfileType` bit 0 set
-(indicating a reduced-resolution image), the reader treats it as the primary image
-with key `image:0` and role `data`. A single-IFD file is always the primary image
-regardless of its `NewSubfileType` flag.
+Block-level resolution levels are different from overview assets. Overviews are
+separate images at reduced resolutions, exposed as distinct assets within the dataset.
+See [Image Pyramids](datasets-and-io.md#image-pyramids) for how the library handles
+embedded overviews (COG) and multi-file pyramids (R-sets).

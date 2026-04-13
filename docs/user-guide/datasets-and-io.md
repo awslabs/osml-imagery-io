@@ -77,24 +77,119 @@ underlying file format.
 | Role | Meaning | Assigned To |
 |------|---------|-------------|
 | `data` | Full-resolution image data | TIFF full-res IFDs, NITF image segments, JPEG, PNG |
-| `overview` | Reduced-resolution image | TIFF overview IFDs (COG) |
+| `overview` | Reduced-resolution image | COG overview IFDs, multi-file R-set images |
 | `metadata` | Metadata asset | NITF text segments, data extension segments |
 | `graphic` | Graphic/annotation overlay | NITF graphic segments |
 
 Roles are the primary way to distinguish between different kinds of assets without
-parsing key strings. A Cloud Optimized GeoTIFF (COG) might contain a full-resolution
-image and two overview images — all three are `image` type assets, but their roles
-tell you which is the primary data and which are reduced-resolution versions:
+parsing key strings. See [Image Pyramids](#image-pyramids) below for how roles are
+used to separate full-resolution images from reduced-resolution overviews.
+
+## Image Pyramids
+
+An image pyramid is a set of representations of the same image at progressively lower
+resolutions. Pyramids enable efficient multi-scale access — a viewer can load a
+low-resolution overview for navigation and fetch full-resolution tiles only for the
+region of interest.
+
+There are three ways multi-resolution data can be represented in geospatial imagery:
+
+1. **Block-level resolution levels** — A single image whose compressed blocks can be
+   decoded at multiple resolutions (e.g. JPEG 2000 wavelet decomposition). The block
+   grid stays the same; each block just produces fewer pixels at higher level numbers.
+   See [Reading Blocks](image-assets.md#reading-blocks) for details.
+
+2. **Embedded overviews** — A single file containing multiple images at different
+   resolutions. Cloud Optimized GeoTIFFs (COGs) store reduced-resolution overview
+   images as additional IFDs alongside the full-resolution image.
+
+3. **Multi-file pyramids** — Separate files for each resolution level. NITF R-sets
+   are a common example: `image.ntf` is the full resolution, `image.ntf.r1` through
+   `image.ntf.rN` are progressively reduced overviews.
+
+This library exposes cases 2 and 3 through the same uniform interface: each resolution
+level becomes a separate image asset with its own key and role. The full-resolution
+image has role `data`, and each overview has role `overview`.
+
+### Overview Asset Keys
+
+Overview keys follow the pattern `image:{parent}:overview:{level}`, where `{parent}`
+is the index of the full-resolution image and `{level}` is the overview number:
 
 ```python
+from aws.osml.io import IO
+
 with IO.open(["cog.tif"], "r") as dataset:
     for key in dataset.get_asset_keys(asset_type="image"):
         asset = dataset.get_asset(key)
-        print(f"{key}: roles={asset.roles}")
-    # image:0: roles=['data']
-    # image:0:overview:1: roles=['overview']
-    # image:0:overview:2: roles=['overview']
+        print(f"{key}: {asset.num_columns}x{asset.num_rows}, roles={asset.roles}")
+    # image:0: 4096x4096, roles=['data']
+    # image:0:overview:1: 2048x2048, roles=['overview']
+    # image:0:overview:2: 1024x1024, roles=['overview']
 ```
+
+Each overview is a fully functional image asset — you can read blocks, check dimensions,
+and access metadata just like a full-resolution image:
+
+```python
+    # Use roles to separate full-res from overviews
+    data_keys = dataset.get_asset_keys(asset_type="image", roles=["data"])
+    overview_keys = dataset.get_asset_keys(asset_type="image", roles=["overview"])
+
+    # Read a block from an overview
+    overview = dataset.get_asset("image:0:overview:1")
+    block = overview.get_block(0, 0, resolution_level=0)
+```
+
+This is different from the `resolution_level` parameter on `get_block()`. Block-level
+resolution levels are a decompression feature that produces smaller versions of the
+same block. Overview assets are separate images with their own tile grids and
+dimensions. The two mechanisms are complementary — an overview image that uses JPEG
+2000 compression could itself support multiple block-level resolution levels.
+
+### Multi-File Pyramids
+
+When a dataset spans multiple files at different resolutions, pass all files to
+`IO.open()` as a list. The library detects the R-set naming convention (`.rN` suffix)
+and exposes each file as an overview asset, producing the same key and role structure
+as embedded overviews:
+
+```python
+with IO.open(["image.ntf", "image.ntf.r1", "image.ntf.r2"], "r") as dataset:
+    for key in dataset.get_asset_keys(asset_type="image"):
+        asset = dataset.get_asset(key)
+        print(f"{key}: {asset.num_columns}x{asset.num_rows}, roles={asset.roles}")
+    # image:0: 4096x4096, roles=['data']
+    # image:0:overview:1: 2048x2048, roles=['overview']
+    # image:0:overview:2: 1024x1024, roles=['overview']
+```
+
+The first path is always the full-resolution base image. The overview level is
+extracted from the filename, not inferred from list order — these two calls produce
+identical results:
+
+```python
+IO.open(["image.ntf", "image.ntf.r1", "image.ntf.r2"], "r")
+IO.open(["image.ntf", "image.ntf.r2", "image.ntf.r1"], "r")
+```
+
+R-set detection is format-agnostic. Each file in the list is opened with its own
+auto-detected format reader, so the convention works for any supported format.
+
+:::{note}
+R-sets are a de facto industry convention used by commercial data providers. They are
+not part of the JBP/NITF specification — there is no internal metadata linking an
+R-set file to its parent. The relationship is purely by filename convention.
+:::
+
+Some things to keep in mind with multi-file pyramids:
+
+- The caller must provide the full list of paths explicitly. `IO.open()` does not
+  scan the filesystem for sibling `.rN` files.
+- When only one path is provided, behavior is identical to the single-file case.
+- R-set overviews are associated with `image:0` (the primary image segment). If the
+  base file contains multiple image segments, the R-sets apply to the primary image
+  only.
 
 ## Discovering Assets
 
@@ -121,8 +216,8 @@ with IO.open(["complex_dataset.ntf"], "r") as dataset:
 ### Filtering by Role
 
 The `roles` parameter on `get_asset_keys()` lets you filter assets by their semantic
-purpose. This is particularly useful for COG files where you want to separate
-full-resolution images from overviews:
+purpose. This is useful when a dataset contains both full-resolution images and
+overviews:
 
 ```python
 with IO.open(["cog.tif"], "r") as dataset:

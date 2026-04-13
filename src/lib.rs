@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 
 mod bindings;
 pub mod buffered;
+pub mod composite;
 mod error;
 pub mod j2k;
 pub mod jbp;
@@ -29,6 +30,7 @@ pub use bindings::{
     PyStructureWriter, PyValue, IO,
 };
 pub use buffered::{BufferedImageAssetProvider, BufferedMetadataProvider, BufferedTextAssetProvider, MemoryImageConfig};
+pub use composite::{CompositeDatasetReader, OverviewAssetWrapper};
 pub use traits::{
     AssetProvider, DataAssetProvider, DatasetReader, DatasetWriter, GraphicsAssetProvider,
     ImageAssetProvider, MetadataProvider, TextAssetProvider,

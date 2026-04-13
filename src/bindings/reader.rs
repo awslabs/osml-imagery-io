@@ -220,6 +220,16 @@ fn try_as_image_provider(
         return None;
     }
 
+    // Try OverviewAssetWrapper (composite reader overview assets)
+    if asset.as_any().downcast_ref::<crate::composite::OverviewAssetWrapper>().is_some() {
+        let ptr = Arc::as_ptr(asset);
+        unsafe {
+            Arc::increment_strong_count(ptr);
+            let concrete_ptr = ptr as *const crate::composite::OverviewAssetWrapper;
+            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
+        }
+    }
+
     // Try JBPImageAssetProvider
     if asset.as_any().downcast_ref::<JBPImageAssetProvider>().is_some() {
         let ptr = Arc::as_ptr(asset);
