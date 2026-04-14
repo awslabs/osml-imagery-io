@@ -93,7 +93,7 @@ impl PyDataAssetProvider {
     /// The asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
-        self.inner.asset_type()
+        AssetType::Data
     }
 
     /// The raw asset bytes as a ``BytesIO`` object.

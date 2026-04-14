@@ -635,7 +635,7 @@ fn pad_tile(
 /// An image asset queued for writing.
 struct QueuedImageAsset {
     key: String,
-    provider: Arc<dyn AssetProvider>,
+    provider: AssetProvider,
     #[allow(dead_code)]
     title: String,
     #[allow(dead_code)]
@@ -677,20 +677,6 @@ impl TIFFDatasetWriter {
             metadata: None,
             closed: false,
         })
-    }
-
-    /// Downcast an `AssetProvider` to `ImageAssetProvider`.
-    fn get_image_provider(provider: &Arc<dyn AssetProvider>) -> Option<&dyn ImageAssetProvider> {
-        use crate::buffered::BufferedImageAssetProvider;
-        use crate::tiff::image::TIFFImageAssetProvider;
-
-        if let Some(p) = provider.as_any().downcast_ref::<BufferedImageAssetProvider>() {
-            return Some(p as &dyn ImageAssetProvider);
-        }
-        if let Some(p) = provider.as_any().downcast_ref::<TIFFImageAssetProvider>() {
-            return Some(p as &dyn ImageAssetProvider);
-        }
-        None
     }
 
     /// Map a `PixelType` to the TIFF SampleFormat tag value.
@@ -744,9 +730,9 @@ impl TIFFDatasetWriter {
 
     /// Return the image area (num_rows × num_columns) for a queued asset.
     ///
-    /// Falls back to 0 if the provider cannot be downcast to `ImageAssetProvider`.
+    /// Falls back to 0 if the provider is not an `Image` variant.
     fn get_image_area(asset: &QueuedImageAsset) -> u64 {
-        if let Some(image) = Self::get_image_provider(&asset.provider) {
+        if let Some(image) = asset.provider.as_image() {
             image.num_rows() as u64 * image.num_columns() as u64
         } else {
             0
@@ -1076,7 +1062,7 @@ impl DatasetWriter for TIFFDatasetWriter {
     fn add_asset(
         &mut self,
         key: &str,
-        provider: Arc<dyn AssetProvider>,
+        provider: AssetProvider,
         title: &str,
         description: &str,
         roles: &[String],
@@ -1136,9 +1122,9 @@ impl DatasetWriter for TIFFDatasetWriter {
 
         // Write each queued image as a separate IFD
         for asset in &self.assets {
-            let image = Self::get_image_provider(&asset.provider).ok_or_else(|| {
-                CodecError::Unsupported(format!(
-                    "Asset '{}' does not implement ImageAssetProvider",
+            let image = asset.provider.as_image().ok_or_else(|| {
+                CodecError::InvalidFormat(format!(
+                    "Asset '{}' is not an Image variant",
                     asset.key
                 ))
             })?;
@@ -1152,7 +1138,7 @@ impl DatasetWriter for TIFFDatasetWriter {
 
             Self::write_image_ifd(
                 &handle,
-                image,
+                image.as_ref(),
                 &hints,
                 self.metadata.as_ref().map(|m| m.as_ref() as &dyn MetadataProvider),
                 &asset.roles,
@@ -1215,7 +1201,7 @@ mod tests {
         let provider = make_image_provider("image:0");
         let result = writer.add_asset(
             "image:0",
-            provider,
+            AssetProvider::Image(provider),
             "Image 0",
             "Test image",
             &["data".to_string()],
@@ -1229,7 +1215,7 @@ mod tests {
     fn writer_add_non_image_asset_rejected() {
         let mut writer = TIFFDatasetWriter::new("/tmp/test.tif").unwrap();
         let text = make_text_provider();
-        let result = writer.add_asset("text_0", text, "Text", "desc", &[]);
+        let result = writer.add_asset("text_0", AssetProvider::Text(text), "Text", "desc", &[]);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -1247,9 +1233,9 @@ mod tests {
         let p1 = make_image_provider("img_0");
         let p2 = make_image_provider("img_1");
         writer
-            .add_asset("image:0", p1, "Image 0", "desc", &[])
+            .add_asset("image:0", AssetProvider::Image(p1), "Image 0", "desc", &[])
             .unwrap();
-        let result = writer.add_asset("image:0", p2, "Image 0 dup", "desc", &[]);
+        let result = writer.add_asset("image:0", AssetProvider::Image(p2), "Image 0 dup", "desc", &[]);
         assert!(result.is_err());
         assert!(
             matches!(result.unwrap_err(), CodecError::DuplicateKey(_)),
@@ -1266,12 +1252,12 @@ mod tests {
         // Add one asset so close() has something to write
         let provider = make_image_provider("image:0");
         writer
-            .add_asset("image:0", provider, "Image", "desc", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Image", "desc", &[])
             .unwrap();
         writer.close().unwrap();
 
         let p2 = make_image_provider("img_1");
-        let result = writer.add_asset("image:1", p2, "Image 1", "desc", &[]);
+        let result = writer.add_asset("image:1", AssetProvider::Image(p2), "Image 1", "desc", &[]);
         assert!(result.is_err());
         assert!(
             matches!(result.unwrap_err(), CodecError::Io(_)),
@@ -1290,7 +1276,7 @@ mod tests {
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
         let provider = make_image_provider("image:0");
         writer
-            .add_asset("image:0", provider, "Image", "desc", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Image", "desc", &[])
             .unwrap();
 
         assert!(writer.close().is_ok());
@@ -1638,7 +1624,7 @@ mod tests {
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
         let provider = make_image_provider("image:0");
         writer
-            .add_asset("image:0", provider, "Image", "desc", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Image", "desc", &[])
             .unwrap();
         writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(meta))).unwrap();
         writer.close().unwrap();
@@ -1700,7 +1686,7 @@ mod tests {
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
         let provider = make_image_provider("image:0");
         writer
-            .add_asset("image:0", provider, "Image", "desc", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Image", "desc", &[])
             .unwrap();
         writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta))).unwrap();
         let result = writer.close();
@@ -1723,7 +1709,7 @@ mod tests {
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
         let provider = make_image_provider("image:0");
         writer
-            .add_asset("image:0", provider, "Image", "desc", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Image", "desc", &[])
             .unwrap();
         writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta))).unwrap();
         let result = writer.close();
@@ -1960,7 +1946,7 @@ mod tests {
         writer
             .add_asset(
                 "image:0:overview:1",
-                provider,
+                AssetProvider::Image(provider),
                 "Overview",
                 "desc",
                 &["overview".to_string()],
@@ -1990,7 +1976,7 @@ mod tests {
         writer
             .add_asset(
                 "image:0:overview:1",
-                provider,
+                AssetProvider::Image(provider),
                 "Overview",
                 "desc",
                 &["overview".to_string()],
@@ -2036,7 +2022,7 @@ mod tests {
         writer
             .add_asset(
                 "image:0",
-                provider,
+                AssetProvider::Image(provider),
                 "Data",
                 "desc",
                 &["data".to_string()],
@@ -2083,7 +2069,7 @@ mod tests {
         writer
             .add_asset(
                 "image:0:overview:1",
-                ovr,
+                AssetProvider::Image(ovr),
                 "Overview",
                 "desc",
                 &["overview".to_string()],
@@ -2092,7 +2078,7 @@ mod tests {
 
         let full = make_sized_image_provider("image:0", 256, 256);
         writer
-            .add_asset("image:0", full, "Full", "desc", &["data".to_string()])
+            .add_asset("image:0", AssetProvider::Image(full), "Full", "desc", &["data".to_string()])
             .unwrap();
 
         writer.sort_assets_for_cog();
@@ -2112,7 +2098,7 @@ mod tests {
         writer
             .add_asset(
                 "image:0:overview:2",
-                ovr_0_2,
+                AssetProvider::Image(ovr_0_2),
                 "Ovr 0-2",
                 "desc",
                 &["overview".to_string()],
@@ -2121,14 +2107,14 @@ mod tests {
 
         let full_1 = make_sized_image_provider("image:1", 512, 512);
         writer
-            .add_asset("image:1", full_1, "Full 1", "desc", &["data".to_string()])
+            .add_asset("image:1", AssetProvider::Image(full_1), "Full 1", "desc", &["data".to_string()])
             .unwrap();
 
         let ovr_1_1 = make_sized_image_provider("image:1:overview:1", 256, 256);
         writer
             .add_asset(
                 "image:1:overview:1",
-                ovr_1_1,
+                AssetProvider::Image(ovr_1_1),
                 "Ovr 1-1",
                 "desc",
                 &["overview".to_string()],
@@ -2137,14 +2123,14 @@ mod tests {
 
         let full_0 = make_sized_image_provider("image:0", 512, 512);
         writer
-            .add_asset("image:0", full_0, "Full 0", "desc", &["data".to_string()])
+            .add_asset("image:0", AssetProvider::Image(full_0), "Full 0", "desc", &["data".to_string()])
             .unwrap();
 
         let ovr_0_1 = make_sized_image_provider("image:0:overview:1", 256, 256);
         writer
             .add_asset(
                 "image:0:overview:1",
-                ovr_0_1,
+                AssetProvider::Image(ovr_0_1),
                 "Ovr 0-1",
                 "desc",
                 &["overview".to_string()],
@@ -2184,17 +2170,17 @@ mod tests {
 
         let img_2 = make_sized_image_provider("image:2", 100, 100);
         writer
-            .add_asset("image:2", img_2, "Image 2", "desc", &["data".to_string()])
+            .add_asset("image:2", AssetProvider::Image(img_2), "Image 2", "desc", &["data".to_string()])
             .unwrap();
 
         let img_0 = make_sized_image_provider("image:0", 200, 200);
         writer
-            .add_asset("image:0", img_0, "Image 0", "desc", &["data".to_string()])
+            .add_asset("image:0", AssetProvider::Image(img_0), "Image 0", "desc", &["data".to_string()])
             .unwrap();
 
         let img_1 = make_sized_image_provider("image:1", 150, 150);
         writer
-            .add_asset("image:1", img_1, "Image 1", "desc", &["data".to_string()])
+            .add_asset("image:1", AssetProvider::Image(img_1), "Image 1", "desc", &["data".to_string()])
             .unwrap();
 
         writer.sort_assets_for_cog();

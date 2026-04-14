@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use crate::error::CodecError;
 use crate::png::metadata::PNGMetadataProvider;
-use crate::traits::asset::AssetProvider;
+use crate::traits::asset::AssetMetadata;
 use crate::traits::image::ImageAssetProvider;
 use crate::traits::metadata::MetadataProvider;
-use crate::types::{AssetType, PixelType};
+use crate::types::PixelType;
 
 /// Image asset provider for a decoded PNG image.
 ///
@@ -100,7 +100,7 @@ impl PNGImageAssetProvider {
 // AssetProvider Implementation
 // =============================================================================
 
-impl AssetProvider for PNGImageAssetProvider {
+impl AssetMetadata for PNGImageAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -121,10 +121,6 @@ impl AssetProvider for PNGImageAssetProvider {
         &self.roles
     }
 
-    fn asset_type(&self) -> AssetType {
-        AssetType::Image
-    }
-
     fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
         Err(CodecError::Unsupported(
             "raw_asset() not supported for PNG; use get_block()".to_string(),
@@ -133,10 +129,6 @@ impl AssetProvider for PNGImageAssetProvider {
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 
@@ -295,7 +287,6 @@ mod tests {
         assert_eq!(provider.num_pixels_per_block_horizontal(), 3);
         assert_eq!(provider.num_pixels_per_block_vertical(), 2);
         assert_eq!(provider.media_type(), "image/png");
-        assert_eq!(provider.asset_type(), AssetType::Image);
 
         let (data, shape) = provider.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [1, 2, 3]);
@@ -575,7 +566,6 @@ mod tests {
         assert_eq!(provider.title(), "image:0");
         assert_eq!(provider.description(), "PNG image segment");
         assert_eq!(provider.media_type(), "image/png");
-        assert_eq!(provider.asset_type(), AssetType::Image);
         assert_eq!(provider.roles(), &["data".to_string()]);
         assert!(provider.raw_asset().is_err());
     }

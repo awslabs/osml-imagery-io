@@ -1,19 +1,21 @@
 //! Python bindings for AssetProvider.
 //!
 //! This module provides the PyAssetProvider wrapper that exposes the
-//! AssetProvider trait to Python, and BytesAssetProvider for creating
-//! assets from raw bytes.
+//! AssetProvider enum to Python, and specialized Bytes*AssetProvider adapters
+//! for creating assets from raw bytes.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use pyo3::IntoPyObjectExt;
 
 use crate::bindings::PyMetadataProvider;
 use crate::error::CodecError;
-use crate::traits::{AssetProvider, MetadataProvider};
+use crate::traits::{
+    AssetMetadata, AssetProvider, DataAssetProvider, GraphicsAssetProvider, MetadataProvider,
+    TextAssetProvider,
+};
 use crate::types::AssetType;
 
 /// Base class for all asset types within a dataset.
@@ -41,15 +43,15 @@ use crate::types::AssetType;
 ///         print(asset.key, asset.title, asset.asset_type)
 #[pyclass(name = "AssetProvider")]
 pub struct PyAssetProvider {
-    inner: Arc<dyn AssetProvider>,
+    inner: AssetProvider,
 }
 
 impl PyAssetProvider {
-    pub fn new(inner: Arc<dyn AssetProvider>) -> Self {
+    pub fn new(inner: AssetProvider) -> Self {
         Self { inner }
     }
 
-    pub fn inner(&self) -> &Arc<dyn AssetProvider> {
+    pub fn inner(&self) -> &AssetProvider {
         &self.inner
     }
 }
@@ -140,6 +142,8 @@ impl PyAssetProvider {
     /// :type media_type: str, optional
     /// :returns: A new asset that can be passed to :meth:`DatasetWriter.add_asset`.
     /// :rtype: AssetProvider
+    /// :raises ValueError: If *asset_type* is ``AssetType.Image`` — use
+    ///     :class:`BufferedImageAssetProvider` instead.
     ///
     /// Example::
     ///
@@ -161,70 +165,75 @@ impl PyAssetProvider {
         description: Option<&str>,
         roles: Option<Vec<String>>,
         media_type: Option<&str>,
-    ) -> Self {
-        let provider = BytesAssetProvider::new(
-            key.to_string(),
-            data.to_vec(),
-            asset_type,
-            title.map(|s| s.to_string()),
-            description.map(|s| s.to_string()),
-            roles,
-            media_type.map(|s| s.to_string()),
-        );
-        Self {
-            inner: Arc::new(provider),
-        }
-    }
-}
+    ) -> PyResult<Self> {
+        let title_str = title.unwrap_or(key).to_string();
+        let desc_str = description.unwrap_or_default().to_string();
+        let roles_vec = roles.unwrap_or_else(|| vec!["data".to_string()]);
 
-/// A simple asset provider that holds raw bytes in memory.
-///
-/// This is used to create assets from Python for writing to datasets.
-struct BytesAssetProvider {
-    key: String,
-    title: String,
-    description: String,
-    media_type: String,
-    roles: Vec<String>,
-    asset_type: AssetType,
-    data: Vec<u8>,
-}
-
-impl BytesAssetProvider {
-    fn new(
-        key: String,
-        data: Vec<u8>,
-        asset_type: AssetType,
-        title: Option<String>,
-        description: Option<String>,
-        roles: Option<Vec<String>>,
-        media_type: Option<String>,
-    ) -> Self {
-        let default_media_type = match asset_type {
-            AssetType::Image => "application/vnd.nitf.image",
-            AssetType::Text => "text/plain",
-            AssetType::Graphics => "image/cgm",
-            AssetType::Data => "application/octet-stream",
+        let enum_provider = match asset_type {
+            AssetType::Image => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Cannot create an image asset from raw bytes. \
+                     Use BufferedImageAssetProvider instead.",
+                ));
+            }
+            AssetType::Text => {
+                let default_media = "text/plain";
+                let media = media_type.unwrap_or(default_media).to_string();
+                let provider = BytesTextAssetProvider {
+                    key: key.to_string(),
+                    title: title_str,
+                    description: desc_str,
+                    media_type: media,
+                    roles: roles_vec,
+                    data: data.to_vec(),
+                };
+                AssetProvider::Text(Arc::new(provider))
+            }
+            AssetType::Data => {
+                let default_media = "application/octet-stream";
+                let media = media_type.unwrap_or(default_media).to_string();
+                let provider = BytesDataAssetProvider {
+                    key: key.to_string(),
+                    title: title_str,
+                    description: desc_str,
+                    media_type: media,
+                    roles: roles_vec,
+                    data: data.to_vec(),
+                };
+                AssetProvider::Data(Arc::new(provider))
+            }
+            AssetType::Graphics => {
+                let default_media = "image/cgm";
+                let media = media_type.unwrap_or(default_media).to_string();
+                let provider = BytesGraphicsAssetProvider {
+                    key: key.to_string(),
+                    title: title_str,
+                    description: desc_str,
+                    media_type: media,
+                    roles: roles_vec,
+                    data: data.to_vec(),
+                };
+                AssetProvider::Graphics(Arc::new(provider))
+            }
         };
 
-        Self {
-            title: title.unwrap_or_else(|| key.clone()),
-            description: description.unwrap_or_default(),
-            media_type: media_type.unwrap_or_else(|| default_media_type.to_string()),
-            roles: roles.unwrap_or_else(|| vec!["data".to_string()]),
-            key,
-            asset_type,
-            data,
-        }
+        Ok(Self {
+            inner: enum_provider,
+        })
     }
 }
 
-/// Empty metadata provider for BytesAssetProvider
+
+// =============================================================================
+// Empty metadata provider shared by all Bytes*AssetProvider adapters
+// =============================================================================
+
+/// Empty metadata provider for Bytes*AssetProvider adapters.
 #[derive(Default)]
 struct EmptyMetadataProvider {
     empty_bytes: Vec<u8>,
 }
-
 
 impl MetadataProvider for EmptyMetadataProvider {
     fn as_dict(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
@@ -236,7 +245,21 @@ impl MetadataProvider for EmptyMetadataProvider {
     }
 }
 
-impl AssetProvider for BytesAssetProvider {
+// =============================================================================
+// BytesTextAssetProvider — implements AssetMetadata + TextAssetProvider
+// =============================================================================
+
+/// A text asset provider backed by raw bytes in memory.
+struct BytesTextAssetProvider {
+    key: String,
+    title: String,
+    description: String,
+    media_type: String,
+    roles: Vec<String>,
+    data: Vec<u8>,
+}
+
+impl AssetMetadata for BytesTextAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -257,23 +280,135 @@ impl AssetProvider for BytesAssetProvider {
         &self.roles
     }
 
-    fn asset_type(&self) -> AssetType {
-        self.asset_type
+    fn metadata(&self) -> Arc<dyn MetadataProvider> {
+        Arc::new(EmptyMetadataProvider::default())
     }
 
     fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
         Ok(self.data.clone())
+    }
+}
+
+impl TextAssetProvider for BytesTextAssetProvider {
+    fn text(&self) -> Result<String, CodecError> {
+        String::from_utf8(self.data.clone()).map_err(|e| {
+            CodecError::Decode(format!("Invalid UTF-8 in text asset: {}", e))
+        })
+    }
+
+    fn encoding(&self) -> &str {
+        "UTF-8"
+    }
+
+    fn format(&self) -> &str {
+        "text/plain"
+    }
+}
+
+// =============================================================================
+// BytesDataAssetProvider — implements AssetMetadata + DataAssetProvider
+// =============================================================================
+
+/// A data asset provider backed by raw bytes in memory.
+struct BytesDataAssetProvider {
+    key: String,
+    title: String,
+    description: String,
+    media_type: String,
+    roles: Vec<String>,
+    data: Vec<u8>,
+}
+
+impl AssetMetadata for BytesDataAssetProvider {
+    fn key(&self) -> &str {
+        &self.key
+    }
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn media_type(&self) -> &str {
+        &self.media_type
+    }
+
+    fn roles(&self) -> &[String] {
+        &self.roles
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         Arc::new(EmptyMetadataProvider::default())
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
+        Ok(self.data.clone())
     }
 }
 
-// Ensure BytesAssetProvider is Send + Sync
-unsafe impl Send for BytesAssetProvider {}
-unsafe impl Sync for BytesAssetProvider {}
+impl DataAssetProvider for BytesDataAssetProvider {
+    fn mime_type(&self) -> &str {
+        &self.media_type
+    }
+
+    fn parse_as_xml(&self) -> Result<String, CodecError> {
+        String::from_utf8(self.data.clone()).map_err(|e| {
+            CodecError::Parse(format!("Invalid UTF-8 in data asset XML: {}", e))
+        })
+    }
+
+    fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
+        serde_json::from_slice(&self.data).map_err(|e| {
+            CodecError::Parse(format!("Invalid JSON in data asset: {}", e))
+        })
+    }
+}
+
+// =============================================================================
+// BytesGraphicsAssetProvider — implements AssetMetadata + GraphicsAssetProvider
+// =============================================================================
+
+/// A graphics asset provider backed by raw bytes in memory.
+struct BytesGraphicsAssetProvider {
+    key: String,
+    title: String,
+    description: String,
+    media_type: String,
+    roles: Vec<String>,
+    data: Vec<u8>,
+}
+
+impl AssetMetadata for BytesGraphicsAssetProvider {
+    fn key(&self) -> &str {
+        &self.key
+    }
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn media_type(&self) -> &str {
+        &self.media_type
+    }
+
+    fn roles(&self) -> &[String] {
+        &self.roles
+    }
+
+    fn metadata(&self) -> Arc<dyn MetadataProvider> {
+        Arc::new(EmptyMetadataProvider::default())
+    }
+
+    fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
+        Ok(self.data.clone())
+    }
+}
+
+impl GraphicsAssetProvider for BytesGraphicsAssetProvider {}

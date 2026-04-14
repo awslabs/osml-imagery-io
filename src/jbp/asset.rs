@@ -6,7 +6,7 @@
 //! - [`JBPGraphicsAssetProvider`] - Graphic segments
 //! - [`JBPDataAssetProvider`] - Data Extension Segments (DES)
 //!
-//! Each provider implements the [`AssetProvider`] trait, providing access to
+//! Each provider implements the [`AssetMetadata`] trait, providing access to
 //! segment data and metadata through a unified interface.
 //!
 //! # Asset Key Generation
@@ -33,8 +33,11 @@ use crate::jbp::metadata::JBPSegmentMetadataProvider;
 use crate::jbp::text::decode_and_normalize;
 use crate::jbp::types::{NitfFormat, SegmentLocation, SegmentType};
 use crate::parser::StructureRegistry;
-use crate::traits::{AssetProvider, DataAssetProvider, GraphicsAssetProvider, ImageAssetProvider, MetadataProvider, TextAssetProvider};
-use crate::types::{AssetType, PixelType};
+use crate::traits::{AssetMetadata, DataAssetProvider, GraphicsAssetProvider, ImageAssetProvider, MetadataProvider, TextAssetProvider};
+use crate::types::PixelType;
+
+#[cfg(test)]
+use crate::types::AssetType;
 
 /// Generate an asset key from segment type and index.
 ///
@@ -96,7 +99,7 @@ pub fn parse_asset_key(key: &str) -> Option<(SegmentType, usize)> {
 
 /// Asset provider for NITF image segments.
 ///
-/// Provides access to image segment data and metadata through the [`AssetProvider`]
+/// Provides access to image segment data and metadata through the [`AssetMetadata`]
 /// trait. Image segments contain raster imagery data with associated subheader
 /// metadata describing dimensions, compression, and other image properties.
 ///
@@ -269,7 +272,7 @@ impl JBPImageAssetProvider {
     }
 }
 
-impl AssetProvider for JBPImageAssetProvider {
+impl AssetMetadata for JBPImageAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -290,10 +293,6 @@ impl AssetProvider for JBPImageAssetProvider {
         &self.roles
     }
 
-    fn asset_type(&self) -> AssetType {
-        AssetType::Image
-    }
-
     fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
         let start = self.location.data_offset as usize;
         let end = start + self.location.data_length as usize;
@@ -312,10 +311,6 @@ impl AssetProvider for JBPImageAssetProvider {
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 
@@ -502,7 +497,7 @@ impl ImageAssetProvider for JBPImageAssetProvider {
 
 /// Asset provider for NITF text segments.
 ///
-/// Provides access to text segment data and metadata through the [`AssetProvider`]
+/// Provides access to text segment data and metadata through the [`AssetMetadata`]
 /// trait. Text segments contain plain text content with associated subheader
 /// metadata.
 ///
@@ -571,7 +566,7 @@ impl JBPTextAssetProvider {
     }
 }
 
-impl AssetProvider for JBPTextAssetProvider {
+impl AssetMetadata for JBPTextAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -598,10 +593,6 @@ impl AssetProvider for JBPTextAssetProvider {
         &self.roles
     }
 
-    fn asset_type(&self) -> AssetType {
-        AssetType::Text
-    }
-
     fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
         let start = self.location.data_offset as usize;
         let end = start + self.location.data_length as usize;
@@ -620,10 +611,6 @@ impl AssetProvider for JBPTextAssetProvider {
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 
@@ -650,7 +637,7 @@ impl TextAssetProvider for JBPTextAssetProvider {
 
 /// Asset provider for NITF graphic segments.
 ///
-/// Provides access to graphic segment data and metadata through the [`AssetProvider`]
+/// Provides access to graphic segment data and metadata through the [`AssetMetadata`]
 /// trait. Graphic segments contain CGM (Computer Graphics Metafile) vector graphics
 /// with associated subheader metadata.
 ///
@@ -713,7 +700,7 @@ impl JBPGraphicsAssetProvider {
     }
 }
 
-impl AssetProvider for JBPGraphicsAssetProvider {
+impl AssetMetadata for JBPGraphicsAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -732,10 +719,6 @@ impl AssetProvider for JBPGraphicsAssetProvider {
 
     fn roles(&self) -> &[String] {
         &self.roles
-    }
-
-    fn asset_type(&self) -> AssetType {
-        AssetType::Graphics
     }
 
     fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
@@ -757,17 +740,13 @@ impl AssetProvider for JBPGraphicsAssetProvider {
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 }
 
 impl GraphicsAssetProvider for JBPGraphicsAssetProvider {}
 
 /// Asset provider for NITF Data Extension Segments (DES).
 ///
-/// Provides access to DES data and metadata through the [`AssetProvider`]
+/// Provides access to DES data and metadata through the [`AssetMetadata`]
 /// trait. DES segments contain structured data such as XML, TRE overflow,
 /// or other application-specific content.
 ///
@@ -830,7 +809,7 @@ impl JBPDataAssetProvider {
     }
 }
 
-impl AssetProvider for JBPDataAssetProvider {
+impl AssetMetadata for JBPDataAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -851,10 +830,6 @@ impl AssetProvider for JBPDataAssetProvider {
         &self.roles
     }
 
-    fn asset_type(&self) -> AssetType {
-        AssetType::Data
-    }
-
     fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
         let start = self.location.data_offset as usize;
         let end = start + self.location.data_length as usize;
@@ -873,10 +848,6 @@ impl AssetProvider for JBPDataAssetProvider {
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 
@@ -1347,8 +1318,6 @@ mod tests {
             registry,
             test_format(),
         ).unwrap();
-
-        assert_eq!(provider.asset_type(), AssetType::Image);
     }
 
     #[test]
@@ -1478,8 +1447,6 @@ mod tests {
             metadata,
             "STA".to_string(),
         );
-
-        assert_eq!(provider.asset_type(), AssetType::Text);
     }
 
     #[test]
@@ -1838,8 +1805,6 @@ mod tests {
             file_data,
             metadata,
         );
-
-        assert_eq!(provider.asset_type(), AssetType::Graphics);
     }
 
     #[test]
@@ -1903,8 +1868,6 @@ mod tests {
             file_data,
             metadata,
         );
-
-        assert_eq!(provider.asset_type(), AssetType::Data);
     }
 
     #[test]

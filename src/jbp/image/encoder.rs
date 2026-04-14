@@ -1185,18 +1185,16 @@ mod property_tests {
         }
     }
 
-    impl crate::traits::AssetProvider for MockBsqImageProvider {
+    impl crate::traits::AssetMetadata for MockBsqImageProvider {
         fn key(&self) -> &str { "mock" }
         fn title(&self) -> &str { "Mock Image" }
         fn description(&self) -> &str { "Mock image for testing" }
         fn media_type(&self) -> &str { "application/octet-stream" }
         fn roles(&self) -> &[String] { &[] }
-        fn asset_type(&self) -> crate::types::AssetType { crate::types::AssetType::Image }
         fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(self.image_data.clone()) }
         fn metadata(&self) -> Arc<dyn crate::traits::MetadataProvider> {
             Arc::new(EmptyMetadataProvider)
         }
-        fn as_any(&self) -> &dyn std::any::Any { self }
     }
 
     struct EmptyMetadataProvider;
@@ -1385,7 +1383,7 @@ mod round_trip_property_tests {
     use crate::jbp::types::NitfFormat;
     use crate::jbp::reader::JBPDatasetReader;
     use crate::jbp::writer::JBPDatasetWriter;
-    use crate::traits::{DatasetReader, DatasetWriter, ImageAssetProvider};
+    use crate::traits::{AssetProvider, DatasetReader, DatasetWriter, ImageAssetProvider};
     use crate::types::AssetType;
     use proptest::prelude::*;
     use std::sync::Arc;
@@ -1443,7 +1441,7 @@ mod round_trip_property_tests {
             let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
             writer.add_asset(
                 "test_image",
-                Arc::new(provider),
+                AssetProvider::Image(Arc::new(provider)),
                 "Test Image",
                 "Round-trip test",
                 &[]
@@ -1461,9 +1459,8 @@ mod round_trip_property_tests {
             // Get the image asset
             let asset = reader.get_asset(&asset_keys[0]).unwrap();
 
-            // Downcast to ImageAssetProvider
-            let image_provider = asset.as_any()
-                .downcast_ref::<crate::jbp::asset::JBPImageAssetProvider>()
+            // Get the ImageAssetProvider via the enum's typed accessor
+            let image_provider = asset.as_image()
                 .expect("Asset should be an image provider");
 
             // Verify dimensions
@@ -1595,7 +1592,7 @@ mod round_trip_property_tests {
             let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
             writer.add_asset(
                 "test_image",
-                Arc::new(provider),
+                AssetProvider::Image(Arc::new(provider)),
                 "Test Image",
                 "Edge block test",
                 &[]
@@ -1608,8 +1605,7 @@ mod round_trip_property_tests {
             let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
             let asset = reader.get_asset(&asset_keys[0]).unwrap();
 
-            let image_provider = asset.as_any()
-                .downcast_ref::<crate::jbp::asset::JBPImageAssetProvider>()
+            let image_provider = asset.as_image()
                 .expect("Asset should be an image provider");
 
             // Calculate expected grid size
@@ -1732,7 +1728,7 @@ mod round_trip_property_tests {
             let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
             writer.add_asset(
                 "test_image",
-                Arc::new(provider_with_meta),
+                AssetProvider::Image(Arc::new(provider_with_meta)),
                 "Test Image",
                 "Tile size round-trip test",
                 &[]
@@ -1745,8 +1741,7 @@ mod round_trip_property_tests {
             let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
             let asset = reader.get_asset(&asset_keys[0]).unwrap();
 
-            let image_provider = asset.as_any()
-                .downcast_ref::<crate::jbp::asset::JBPImageAssetProvider>()
+            let image_provider = asset.as_image()
                 .expect("Asset should be an image provider");
 
             // Verify dimensions match

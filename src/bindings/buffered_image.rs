@@ -9,9 +9,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::IntoPyObjectExt;
 
-use crate::bindings::PyMetadataProvider;
+use crate::bindings::{PyImageAssetProvider, PyMetadataProvider};
 use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
-use crate::traits::{AssetProvider, ImageAssetProvider};
+use crate::traits::{AssetMetadata, ImageAssetProvider};
 use crate::types::{AssetType, PixelType};
 
 /// Extract raw bytes from a NumPy array of any supported dtype.
@@ -267,6 +267,81 @@ impl PyBufferedImageAssetProvider {
         }
     }
 
+    /// Create a mutable copy of an existing :class:`ImageAssetProvider`.
+    ///
+    /// The returned ``BufferedImageAssetProvider`` lazily delegates
+    /// :meth:`get_block` calls to the source provider. Only blocks
+    /// explicitly set via :meth:`set_block` are stored in memory; all
+    /// others are read on demand from the source. This enables
+    /// copy-on-write semantics without loading the entire image into
+    /// memory.
+    ///
+    /// Because the returned provider holds a reference to the source,
+    /// the source must remain open for the lifetime of the copy. If you
+    /// need a fully independent snapshot, iterate over the blocks and
+    /// call :meth:`set_block` for each one.
+    ///
+    /// :param provider: The source image asset to delegate to.
+    /// :type provider: ImageAssetProvider
+    /// :param key: Optional new key for the copy. If ``None``, the source
+    ///     key is reused.
+    /// :type key: str, optional
+    /// :param block_width: Block width for the copy. If ``None``, uses the
+    ///     source block width.
+    /// :type block_width: int, optional
+    /// :param block_height: Block height for the copy. If ``None``, uses the
+    ///     source block height.
+    /// :type block_height: int, optional
+    /// :param metadata: Metadata for the copy. If ``None``, copies the
+    ///     source metadata.
+    /// :type metadata: MetadataProvider, optional
+    /// :returns: A new mutable provider backed by the source.
+    /// :rtype: BufferedImageAssetProvider
+    ///
+    /// Example::
+    ///
+    ///     from aws.osml.io import IO, BufferedImageAssetProvider
+    ///
+    ///     with IO.open(["input.ntf"], "r") as reader:
+    ///         source = reader.get_asset("image:0")
+    ///         copy = BufferedImageAssetProvider.from_provider(source)
+    ///         # Override specific blocks or metadata, then write
+    #[staticmethod]
+    #[pyo3(signature = (provider, key=None, block_width=None, block_height=None, metadata=None))]
+    fn from_provider(
+        provider: &PyImageAssetProvider,
+        key: Option<&str>,
+        block_width: Option<u32>,
+        block_height: Option<u32>,
+        metadata: Option<&PyMetadataProvider>,
+    ) -> PyResult<Self> {
+        let src = provider.inner();
+
+        let bw = block_width.unwrap_or_else(|| src.num_pixels_per_block_horizontal());
+        let bh = block_height.unwrap_or_else(|| src.num_pixels_per_block_vertical());
+        let asset_key = key.unwrap_or_else(|| src.key());
+
+        let config = MemoryImageConfig::new(src.num_columns(), src.num_rows())
+            .with_bands(src.num_bands())
+            .with_block_size(bw, bh)
+            .with_pixel_type(src.pixel_value_type())
+            .with_actual_bits_per_pixel(src.actual_bits_per_pixel());
+
+        let meta = match metadata {
+            Some(m) => m.inner().clone(),
+            None => src.metadata(),
+        };
+
+        let buffered = BufferedImageAssetProvider::new(asset_key, config)
+            .with_title(src.title(), src.description())
+            .with_metadata(meta)
+            .with_source(Arc::clone(src));
+
+        Ok(Self {
+            inner: Arc::new(buffered),
+        })
+    }
+
     /// Set the full image data from a NumPy array.
     ///
     /// The array must use channels-first (CHW) layout with shape
@@ -365,7 +440,7 @@ impl PyBufferedImageAssetProvider {
     /// Asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
-        self.inner.asset_type()
+        AssetType::Image
     }
 
     /// Raw asset bytes as a ``BytesIO`` object.

@@ -23,11 +23,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::buffered::BufferedImageAssetProvider;
 use crate::error::CodecError;
 use crate::j2k::codec::{J2KCodec, J2KEncodeParams};
-use crate::j2k::image::J2KImageAssetProvider;
-use crate::traits::{AssetProvider, DatasetWriter, ImageAssetProvider, MetadataProvider};
+use crate::traits::{AssetProvider, DatasetWriter, MetadataProvider};
 use crate::types::{AssetType, PixelType};
 
 #[cfg(feature = "openjpeg")]
@@ -35,7 +33,7 @@ use crate::j2k::openjpeg::get_j2k_codec;
 
 /// An image asset queued for writing.
 struct QueuedJ2KAsset {
-    provider: Arc<dyn AssetProvider>,
+    provider: AssetProvider,
     #[allow(dead_code)]
     key: String,
 }
@@ -81,17 +79,6 @@ impl J2KDatasetWriter {
             assets: Vec::new(),
             codec,
         })
-    }
-
-    /// Downcast an `AssetProvider` to `ImageAssetProvider`.
-    fn get_image_provider(provider: &Arc<dyn AssetProvider>) -> Option<&dyn ImageAssetProvider> {
-        if let Some(p) = provider.as_any().downcast_ref::<BufferedImageAssetProvider>() {
-            return Some(p as &dyn ImageAssetProvider);
-        }
-        if let Some(p) = provider.as_any().downcast_ref::<J2KImageAssetProvider>() {
-            return Some(p as &dyn ImageAssetProvider);
-        }
-        None
     }
 
     /// Extract encoding hints from metadata, falling back to defaults.
@@ -165,7 +152,7 @@ impl DatasetWriter for J2KDatasetWriter {
     fn add_asset(
         &mut self,
         key: &str,
-        provider: Arc<dyn AssetProvider>,
+        provider: AssetProvider,
         _title: &str,
         _description: &str,
         _roles: &[String],
@@ -217,11 +204,12 @@ impl DatasetWriter for J2KDatasetWriter {
             None => return Ok(()),
         };
 
-        let image = Self::get_image_provider(&asset.provider).ok_or_else(|| {
+        let image = asset.provider.as_image().ok_or_else(|| {
             CodecError::Unsupported(
-                "Cannot downcast asset provider to ImageAssetProvider".to_string(),
+                "Asset is not an Image variant".to_string(),
             )
         })?;
+        let image = image.as_ref();
 
         let width = image.num_columns();
         let height = image.num_rows();
@@ -330,7 +318,7 @@ mod tests {
 
         let result = writer.add_asset(
             "image:0",
-            provider,
+            AssetProvider::Image(provider),
             "Test",
             "Test image",
             &[],
@@ -357,7 +345,7 @@ mod tests {
 
         let result = writer.add_asset(
             "text_0",
-            text_provider,
+            AssetProvider::Text(text_provider),
             "Text",
             "A text asset",
             &[],
@@ -381,10 +369,10 @@ mod tests {
         let provider2 = make_image_provider(2, 2, 1, PixelType::UInt8, &[5, 6, 7, 8]);
 
         writer
-            .add_asset("img0", provider1, "First", "First image", &[])
+            .add_asset("img0", AssetProvider::Image(provider1), "First", "First image", &[])
             .unwrap();
 
-        let result = writer.add_asset("img1", provider2, "Second", "Second image", &[]);
+        let result = writer.add_asset("img1", AssetProvider::Image(provider2), "Second", "Second image", &[]);
         match result {
             Err(CodecError::Unsupported(msg)) => {
                 assert!(msg.contains("single image per file"));
@@ -406,7 +394,7 @@ mod tests {
         writer.close().unwrap();
 
         let provider = make_image_provider(2, 2, 1, PixelType::UInt8, &[1, 2, 3, 4]);
-        let result = writer.add_asset("img0", provider, "Test", "Test", &[]);
+        let result = writer.add_asset("img0", AssetProvider::Image(provider), "Test", "Test", &[]);
         match result {
             Err(CodecError::Unsupported(msg)) => {
                 assert!(msg.contains("already closed"));
@@ -435,7 +423,7 @@ mod tests {
         let provider = make_image_provider(64, 64, 3, PixelType::UInt8, &pixels);
         let mut writer = J2KDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", provider, "Test", "Test", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
             .unwrap();
 
         // First close should succeed
@@ -461,7 +449,7 @@ mod tests {
 
         let mut writer = J2KDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", provider, "Test", "Test", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
             .unwrap();
         writer.close().unwrap();
 
@@ -470,9 +458,8 @@ mod tests {
         let reader = J2KDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<J2KImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("Expected Image variant");
 
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [1, 64, 64]);
@@ -500,7 +487,7 @@ mod tests {
 
         let mut writer = J2KDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", provider, "Test", "Test", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
             .unwrap();
         writer.close().unwrap();
 
@@ -508,9 +495,8 @@ mod tests {
         let reader = J2KDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<J2KImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("Expected Image variant");
 
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [3, 64, 64]);
@@ -534,7 +520,7 @@ mod tests {
 
         let mut writer = J2KDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", provider, "Test", "Test", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
             .unwrap();
         writer.close().unwrap();
 
@@ -542,9 +528,8 @@ mod tests {
         let reader = J2KDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<J2KImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("Expected Image variant");
 
         assert_eq!(image.pixel_value_type(), PixelType::UInt16);
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();

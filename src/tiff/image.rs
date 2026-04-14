@@ -9,10 +9,10 @@ use crate::error::CodecError;
 use crate::tiff::ffi::TiffHandle;
 use crate::tiff::metadata::TIFFMetadataProvider;
 use crate::tiff::tags;
-use crate::traits::asset::AssetProvider;
+use crate::traits::asset::AssetMetadata;
 use crate::traits::image::ImageAssetProvider;
 use crate::traits::metadata::MetadataProvider;
-use crate::types::{AssetType, PixelType};
+use crate::types::PixelType;
 
 // =============================================================================
 // Pixel Format Mapping
@@ -164,10 +164,10 @@ impl TIFFImageAssetProvider {
 }
 
 // =============================================================================
-// AssetProvider Implementation
+// AssetMetadata Implementation
 // =============================================================================
 
-impl AssetProvider for TIFFImageAssetProvider {
+impl AssetMetadata for TIFFImageAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -188,10 +188,6 @@ impl AssetProvider for TIFFImageAssetProvider {
         &self.roles
     }
 
-    fn asset_type(&self) -> AssetType {
-        AssetType::Image
-    }
-
     fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
         // Not meaningful for TIFF — callers should use get_block()
         Err(CodecError::Unsupported(
@@ -201,10 +197,6 @@ impl AssetProvider for TIFFImageAssetProvider {
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 

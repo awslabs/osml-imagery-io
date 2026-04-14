@@ -21,6 +21,7 @@ use crate::j2k::image::J2KImageAssetProvider;
 use crate::j2k::markers::parse_main_header;
 use crate::j2k::metadata::J2KMetadataProvider;
 use crate::traits::asset::AssetProvider;
+use crate::traits::asset::AssetMetadata;
 use crate::traits::metadata::MetadataProvider;
 use crate::traits::reader::DatasetReader;
 use crate::types::{AssetType, PixelType};
@@ -332,9 +333,11 @@ struct SizMarkerInfo {
 // =============================================================================
 
 impl DatasetReader for J2KDatasetReader {
-    fn get_asset(&self, key: &str) -> Result<Arc<dyn AssetProvider>, CodecError> {
+    fn get_asset(&self, key: &str) -> Result<AssetProvider, CodecError> {
         match &self.image_asset {
-            Some(asset) if asset.key() == key => Ok(asset.clone()),
+            Some(asset) if asset.key() == key => {
+                Ok(AssetProvider::Image(asset.clone() as Arc<dyn crate::traits::image::ImageAssetProvider>))
+            }
             _ => Err(CodecError::AssetNotFound(key.to_string())),
         }
     }
@@ -649,9 +652,8 @@ mod tests {
         // Decode and verify pixels
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<J2KImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
         assert_eq!(image.num_columns(), 64);
         assert_eq!(image.num_rows(), 64);
         assert_eq!(image.num_bands(), 1);
@@ -678,9 +680,8 @@ mod tests {
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<J2KImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
 
         assert_eq!(image.num_bands(), 3);
         let (data, shape) = image.get_block(0, 0, 0, None).unwrap();
@@ -724,9 +725,8 @@ mod tests {
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<J2KImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
 
         let err = image.get_block(1, 0, 0, None).unwrap_err();
         assert!(matches!(err, CodecError::InvalidBlockCoordinates(1, 0, 0)));
@@ -743,9 +743,8 @@ mod tests {
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<J2KImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
 
         let err = image.get_block(0, 0, 99, None).unwrap_err();
         assert!(matches!(err, CodecError::InvalidResolutionLevel(99)));
@@ -766,9 +765,8 @@ mod tests {
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<J2KImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
 
         // Request only band 0
         let (data, shape) = image.get_block(0, 0, 0, Some(&[0])).unwrap();
@@ -790,9 +788,8 @@ mod tests {
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<J2KImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
 
         assert!(image.has_block(0, 0, 0));
         assert!(!image.has_block(1, 0, 0));
@@ -819,9 +816,8 @@ mod tests {
 
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<J2KImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
         assert_eq!(image.pixel_value_type(), PixelType::UInt16);
         assert_eq!(image.num_bits_per_pixel(), 16);
 

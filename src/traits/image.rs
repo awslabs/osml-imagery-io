@@ -4,12 +4,12 @@
 //! a blocked/tiled access pattern for memory efficiency.
 
 use crate::error::CodecError;
-use crate::traits::AssetProvider;
+use crate::traits::asset::AssetMetadata;
 use crate::types::PixelType;
 
 /// Trait for blocked/tiled image access.
 ///
-/// This trait extends `AssetProvider` to provide efficient access to large imagery
+/// This trait extends `AssetMetadata` to provide efficient access to large imagery
 /// through a blocked/tiled access pattern. Images are divided into rectangular blocks
 /// that can be read independently, allowing processing of images larger than available memory.
 ///
@@ -22,7 +22,7 @@ use crate::types::PixelType;
 ///
 /// Implementations must be thread-safe (`Send + Sync`) to allow concurrent access
 /// from multiple threads.
-pub trait ImageAssetProvider: AssetProvider {
+pub trait ImageAssetProvider: AssetMetadata {
     /// Check if a block exists at the given coordinates.
     ///
     /// # Arguments

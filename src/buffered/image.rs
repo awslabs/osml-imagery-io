@@ -4,13 +4,12 @@
 //! [`ImageAssetProvider`] trait for creating synthetic images in memory.
 //! It allows setting image parameters and block data programmatically.
 
-use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use crate::error::CodecError;
-use crate::traits::{AssetProvider, ImageAssetProvider, MetadataProvider};
-use crate::types::{AssetType, PixelType};
+use crate::traits::{AssetMetadata, ImageAssetProvider, MetadataProvider};
+use crate::types::PixelType;
 
 /// Configuration for a memory image.
 #[derive(Clone, Debug)]
@@ -167,6 +166,12 @@ pub struct BufferedImageAssetProvider {
     provided_blocks: RwLock<HashSet<(u32, u32)>>,
     /// Metadata provider
     metadata: Arc<dyn MetadataProvider>,
+    /// Optional source provider for lazy delegation.
+    /// When present, `get_block` checks local overrides first, then falls
+    /// back to this source. This enables copy-on-write semantics: only
+    /// blocks explicitly set via `set_block` are stored in memory; all
+    /// others are read on demand from the source.
+    source: Option<Arc<dyn ImageAssetProvider>>,
 }
 
 impl BufferedImageAssetProvider {
@@ -188,6 +193,7 @@ impl BufferedImageAssetProvider {
             blocks: RwLock::new(HashMap::new()),
             provided_blocks: RwLock::new(HashSet::new()),
             metadata: Arc::new(EmptyMetadataProvider::default()),
+            source: None,
         }
     }
 
@@ -223,6 +229,20 @@ impl BufferedImageAssetProvider {
     /// ```
     pub fn with_metadata(mut self, metadata: Arc<dyn MetadataProvider>) -> Self {
         self.metadata = metadata;
+        self
+    }
+
+    /// Set a source provider for lazy block delegation.
+    ///
+    /// When a source is set, `get_block` checks local overrides first
+    /// (blocks set via `set_block`), then falls back to the source provider.
+    /// This enables copy-on-write semantics without loading the entire image
+    /// into memory.
+    ///
+    /// # Arguments
+    /// * `source` - The source provider to delegate unmodified block reads to
+    pub fn with_source(mut self, source: Arc<dyn ImageAssetProvider>) -> Self {
+        self.source = Some(source);
         self
     }
 
@@ -414,7 +434,7 @@ impl BufferedImageAssetProvider {
     }
 }
 
-impl AssetProvider for BufferedImageAssetProvider {
+impl AssetMetadata for BufferedImageAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -435,20 +455,12 @@ impl AssetProvider for BufferedImageAssetProvider {
         &self.roles
     }
 
-    fn asset_type(&self) -> AssetType {
-        AssetType::Image
-    }
-
     fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
         self.get_raw_bsq()
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
@@ -465,12 +477,22 @@ impl ImageAssetProvider for BufferedImageAssetProvider {
             return false;
         }
 
+        // Check local overrides first
         let provided = match self.provided_blocks.read() {
             Ok(p) => p,
             Err(_) => return false,
         };
 
-        provided.contains(&(block_row, block_col))
+        if provided.contains(&(block_row, block_col)) {
+            return true;
+        }
+
+        // Fall back to source provider
+        if let Some(ref source) = self.source {
+            return source.has_block(block_row, block_col, resolution_level);
+        }
+
+        false
     }
 
     fn get_block(
@@ -491,46 +513,62 @@ impl ImageAssetProvider for BufferedImageAssetProvider {
             return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, resolution_level));
         }
 
-        let blocks = self.blocks.read().map_err(|_| {
-            CodecError::Decode("Failed to acquire read lock on blocks".to_string())
-        })?;
-
-        let block_data = blocks.get(&(block_row, block_col)).ok_or_else(|| {
-            CodecError::Decode(format!("Block ({}, {}) not found", block_row, block_col))
-        })?;
-
-        // Calculate actual block dimensions (may be smaller for edge blocks)
-        let start_row = block_row * self.config.block_height;
-        let start_col = block_col * self.config.block_width;
-        let block_rows = (self.config.block_height).min(self.config.num_rows - start_row);
-        let block_cols = (self.config.block_width).min(self.config.num_columns - start_col);
-
-        let num_bands = if let Some(band_indices) = bands {
-            band_indices.len() as u32
-        } else {
-            self.config.num_bands
+        // Check local overrides first
+        let has_local = {
+            let blocks = self.blocks.read().map_err(|_| {
+                CodecError::Decode("Failed to acquire read lock on blocks".to_string())
+            })?;
+            blocks.contains_key(&(block_row, block_col))
         };
 
-        // If specific bands requested, extract them from BSQ data
-        let output_data = if let Some(band_indices) = bands {
-            let bytes_per_pixel = self.config.pixel_type.bytes_per_pixel();
-            let block_band_size = (block_rows * block_cols) as usize * bytes_per_pixel;
-            let mut extracted = Vec::with_capacity(band_indices.len() * block_band_size);
+        if has_local {
+            // Serve from local block storage
+            let blocks = self.blocks.read().map_err(|_| {
+                CodecError::Decode("Failed to acquire read lock on blocks".to_string())
+            })?;
 
-            for &band in band_indices {
-                let src_band_start = (band as usize) * block_band_size;
-                let src_band_end = src_band_start + block_band_size;
-                if src_band_end <= block_data.len() {
-                    extracted.extend_from_slice(&block_data[src_band_start..src_band_end]);
+            let block_data = blocks.get(&(block_row, block_col)).ok_or_else(|| {
+                CodecError::Decode(format!("Block ({}, {}) not found", block_row, block_col))
+            })?;
+
+            // Calculate actual block dimensions (may be smaller for edge blocks)
+            let start_row = block_row * self.config.block_height;
+            let start_col = block_col * self.config.block_width;
+            let block_rows = (self.config.block_height).min(self.config.num_rows - start_row);
+            let block_cols = (self.config.block_width).min(self.config.num_columns - start_col);
+
+            let num_bands = if let Some(band_indices) = bands {
+                band_indices.len() as u32
+            } else {
+                self.config.num_bands
+            };
+
+            // If specific bands requested, extract them from BSQ data
+            let output_data = if let Some(band_indices) = bands {
+                let bytes_per_pixel = self.config.pixel_type.bytes_per_pixel();
+                let block_band_size = (block_rows * block_cols) as usize * bytes_per_pixel;
+                let mut extracted = Vec::with_capacity(band_indices.len() * block_band_size);
+
+                for &band in band_indices {
+                    let src_band_start = (band as usize) * block_band_size;
+                    let src_band_end = src_band_start + block_band_size;
+                    if src_band_end <= block_data.len() {
+                        extracted.extend_from_slice(&block_data[src_band_start..src_band_end]);
+                    }
                 }
-            }
-            extracted
-        } else {
-            block_data.clone()
-        };
+                extracted
+            } else {
+                block_data.clone()
+            };
 
-        // Return shape as [bands, rows, cols] (CHW format)
-        Ok((output_data, [num_bands, block_rows, block_cols]))
+            // Return shape as [bands, rows, cols] (CHW format)
+            Ok((output_data, [num_bands, block_rows, block_cols]))
+        } else if let Some(ref source) = self.source {
+            // Delegate to source provider
+            source.get_block(block_row, block_col, resolution_level, bands)
+        } else {
+            Err(CodecError::Decode(format!("Block ({}, {}) not found", block_row, block_col)))
+        }
     }
 
     fn num_resolution_levels(&self) -> u32 {
@@ -627,7 +665,6 @@ mod tests {
         let provider = BufferedImageAssetProvider::new("test_image", config);
 
         assert_eq!(provider.key(), "test_image");
-        assert_eq!(provider.asset_type(), AssetType::Image);
         assert_eq!(provider.num_rows(), 512);
         assert_eq!(provider.num_columns(), 512);
     }

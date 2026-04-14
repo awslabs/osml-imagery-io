@@ -32,8 +32,8 @@ pub use bindings::{
 pub use buffered::{BufferedImageAssetProvider, BufferedMetadataProvider, BufferedTextAssetProvider, MemoryImageConfig};
 pub use composite::{CompositeDatasetReader, OverviewAssetWrapper};
 pub use traits::{
-    AssetProvider, DataAssetProvider, DatasetReader, DatasetWriter, GraphicsAssetProvider,
-    ImageAssetProvider, MetadataProvider, TextAssetProvider,
+    AssetMetadata, AssetProvider, DataAssetProvider, DatasetReader, DatasetWriter,
+    GraphicsAssetProvider, ImageAssetProvider, MetadataProvider, TextAssetProvider,
 };
 pub use types::{AssetType, PixelType};
 

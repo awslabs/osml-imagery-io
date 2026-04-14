@@ -15,6 +15,7 @@ use crate::error::CodecError;
 use crate::png::image::PNGImageAssetProvider;
 use crate::png::metadata::PNGMetadataProvider;
 use crate::traits::asset::AssetProvider;
+use crate::traits::asset::AssetMetadata;
 use crate::traits::metadata::MetadataProvider;
 use crate::traits::reader::DatasetReader;
 use crate::types::{AssetType, PixelType};
@@ -346,9 +347,11 @@ impl PNGDatasetReader {
 // =============================================================================
 
 impl DatasetReader for PNGDatasetReader {
-    fn get_asset(&self, key: &str) -> Result<Arc<dyn AssetProvider>, CodecError> {
+    fn get_asset(&self, key: &str) -> Result<AssetProvider, CodecError> {
         match &self.image_asset {
-            Some(asset) if asset.key() == key => Ok(asset.clone()),
+            Some(asset) if asset.key() == key => {
+                Ok(AssetProvider::Image(asset.clone() as Arc<dyn crate::traits::image::ImageAssetProvider>))
+            }
             _ => Err(CodecError::AssetNotFound(key.to_string())),
         }
     }
@@ -584,10 +587,7 @@ mod tests {
         let data = make_gray_2x2();
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_any()
-            .downcast_ref::<PNGImageAssetProvider>()
-            .unwrap();
+        let image = asset.as_image().expect("expected Image variant");
 
         assert_eq!(image.num_columns(), 2);
         assert_eq!(image.num_rows(), 2);
@@ -611,10 +611,7 @@ mod tests {
         let data = make_png(2, 2, png::ColorType::Rgb, png::BitDepth::Eight, &interleaved);
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_any()
-            .downcast_ref::<PNGImageAssetProvider>()
-            .unwrap();
+        let image = asset.as_image().expect("expected Image variant");
 
         assert_eq!(image.num_bands(), 3);
         assert_eq!(image.pixel_value_type(), PixelType::UInt8);
@@ -635,10 +632,7 @@ mod tests {
         let data = make_png(2, 1, png::ColorType::Rgba, png::BitDepth::Eight, &interleaved);
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_any()
-            .downcast_ref::<PNGImageAssetProvider>()
-            .unwrap();
+        let image = asset.as_image().expect("expected Image variant");
 
         assert_eq!(image.num_bands(), 4);
         let (pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
@@ -661,10 +655,7 @@ mod tests {
         );
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_any()
-            .downcast_ref::<PNGImageAssetProvider>()
-            .unwrap();
+        let image = asset.as_image().expect("expected Image variant");
 
         assert_eq!(image.num_bands(), 1);
         assert_eq!(image.pixel_value_type(), PixelType::UInt16);
@@ -690,10 +681,7 @@ mod tests {
         let data = make_png(1, 2, png::ColorType::Rgb, png::BitDepth::Sixteen, &interleaved);
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_any()
-            .downcast_ref::<PNGImageAssetProvider>()
-            .unwrap();
+        let image = asset.as_image().expect("expected Image variant");
 
         assert_eq!(image.num_bands(), 3);
         assert_eq!(image.pixel_value_type(), PixelType::UInt16);
@@ -760,10 +748,7 @@ mod tests {
 
         let reader = PNGDatasetReader::from_bytes(&buf).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_any()
-            .downcast_ref::<PNGImageAssetProvider>()
-            .unwrap();
+        let image = asset.as_image().expect("expected Image variant");
 
         assert_eq!(image.num_bands(), 1);
         assert_eq!(image.pixel_value_type(), PixelType::UInt8);

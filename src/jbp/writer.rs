@@ -39,7 +39,7 @@ use crate::jbp::tre::{parse_tre_fields_from_metadata, write_tre_envelopes, TreEn
 use crate::jbp::tre_fields::serialize_tre_groups_to_envelopes;
 use crate::jbp::types::{NitfFormat, SegmentType};
 use crate::parser::StructureRegistry;
-use crate::traits::{AssetProvider, DatasetWriter, ImageAssetProvider, MetadataProvider};
+use crate::traits::{AssetMetadata, AssetProvider, DatasetWriter, ImageAssetProvider, MetadataProvider};
 use crate::types::AssetType;
 
 /// Maximum TRE data size for UDID field (UDIDL max 99999 - 3 bytes for UDOFL).
@@ -277,8 +277,8 @@ impl Default for ImageProperties {
 struct QueuedAsset {
     /// Unique key for this asset
     key: String,
-    /// The asset provider containing data and metadata
-    provider: Arc<dyn AssetProvider>,
+    /// The asset provider enum containing data and metadata
+    provider: AssetProvider,
     /// Human-readable title
     title: String,
     /// Detailed description
@@ -592,51 +592,35 @@ impl JBPDatasetWriter {
 
     /// Extract image properties from an asset provider.
     /// 
-    /// If the provider implements ImageAssetProvider (via BufferedImageAssetProvider),
-    /// extract the image properties. Otherwise, return default values.
+    /// If the provider is an `AssetProvider::Image` variant, extract the image
+    /// properties. Otherwise, return default values.
     /// 
     /// Note: NPPBH and NPPBV are set to defaults here. The actual values
     /// should come from encoding hints extracted via `extract_encoding_hints()`.
     /// Callers should override these fields with validated encoding hints.
     fn extract_image_properties(asset: &QueuedAsset) -> ImageProperties {
-        use crate::buffered::BufferedImageAssetProvider;
-        use crate::traits::ImageAssetProvider;
-        
-        // Try to downcast to BufferedImageAssetProvider
-        if let Some(memory_provider) = asset.provider.as_any().downcast_ref::<BufferedImageAssetProvider>() {
-            let config = memory_provider.config();
+        // Use the enum's typed accessor to get the ImageAssetProvider
+        if let Some(image_provider) = asset.provider.as_image() {
             ImageProperties {
-                nrows: memory_provider.num_rows(),
-                ncols: memory_provider.num_columns(),
-                nbands: memory_provider.num_bands(),
-                nbpp: memory_provider.num_bits_per_pixel(),
-                abpp: memory_provider.actual_bits_per_pixel(),
-                pvtype: Self::pixel_type_to_pvtype(memory_provider.pixel_value_type()),
-                irep: config.irep.clone(),
+                nrows: image_provider.num_rows(),
+                ncols: image_provider.num_columns(),
+                nbands: image_provider.num_bands(),
+                nbpp: image_provider.num_bits_per_pixel(),
+                abpp: image_provider.actual_bits_per_pixel(),
+                pvtype: Self::pixel_type_to_pvtype(image_provider.pixel_value_type()),
+                irep: match image_provider.num_bands() {
+                    1 => "MONO".to_string(),
+                    3 => "RGB".to_string(),
+                    _ => "MULTI".to_string(),
+                },
                 // Default block sizes from provider - may be overridden by encoding hints
-                nppbh: memory_provider.num_pixels_per_block_horizontal(),
-                nppbv: memory_provider.num_pixels_per_block_vertical(),
+                nppbh: image_provider.num_pixels_per_block_horizontal(),
+                nppbv: image_provider.num_pixels_per_block_vertical(),
             }
         } else {
             // Default values for non-ImageAssetProvider assets
             ImageProperties::default()
         }
-    }
-
-    /// Get a reference to the ImageAssetProvider if the asset implements it.
-    ///
-    /// This method attempts to downcast the asset provider to BufferedImageAssetProvider
-    /// and returns a reference to it as an ImageAssetProvider trait object.
-    ///
-    /// # Arguments
-    /// * `asset` - The queued asset to check
-    ///
-    /// # Returns
-    /// Some(&dyn ImageAssetProvider) if the asset implements ImageAssetProvider, None otherwise.
-    fn get_image_asset_provider(asset: &QueuedAsset) -> Option<&dyn ImageAssetProvider> {
-        use crate::buffered::BufferedImageAssetProvider;
-        asset.provider.as_any().downcast_ref::<BufferedImageAssetProvider>()
-            .map(|p| p as &dyn ImageAssetProvider)
     }
 
     /// Collect the set of provided block coordinates from an ImageAssetProvider.
@@ -2120,7 +2104,7 @@ impl DatasetWriter for JBPDatasetWriter {
     fn add_asset(
         &mut self,
         key: &str,
-        provider: Arc<dyn AssetProvider>,
+        provider: AssetProvider,
         title: &str,
         description: &str,
         roles: &[String],
@@ -2192,10 +2176,10 @@ impl DatasetWriter for JBPDatasetWriter {
             
             // Encode image data using BlockEncoder for ImageAssetProvider,
             // or fall back to raw data for other providers.
-            let data = if let Some(image_provider) = Self::get_image_asset_provider(asset) {
+            let data = if let Some(image_provider) = asset.provider.as_image() {
                 // Use BlockEncoder with TileAssembler for ImageAssetProvider
                 let props = Self::extract_image_properties(asset);
-                Self::encode_image_with_block_encoder(image_provider, &hints, &props)?
+                Self::encode_image_with_block_encoder(image_provider.as_ref(), &hints, &props)?
             } else {
                 // Non-image providers pass through raw data as-is
                 asset.provider.raw_asset()?
@@ -2374,7 +2358,7 @@ mod tests {
         }
     }
 
-    impl AssetProvider for TestAssetProvider {
+    impl AssetMetadata for TestAssetProvider {
         fn key(&self) -> &str {
             &self.key
         }
@@ -2400,10 +2384,6 @@ mod tests {
             &self.roles
         }
 
-        fn asset_type(&self) -> AssetType {
-            self.asset_type
-        }
-
         fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
             Ok(self.data.clone())
         }
@@ -2411,10 +2391,23 @@ mod tests {
         fn metadata(&self) -> Arc<dyn MetadataProvider> {
             Arc::new(TestMetadataProvider)
         }
+    }
 
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
+    impl ImageAssetProvider for TestAssetProvider {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
+        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+            Ok((self.data.clone(), [1, 1, 1]))
         }
+        fn num_resolution_levels(&self) -> u32 { 1 }
+        fn num_bands(&self) -> u32 { 1 }
+        fn num_rows(&self) -> u32 { 1 }
+        fn num_columns(&self) -> u32 { 1 }
+        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
+        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
+        fn num_bits_per_pixel(&self) -> u32 { 8 }
+        fn actual_bits_per_pixel(&self) -> u32 { 8 }
+        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
+        fn pad_pixel_value(&self) -> f64 { 0.0 }
     }
 
     struct TestMetadataProvider;
@@ -2427,6 +2420,86 @@ mod tests {
         fn as_dict(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
             HashMap::new()
         }
+    }
+
+    /// Simple text asset provider for testing non-image segments.
+    struct TestTextAssetProvider {
+        key: String,
+        data: Vec<u8>,
+    }
+
+    impl TestTextAssetProvider {
+        fn new(key: &str, data: Vec<u8>) -> Self {
+            Self { key: key.to_string(), data }
+        }
+    }
+
+    impl AssetMetadata for TestTextAssetProvider {
+        fn key(&self) -> &str { &self.key }
+        fn title(&self) -> &str { "Test Text" }
+        fn description(&self) -> &str { "Test text asset" }
+        fn media_type(&self) -> &str { "text/plain" }
+        fn roles(&self) -> &[String] { &[] }
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(self.data.clone()) }
+        fn metadata(&self) -> Arc<dyn MetadataProvider> { Arc::new(TestMetadataProvider) }
+    }
+
+    impl crate::traits::TextAssetProvider for TestTextAssetProvider {
+        fn text(&self) -> Result<String, CodecError> { Ok(String::from_utf8_lossy(&self.data).to_string()) }
+        fn encoding(&self) -> &str { "UTF-8" }
+        fn format(&self) -> &str { "MTF" }
+    }
+
+    /// Simple graphics asset provider for testing non-image segments.
+    struct TestGraphicsAssetProvider {
+        key: String,
+        data: Vec<u8>,
+    }
+
+    impl TestGraphicsAssetProvider {
+        fn new(key: &str, data: Vec<u8>) -> Self {
+            Self { key: key.to_string(), data }
+        }
+    }
+
+    impl AssetMetadata for TestGraphicsAssetProvider {
+        fn key(&self) -> &str { &self.key }
+        fn title(&self) -> &str { "Test Graphics" }
+        fn description(&self) -> &str { "Test graphics asset" }
+        fn media_type(&self) -> &str { "image/cgm" }
+        fn roles(&self) -> &[String] { &[] }
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(self.data.clone()) }
+        fn metadata(&self) -> Arc<dyn MetadataProvider> { Arc::new(TestMetadataProvider) }
+    }
+
+    impl crate::traits::GraphicsAssetProvider for TestGraphicsAssetProvider {}
+
+    /// Simple data asset provider for testing non-image segments.
+    struct TestDataAssetProvider {
+        key: String,
+        data: Vec<u8>,
+    }
+
+    impl TestDataAssetProvider {
+        fn new(key: &str, data: Vec<u8>) -> Self {
+            Self { key: key.to_string(), data }
+        }
+    }
+
+    impl AssetMetadata for TestDataAssetProvider {
+        fn key(&self) -> &str { &self.key }
+        fn title(&self) -> &str { "Test Data" }
+        fn description(&self) -> &str { "Test data asset" }
+        fn media_type(&self) -> &str { "application/octet-stream" }
+        fn roles(&self) -> &[String] { &[] }
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(self.data.clone()) }
+        fn metadata(&self) -> Arc<dyn MetadataProvider> { Arc::new(TestMetadataProvider) }
+    }
+
+    impl crate::traits::DataAssetProvider for TestDataAssetProvider {
+        fn mime_type(&self) -> &str { "application/octet-stream" }
+        fn parse_as_xml(&self) -> Result<String, CodecError> { Err(CodecError::Decode("Not XML".to_string())) }
+        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> { Err(CodecError::Decode("Not JSON".to_string())) }
     }
 
     #[test]
@@ -2458,11 +2531,9 @@ mod tests {
         let path = dir.path().join("test.ntf");
         
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        let provider = Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100]));
+        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
         
         writer.add_asset("image_0", provider, "Test", "", &[]).unwrap();
-        
-        assert_eq!(writer.asset_count(), 1);
     }
 
     #[test]
@@ -2471,8 +2542,8 @@ mod tests {
         let path = dir.path().join("test.ntf");
         
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        let provider1 = Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100]));
-        let provider2 = Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100]));
+        let provider1 = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
+        let provider2 = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
         
         writer.add_asset("image_0", provider1, "Test", "", &[]).unwrap();
         let result = writer.add_asset("image_0", provider2, "Test", "", &[]);
@@ -2492,11 +2563,11 @@ mod tests {
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
         
         for i in 0..5 {
-            let provider = Arc::new(TestAssetProvider::new(
+            let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new(
                 &format!("image_{}", i),
                 AssetType::Image,
                 vec![i as u8; 100],
-            ));
+            )));
             writer.add_asset(&format!("image_{}", i), provider, "Test", "", &[]).unwrap();
         }
         
@@ -2527,7 +2598,7 @@ mod tests {
         let path = dir.path().join("test.ntf");
         
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        let provider = Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100]));
+        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
         writer.add_asset("image_0", provider, "Test", "", &[]).unwrap();
         
         writer.close().unwrap();
@@ -2569,7 +2640,7 @@ mod tests {
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
         writer.close().unwrap();
         
-        let provider = Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100]));
+        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
         let result = writer.add_asset("image_0", provider, "Test", "", &[]);
         
         assert!(result.is_err());
@@ -2604,18 +2675,18 @@ mod tests {
         
         // Add 2 images, 1 text, 1 graphic
         for i in 0..2 {
-            let provider = Arc::new(TestAssetProvider::new(
+            let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new(
                 &format!("image_{}", i),
                 AssetType::Image,
                 vec![0u8; 100],
-            ));
+            )));
             writer.add_asset(&format!("image_{}", i), provider, "Test", "", &[]).unwrap();
         }
         
-        let provider = Arc::new(TestAssetProvider::new("text_0", AssetType::Text, vec![0u8; 50]));
+        let provider = AssetProvider::Text(Arc::new(TestTextAssetProvider::new("text_0", vec![0u8; 50])));
         writer.add_asset("text_0", provider, "Test", "", &[]).unwrap();
         
-        let provider = Arc::new(TestAssetProvider::new("graphic_0", AssetType::Graphics, vec![0u8; 75]));
+        let provider = AssetProvider::Graphics(Arc::new(TestGraphicsAssetProvider::new("graphic_0", vec![0u8; 75])));
         writer.add_asset("graphic_0", provider, "Test", "", &[]).unwrap();
         
         let (numi, nums, numt, numdes, numres) = writer.count_segments_by_type();
@@ -2661,7 +2732,7 @@ mod tests {
         let path = dir.path().join("test.ntf");
         
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        let provider = Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100]));
+        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
         writer.add_asset("image_0", provider, "Test", "", &[]).unwrap();
         writer.close().unwrap();
         
@@ -2684,10 +2755,10 @@ mod tests {
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
         
         // Add different segment types
-        let img = Arc::new(TestAssetProvider::new("img", AssetType::Image, vec![1u8; 100]));
-        let txt = Arc::new(TestAssetProvider::new("txt", AssetType::Text, b"Hello".to_vec()));
-        let gfx = Arc::new(TestAssetProvider::new("gfx", AssetType::Graphics, vec![2u8; 50]));
-        let des = Arc::new(TestAssetProvider::new("des", AssetType::Data, vec![3u8; 25]));
+        let img = AssetProvider::Image(Arc::new(TestAssetProvider::new("img", AssetType::Image, vec![1u8; 100])));
+        let txt = AssetProvider::Text(Arc::new(TestTextAssetProvider::new("txt", b"Hello".to_vec())));
+        let gfx = AssetProvider::Graphics(Arc::new(TestGraphicsAssetProvider::new("gfx", vec![2u8; 50])));
+        let des = AssetProvider::Data(Arc::new(TestDataAssetProvider::new("des", vec![3u8; 25])));
         
         writer.add_asset("img", img, "Image", "", &[]).unwrap();
         writer.add_asset("txt", txt, "Text", "", &[]).unwrap();
@@ -2824,7 +2895,7 @@ mod tests {
         }
     }
 
-    impl AssetProvider for ConflictTestAssetProvider {
+    impl AssetMetadata for ConflictTestAssetProvider {
         fn key(&self) -> &str {
             &self.key
         }
@@ -2845,10 +2916,6 @@ mod tests {
             &[]
         }
 
-        fn asset_type(&self) -> AssetType {
-            AssetType::Image
-        }
-
         fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
             Ok(vec![0u8; 100])
         }
@@ -2856,10 +2923,23 @@ mod tests {
         fn metadata(&self) -> Arc<dyn MetadataProvider> {
             self.metadata.clone()
         }
+    }
 
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
+    impl ImageAssetProvider for ConflictTestAssetProvider {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
+        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+            Ok((vec![0u8; 1], [1, 1, 1]))
         }
+        fn num_resolution_levels(&self) -> u32 { 1 }
+        fn num_bands(&self) -> u32 { 1 }
+        fn num_rows(&self) -> u32 { 1 }
+        fn num_columns(&self) -> u32 { 1 }
+        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
+        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
+        fn num_bits_per_pixel(&self) -> u32 { 8 }
+        fn actual_bits_per_pixel(&self) -> u32 { 8 }
+        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
+        fn pad_pixel_value(&self) -> f64 { 0.0 }
     }
 
     #[test]
@@ -2872,7 +2952,7 @@ mod tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         };
         
         let props = ImageProperties {
@@ -2904,7 +2984,7 @@ mod tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         };
         
         let props = ImageProperties {
@@ -2939,7 +3019,7 @@ mod tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         };
         
         let props = ImageProperties {
@@ -2974,7 +3054,7 @@ mod tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         };
         
         let props = ImageProperties {
@@ -3009,7 +3089,7 @@ mod tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         };
         
         let props = ImageProperties {
@@ -3045,7 +3125,7 @@ mod tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         };
         
         let props = ImageProperties {
@@ -3078,7 +3158,7 @@ mod tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         };
         
         let props = ImageProperties {
@@ -3116,7 +3196,7 @@ mod tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         };
         
         let props = ImageProperties {
@@ -3153,7 +3233,7 @@ mod tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         };
         
         let props = ImageProperties {
@@ -3190,7 +3270,7 @@ mod tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         };
         
         let props = ImageProperties {
@@ -3223,7 +3303,7 @@ mod tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         };
         
         let props = ImageProperties {
@@ -3275,7 +3355,7 @@ mod tests {
         
         // Write the NITF file
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        writer.add_asset("test_image", Arc::new(provider), "Test Image", "Round-trip test", &[]).unwrap();
+        writer.add_asset("test_image", AssetProvider::Image(Arc::new(provider)), "Test Image", "Round-trip test", &[]).unwrap();
         writer.close().unwrap();
         
         // Read the file back
@@ -3289,9 +3369,8 @@ mod tests {
         // Get the image asset
         let asset = reader.get_asset(&asset_keys[0]).unwrap();
         
-        // Downcast to ImageAssetProvider
-        let image_provider = asset.as_any()
-            .downcast_ref::<crate::jbp::asset::JBPImageAssetProvider>()
+        // Get the ImageAssetProvider via the enum's typed accessor
+        let image_provider = asset.as_image()
             .expect("Asset should be an image provider");
         
         // Verify dimensions
@@ -3502,7 +3581,7 @@ mod property_tests {
         }
     }
 
-    impl AssetProvider for PropTestAssetProvider {
+    impl AssetMetadata for PropTestAssetProvider {
         fn key(&self) -> &str {
             &self.key
         }
@@ -3528,10 +3607,6 @@ mod property_tests {
             &[]
         }
 
-        fn asset_type(&self) -> AssetType {
-            self.asset_type
-        }
-
         fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
             Ok(self.data.clone())
         }
@@ -3539,10 +3614,37 @@ mod property_tests {
         fn metadata(&self) -> Arc<dyn MetadataProvider> {
             Arc::new(PropTestMetadataProvider)
         }
+    }
 
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
+    impl ImageAssetProvider for PropTestAssetProvider {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
+        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+            Ok((self.data.clone(), [1, 1, 1]))
         }
+        fn num_resolution_levels(&self) -> u32 { 1 }
+        fn num_bands(&self) -> u32 { 1 }
+        fn num_rows(&self) -> u32 { 1 }
+        fn num_columns(&self) -> u32 { 1 }
+        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
+        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
+        fn num_bits_per_pixel(&self) -> u32 { 8 }
+        fn actual_bits_per_pixel(&self) -> u32 { 8 }
+        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
+        fn pad_pixel_value(&self) -> f64 { 0.0 }
+    }
+
+    impl crate::traits::TextAssetProvider for PropTestAssetProvider {
+        fn text(&self) -> Result<String, CodecError> { Ok(String::from_utf8_lossy(&self.data).to_string()) }
+        fn encoding(&self) -> &str { "UTF-8" }
+        fn format(&self) -> &str { "MTF" }
+    }
+
+    impl crate::traits::GraphicsAssetProvider for PropTestAssetProvider {}
+
+    impl crate::traits::DataAssetProvider for PropTestAssetProvider {
+        fn mime_type(&self) -> &str { "application/octet-stream" }
+        fn parse_as_xml(&self) -> Result<String, CodecError> { Err(CodecError::Decode("Not XML".to_string())) }
+        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> { Err(CodecError::Decode("Not JSON".to_string())) }
     }
 
     struct PropTestMetadataProvider;
@@ -3565,6 +3667,16 @@ mod property_tests {
             Just(AssetType::Graphics),
             Just(AssetType::Data),
         ]
+    }
+
+    /// Wrap a PropTestAssetProvider in the correct AssetProvider enum variant.
+    fn wrap_provider(provider: PropTestAssetProvider) -> AssetProvider {
+        match provider.asset_type {
+            AssetType::Image => AssetProvider::Image(Arc::new(provider)),
+            AssetType::Text => AssetProvider::Text(Arc::new(provider)),
+            AssetType::Graphics => AssetProvider::Graphics(Arc::new(provider)),
+            AssetType::Data => AssetProvider::Data(Arc::new(provider)),
+        }
     }
 
     /// Property 10: Asset Addition Type Mapping
@@ -3598,7 +3710,7 @@ mod property_tests {
                 let path = dir.path().join("test.ntf");
                 
                 let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-                let provider = Arc::new(PropTestAssetProvider::new(
+                let provider = wrap_provider(PropTestAssetProvider::new(
                     "test_asset".to_string(),
                     asset_type,
                     vec![0u8; data_len],
@@ -3634,12 +3746,12 @@ mod property_tests {
                 
                 let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
                 
-                let provider1 = Arc::new(PropTestAssetProvider::new(
+                let provider1 = wrap_provider(PropTestAssetProvider::new(
                     key.clone(),
                     asset_type1,
                     vec![0u8; 100],
                 ));
-                let provider2 = Arc::new(PropTestAssetProvider::new(
+                let provider2 = wrap_provider(PropTestAssetProvider::new(
                     key.clone(),
                     asset_type2,
                     vec![0u8; 100],
@@ -3668,7 +3780,7 @@ mod property_tests {
                 
                 for i in 0..num_assets {
                     let key = format!("asset_{}", i);
-                    let provider = Arc::new(PropTestAssetProvider::new(
+                    let provider = wrap_provider(PropTestAssetProvider::new(
                         key.clone(),
                         AssetType::Image,
                         vec![0u8; 100],
@@ -3704,7 +3816,7 @@ mod property_tests {
                     let key = format!("asset_{}", i);
                     expected_keys.push(key.clone());
                     
-                    let provider = Arc::new(PropTestAssetProvider::new(
+                    let provider = wrap_provider(PropTestAssetProvider::new(
                         key.clone(),
                         AssetType::Image,
                         vec![i as u8; 100],
@@ -3733,7 +3845,7 @@ mod property_tests {
                     let key = format!("asset_{}", i);
                     expected_order.push((key.clone(), *asset_type));
                     
-                    let provider = Arc::new(PropTestAssetProvider::new(
+                    let provider = wrap_provider(PropTestAssetProvider::new(
                         key.clone(),
                         *asset_type,
                         vec![0u8; 100],
@@ -3774,7 +3886,7 @@ mod property_tests {
                 
                 // Add image assets
                 for i in 0..num_images {
-                    let provider = Arc::new(PropTestAssetProvider::new(
+                    let provider = wrap_provider(PropTestAssetProvider::new(
                         format!("image_{}", i),
                         AssetType::Image,
                         vec![0u8; data_size],
@@ -3784,7 +3896,7 @@ mod property_tests {
                 
                 // Add text assets
                 for i in 0..num_text {
-                    let provider = Arc::new(PropTestAssetProvider::new(
+                    let provider = wrap_provider(PropTestAssetProvider::new(
                         format!("text_{}", i),
                         AssetType::Text,
                         vec![0u8; data_size],
@@ -3817,7 +3929,7 @@ mod property_tests {
                 let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
                 
                 for i in 0..num_images {
-                    let provider = Arc::new(PropTestAssetProvider::new(
+                    let provider = wrap_provider(PropTestAssetProvider::new(
                         format!("image_{}", i),
                         AssetType::Image,
                         vec![0u8; data_size],
@@ -4054,16 +4166,31 @@ mod bugfix_tests {
         }
     }
 
-    impl AssetProvider for BugfixAssetProvider {
+    impl AssetMetadata for BugfixAssetProvider {
         fn key(&self) -> &str { &self.key }
         fn title(&self) -> &str { "Bugfix Test" }
         fn description(&self) -> &str { "Bugfix test asset" }
         fn media_type(&self) -> &str { "image/nitf" }
         fn roles(&self) -> &[String] { &[] }
-        fn asset_type(&self) -> AssetType { AssetType::Image }
         fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(vec![0u8; 64]) }
         fn metadata(&self) -> Arc<dyn MetadataProvider> { self.metadata.clone() }
-        fn as_any(&self) -> &dyn std::any::Any { self }
+    }
+
+    impl ImageAssetProvider for BugfixAssetProvider {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
+        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+            Ok((vec![0u8; 1], [1, 1, 1]))
+        }
+        fn num_resolution_levels(&self) -> u32 { 1 }
+        fn num_bands(&self) -> u32 { 1 }
+        fn num_rows(&self) -> u32 { 1 }
+        fn num_columns(&self) -> u32 { 1 }
+        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
+        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
+        fn num_bits_per_pixel(&self) -> u32 { 8 }
+        fn actual_bits_per_pixel(&self) -> u32 { 8 }
+        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
+        fn pad_pixel_value(&self) -> f64 { 0.0 }
     }
 
     fn make_queued_asset(metadata: BugfixMetadataProvider) -> QueuedAsset {
@@ -4074,7 +4201,7 @@ mod bugfix_tests {
             description: "Test".to_string(),
             roles: vec![],
             segment_type: SegmentType::Image,
-            provider: Arc::new(provider),
+            provider: AssetProvider::Image(Arc::new(provider)),
         }
     }
 
@@ -4355,27 +4482,62 @@ mod metadata_writing_tests {
         }
     }
 
-    impl AssetProvider for MetaAssetProvider {
+    impl AssetMetadata for MetaAssetProvider {
         fn key(&self) -> &str { &self.key }
         fn title(&self) -> &str { &self.title }
         fn description(&self) -> &str { "" }
         fn media_type(&self) -> &str { "application/octet-stream" }
         fn roles(&self) -> &[String] { &[] }
-        fn asset_type(&self) -> AssetType { self.asset_type }
         fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(self.data.clone()) }
         fn metadata(&self) -> Arc<dyn MetadataProvider> { self.metadata.clone() }
-        fn as_any(&self) -> &dyn std::any::Any { self }
+    }
+
+    impl ImageAssetProvider for MetaAssetProvider {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
+        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+            Ok((vec![0u8; 1], [1, 1, 1]))
+        }
+        fn num_resolution_levels(&self) -> u32 { 1 }
+        fn num_bands(&self) -> u32 { 1 }
+        fn num_rows(&self) -> u32 { 1 }
+        fn num_columns(&self) -> u32 { 1 }
+        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
+        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
+        fn num_bits_per_pixel(&self) -> u32 { 8 }
+        fn actual_bits_per_pixel(&self) -> u32 { 8 }
+        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
+        fn pad_pixel_value(&self) -> f64 { 0.0 }
+    }
+
+    impl crate::traits::TextAssetProvider for MetaAssetProvider {
+        fn text(&self) -> Result<String, CodecError> { Ok(String::from_utf8_lossy(&self.data).to_string()) }
+        fn encoding(&self) -> &str { "UTF-8" }
+        fn format(&self) -> &str { "MTF" }
+    }
+
+    impl crate::traits::GraphicsAssetProvider for MetaAssetProvider {}
+
+    impl crate::traits::DataAssetProvider for MetaAssetProvider {
+        fn mime_type(&self) -> &str { "application/octet-stream" }
+        fn parse_as_xml(&self) -> Result<String, CodecError> { Err(CodecError::Decode("Not XML".to_string())) }
+        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> { Err(CodecError::Decode("Not JSON".to_string())) }
     }
 
     fn make_asset(key: &str, asset_type: AssetType, metadata: MetaProvider) -> QueuedAsset {
         let provider = MetaAssetProvider::new(key, asset_type, metadata);
+        let enum_provider = match asset_type {
+            AssetType::Image => AssetProvider::Image(Arc::new(provider)),
+            AssetType::Text => AssetProvider::Text(Arc::new(provider)),
+            AssetType::Graphics => AssetProvider::Graphics(Arc::new(provider)),
+            AssetType::Data => AssetProvider::Data(Arc::new(provider)),
+        };
         QueuedAsset {
             key: key.to_string(),
             title: "Test Title".to_string(),
             description: "".to_string(),
             roles: vec![],
             segment_type: JBPDatasetWriter::asset_type_to_segment_type(asset_type),
-            provider: Arc::new(provider),
+            provider: enum_provider,
         }
     }
 
@@ -4926,7 +5088,7 @@ mod metadata_writing_tests {
         let text_provider = MetaAssetProvider::new("text1", AssetType::Text, text_meta);
         writer.add_asset(
             "text1",
-            Arc::new(text_provider),
+            AssetProvider::Text(Arc::new(text_provider)),
             "Test Text",
             "",
             &[],

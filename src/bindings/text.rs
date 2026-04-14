@@ -86,7 +86,7 @@ impl PyTextAssetProvider {
     /// The asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
-        self.inner.asset_type()
+        AssetType::Text
     }
 
     /// The raw asset bytes as a ``BytesIO`` object.

@@ -18,6 +18,7 @@ use crate::jpeg::ffi::TjDecompressor;
 use crate::jpeg::image::JPEGImageAssetProvider;
 use crate::jpeg::metadata::JPEGMetadataProvider;
 use crate::traits::asset::AssetProvider;
+use crate::traits::asset::AssetMetadata;
 use crate::traits::metadata::MetadataProvider;
 use crate::traits::reader::DatasetReader;
 use crate::types::AssetType;
@@ -124,9 +125,11 @@ impl JPEGDatasetReader {
 // =============================================================================
 
 impl DatasetReader for JPEGDatasetReader {
-    fn get_asset(&self, key: &str) -> Result<Arc<dyn AssetProvider>, CodecError> {
+    fn get_asset(&self, key: &str) -> Result<AssetProvider, CodecError> {
         match &self.image_asset {
-            Some(asset) if asset.key() == key => Ok(asset.clone()),
+            Some(asset) if asset.key() == key => {
+                Ok(AssetProvider::Image(asset.clone() as Arc<dyn crate::traits::image::ImageAssetProvider>))
+            }
             _ => Err(CodecError::AssetNotFound(key.to_string())),
         }
     }
@@ -279,9 +282,8 @@ mod tests {
         // Decode and verify shape
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<JPEGImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
         assert_eq!(image.num_columns(), 16);
         assert_eq!(image.num_rows(), 16);
         assert_eq!(image.num_bands(), 1);
@@ -310,9 +312,8 @@ mod tests {
 
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<JPEGImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
         assert_eq!(image.num_bands(), 3);
 
         let (data, shape) = image.get_block(0, 0, 0, None).unwrap();
@@ -352,9 +353,8 @@ mod tests {
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<JPEGImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
 
         let err = image.get_block(1, 0, 0, None).unwrap_err();
         assert!(matches!(err, CodecError::InvalidBlockCoordinates(1, 0, 0)));
@@ -369,9 +369,8 @@ mod tests {
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<JPEGImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
 
         let err = image.get_block(0, 0, 1, None).unwrap_err();
         assert!(matches!(err, CodecError::InvalidResolutionLevel(1)));
@@ -383,9 +382,8 @@ mod tests {
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<JPEGImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
 
         assert!(image.has_block(0, 0, 0));
         assert!(!image.has_block(1, 0, 0));
@@ -399,9 +397,8 @@ mod tests {
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<JPEGImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
 
         // Get all bands first for reference
         let (all_data, _) = image.get_block(0, 0, 0, None).unwrap();
@@ -433,9 +430,8 @@ mod tests {
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<JPEGImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
 
         let (data, _) = image.get_block(0, 0, 0, None).unwrap();
         for (i, &pixel) in data.iter().enumerate() {
@@ -468,9 +464,8 @@ mod tests {
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<JPEGImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("expected Image variant");
 
         let (data, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [3, 8, 8]);

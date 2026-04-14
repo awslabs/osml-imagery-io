@@ -4,13 +4,12 @@
 //! key and roles to present it as an overview asset (e.g., `image:0:overview:1`
 //! with role `"overview"`). All other methods delegate to the inner provider.
 
-use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::CodecError;
-use crate::traits::{AssetProvider, ImageAssetProvider, MetadataProvider};
-use crate::types::{AssetType, PixelType};
+use crate::traits::{AssetMetadata, ImageAssetProvider, MetadataProvider};
+use crate::types::PixelType;
 
 /// Wraps an `ImageAssetProvider` with a new key and overview role.
 ///
@@ -41,7 +40,7 @@ impl OverviewAssetWrapper {
     }
 }
 
-impl AssetProvider for OverviewAssetWrapper {
+impl AssetMetadata for OverviewAssetWrapper {
     fn key(&self) -> &str {
         &self.key
     }
@@ -62,20 +61,12 @@ impl AssetProvider for OverviewAssetWrapper {
         &self.roles
     }
 
-    fn asset_type(&self) -> AssetType {
-        AssetType::Image
-    }
-
     fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
         self.inner.raw_asset()
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.inner.metadata()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 

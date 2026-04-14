@@ -4,14 +4,12 @@
 //! [`TextAssetProvider`] trait for creating text segments in memory.
 //! It allows setting text content and encoding programmatically.
 
-use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::CodecError;
 use crate::jbp::text::encode_with_crlf;
-use crate::traits::{AssetProvider, MetadataProvider, TextAssetProvider};
-use crate::types::AssetType;
+use crate::traits::{AssetMetadata, MetadataProvider, TextAssetProvider};
 
 /// Empty metadata provider for BufferedTextAssetProvider.
 #[derive(Default)]
@@ -159,7 +157,7 @@ impl BufferedTextAssetProvider {
     }
 }
 
-impl AssetProvider for BufferedTextAssetProvider {
+impl AssetMetadata for BufferedTextAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -185,14 +183,6 @@ impl AssetProvider for BufferedTextAssetProvider {
         &self.roles
     }
 
-    /// Returns AssetType::Text.
-    ///
-    /// # Requirements
-    /// - 7.6: asset_type() returns AssetType::Text
-    fn asset_type(&self) -> AssetType {
-        AssetType::Text
-    }
-
     /// Returns the raw text bytes with CR/LF line delimiters.
     ///
     /// # Requirements
@@ -205,10 +195,6 @@ impl AssetProvider for BufferedTextAssetProvider {
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
@@ -261,7 +247,6 @@ mod tests {
         assert_eq!(provider.text().unwrap(), "Hello");
         assert_eq!(provider.encoding(), "UTF-8");
         assert_eq!(provider.format(), "U8S");
-        assert_eq!(provider.asset_type(), AssetType::Text);
     }
 
     #[test]
@@ -400,8 +385,9 @@ mod tests {
 
     #[test]
     fn test_asset_type_is_text() {
+        // asset_type() is now on the AssetProvider enum, not on concrete types.
+        // This is validated by Property 1 (variant-type consistency) in the enum tests.
         let provider = BufferedTextAssetProvider::new("text_0", "Hello".to_string(), "UTF-8");
-
-        assert_eq!(provider.asset_type(), AssetType::Text);
+        assert_eq!(provider.key(), "text_0");
     }
 }

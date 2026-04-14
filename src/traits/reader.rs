@@ -6,7 +6,8 @@
 use std::sync::Arc;
 
 use crate::error::CodecError;
-use crate::traits::{AssetProvider, MetadataProvider};
+use crate::traits::asset::AssetProvider;
+use crate::traits::MetadataProvider;
 use crate::types::AssetType;
 
 /// Trait for reading datasets.
@@ -34,6 +35,12 @@ use crate::types::AssetType;
 pub trait DatasetReader: Send + Sync {
     /// Returns an AssetProvider for the specified asset key.
     ///
+    /// The returned `AssetProvider` enum variant indicates the asset type:
+    /// `AssetProvider::Image`, `AssetProvider::Text`, `AssetProvider::Data`,
+    /// or `AssetProvider::Graphics`. Use pattern matching or the typed
+    /// accessors (`as_image()`, `as_text()`, etc.) to access the specialized
+    /// provider trait object.
+    ///
     /// # Arguments
     ///
     /// * `key` - The unique string identifier for the asset.
@@ -41,7 +48,7 @@ pub trait DatasetReader: Send + Sync {
     /// # Errors
     ///
     /// Returns `CodecError::AssetNotFound` if no asset with the given key exists.
-    fn get_asset(&self, key: &str) -> Result<Arc<dyn AssetProvider>, CodecError>;
+    fn get_asset(&self, key: &str) -> Result<AssetProvider, CodecError>;
 
     /// Returns a list of asset keys matching the filter criteria.
     ///

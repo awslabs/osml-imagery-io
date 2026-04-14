@@ -3,39 +3,16 @@
 //! This module provides the PyDatasetReader wrapper that exposes the
 //! DatasetReader trait to Python with context manager support.
 
-use std::sync::Arc;
-
 use pyo3::prelude::*;
 use pyo3::IntoPyObjectExt;
 
 use crate::bindings::{
-    PyAssetProvider, PyDataAssetProvider, PyGraphicsAssetProvider, PyImageAssetProvider,
+    PyDataAssetProvider, PyGraphicsAssetProvider, PyImageAssetProvider,
     PyMetadataProvider, PyTextAssetProvider,
 };
 use crate::error::CodecError;
-use crate::traits::{
-    AssetProvider, DataAssetProvider, DatasetReader, GraphicsAssetProvider, ImageAssetProvider,
-    TextAssetProvider,
-};
+use crate::traits::{AssetProvider, DatasetReader};
 use crate::types::AssetType;
-
-// Import JBP asset providers for downcasting
-use crate::jbp::{JBPDataAssetProvider, JBPGraphicsAssetProvider, JBPImageAssetProvider, JBPTextAssetProvider};
-
-// Import TIFF asset providers for downcasting
-#[cfg(feature = "libtiff")]
-use crate::tiff::TIFFImageAssetProvider;
-
-// Import PNG asset providers for downcasting
-use crate::png::PNGImageAssetProvider;
-
-// Import J2K asset providers for downcasting
-#[cfg(feature = "openjpeg")]
-use crate::j2k::J2KImageAssetProvider;
-
-// Import JPEG asset providers for downcasting
-#[cfg(feature = "libjpeg-turbo")]
-use crate::jpeg::JPEGImageAssetProvider;
 
 /// Provides read access to geospatial datasets.
 ///
@@ -101,36 +78,18 @@ impl PyDatasetReader {
         let inner = self.get_inner()?;
         let asset = inner.get_asset(key)?;
 
-        // Return the appropriate Python wrapper based on asset type
-        match asset.asset_type() {
-            AssetType::Image => {
-                // Try to downcast to ImageAssetProvider
-                if let Some(image_provider) = try_as_image_provider(&asset) {
-                    Ok(PyImageAssetProvider::new(image_provider).into_pyobject(py)?.into_any().unbind())
-                } else {
-                    Ok(PyAssetProvider::new(asset).into_pyobject(py)?.into_any().unbind())
-                }
+        match asset {
+            AssetProvider::Image(img) => {
+                Ok(PyImageAssetProvider::new(img).into_pyobject(py)?.into_any().unbind())
             }
-            AssetType::Text => {
-                if let Some(text_provider) = try_as_text_provider(&asset) {
-                    Ok(PyTextAssetProvider::new(text_provider).into_pyobject(py)?.into_any().unbind())
-                } else {
-                    Ok(PyAssetProvider::new(asset).into_pyobject(py)?.into_any().unbind())
-                }
+            AssetProvider::Text(txt) => {
+                Ok(PyTextAssetProvider::new(txt).into_pyobject(py)?.into_any().unbind())
             }
-            AssetType::Data => {
-                if let Some(data_provider) = try_as_data_provider(&asset) {
-                    Ok(PyDataAssetProvider::new(data_provider).into_pyobject(py)?.into_any().unbind())
-                } else {
-                    Ok(PyAssetProvider::new(asset).into_pyobject(py)?.into_any().unbind())
-                }
+            AssetProvider::Data(data) => {
+                Ok(PyDataAssetProvider::new(data).into_pyobject(py)?.into_any().unbind())
             }
-            AssetType::Graphics => {
-                if let Some(graphics_provider) = try_as_graphics_provider(&asset) {
-                    Ok(PyGraphicsAssetProvider::new(graphics_provider).into_pyobject(py)?.into_any().unbind())
-                } else {
-                    Ok(PyAssetProvider::new(asset).into_pyobject(py)?.into_any().unbind())
-                }
+            AssetProvider::Graphics(gfx) => {
+                Ok(PyGraphicsAssetProvider::new(gfx).into_pyobject(py)?.into_any().unbind())
             }
         }
     }
@@ -206,177 +165,5 @@ impl PyDatasetReader {
     ) -> PyResult<bool> {
         self.close()?;
         Ok(false)
-    }
-}
-
-/// Attempts to convert an AssetProvider to an ImageAssetProvider.
-///
-/// This function checks if the underlying implementation supports the
-/// ImageAssetProvider trait by attempting to downcast to known concrete types.
-fn try_as_image_provider(
-    asset: &Arc<dyn AssetProvider>,
-) -> Option<Arc<dyn ImageAssetProvider>> {
-    if asset.asset_type() != AssetType::Image {
-        return None;
-    }
-
-    // Try OverviewAssetWrapper (composite reader overview assets)
-    if asset.as_any().downcast_ref::<crate::composite::OverviewAssetWrapper>().is_some() {
-        let ptr = Arc::as_ptr(asset);
-        unsafe {
-            Arc::increment_strong_count(ptr);
-            let concrete_ptr = ptr as *const crate::composite::OverviewAssetWrapper;
-            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
-        }
-    }
-
-    // Try JBPImageAssetProvider
-    if asset.as_any().downcast_ref::<JBPImageAssetProvider>().is_some() {
-        let ptr = Arc::as_ptr(asset);
-        // SAFETY: We've verified the concrete type is JBPImageAssetProvider
-        // which implements ImageAssetProvider. We increment the ref count.
-        unsafe {
-            Arc::increment_strong_count(ptr);
-            let concrete_ptr = ptr as *const JBPImageAssetProvider;
-            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
-        }
-    }
-
-    // Try TIFFImageAssetProvider
-    #[cfg(feature = "libtiff")]
-    if asset.as_any().downcast_ref::<TIFFImageAssetProvider>().is_some() {
-        let ptr = Arc::as_ptr(asset);
-        // SAFETY: We've verified the concrete type is TIFFImageAssetProvider
-        // which implements ImageAssetProvider. We increment the ref count.
-        unsafe {
-            Arc::increment_strong_count(ptr);
-            let concrete_ptr = ptr as *const TIFFImageAssetProvider;
-            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
-        }
-    }
-
-    // Try PNGImageAssetProvider
-    if asset.as_any().downcast_ref::<PNGImageAssetProvider>().is_some() {
-        let ptr = Arc::as_ptr(asset);
-        // SAFETY: We've verified the concrete type is PNGImageAssetProvider
-        // which implements ImageAssetProvider. We increment the ref count.
-        unsafe {
-            Arc::increment_strong_count(ptr);
-            let concrete_ptr = ptr as *const PNGImageAssetProvider;
-            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
-        }
-    }
-
-    // Try J2KImageAssetProvider
-    #[cfg(feature = "openjpeg")]
-    if asset.as_any().downcast_ref::<J2KImageAssetProvider>().is_some() {
-        let ptr = Arc::as_ptr(asset);
-        // SAFETY: We've verified the concrete type is J2KImageAssetProvider
-        // which implements ImageAssetProvider. We increment the ref count.
-        unsafe {
-            Arc::increment_strong_count(ptr);
-            let concrete_ptr = ptr as *const J2KImageAssetProvider;
-            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
-        }
-    }
-
-    // Try JPEGImageAssetProvider
-    #[cfg(feature = "libjpeg-turbo")]
-    if asset.as_any().downcast_ref::<JPEGImageAssetProvider>().is_some() {
-        let ptr = Arc::as_ptr(asset);
-        // SAFETY: We've verified the concrete type is JPEGImageAssetProvider
-        // which implements ImageAssetProvider. We increment the ref count.
-        unsafe {
-            Arc::increment_strong_count(ptr);
-            let concrete_ptr = ptr as *const JPEGImageAssetProvider;
-            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
-        }
-    }
-
-    None
-}
-
-/// Attempts to convert an AssetProvider to a TextAssetProvider.
-///
-/// This function checks if the underlying implementation supports the
-/// TextAssetProvider trait by attempting to downcast to known concrete types.
-fn try_as_text_provider(
-    asset: &Arc<dyn AssetProvider>,
-) -> Option<Arc<dyn TextAssetProvider>> {
-    // Try to downcast to JBPTextAssetProvider using as_any
-    if asset.asset_type() == AssetType::Text {
-        if asset.as_any().downcast_ref::<JBPTextAssetProvider>().is_some() {
-            // We need to clone the Arc and return it as TextAssetProvider
-            // Since we can't directly convert Arc<dyn AssetProvider> to Arc<dyn TextAssetProvider>,
-            // we need to create a new Arc from the concrete type
-            // This is safe because we've verified the concrete type
-            let ptr = Arc::as_ptr(asset);
-            // SAFETY: We've verified the concrete type is JBPTextAssetProvider
-            // which implements TextAssetProvider. We increment the ref count.
-            unsafe {
-                Arc::increment_strong_count(ptr);
-                let concrete_ptr = ptr as *const JBPTextAssetProvider;
-                Some(Arc::from_raw(concrete_ptr as *const dyn TextAssetProvider))
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    }
-}
-
-/// Attempts to convert an AssetProvider to a DataAssetProvider.
-///
-/// This function checks if the underlying implementation supports the
-/// DataAssetProvider trait by attempting to downcast to known concrete types.
-fn try_as_data_provider(
-    asset: &Arc<dyn AssetProvider>,
-) -> Option<Arc<dyn DataAssetProvider>> {
-    if asset.asset_type() == AssetType::Data {
-        if asset.as_any().downcast_ref::<JBPDataAssetProvider>().is_some() {
-            let ptr = Arc::as_ptr(asset);
-            // SAFETY: We've verified the concrete type is JBPDataAssetProvider
-            // which implements DataAssetProvider. We increment the ref count.
-            unsafe {
-                Arc::increment_strong_count(ptr);
-                let concrete_ptr = ptr as *const JBPDataAssetProvider;
-                Some(Arc::from_raw(concrete_ptr as *const dyn DataAssetProvider))
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    }
-}
-
-/// Attempts to convert an AssetProvider to a GraphicsAssetProvider.
-///
-/// This function checks if the underlying implementation supports the
-/// GraphicsAssetProvider trait by attempting to downcast to known concrete types.
-fn try_as_graphics_provider(
-    asset: &Arc<dyn AssetProvider>,
-) -> Option<Arc<dyn GraphicsAssetProvider>> {
-    // Try to downcast to JBPGraphicsAssetProvider using as_any
-    if asset.asset_type() == AssetType::Graphics {
-        if asset.as_any().downcast_ref::<JBPGraphicsAssetProvider>().is_some() {
-            // We need to clone the Arc and return it as GraphicsAssetProvider
-            // Since we can't directly convert Arc<dyn AssetProvider> to Arc<dyn GraphicsAssetProvider>,
-            // we need to create a new Arc from the concrete type
-            // This is safe because we've verified the concrete type
-            let ptr = Arc::as_ptr(asset);
-            // SAFETY: We've verified the concrete type is JBPGraphicsAssetProvider
-            // which implements GraphicsAssetProvider. We increment the ref count.
-            unsafe {
-                Arc::increment_strong_count(ptr);
-                let concrete_ptr = ptr as *const JBPGraphicsAssetProvider;
-                Some(Arc::from_raw(concrete_ptr as *const dyn GraphicsAssetProvider))
-            }
-        } else {
-            None
-        }
-    } else {
-        None
     }
 }

@@ -18,7 +18,7 @@ use crate::tiff::metadata::TIFFMetadataProvider;
 use crate::tiff::tags;
 use crate::traits::metadata::MetadataProvider;
 use crate::traits::reader::DatasetReader;
-use crate::traits::AssetProvider;
+use crate::traits::{AssetMetadata, AssetProvider};
 use crate::types::AssetType;
 
 /// Supported compression codes. IFDs using other compressions are rejected
@@ -222,10 +222,10 @@ impl TIFFDatasetReader {
 }
 
 impl DatasetReader for TIFFDatasetReader {
-    fn get_asset(&self, key: &str) -> Result<Arc<dyn AssetProvider>, CodecError> {
+    fn get_asset(&self, key: &str) -> Result<AssetProvider, CodecError> {
         for (i, k) in self.asset_keys.iter().enumerate() {
             if k == key {
-                return Ok(self.image_assets[i].clone());
+                return Ok(AssetProvider::Image(self.image_assets[i].clone()));
             }
         }
         Err(CodecError::AssetNotFound(key.to_string()))
@@ -469,11 +469,10 @@ mod tests {
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
 
-        // Downcast to ImageAssetProvider to verify it's the right type
+        // Use typed accessor to get the ImageAssetProvider
         let image = asset
-            .as_any()
-            .downcast_ref::<TIFFImageAssetProvider>()
-            .expect("Asset should be a TIFFImageAssetProvider");
+            .as_image()
+            .expect("Asset should be an Image variant");
 
         assert_eq!(image.num_columns(), 4);
         assert_eq!(image.num_rows(), 4);

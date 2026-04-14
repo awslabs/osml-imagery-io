@@ -6,7 +6,8 @@
 use std::sync::Arc;
 
 use crate::error::CodecError;
-use crate::traits::{AssetProvider, MetadataProvider};
+use crate::traits::asset::AssetProvider;
+use crate::traits::MetadataProvider;
 
 /// Trait for writing datasets.
 ///
@@ -30,10 +31,14 @@ use crate::traits::{AssetProvider, MetadataProvider};
 pub trait DatasetWriter: Send + Sync {
     /// Adds an asset to the dataset.
     ///
+    /// The `provider` is an `AssetProvider` enum whose variant indicates the
+    /// asset type (`Image`, `Text`, `Data`, or `Graphics`). Writers can match
+    /// on the variant to extract the specialized provider trait object directly.
+    ///
     /// # Arguments
     ///
     /// * `key` - The unique string identifier for the asset.
-    /// * `provider` - The AssetProvider containing the asset data.
+    /// * `provider` - The `AssetProvider` enum containing the asset data.
     /// * `title` - A human-readable title for the asset.
     /// * `description` - A detailed description of the asset.
     /// * `roles` - Semantic roles for the asset (e.g., "data", "thumbnail", "metadata").
@@ -44,7 +49,7 @@ pub trait DatasetWriter: Send + Sync {
     fn add_asset(
         &mut self,
         key: &str,
-        provider: Arc<dyn AssetProvider>,
+        provider: AssetProvider,
         title: &str,
         description: &str,
         roles: &[String],

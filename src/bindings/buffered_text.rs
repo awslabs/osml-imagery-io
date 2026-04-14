@@ -10,7 +10,7 @@ use pyo3::IntoPyObjectExt;
 
 use crate::bindings::PyMetadataProvider;
 use crate::buffered::BufferedTextAssetProvider;
-use crate::traits::{AssetProvider, TextAssetProvider};
+use crate::traits::{AssetMetadata, TextAssetProvider};
 use crate::types::AssetType;
 
 /// Constructs text assets entirely in memory.
@@ -180,7 +180,7 @@ impl PyBufferedTextAssetProvider {
     /// Asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
-        self.inner.asset_type()
+        AssetType::Text
     }
 
     /// Raw asset bytes as a ``BytesIO`` object.

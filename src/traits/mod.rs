@@ -12,7 +12,7 @@ pub mod reader;
 pub mod text;
 pub mod writer;
 
-pub use asset::AssetProvider;
+pub use asset::{AssetMetadata, AssetProvider};
 pub use data::DataAssetProvider;
 pub use graphics::GraphicsAssetProvider;
 pub use image::ImageAssetProvider;

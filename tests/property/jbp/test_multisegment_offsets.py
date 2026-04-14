@@ -8,12 +8,29 @@ and preserves data for each segment through a round-trip.
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import pytest
-from aws.osml.io import IO, AssetProvider, AssetType
+from aws.osml.io import IO, AssetProvider, AssetType, BufferedImageAssetProvider, PixelType
 from hypothesis import given
 from hypothesis import strategies as st
 
 from ..conftest import pbt_settings
+
+
+def _create_image_provider(key, seed=0):
+    """Create a minimal BufferedImageAssetProvider for testing."""
+    provider = BufferedImageAssetProvider.create(
+        key=key,
+        num_columns=8,
+        num_rows=8,
+        num_bands=1,
+        block_width=8,
+        block_height=8,
+        pixel_type=PixelType.UInt8,
+    )
+    data = np.full((1, 8, 8), seed % 256, dtype=np.uint8)
+    provider.set_full_image(data)
+    return provider
 
 # Strategies for generating segment content
 image_data_strategy = st.binary(min_size=1, max_size=256)
@@ -55,12 +72,7 @@ class TestMultiSegmentOffsets:
 
             for i in range(counts["images"]):
                 key = f"image:{i}"
-                asset = AssetProvider.from_bytes(
-                    key=key,
-                    data=bytes([i] * 64),
-                    asset_type=AssetType.Image,
-                    title=f"Image {i}",
-                )
+                asset = _create_image_provider(key, seed=i)
                 writer.add_asset(key, asset, f"Image {i}", "", ["data"])
                 expected_keys.append(key)
 
@@ -123,18 +135,18 @@ class TestMultiSegmentOffsets:
                 path.unlink()
 
     @given(
-        image_bytes=image_data_strategy,
         text_bytes=text_data_strategy,
         graphics_bytes=graphics_data_strategy,
         des_bytes=des_data_strategy,
     )
     @pbt_settings
     def test_mixed_segment_data_roundtrip(
-        self, image_bytes, text_bytes, graphics_bytes, des_bytes
+        self, text_bytes, graphics_bytes, des_bytes
     ):
         """For any NITF file containing one of each segment type, reading
-        back the raw data for each segment SHALL return bytes identical
-        to what was written.
+        back the raw data for text, graphics, and DES segments SHALL return
+        bytes identical to what was written. Image segments use
+        BufferedImageAssetProvider (raw byte comparison not applicable).
         """
         with tempfile.NamedTemporaryFile(suffix=".ntf", delete=False) as f:
             path = Path(f.name)
@@ -142,14 +154,18 @@ class TestMultiSegmentOffsets:
         try:
             writer = IO.open([str(path)], "w", "nitf")
 
-            segments = [
-                ("image:0", image_bytes, AssetType.Image),
+            # Image segment uses BufferedImageAssetProvider
+            image_provider = _create_image_provider("image:0")
+            writer.add_asset("image:0", image_provider, "image:0", "", ["data"])
+
+            # Non-image segments use from_bytes
+            non_image_segments = [
                 ("text:0", text_bytes, AssetType.Text),
                 ("graphic:0", graphics_bytes, AssetType.Graphics),
                 ("des:0", des_bytes, AssetType.Data),
             ]
 
-            for key, data, asset_type in segments:
+            for key, data, asset_type in non_image_segments:
                 asset = AssetProvider.from_bytes(
                     key=key, data=data, asset_type=asset_type, title=key,
                 )
@@ -159,7 +175,12 @@ class TestMultiSegmentOffsets:
 
             reader = IO.open([str(path)], "r")
 
-            for key, original_data, _ in segments:
+            # Verify image segment exists
+            image_asset = reader.get_asset("image:0")
+            assert image_asset is not None, "Missing asset: image:0"
+
+            # Verify non-image segment data roundtrip
+            for key, original_data, _ in non_image_segments:
                 asset = reader.get_asset(key)
                 assert asset is not None, f"Missing asset: {key}"
                 read_data = asset.get_raw_asset().read()
@@ -190,9 +211,7 @@ class TestMultiSegmentOffsets:
 
             for i in range(counts["images"]):
                 key = f"image:{i}"
-                asset = AssetProvider.from_bytes(
-                    key=key, data=bytes(64), asset_type=AssetType.Image, title=key,
-                )
+                asset = _create_image_provider(key, seed=i)
                 writer.add_asset(key, asset, key, "", ["data"])
 
             for i in range(counts["text"]):

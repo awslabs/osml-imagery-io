@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::error::CodecError;
 use crate::traits::{AssetProvider, DatasetWriter, MetadataProvider};
 
+
 /// Parse an overview key like `image:N:overview:M` into `(parent_key, level)`.
 ///
 /// Uses plain string parsing with `rsplit_once(":overview:")` — no regex needed.
@@ -78,7 +79,7 @@ impl DatasetWriter for CompositeDatasetWriter {
     fn add_asset(
         &mut self,
         key: &str,
-        provider: Arc<dyn AssetProvider>,
+        provider: AssetProvider,
         title: &str,
         description: &str,
         roles: &[String],
@@ -153,8 +154,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
-    use crate::traits::{AssetProvider, MetadataProvider};
-    use crate::types::AssetType;
+    use crate::traits::{AssetMetadata, AssetProvider, ImageAssetProvider, MetadataProvider};
 
     // =========================================================================
     // Mock implementations
@@ -179,14 +179,14 @@ mod tests {
     }
 
     impl MockAssetProvider {
-        fn new(key: &str) -> Arc<Self> {
-            Arc::new(Self {
+        fn new(key: &str) -> AssetProvider {
+            AssetProvider::Image(Arc::new(Self {
                 key: key.to_string(),
-            })
+            }))
         }
     }
 
-    impl AssetProvider for MockAssetProvider {
+    impl AssetMetadata for MockAssetProvider {
         fn key(&self) -> &str {
             &self.key
         }
@@ -202,18 +202,29 @@ mod tests {
         fn roles(&self) -> &[String] {
             &[]
         }
-        fn asset_type(&self) -> AssetType {
-            AssetType::Image
-        }
         fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
             Ok(vec![])
         }
         fn metadata(&self) -> Arc<dyn MetadataProvider> {
             Arc::new(MockMetadataProvider)
         }
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
+    }
+
+    impl ImageAssetProvider for MockAssetProvider {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
+        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+            Ok((vec![0u8; 1], [1, 1, 1]))
         }
+        fn num_resolution_levels(&self) -> u32 { 1 }
+        fn num_bands(&self) -> u32 { 1 }
+        fn num_rows(&self) -> u32 { 1 }
+        fn num_columns(&self) -> u32 { 1 }
+        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
+        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
+        fn num_bits_per_pixel(&self) -> u32 { 8 }
+        fn actual_bits_per_pixel(&self) -> u32 { 8 }
+        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
+        fn pad_pixel_value(&self) -> f64 { 0.0 }
     }
 
     /// A mock DatasetWriter that records all operations to a shared log.
@@ -238,7 +249,7 @@ mod tests {
         fn add_asset(
             &mut self,
             key: &str,
-            _provider: Arc<dyn AssetProvider>,
+            _provider: AssetProvider,
             _title: &str,
             _description: &str,
             _roles: &[String],

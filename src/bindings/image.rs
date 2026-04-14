@@ -102,7 +102,7 @@ impl PyImageAssetProvider {
     /// Asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
-        self.inner.asset_type()
+        AssetType::Image
     }
 
     /// Raw asset bytes as a ``BytesIO`` object.

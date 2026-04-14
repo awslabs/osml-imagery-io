@@ -3,18 +3,18 @@
 //! This module defines the interface for text assets with encoding information.
 
 use crate::error::CodecError;
-use crate::traits::AssetProvider;
+use crate::traits::asset::AssetMetadata;
 
 /// Trait for text content access.
 ///
-/// This trait extends `AssetProvider` to provide text-specific access methods
+/// This trait extends `AssetMetadata` to provide text-specific access methods
 /// including decoded text content and encoding information.
 ///
 /// # Thread Safety
 ///
 /// Implementations must be thread-safe (`Send + Sync`) to allow concurrent access
 /// from multiple threads.
-pub trait TextAssetProvider: AssetProvider {
+pub trait TextAssetProvider: AssetMetadata {
     /// Returns the decoded text content as a string.
     ///
     /// # Errors

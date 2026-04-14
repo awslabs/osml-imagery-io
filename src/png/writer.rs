@@ -18,10 +18,8 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::buffered::BufferedImageAssetProvider;
 use crate::error::CodecError;
-use crate::png::image::PNGImageAssetProvider;
-use crate::traits::{AssetProvider, DatasetWriter, ImageAssetProvider, MetadataProvider};
+use crate::traits::{AssetProvider, DatasetWriter, MetadataProvider};
 use crate::types::{AssetType, PixelType};
 
 /// Metadata keys that are not written as tEXt chunks (they control encoding
@@ -39,7 +37,7 @@ const SKIP_TEXT_KEYS: &[&str] = &[
 
 /// An image asset queued for writing.
 struct QueuedPngAsset {
-    provider: Arc<dyn AssetProvider>,
+    provider: AssetProvider,
     #[allow(dead_code)]
     key: String,
 }
@@ -73,17 +71,6 @@ impl PNGDatasetWriter {
             closed: false,
             assets: Vec::new(),
         })
-    }
-
-    /// Downcast an `AssetProvider` to `ImageAssetProvider`.
-    fn get_image_provider(provider: &Arc<dyn AssetProvider>) -> Option<&dyn ImageAssetProvider> {
-        if let Some(p) = provider.as_any().downcast_ref::<BufferedImageAssetProvider>() {
-            return Some(p as &dyn ImageAssetProvider);
-        }
-        if let Some(p) = provider.as_any().downcast_ref::<PNGImageAssetProvider>() {
-            return Some(p as &dyn ImageAssetProvider);
-        }
-        None
     }
 
     /// Determine the PNG color type from band count and optional metadata hints.
@@ -263,7 +250,7 @@ impl DatasetWriter for PNGDatasetWriter {
     fn add_asset(
         &mut self,
         key: &str,
-        provider: Arc<dyn AssetProvider>,
+        provider: AssetProvider,
         _title: &str,
         _description: &str,
         _roles: &[String],
@@ -315,11 +302,12 @@ impl DatasetWriter for PNGDatasetWriter {
             None => return Ok(()),
         };
 
-        let image = Self::get_image_provider(&asset.provider).ok_or_else(|| {
+        let image = asset.provider.as_image().ok_or_else(|| {
             CodecError::Unsupported(
-                "Cannot downcast asset provider to ImageAssetProvider".to_string(),
+                "Asset is not an Image variant".to_string(),
             )
         })?;
+        let image = image.as_ref();
 
         let width = image.num_columns();
         let height = image.num_rows();
@@ -476,7 +464,7 @@ mod tests {
 
         let result = writer.add_asset(
             "image:0",
-            provider,
+            AssetProvider::Image(provider),
             "Test",
             "Test image",
             &[],
@@ -503,7 +491,7 @@ mod tests {
 
         let result = writer.add_asset(
             "text_0",
-            text_provider,
+            AssetProvider::Text(text_provider),
             "Text",
             "A text asset",
             &[],
@@ -527,10 +515,10 @@ mod tests {
         let provider2 = make_image_provider(2, 2, 1, PixelType::UInt8, &[5, 6, 7, 8]);
 
         writer
-            .add_asset("img0", provider1, "First", "First image", &[])
+            .add_asset("img0", AssetProvider::Image(provider1), "First", "First image", &[])
             .unwrap();
 
-        let result = writer.add_asset("img1", provider2, "Second", "Second image", &[]);
+        let result = writer.add_asset("img1", AssetProvider::Image(provider2), "Second", "Second image", &[]);
         match result {
             Err(CodecError::Unsupported(msg)) => {
                 assert!(msg.contains("single image per file"));
@@ -555,7 +543,7 @@ mod tests {
             9, 10, 11, 12, // B
         ]);
         writer
-            .add_asset("image:0", provider, "Test", "Test", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
             .unwrap();
 
         // First close should succeed
@@ -580,7 +568,7 @@ mod tests {
 
         let mut writer = PNGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", provider, "Test", "Test", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
             .unwrap();
         writer.close().unwrap();
 
@@ -589,9 +577,8 @@ mod tests {
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<PNGImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("Expected Image variant");
 
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [1, 2, 2]);
@@ -613,7 +600,7 @@ mod tests {
 
         let mut writer = PNGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", provider, "Test", "Test", &[])
+            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
             .unwrap();
         writer.close().unwrap();
 
@@ -621,9 +608,8 @@ mod tests {
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset
-            .as_any()
-            .downcast_ref::<PNGImageAssetProvider>()
-            .unwrap();
+            .as_image()
+            .expect("Expected Image variant");
 
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [3, 2, 2]);

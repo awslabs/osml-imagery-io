@@ -24,8 +24,8 @@ pub struct CompositeDatasetReader {
     overviews: HashMap<String, Arc<OverviewAssetWrapper>>,
     /// Sorted overview keys for deterministic iteration
     overview_keys: Vec<String>,
-    /// Cache for Arc<dyn AssetProvider> wrappers
-    cache: RwLock<HashMap<String, Arc<dyn AssetProvider>>>,
+    /// Cache for AssetProvider enum wrappers
+    cache: RwLock<HashMap<String, AssetProvider>>,
 }
 
 impl CompositeDatasetReader {
@@ -64,7 +64,7 @@ impl CompositeDatasetReader {
 }
 
 impl DatasetReader for CompositeDatasetReader {
-    fn get_asset(&self, key: &str) -> Result<Arc<dyn AssetProvider>, CodecError> {
+    fn get_asset(&self, key: &str) -> Result<AssetProvider, CodecError> {
         // Check overview assets first
         if let Some(wrapper) = self.overviews.get(key) {
             // Check cache
@@ -74,7 +74,7 @@ impl DatasetReader for CompositeDatasetReader {
                     return Ok(cached.clone());
                 }
             }
-            let asset: Arc<dyn AssetProvider> = wrapper.clone();
+            let asset = AssetProvider::Image(wrapper.clone() as Arc<dyn ImageAssetProvider>);
             let mut cache = self.cache.write().unwrap();
             cache.insert(key.to_string(), asset.clone());
             return Ok(asset);

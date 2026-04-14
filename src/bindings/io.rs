@@ -10,7 +10,6 @@ use std::sync::Arc;
 use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::IntoPyObjectExt;
 
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
 use crate::composite::{CompositeDatasetReader, CompositeDatasetWriter};
@@ -21,7 +20,7 @@ use crate::jbp::{JBPDatasetReader, JBPDatasetWriter, NitfFormat};
 #[cfg(feature = "libjpeg-turbo")]
 use crate::jpeg::{JPEGDatasetReader, JPEGDatasetWriter};
 use crate::png::{PNGDatasetReader, PNGDatasetWriter};
-use crate::traits::{AssetProvider, DatasetReader, DatasetWriter, ImageAssetProvider};
+use crate::traits::{DatasetReader, DatasetWriter, ImageAssetProvider};
 use crate::types::AssetType;
 #[cfg(feature = "libtiff")]
 use crate::tiff;
@@ -263,77 +262,7 @@ fn extract_primary_image(reader: &dyn DatasetReader) -> Option<Arc<dyn ImageAsse
     let keys = reader.get_asset_keys(Some(AssetType::Image), None);
     let key = keys.first()?;
     let asset = reader.get_asset(key).ok()?;
-    try_as_image_provider_from_asset(&asset)
-}
-
-/// Try to convert an `Arc<dyn AssetProvider>` to `Arc<dyn ImageAssetProvider>`.
-///
-/// This duplicates the downcasting logic from `reader.rs` but operates on
-/// `AssetProvider` rather than requiring the Python binding context.
-fn try_as_image_provider_from_asset(
-    asset: &Arc<dyn AssetProvider>,
-) -> Option<Arc<dyn ImageAssetProvider>> {
-    use crate::jbp::JBPImageAssetProvider;
-    use crate::png::PNGImageAssetProvider;
-
-    if asset.asset_type() != AssetType::Image {
-        return None;
-    }
-
-    // Try JBPImageAssetProvider
-    if asset.as_any().downcast_ref::<JBPImageAssetProvider>().is_some() {
-        let ptr = Arc::as_ptr(asset);
-        unsafe {
-            Arc::increment_strong_count(ptr);
-            let concrete_ptr = ptr as *const JBPImageAssetProvider;
-            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
-        }
-    }
-
-    // Try TIFFImageAssetProvider
-    #[cfg(feature = "libtiff")]
-    if asset.as_any().downcast_ref::<crate::tiff::TIFFImageAssetProvider>().is_some() {
-        let ptr = Arc::as_ptr(asset);
-        unsafe {
-            Arc::increment_strong_count(ptr);
-            let concrete_ptr = ptr as *const crate::tiff::TIFFImageAssetProvider;
-            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
-        }
-    }
-
-    // Try PNGImageAssetProvider
-    if asset.as_any().downcast_ref::<PNGImageAssetProvider>().is_some() {
-        let ptr = Arc::as_ptr(asset);
-        unsafe {
-            Arc::increment_strong_count(ptr);
-            let concrete_ptr = ptr as *const PNGImageAssetProvider;
-            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
-        }
-    }
-
-    // Try J2KImageAssetProvider
-    #[cfg(feature = "openjpeg")]
-    if asset.as_any().downcast_ref::<crate::j2k::J2KImageAssetProvider>().is_some() {
-        let ptr = Arc::as_ptr(asset);
-        unsafe {
-            Arc::increment_strong_count(ptr);
-            let concrete_ptr = ptr as *const crate::j2k::J2KImageAssetProvider;
-            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
-        }
-    }
-
-    // Try JPEGImageAssetProvider
-    #[cfg(feature = "libjpeg-turbo")]
-    if asset.as_any().downcast_ref::<crate::jpeg::JPEGImageAssetProvider>().is_some() {
-        let ptr = Arc::as_ptr(asset);
-        unsafe {
-            Arc::increment_strong_count(ptr);
-            let concrete_ptr = ptr as *const crate::jpeg::JPEGImageAssetProvider;
-            return Some(Arc::from_raw(concrete_ptr as *const dyn ImageAssetProvider));
-        }
-    }
-
-    None
+    asset.as_image().cloned()
 }
 
 /// Creates a composite reader from multiple paths with R-set detection.

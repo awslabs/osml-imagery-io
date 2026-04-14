@@ -14,10 +14,10 @@ use crate::error::CodecError;
 use crate::j2k::codec::{J2KCodec, J2KDecodeParams};
 use crate::j2k::markers::{TilePartOffsetTable, scan_sot_markers};
 use crate::j2k::metadata::J2KMetadataProvider;
-use crate::traits::asset::AssetProvider;
+use crate::traits::asset::AssetMetadata;
 use crate::traits::image::ImageAssetProvider;
 use crate::traits::metadata::MetadataProvider;
-use crate::types::{AssetType, PixelType};
+use crate::types::PixelType;
 
 /// Image asset provider for a standalone JPEG 2000 image.
 ///
@@ -134,7 +134,7 @@ impl J2KImageAssetProvider {
 // AssetProvider Implementation
 // =============================================================================
 
-impl AssetProvider for J2KImageAssetProvider {
+impl AssetMetadata for J2KImageAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -155,10 +155,6 @@ impl AssetProvider for J2KImageAssetProvider {
         &self.roles
     }
 
-    fn asset_type(&self) -> AssetType {
-        AssetType::Image
-    }
-
     fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
         Err(CodecError::Unsupported(
             "raw_asset() not supported for J2K; use get_block()".to_string(),
@@ -167,10 +163,6 @@ impl AssetProvider for J2KImageAssetProvider {
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 

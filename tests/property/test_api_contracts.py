@@ -44,7 +44,7 @@ class TestAssetProviderPolymorphism:
         ),
         title=st.text(min_size=1, max_size=50),
         description=st.text(max_size=100),
-        asset_type=st.sampled_from([AssetType.Image, AssetType.Text, AssetType.Data]),
+        asset_type=st.sampled_from([AssetType.Text, AssetType.Data]),
     )
     @pbt_settings
     def test_add_asset_accepts_bytes_asset_provider(self, key, title, description, asset_type):

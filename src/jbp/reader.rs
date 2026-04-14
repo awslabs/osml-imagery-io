@@ -56,7 +56,7 @@ pub struct JBPDatasetReader {
     /// Pre-calculated segment offsets
     segment_offsets: SegmentOffsets,
     /// Cached segment assets (parsed on demand)
-    segment_cache: RwLock<HashMap<String, Arc<dyn AssetProvider>>>,
+    segment_cache: RwLock<HashMap<String, AssetProvider>>,
     /// File-level metadata provider
     file_metadata: Arc<JBPFileMetadataProvider>,
     /// File header structure definition
@@ -414,7 +414,7 @@ impl JBPDatasetReader {
         segment_type: SegmentType,
         index: usize,
         location: &SegmentLocation,
-    ) -> Result<Arc<dyn AssetProvider>, CodecError> {
+    ) -> Result<AssetProvider, CodecError> {
         let key = generate_asset_key(segment_type, index);
         
         // Get subheader bytes
@@ -452,7 +452,7 @@ impl JBPDatasetReader {
                     self.registry.clone(),
                 ));
                 
-                Ok(Arc::new(JBPImageAssetProvider::new(
+                Ok(AssetProvider::Image(Arc::new(JBPImageAssetProvider::new(
                     key,
                     format!("Image Segment {}", index),
                     format!("NITF image segment at index {}", index),
@@ -462,7 +462,7 @@ impl JBPDatasetReader {
                     metadata,
                     self.registry.clone(),
                     self.format,
-                )?))
+                )?)))
             }
             SegmentType::Text => {
                 // Load the text subheader definition from the registry (KSY file)
@@ -502,7 +502,7 @@ impl JBPDatasetReader {
                     self.registry.clone(),
                 ));
                 
-                Ok(Arc::new(JBPTextAssetProvider::new(
+                Ok(AssetProvider::Text(Arc::new(JBPTextAssetProvider::new(
                     key,
                     title,
                     format!("NITF text segment at index {}", index),
@@ -511,7 +511,7 @@ impl JBPDatasetReader {
                     self.data.clone(),
                     metadata,
                     txtfmt,
-                )))
+                ))))
             }
             SegmentType::Graphic => {
                 // Load the graphic subheader definition from the registry (KSY file)
@@ -556,7 +556,7 @@ impl JBPDatasetReader {
                     self.registry.clone(),
                 ));
                 
-                Ok(Arc::new(JBPGraphicsAssetProvider::new(
+                Ok(AssetProvider::Graphics(Arc::new(JBPGraphicsAssetProvider::new(
                     key,
                     title,
                     description,
@@ -564,7 +564,7 @@ impl JBPDatasetReader {
                     *location,
                     self.data.clone(),
                     metadata,
-                )))
+                ))))
             }
             SegmentType::DataExtension => {
                 // Load the DES subheader definition from the registry (KSY file)
@@ -579,7 +579,7 @@ impl JBPDatasetReader {
                     subheader_bytes,
                 ));
                 
-                Ok(Arc::new(JBPDataAssetProvider::new(
+                Ok(AssetProvider::Data(Arc::new(JBPDataAssetProvider::new(
                     key,
                     format!("DES Segment {}", index),
                     format!("NITF data extension segment at index {}", index),
@@ -587,7 +587,7 @@ impl JBPDatasetReader {
                     *location,
                     self.data.clone(),
                     metadata,
-                )))
+                ))))
             }
             SegmentType::ReservedExtension => {
                 // RES segments use the DES subheader definition
@@ -602,7 +602,7 @@ impl JBPDatasetReader {
                     subheader_bytes,
                 ));
                 
-                Ok(Arc::new(JBPDataAssetProvider::new(
+                Ok(AssetProvider::Data(Arc::new(JBPDataAssetProvider::new(
                     key,
                     format!("RES Segment {}", index),
                     format!("NITF reserved extension segment at index {}", index),
@@ -610,7 +610,7 @@ impl JBPDatasetReader {
                     *location,
                     self.data.clone(),
                     metadata,
-                )))
+                ))))
             }
         }
     }
@@ -780,7 +780,7 @@ impl DatasetReader for JBPDatasetReader {
     /// Returns an AssetProvider for the specified asset key.
     ///
     /// Segment subheaders are parsed on-demand and cached for subsequent access.
-    fn get_asset(&self, key: &str) -> Result<Arc<dyn AssetProvider>, CodecError> {
+    fn get_asset(&self, key: &str) -> Result<AssetProvider, CodecError> {
         // Check cache first
         {
             let cache = self.segment_cache.read().unwrap();
@@ -1455,8 +1455,10 @@ mod tests {
         // Second access (should be cached)
         let asset2 = reader.get_asset("image:0").unwrap();
         
-        // Both should point to the same Arc
-        assert!(Arc::ptr_eq(&asset1, &asset2));
+        // Both should have the same inner Arc (via enum Clone)
+        let img1 = asset1.as_image().unwrap();
+        let img2 = asset2.as_image().unwrap();
+        assert!(Arc::ptr_eq(img1, img2));
     }
 
     #[test]

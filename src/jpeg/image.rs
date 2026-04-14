@@ -12,10 +12,10 @@ use std::sync::Arc;
 use crate::error::CodecError;
 use crate::jpeg::ffi::TjDecompressor;
 use crate::jpeg::metadata::JPEGMetadataProvider;
-use crate::traits::asset::AssetProvider;
+use crate::traits::asset::AssetMetadata;
 use crate::traits::image::ImageAssetProvider;
 use crate::traits::metadata::MetadataProvider;
-use crate::types::{AssetType, PixelType};
+use crate::types::PixelType;
 
 /// Image asset provider for a standalone JPEG image.
 ///
@@ -87,7 +87,7 @@ impl JPEGImageAssetProvider {
 // AssetProvider Implementation
 // =============================================================================
 
-impl AssetProvider for JPEGImageAssetProvider {
+impl AssetMetadata for JPEGImageAssetProvider {
     fn key(&self) -> &str {
         &self.key
     }
@@ -108,10 +108,6 @@ impl AssetProvider for JPEGImageAssetProvider {
         &self.roles
     }
 
-    fn asset_type(&self) -> AssetType {
-        AssetType::Image
-    }
-
     fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
         Err(CodecError::Unsupported(
             "raw_asset() not supported for JPEG; use get_block()".to_string(),
@@ -120,10 +116,6 @@ impl AssetProvider for JPEGImageAssetProvider {
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
         self.metadata.clone()
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 

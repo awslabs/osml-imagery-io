@@ -7,7 +7,11 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 
-use crate::bindings::{PyAssetProvider, PyBufferedImageAssetProvider, PyMetadataProvider};
+use crate::bindings::{
+    PyAssetProvider, PyBufferedImageAssetProvider, PyBufferedTextAssetProvider,
+    PyDataAssetProvider, PyGraphicsAssetProvider, PyImageAssetProvider, PyMetadataProvider,
+    PyTextAssetProvider,
+};
 use crate::error::CodecError;
 use crate::traits::{AssetProvider, DatasetWriter};
 
@@ -68,7 +72,7 @@ impl PyDatasetWriter {
     /// :param key: Unique string identifier for the asset.
     /// :type key: str
     /// :param provider: The asset data to add.
-    /// :type provider: AssetProvider | BufferedImageAssetProvider
+    /// :type provider: AssetProvider | ImageAssetProvider | BufferedImageAssetProvider
     /// :param title: Human-readable title for the asset.
     /// :type title: str
     /// :param description: Detailed description of the asset.
@@ -96,24 +100,33 @@ impl PyDatasetWriter {
     ) -> PyResult<()> {
         let inner = self.get_inner_mut()?;
 
-        // Try to extract as PyAssetProvider first
-        if let Ok(asset_provider) = provider.extract::<PyRef<PyAssetProvider>>() {
-            let arc_provider = Arc::clone(asset_provider.inner());
-            inner.add_asset(key, arc_provider, title, description, &roles)?;
-            return Ok(());
-        }
+        // Extract the AssetProvider enum from whichever Python type was passed
+        let enum_provider = if let Ok(img) = provider.extract::<PyRef<PyImageAssetProvider>>() {
+            AssetProvider::Image(img.inner().clone())
+        } else if let Ok(buf) = provider.extract::<PyRef<PyBufferedImageAssetProvider>>() {
+            AssetProvider::Image(buf.inner().clone())
+        } else if let Ok(txt) = provider.extract::<PyRef<PyTextAssetProvider>>() {
+            AssetProvider::Text(txt.inner().clone())
+        } else if let Ok(buf_txt) = provider.extract::<PyRef<PyBufferedTextAssetProvider>>() {
+            AssetProvider::Text(buf_txt.as_text_provider())
+        } else if let Ok(data) = provider.extract::<PyRef<PyDataAssetProvider>>() {
+            AssetProvider::Data(data.inner().clone())
+        } else if let Ok(gfx) = provider.extract::<PyRef<PyGraphicsAssetProvider>>() {
+            AssetProvider::Graphics(gfx.inner().clone())
+        } else if let Ok(asset) = provider.extract::<PyRef<PyAssetProvider>>() {
+            // PyAssetProvider wraps an AssetProvider enum internally
+            asset.inner().clone()
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "provider must be an AssetProvider, ImageAssetProvider, \
+                 BufferedImageAssetProvider, TextAssetProvider, \
+                 BufferedTextAssetProvider, DataAssetProvider, or \
+                 GraphicsAssetProvider",
+            ));
+        };
 
-        // Try to extract as PyBufferedImageAssetProvider
-        if let Ok(memory_provider) = provider.extract::<PyRef<PyBufferedImageAssetProvider>>() {
-            let arc_provider: Arc<dyn AssetProvider> = memory_provider.inner().clone();
-            inner.add_asset(key, arc_provider, title, description, &roles)?;
-            return Ok(());
-        }
-
-        // If neither worked, raise TypeError
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "provider must be an AssetProvider or BufferedImageAssetProvider",
-        ))
+        inner.add_asset(key, enum_provider, title, description, &roles)?;
+        Ok(())
     }
 
     /// Set the dataset-level metadata.

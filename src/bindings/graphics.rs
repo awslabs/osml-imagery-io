@@ -71,7 +71,7 @@ impl PyGraphicsAssetProvider {
     /// The asset category.
     #[getter]
     fn asset_type(&self) -> AssetType {
-        self.inner.asset_type()
+        AssetType::Graphics
     }
 
     /// The raw graphics bytes as a ``BytesIO`` object.
