@@ -29,7 +29,7 @@ def test_bench_index_generation(benchmark, dataset_entry, tmp_path):
     output = str(tmp_path / "index.json")
 
     def run():
-        parser = OversightMLParser(local_path=path)
+        parser = OversightMLParser(local_paths=path)
         store = parser(url=path)
         write_tile_index(store, output, segments=["image_segment_0"])
 

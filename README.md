@@ -32,7 +32,7 @@ Generate a tile index once, upload it alongside your imagery, and the Zarr ecosy
 from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
 # Index a file (works for NITF, TIFF, JPEG 2000)
-parser = OversightMLParser(local_path="image.ntf")
+parser = OversightMLParser(local_paths="image.ntf")
 store = parser(url="s3://my-bucket/imagery/image.ntf")
 write_tile_index(store, "image.ntf.tile_index.json")
 ```

@@ -140,7 +140,7 @@ def generate_index(path: str, source_uri: str, output: str, segments: list[str] 
     try:
         from virtualizarr.manifests import ManifestGroup, ManifestStore
 
-        parser = OversightMLParser(local_path=path)
+        parser = OversightMLParser(local_paths=path)
         ms = parser(url=source_uri)
 
         # Capture multi-range refs before any filtering

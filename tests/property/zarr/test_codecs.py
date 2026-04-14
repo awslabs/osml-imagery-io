@@ -260,7 +260,7 @@ class TestProperty7EndToEndDecodeEquivalence:
                 block_via_io = asset.get_block(0, 0, 0)
 
             # Path B: Read via Kerchunk index + codec
-            parser = OversightMLParser(local_path=str(path))
+            parser = OversightMLParser(local_paths=str(path))
             ms = parser(url=str(path))
             vds = ms.to_virtual_dataset()
 

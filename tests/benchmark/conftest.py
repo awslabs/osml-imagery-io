@@ -258,7 +258,7 @@ def _generate_tile_index(dataset_path: Path, cache: dict, tmp_dir: Path,
     if key not in cache:
         from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
-        parser = OversightMLParser(local_path=str(dataset_path))
+        parser = OversightMLParser(local_paths=str(dataset_path))
         store = parser(url=url)
         suffix = "_s3" if source_url else ""
         index_path = tmp_dir / f"{dataset_path.stem}{suffix}.tile_index.json"

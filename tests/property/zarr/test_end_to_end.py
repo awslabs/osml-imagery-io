@@ -187,7 +187,7 @@ def _generate_and_save_index(path: Path) -> Path:
     """Generate a Kerchunk JSON index via VirtualiZarr parser, return the index path."""
     from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
-    parser = OversightMLParser(local_path=str(path))
+    parser = OversightMLParser(local_paths=str(path))
     ms = parser(url=str(path))
     vds = ms.to_virtual_dataset()
 
