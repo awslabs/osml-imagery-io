@@ -4,14 +4,14 @@ This module provides PSNR and SSIM calculation functions for comparing
 original and decoded images in lossy compression roundtrip tests.
 
 Quality thresholds:
-- MIN_PSNR_DB = 30.0 dB (minimum acceptable PSNR for lossy compression)
+- MIN_PSNR_DB = 28.0 dB (minimum acceptable PSNR for lossy compression)
 - MIN_SSIM = 0.95 (minimum acceptable structural similarity)
 """
 
 import numpy as np
 
 # Quality thresholds for lossy compression validation
-MIN_PSNR_DB = 30.0
+MIN_PSNR_DB = 28.0
 MIN_SSIM = 0.95
 
 

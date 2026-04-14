@@ -212,14 +212,12 @@ class TestIOCreate:
 
         assert "Unsupported" in str(exc_info.value) or "format" in str(exc_info.value).lower()
 
-    def test_create_requires_format(self, tmp_path):
-        """Test IO.open() with 'w' mode requires format specification."""
+    def test_create_defaults_format_from_extension(self, tmp_path):
+        """Test IO.open() with 'w' mode infers format from file extension."""
         output_path = tmp_path / "output.ntf"
 
-        with pytest.raises(Exception) as exc_info:
-            IO.open([str(output_path)], "w")
-
-        assert "format" in str(exc_info.value).lower() or "must be specified" in str(exc_info.value).lower()
+        writer = IO.open([str(output_path)], "w")
+        assert writer is not None
 
 
 @pytest.mark.property
@@ -251,16 +249,14 @@ class TestIOOpenPathsList:
         keys = reader.get_asset_keys()
         assert len(keys) > 0
 
-    def test_multi_element_list_uses_first(self):
-        """Test IO.open() with multi-element list uses first path."""
+    def test_multi_element_list_validates_rset_pattern(self):
+        """Test IO.open() with multi-element list validates R-set naming."""
         if not SMALL_NTF.exists():
             pytest.skip("Test data file not available")
 
-        # Second path is invalid, but should be ignored since first is used
-        reader = IO.open([str(SMALL_NTF), "nonexistent.ntf"], "r")
-        assert reader is not None
-        keys = reader.get_asset_keys()
-        assert len(keys) > 0
+        # Additional paths must match R-set pattern (.rN suffix)
+        with pytest.raises(ValueError, match="R-set pattern"):
+            IO.open([str(SMALL_NTF), "nonexistent.ntf"], "r")
 
     def test_empty_list_raises_value_error(self):
         """Test IO.open() with empty list raises ValueError."""
