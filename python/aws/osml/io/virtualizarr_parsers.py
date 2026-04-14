@@ -782,7 +782,7 @@ def write_tile_index(store, output: str, segments: list[str] | None = None) -> N
         write_tile_index(store, "image.tile_index.json")
 
         # Or index only specific segments
-        write_tile_index(store, "image.tile_index.json", segments=["image_segment_0"])
+        write_tile_index(store, "image.tile_index.json", segments=["image:0"])
     """
     from pathlib import Path
 

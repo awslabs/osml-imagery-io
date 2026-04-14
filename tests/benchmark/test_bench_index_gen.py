@@ -20,6 +20,7 @@ fsspec = pytest.importorskip("fsspec")
 
 from aws.osml.io import IO, AssetType
 from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
+from tests.benchmark.conftest import _first_image_segments
 
 
 @pytest.mark.benchmark
@@ -31,7 +32,7 @@ def test_bench_index_generation(benchmark, dataset_entry, tmp_path):
     def run():
         parser = OversightMLParser(local_paths=path)
         store = parser(url=path)
-        write_tile_index(store, output, segments=["image_segment_0"])
+        write_tile_index(store, output, segments=_first_image_segments(store))
 
     benchmark.group = "index_generation"
     benchmark.pedantic(run, warmup_rounds=0, rounds=5, iterations=1)

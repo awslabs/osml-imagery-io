@@ -228,6 +228,30 @@ def compute_access_patterns(
 # ---------------------------------------------------------------------------
 
 
+def _first_image_segments(store) -> list[str]:
+    """Return a list containing the first image segment key from a ManifestStore.
+
+    Inspects the store's arrays (flat) or groups (hierarchical) and returns
+    the first key that looks like an image segment.  Returns an empty list
+    if no image segments are found, which causes ``write_tile_index`` to
+    include all segments.
+    """
+    group = store._group
+    # Flat store: arrays are keyed by segment name (e.g. "image:0")
+    if group.arrays:
+        for key in group.arrays:
+            if key.startswith("image:") or key.startswith("image_segment_"):
+                return [key]
+        # If no image-prefixed key, return the first array key
+        first = next(iter(group.arrays), None)
+        return [first] if first else []
+    # Hierarchical store: subgroups are numbered ("0", "1", ...)
+    if group.groups:
+        first = next(iter(group.groups), None)
+        return [first] if first else []
+    return []
+
+
 def _generate_tile_index(dataset_path: Path, cache: dict, tmp_dir: Path,
                          source_url: str | None = None) -> Path:
     """Generate tile index for a dataset, caching the result.
@@ -262,7 +286,10 @@ def _generate_tile_index(dataset_path: Path, cache: dict, tmp_dir: Path,
         store = parser(url=url)
         suffix = "_s3" if source_url else ""
         index_path = tmp_dir / f"{dataset_path.stem}{suffix}.tile_index.json"
-        write_tile_index(store, str(index_path), segments=["image_segment_0"])
+        # Discover the first image segment dynamically to avoid brittle
+        # hardcoded segment names (keys changed from image_segment_N to image:N).
+        image_segments = _first_image_segments(store)
+        write_tile_index(store, str(index_path), segments=image_segments)
         cache[key] = index_path
     return cache[key]
 
