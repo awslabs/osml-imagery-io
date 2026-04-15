@@ -1014,7 +1014,7 @@ class TestEndToEndPyramidRoundTrip:
         from zarr.storage._fsspec import FsspecStore
 
         fs = fsspec.filesystem(
-            "reference", fo=output, skip_instance_cache=True
+            "reference", fo=output, skip_instance_cache=True, asynchronous=True
         )
         store_zarr = FsspecStore(fs=fs, read_only=True, path="")
         root = zarr.open_group(store_zarr, mode="r", zarr_format=2)
@@ -1371,6 +1371,7 @@ class TestPortableIndex:
             fo=index_path,
             template_overrides={"base": base_url},
             skip_instance_cache=True,
+            asynchronous=True,
         )
 
         store_zarr = FsspecStore(fs=fs, read_only=True, path="")
