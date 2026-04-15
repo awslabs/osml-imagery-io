@@ -522,47 +522,57 @@ class OversightMLParser:
             # metadata.  Single-resolution images become a one-level pyramid
             # so the access path (``root["0/data"]``) is the same regardless
             # of whether overviews are present.
-            group = None
-            for parent_key, parent_asset in parents.items():
-                levels = []
+            #
+            # When multiple independent parent segments exist (e.g. a main
+            # image + an embedded thumbnail), select the largest by pixel
+            # count.  The previous loop overwrote ``group`` on each
+            # iteration, silently dropping all parents except the last.
+            primary_key = max(
+                parents,
+                key=lambda k: parents[k].num_rows * parents[k].num_columns,
+            )
+            primary_asset = parents[primary_key]
 
-                # Level 0: parent asset (always present)
-                parent_url = url_by_overview_level.get(0, urls[0])
-                parent_array = _build_manifest_array(
-                    parent_asset, parent_url, multi_range_refs,
-                    key_prefix="0/data/"
-                )
-                if parent_array is not None:
-                    levels.append((
-                        parent_array,
-                        parent_asset.num_rows,
-                        parent_asset.num_columns,
-                    ))
+            levels = []
 
-                # Levels 1+: overviews (if any)
-                if parent_key in overviews:
-                    for level_num, ovr_asset in overviews[parent_key]:
-                        ovr_url = url_by_overview_level.get(
-                            level_num, urls[0]
-                        )
-                        ovr_array = _build_manifest_array(
-                            ovr_asset, ovr_url, multi_range_refs,
-                            key_prefix=f"{len(levels)}/data/"
-                        )
-                        if ovr_array is not None:
-                            levels.append((
-                                ovr_array,
-                                ovr_asset.num_rows,
-                                ovr_asset.num_columns,
-                            ))
+            # Level 0: primary parent asset
+            parent_url = url_by_overview_level.get(0, urls[0])
+            parent_array = _build_manifest_array(
+                primary_asset, parent_url, multi_range_refs,
+                key_prefix="0/data/"
+            )
+            if parent_array is not None:
+                levels.append((
+                    parent_array,
+                    primary_asset.num_rows,
+                    primary_asset.num_columns,
+                ))
 
-                if levels:
-                    group = _build_multiscale_group(
-                        levels, urls[0], multi_range_refs,
-                        downsampling_method=kwargs.get(
-                            "downsampling_method"
-                        ),
+            # Levels 1+: overviews (if any)
+            if primary_key in overviews:
+                for level_num, ovr_asset in overviews[primary_key]:
+                    ovr_url = url_by_overview_level.get(
+                        level_num, urls[0]
                     )
+                    ovr_array = _build_manifest_array(
+                        ovr_asset, ovr_url, multi_range_refs,
+                        key_prefix=f"{len(levels)}/data/"
+                    )
+                    if ovr_array is not None:
+                        levels.append((
+                            ovr_array,
+                            ovr_asset.num_rows,
+                            ovr_asset.num_columns,
+                        ))
+
+            group = None
+            if levels:
+                group = _build_multiscale_group(
+                    levels, urls[0], multi_range_refs,
+                    downsampling_method=kwargs.get(
+                        "downsampling_method"
+                    ),
+                )
 
             if group is None:
                 raise ValueError(
