@@ -24,21 +24,23 @@ use crate::types::AssetType;
 /// content format. Use :meth:`DatasetReader.get_asset` to obtain an
 /// instance for a specific data asset in the dataset.
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import IO
+/// ```python
+/// from aws.osml.io import IO
 ///
-///     with IO.open(["sicd_image.ntf"], "r") as dataset:
-///         for key in dataset.get_asset_keys(asset_type="data"):
-///             data = dataset.get_asset(key)
-///             print(f"Data '{key}': mime_type={data.mime_type}")
+/// with IO.open(["sicd_image.ntf"], "r") as dataset:
+///     for key in dataset.get_asset_keys(asset_type="data"):
+///         data = dataset.get_asset(key)
+///         print(f"Data '{key}': mime_type={data.mime_type}")
 ///
-///             if data.mime_type == "application/xml":
-///                 xml_tree = data.parse_as_xml()
-///                 print(f"XML root tag: {xml_tree.tag}")
-///             elif data.mime_type == "application/json":
-///                 obj = data.parse_as_json()
-///                 print(f"JSON keys: {list(obj.keys())}")
+///         if data.mime_type == "application/xml":
+///             xml_tree = data.parse_as_xml()
+///             print(f"XML root tag: {xml_tree.tag}")
+///         elif data.mime_type == "application/json":
+///             obj = data.parse_as_json()
+///             print(f"JSON keys: {list(obj.keys())}")
+/// ```
 #[pyclass(name = "DataAssetProvider")]
 pub struct PyDataAssetProvider {
     inner: Arc<dyn DataAssetProvider>,
@@ -131,14 +133,16 @@ impl PyDataAssetProvider {
     /// :rtype: xml.etree.ElementTree.Element
     /// :raises ValueError: If the content is not valid XML.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     data = dataset.get_asset(key)
-    ///     if data.mime_type == "application/xml":
-    ///         root = data.parse_as_xml()
-    ///         print(f"XML root tag: {root.tag}")
-    ///         for child in root:
-    ///             print(f"  {child.tag}")
+    /// ```python
+    /// data = dataset.get_asset(key)
+    /// if data.mime_type == "application/xml":
+    ///     root = data.parse_as_xml()
+    ///     print(f"XML root tag: {root.tag}")
+    ///     for child in root:
+    ///         print(f"  {child.tag}")
+    /// ```
     fn parse_as_xml(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let xml_string = self.inner.parse_as_xml()?;
         
@@ -160,12 +164,14 @@ impl PyDataAssetProvider {
     /// :rtype: dict or list
     /// :raises ValueError: If the content is not valid JSON.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     data = dataset.get_asset(key)
-    ///     if data.mime_type == "application/json":
-    ///         obj = data.parse_as_json()
-    ///         print(f"Keys: {list(obj.keys())}")
+    /// ```python
+    /// data = dataset.get_asset(key)
+    /// if data.mime_type == "application/json":
+    ///     obj = data.parse_as_json()
+    ///     print(f"Keys: {list(obj.keys())}")
+    /// ```
     fn parse_as_json(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let json_value = self.inner.parse_as_json()?;
         serde_json_value_to_pyobject(py, &json_value)

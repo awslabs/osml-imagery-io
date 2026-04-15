@@ -25,16 +25,18 @@ use crate::traits::MetadataProvider;
 /// :class:`DatasetReader` or an :class:`AssetProvider` rather than creating
 /// one directly.
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import IO
+/// ```python
+/// from aws.osml.io import IO
 ///
-///     with IO.open(["image.ntf"], "r") as dataset:
-///         # All dataset-level metadata
-///         all_meta = dataset.metadata.as_dict()
+/// with IO.open(["image.ntf"], "r") as dataset:
+///     # All dataset-level metadata
+///     all_meta = dataset.metadata.as_dict()
 ///
-///         # Only fields whose key starts with "FS" (file security)
-///         security = dataset.metadata.as_dict("FS")
+///     # Only fields whose key starts with "FS" (file security)
+///     security = dataset.metadata.as_dict("FS")
+/// ```
 #[pyclass(name = "MetadataProvider", subclass)]
 pub struct PyMetadataProvider {
     inner: Arc<dyn MetadataProvider>,
@@ -79,10 +81,12 @@ impl PyMetadataProvider {
     ///     native Python values (``str``, ``int``, ``list``, or ``dict``).
     /// :rtype: dict
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     all_meta = provider.as_dict()
-    ///     security = provider.as_dict("FS")
+    /// ```python
+    /// all_meta = provider.as_dict()
+    /// security = provider.as_dict("FS")
+    /// ```
     #[pyo3(signature = (name=None))]
     fn as_dict<'py>(&self, py: Python<'py>, name: Option<&str>) -> PyResult<Py<PyAny>> {
         let metadata = self.inner.as_dict(name);

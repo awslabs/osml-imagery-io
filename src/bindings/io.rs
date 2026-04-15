@@ -79,18 +79,20 @@ impl ParsedUri {
 /// formats include NITF 2.0/2.1, NSIF 1.0, and TIFF/GeoTIFF. Both local file
 /// paths and ``file://`` URIs are supported.
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import IO
+/// ```python
+/// from aws.osml.io import IO
 ///
-///     # Read mode — returns a DatasetReader (format auto-detected)
-///     with IO.open(["image.ntf"], "r") as dataset:
-///         keys = dataset.get_asset_keys()
-///         asset = dataset.get_asset(keys[0])
+/// # Read mode — returns a DatasetReader (format auto-detected)
+/// with IO.open(["image.ntf"], "r") as dataset:
+///     keys = dataset.get_asset_keys()
+///     asset = dataset.get_asset(keys[0])
 ///
-///     # Write mode — returns a DatasetWriter
-///     with IO.open(["output.ntf"], "w", "nitf") as writer:
-///         writer.add_asset("image", provider, "Title", "Description", ["data"])
+/// # Write mode — returns a DatasetWriter
+/// with IO.open(["output.ntf"], "w", "nitf") as writer:
+///     writer.add_asset("image", provider, "Title", "Description", ["data"])
+/// ```
 #[pyclass(name = "IO")]
 pub struct IO;
 
@@ -119,17 +121,19 @@ impl IO {
     ///     file format is not supported.
     /// :raises IOError: If the file cannot be opened.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     from aws.osml.io import IO
+    /// ```python
+    /// from aws.osml.io import IO
     ///
-    ///     # Read mode — format auto-detected from extension
-    ///     with IO.open(["image.ntf"], "r") as dataset:
-    ///         print(type(dataset))  # DatasetReader
+    /// # Read mode — format auto-detected from extension
+    /// with IO.open(["image.ntf"], "r") as dataset:
+    ///     print(type(dataset))  # DatasetReader
     ///
-    ///     # Write mode — format must be specified
-    ///     with IO.open(["output.ntf"], "w", "nitf") as writer:
-    ///         print(type(writer))  # DatasetWriter
+    /// # Write mode — format must be specified
+    /// with IO.open(["output.ntf"], "w", "nitf") as writer:
+    ///     print(type(writer))  # DatasetWriter
+    /// ```
     #[staticmethod]
     #[pyo3(signature = (paths, mode="r", format=None))]
     fn open(

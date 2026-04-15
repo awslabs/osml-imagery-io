@@ -2,23 +2,29 @@
 
 | Dataset | Access Pattern | Native | Zarr Local | Zarr S3 |
 | --- | --- | --- | --- | --- |
-| Tiny NITF (1MB) | small roi | 6 | 8 | 66 |
-| Synth Small NC | single tile | 6 | 6 | 46 |
-| Tiny NITF (1MB) | single tile | 6 | 4 | 141 |
-| Synth Medium C3 | single tile | 7 | 6 | 61 |
-| Synth Small NC | small roi | 8 | 10 | 158 |
-| Synth Medium C8 | single tile | 9 | 11 | 65 |
-| Synth Medium C3 | small roi | 12 | 11 | 86 |
-| Synth Large NC | small roi | 22 | 24 | 287 |
-| Synth Large NC | single tile | 28 | 6 | 113 |
-| Synth Medium C8 | small roi | 33 | 40 | 100 |
-| Umbra SIDD | small roi | 35 | 59 | 3027 |
-| Umbra SIDD | single tile | 49 | 50 | 3420 |
-| WV Pan J2K (679MB) | single tile | 329 | 53 | 130 |
-| WV 8-band J2K (354MB) | single tile | 395 | 277 | 534 |
-| WV Pan J2K (679MB) | small roi | 529 | 366 | 478 |
-| WV 8-band J2K (354MB) | small roi | 2907 | 2392 | 3095 |
-| WV Pan J2K (679MB) | large roi | 4202 | 3884 | 4353 |
+| Synth COG Pyramid | single tile | 1 | 5 | 169 |
+| Synth Small TIFF | single tile | 2 | 3 | 175 |
+| Synth Small TIFF | small roi | 2 | 5 | 193 |
+| Synth COG Pyramid | small roi | 3 | 23 | 189 |
+| Synth Small NC | single tile | 3 | 5 | 205 |
+| Tiny NITF (1MB) | small roi | 4 | 6 | 316 |
+| Synth Medium C3 | single tile | 4 | 27 | 170 |
+| Synth NITF R-set Pyramid | single tile | 4 | 4 | 198 |
+| Synth Medium C8 | single tile | 5 | 5 | 158 |
+| Tiny NITF (1MB) | single tile | 5 | 5 | 425 |
+| Synth NITF R-set Pyramid | small roi | 5 | 6 | 193 |
+| Synth Small NC | small roi | 5 | 6 | 278 |
+| Synth Medium C3 | small roi | 8 | 7 | 190 |
+| Synth Large NC | small roi | 21 | 11 | 618 |
+| Synth Medium C8 | small roi | 22 | 45 | 204 |
+| Synth Large NC | single tile | 26 | 5 | 389 |
+| Umbra SIDD | small roi | 34 | 48 | 5690 |
+| Umbra SIDD | single tile | 49 | 49 | 5124 |
+| WV 8-band J2K (354MB) | single tile | 193 | 66 | 564 |
+| WV Pan J2K (679MB) | single tile | 209 | 25 | 382 |
+| WV Pan J2K (679MB) | small roi | 321 | 136 | 611 |
+| WV 8-band J2K (354MB) | small roi | 1069 | 532 | 2347 |
+| WV Pan J2K (679MB) | large roi | 1733 | 1339 | 3422 |
 
 All times in milliseconds (ms).
 
@@ -26,23 +32,29 @@ All times in milliseconds (ms).
 
 | Operation | Dataset | Access Pattern | Min | Max | Mean | Median | StdDev | Rounds |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| native_read | Tiny NITF (1MB) | small roi | 6 | 7 | 6 | 6 | 1 | 10 |
-| native_read | Synth Small NC | single tile | 5 | 9 | 6 | 6 | 1 | 10 |
-| native_read | Tiny NITF (1MB) | single tile | 6 | 8 | 6 | 6 | 1 | 10 |
-| native_read | Synth Medium C3 | single tile | 6 | 11 | 7 | 7 | 1 | 10 |
-| native_read | Synth Small NC | small roi | 6 | 8 | 8 | 8 | 1 | 10 |
-| native_read | Synth Medium C8 | single tile | 8 | 10 | 9 | 9 | 1 | 10 |
-| native_read | Synth Medium C3 | small roi | 11 | 12 | 12 | 12 | 0 | 10 |
-| native_read | Synth Large NC | small roi | 21 | 23 | 22 | 22 | 1 | 10 |
-| native_read | Synth Large NC | single tile | 19 | 102 | 28 | 20 | 26 | 10 |
-| native_read | Synth Medium C8 | small roi | 32 | 34 | 33 | 33 | 1 | 10 |
-| native_read | Umbra SIDD | small roi | 33 | 38 | 35 | 34 | 2 | 10 |
-| native_read | Umbra SIDD | single tile | 33 | 158 | 49 | 37 | 39 | 10 |
-| native_read | WV Pan J2K (679MB) | single tile | 208 | 1248 | 329 | 230 | 323 | 10 |
-| native_read | WV 8-band J2K (354MB) | single tile | 385 | 412 | 395 | 393 | 8 | 10 |
-| native_read | WV Pan J2K (679MB) | small roi | 519 | 562 | 529 | 523 | 13 | 10 |
-| native_read | WV 8-band J2K (354MB) | small roi | 2839 | 3003 | 2907 | 2891 | 46 | 10 |
-| native_read | WV Pan J2K (679MB) | large roi | 4157 | 4279 | 4202 | 4192 | 39 | 10 |
+| native_read | Synth COG Pyramid | single tile | 1 | 2 | 1 | 1 | 0 | 10 |
+| native_read | Synth Small TIFF | single tile | 1 | 11 | 2 | 1 | 3 | 10 |
+| native_read | Synth Small TIFF | small roi | 2 | 3 | 2 | 2 | 0 | 10 |
+| native_read | Synth COG Pyramid | small roi | 2 | 4 | 3 | 3 | 1 | 10 |
+| native_read | Synth Small NC | single tile | 2 | 7 | 3 | 3 | 1 | 10 |
+| native_read | Tiny NITF (1MB) | small roi | 3 | 4 | 4 | 4 | 0 | 10 |
+| native_read | Synth Medium C3 | single tile | 3 | 7 | 4 | 4 | 1 | 10 |
+| native_read | Synth NITF R-set Pyramid | single tile | 3 | 9 | 4 | 4 | 2 | 10 |
+| native_read | Synth Medium C8 | single tile | 4 | 6 | 5 | 5 | 1 | 10 |
+| native_read | Tiny NITF (1MB) | single tile | 3 | 6 | 5 | 5 | 1 | 10 |
+| native_read | Synth NITF R-set Pyramid | small roi | 4 | 6 | 5 | 5 | 1 | 10 |
+| native_read | Synth Small NC | small roi | 4 | 7 | 5 | 5 | 1 | 10 |
+| native_read | Synth Medium C3 | small roi | 6 | 16 | 8 | 7 | 3 | 10 |
+| native_read | Synth Large NC | small roi | 19 | 22 | 21 | 21 | 1 | 10 |
+| native_read | Synth Medium C8 | small roi | 20 | 24 | 22 | 22 | 1 | 10 |
+| native_read | Synth Large NC | single tile | 17 | 90 | 26 | 20 | 22 | 10 |
+| native_read | Umbra SIDD | small roi | 33 | 36 | 34 | 34 | 1 | 10 |
+| native_read | Umbra SIDD | single tile | 34 | 156 | 49 | 37 | 38 | 10 |
+| native_read | WV 8-band J2K (354MB) | single tile | 180 | 230 | 193 | 189 | 14 | 10 |
+| native_read | WV Pan J2K (679MB) | single tile | 195 | 241 | 209 | 206 | 14 | 10 |
+| native_read | WV Pan J2K (679MB) | small roi | 305 | 353 | 321 | 318 | 15 | 10 |
+| native_read | WV 8-band J2K (354MB) | small roi | 1044 | 1113 | 1069 | 1061 | 24 | 10 |
+| native_read | WV Pan J2K (679MB) | large roi | 1674 | 1791 | 1733 | 1734 | 34 | 10 |
 
 All times in milliseconds (ms).
 
@@ -50,14 +62,17 @@ All times in milliseconds (ms).
 
 | Operation | Dataset | Min | Max | Mean | Median | StdDev | Rounds |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| index_generation | Synth Medium C8 | 8 | 11 | 9 | 9 | 1 | 5 |
-| index_generation | Tiny NITF (1MB) | 10 | 14 | 11 | 11 | 2 | 5 |
-| index_generation | Synth Small NC | 11 | 18 | 13 | 12 | 3 | 5 |
-| index_generation | Synth Medium C3 | 15 | 22 | 17 | 17 | 3 | 5 |
-| index_generation | Synth Large NC | 23 | 25 | 24 | 24 | 1 | 5 |
-| index_generation | Umbra SIDD | 28 | 31 | 29 | 29 | 1 | 5 |
-| index_generation | WV 8-band J2K (354MB) | 109 | 542 | 199 | 113 | 192 | 5 |
-| index_generation | WV Pan J2K (679MB) | 226 | 327 | 262 | 262 | 40 | 5 |
+| index_generation | Synth Small TIFF | 2 | 2 | 2 | 2 | 0 | 5 |
+| index_generation | Synth COG Pyramid | 4 | 5 | 5 | 5 | 0 | 5 |
+| index_generation | Synth Medium C8 | 5 | 6 | 6 | 6 | 0 | 5 |
+| index_generation | Tiny NITF (1MB) | 6 | 9 | 7 | 6 | 1 | 5 |
+| index_generation | Synth Small NC | 6 | 8 | 7 | 7 | 1 | 5 |
+| index_generation | Synth NITF R-set Pyramid | 7 | 8 | 7 | 7 | 0 | 5 |
+| index_generation | Synth Medium C3 | 9 | 20 | 11 | 9 | 5 | 5 |
+| index_generation | Synth Large NC | 20 | 22 | 22 | 22 | 1 | 5 |
+| index_generation | Umbra SIDD | 27 | 31 | 28 | 27 | 2 | 5 |
+| index_generation | WV 8-band J2K (354MB) | 99 | 494 | 180 | 103 | 176 | 5 |
+| index_generation | WV Pan J2K (679MB) | 239 | 291 | 252 | 246 | 22 | 5 |
 
 All times in milliseconds (ms).
 
@@ -65,14 +80,17 @@ All times in milliseconds (ms).
 
 | Operation | Dataset | Min | Max | Mean | Median | StdDev | Rounds |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| metadata_read | Tiny NITF (1MB) | 5 | 7 | 6 | 6 | 1 | 10 |
-| metadata_read | Synth Small NC | 6 | 8 | 7 | 7 | 1 | 10 |
-| metadata_read | Synth Medium C8 | 6 | 8 | 7 | 7 | 0 | 10 |
-| metadata_read | Synth Medium C3 | 7 | 8 | 7 | 8 | 0 | 10 |
-| metadata_read | Synth Large NC | 13 | 16 | 15 | 15 | 1 | 10 |
-| metadata_read | Umbra SIDD | 17 | 20 | 18 | 18 | 1 | 10 |
-| metadata_read | WV 8-band J2K (354MB) | 70 | 80 | 74 | 73 | 3 | 10 |
-| metadata_read | WV Pan J2K (679MB) | 118 | 124 | 121 | 121 | 2 | 10 |
+| metadata_read | Synth Small TIFF | 1 | 1 | 1 | 1 | 0 | 10 |
+| metadata_read | Synth COG Pyramid | 1 | 2 | 1 | 1 | 0 | 10 |
+| metadata_read | Tiny NITF (1MB) | 2 | 3 | 3 | 3 | 0 | 10 |
+| metadata_read | Synth Medium C8 | 3 | 5 | 4 | 4 | 0 | 10 |
+| metadata_read | Synth Small NC | 3 | 6 | 4 | 4 | 1 | 10 |
+| metadata_read | Synth Medium C3 | 3 | 7 | 4 | 4 | 1 | 10 |
+| metadata_read | Synth NITF R-set Pyramid | 4 | 5 | 4 | 4 | 0 | 10 |
+| metadata_read | Synth Large NC | 13 | 15 | 14 | 14 | 1 | 10 |
+| metadata_read | Umbra SIDD | 15 | 17 | 16 | 16 | 1 | 10 |
+| metadata_read | WV 8-band J2K (354MB) | 61 | 68 | 65 | 64 | 2 | 10 |
+| metadata_read | WV Pan J2K (679MB) | 118 | 135 | 125 | 123 | 5 | 10 |
 
 All times in milliseconds (ms).
 
@@ -80,23 +98,29 @@ All times in milliseconds (ms).
 
 | Operation | Dataset | Access Pattern | Min | Max | Mean | Median | StdDev | Rounds |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| zarr_read | Tiny NITF (1MB) | single tile | 3 | 5 | 4 | 4 | 1 | 10 |
-| zarr_read | Synth Medium C3 | single tile | 4 | 9 | 6 | 5 | 1 | 10 |
-| zarr_read | Synth Large NC | single tile | 5 | 9 | 6 | 5 | 1 | 10 |
-| zarr_read | Synth Small NC | single tile | 3 | 17 | 6 | 5 | 4 | 10 |
-| zarr_read | Tiny NITF (1MB) | small roi | 5 | 19 | 8 | 6 | 5 | 10 |
-| zarr_read | Synth Small NC | small roi | 8 | 14 | 10 | 9 | 2 | 10 |
-| zarr_read | Synth Medium C3 | small roi | 7 | 16 | 11 | 10 | 3 | 10 |
-| zarr_read | Synth Medium C8 | single tile | 10 | 12 | 11 | 11 | 1 | 10 |
-| zarr_read | Synth Large NC | small roi | 13 | 89 | 24 | 17 | 23 | 10 |
-| zarr_read | Synth Medium C8 | small roi | 36 | 48 | 40 | 37 | 4 | 10 |
-| zarr_read | Umbra SIDD | single tile | 42 | 88 | 50 | 45 | 14 | 10 |
-| zarr_read | WV Pan J2K (679MB) | single tile | 48 | 81 | 53 | 50 | 10 | 10 |
-| zarr_read | Umbra SIDD | small roi | 51 | 70 | 59 | 58 | 7 | 10 |
-| zarr_read | WV 8-band J2K (354MB) | single tile | 263 | 292 | 277 | 277 | 9 | 10 |
-| zarr_read | WV Pan J2K (679MB) | small roi | 354 | 431 | 366 | 359 | 23 | 10 |
-| zarr_read | WV 8-band J2K (354MB) | small roi | 2374 | 2443 | 2392 | 2385 | 21 | 10 |
-| zarr_read | WV Pan J2K (679MB) | large roi | 3835 | 4047 | 3884 | 3868 | 63 | 10 |
+| zarr_read | Synth Small TIFF | single tile | 2 | 3 | 3 | 3 | 0 | 10 |
+| zarr_read | Synth NITF R-set Pyramid | single tile | 3 | 9 | 4 | 3 | 2 | 10 |
+| zarr_read | Synth Large NC | single tile | 3 | 10 | 5 | 4 | 2 | 10 |
+| zarr_read | Synth Small NC | single tile | 4 | 10 | 5 | 4 | 2 | 10 |
+| zarr_read | Synth Small TIFF | small roi | 4 | 8 | 5 | 5 | 1 | 10 |
+| zarr_read | Synth COG Pyramid | single tile | 4 | 7 | 5 | 5 | 1 | 10 |
+| zarr_read | Synth Medium C8 | single tile | 4 | 7 | 5 | 5 | 1 | 10 |
+| zarr_read | Tiny NITF (1MB) | single tile | 5 | 7 | 5 | 5 | 1 | 10 |
+| zarr_read | Synth NITF R-set Pyramid | small roi | 5 | 10 | 6 | 5 | 1 | 10 |
+| zarr_read | Synth Small NC | small roi | 5 | 12 | 6 | 6 | 2 | 10 |
+| zarr_read | Tiny NITF (1MB) | small roi | 4 | 15 | 6 | 5 | 3 | 10 |
+| zarr_read | Synth Medium C3 | small roi | 5 | 12 | 7 | 7 | 2 | 10 |
+| zarr_read | Synth Large NC | small roi | 9 | 13 | 11 | 12 | 2 | 10 |
+| zarr_read | Synth COG Pyramid | small roi | 5 | 178 | 23 | 6 | 54 | 10 |
+| zarr_read | WV Pan J2K (679MB) | single tile | 22 | 30 | 25 | 25 | 3 | 10 |
+| zarr_read | Synth Medium C3 | single tile | 4 | 217 | 27 | 5 | 67 | 10 |
+| zarr_read | Synth Medium C8 | small roi | 21 | 231 | 45 | 24 | 66 | 10 |
+| zarr_read | Umbra SIDD | small roi | 43 | 58 | 48 | 47 | 4 | 10 |
+| zarr_read | Umbra SIDD | single tile | 45 | 61 | 49 | 47 | 5 | 10 |
+| zarr_read | WV 8-band J2K (354MB) | single tile | 59 | 76 | 66 | 65 | 5 | 10 |
+| zarr_read | WV Pan J2K (679MB) | small roi | 124 | 162 | 136 | 133 | 11 | 10 |
+| zarr_read | WV 8-band J2K (354MB) | small roi | 518 | 544 | 532 | 533 | 9 | 10 |
+| zarr_read | WV Pan J2K (679MB) | large roi | 1285 | 1406 | 1339 | 1338 | 34 | 10 |
 
 All times in milliseconds (ms).
 
@@ -104,22 +128,28 @@ All times in milliseconds (ms).
 
 | Operation | Dataset | Access Pattern | Min | Max | Mean | Median | StdDev | Rounds |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| zarr_read | Synth Small NC | single tile | 37 | 56 | 46 | 45 | 6 | 10 |
-| zarr_read | Synth Medium C3 | single tile | 38 | 150 | 61 | 52 | 33 | 10 |
-| zarr_read | Synth Medium C8 | single tile | 44 | 229 | 65 | 47 | 58 | 10 |
-| zarr_read | Tiny NITF (1MB) | small roi | 61 | 72 | 66 | 67 | 3 | 10 |
-| zarr_read | Synth Medium C3 | small roi | 62 | 126 | 86 | 85 | 18 | 10 |
-| zarr_read | Synth Medium C8 | small roi | 67 | 156 | 100 | 96 | 25 | 10 |
-| zarr_read | Synth Large NC | single tile | 65 | 296 | 113 | 98 | 66 | 10 |
-| zarr_read | WV Pan J2K (679MB) | single tile | 101 | 270 | 130 | 110 | 51 | 10 |
-| zarr_read | Tiny NITF (1MB) | single tile | 60 | 790 | 141 | 71 | 228 | 10 |
-| zarr_read | Synth Small NC | small roi | 66 | 296 | 158 | 140 | 71 | 10 |
-| zarr_read | Synth Large NC | small roi | 224 | 395 | 287 | 268 | 55 | 10 |
-| zarr_read | WV Pan J2K (679MB) | small roi | 424 | 636 | 478 | 453 | 62 | 10 |
-| zarr_read | WV 8-band J2K (354MB) | single tile | 412 | 705 | 534 | 525 | 71 | 10 |
-| zarr_read | Umbra SIDD | small roi | 2649 | 3375 | 3027 | 3001 | 256 | 10 |
-| zarr_read | WV 8-band J2K (354MB) | small roi | 3023 | 3217 | 3095 | 3091 | 57 | 10 |
-| zarr_read | Umbra SIDD | single tile | 2787 | 4042 | 3420 | 3551 | 466 | 10 |
-| zarr_read | WV Pan J2K (679MB) | large roi | 4215 | 4848 | 4353 | 4299 | 192 | 10 |
+| zarr_read | Synth Medium C8 | single tile | 149 | 171 | 158 | 156 | 11 | 3 |
+| zarr_read | Synth COG Pyramid | single tile | 148 | 195 | 169 | 164 | 24 | 3 |
+| zarr_read | Synth Medium C3 | single tile | 139 | 222 | 170 | 150 | 45 | 3 |
+| zarr_read | Synth Small TIFF | single tile | 169 | 183 | 175 | 173 | 7 | 3 |
+| zarr_read | Synth COG Pyramid | small roi | 177 | 210 | 189 | 180 | 18 | 3 |
+| zarr_read | Synth Medium C3 | small roi | 174 | 221 | 190 | 176 | 26 | 3 |
+| zarr_read | Synth NITF R-set Pyramid | small roi | 182 | 210 | 193 | 186 | 15 | 3 |
+| zarr_read | Synth Small TIFF | small roi | 179 | 212 | 193 | 188 | 17 | 3 |
+| zarr_read | Synth NITF R-set Pyramid | single tile | 161 | 260 | 198 | 173 | 54 | 3 |
+| zarr_read | Synth Medium C8 | small roi | 187 | 215 | 204 | 209 | 15 | 3 |
+| zarr_read | Synth Small NC | single tile | 171 | 268 | 205 | 177 | 54 | 3 |
+| zarr_read | Synth Small NC | small roi | 207 | 388 | 278 | 239 | 97 | 3 |
+| zarr_read | Tiny NITF (1MB) | small roi | 236 | 392 | 316 | 320 | 78 | 3 |
+| zarr_read | WV Pan J2K (679MB) | single tile | 265 | 498 | 382 | 384 | 116 | 3 |
+| zarr_read | Synth Large NC | single tile | 253 | 628 | 389 | 285 | 208 | 3 |
+| zarr_read | Tiny NITF (1MB) | single tile | 227 | 778 | 425 | 269 | 306 | 3 |
+| zarr_read | WV 8-band J2K (354MB) | single tile | 440 | 762 | 564 | 489 | 173 | 3 |
+| zarr_read | WV Pan J2K (679MB) | small roi | 434 | 869 | 611 | 531 | 229 | 3 |
+| zarr_read | Synth Large NC | small roi | 585 | 643 | 618 | 628 | 30 | 3 |
+| zarr_read | WV 8-band J2K (354MB) | small roi | 2217 | 2506 | 2347 | 2316 | 147 | 3 |
+| zarr_read | WV Pan J2K (679MB) | large roi | 3162 | 3937 | 3422 | 3166 | 446 | 3 |
+| zarr_read | Umbra SIDD | single tile | 4624 | 5470 | 5124 | 5277 | 443 | 3 |
+| zarr_read | Umbra SIDD | small roi | 5319 | 6265 | 5690 | 5485 | 505 | 3 |
 
 All times in milliseconds (ms).

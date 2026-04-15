@@ -13,12 +13,27 @@ The benchmark suite produces five result groups:
   patterns (single tile, small ROI, large ROI) that match the Zarr benchmarks for
   direct comparison.
 - **Tile Read Zarr Local** — Tile reads through `MultiReferenceFileSystem` +
-  `zarr.open_group()` with a local file as the backing store.
+  `zarr.open_group()` with a local file as the backing store. Uses hierarchical
+  Kerchunk indexes with the appropriate codec (JbpBlockCodec for NITF,
+  TiffTileCodec for TIFF/COG).
 - **Tile Read Zarr S3** — Same Zarr path but with S3 as the backing store. Only
   included when `OSML_IO_BENCHMARK_S3_BUCKET` is set.
 - **Index Generation** — End-to-end time to scan a local file and produce a Kerchunk
-  JSON tile index via `OversightMLParser` + `write_tile_index()`.
+  JSON tile index via `OversightMLParser` + `write_tile_index()`. Includes
+  multi-resolution index generation for COG and NITF R-set pyramids.
 - **Metadata** — Time to open a dataset, read file-level and image asset metadata.
+
+## Dataset Coverage
+
+The benchmark suite exercises multiple format and compression combinations:
+
+- NITF uncompressed (NC) — various sizes from 1MB to 64MB
+- NITF JPEG (C3) — lossy compressed multi-band
+- NITF JPEG 2000 (C8) — wavelet compressed, including large real-world imagery
+- NITF SIDD — SAR-derived product with XML DES metadata
+- TIFF uncompressed — exercises the TiffTileCodec in the Zarr path
+- COG pyramid — multi-resolution TIFF with overview IFDs
+- NITF R-set pyramid — multi-file NITF with overview levels
 
 ## Generating Results
 
@@ -32,9 +47,28 @@ to the directory specified by `OSML_IO_BENCHMARK_DATA`.
 python scripts/generate_benchmark_data.py
 ```
 
-This creates synthetic imagery in `data/integration/synthetic/` and appends entries
-to `benchmark_datasets.yaml`. Set `OSML_IO_BENCHMARK_DATA=data/integration` when
-running benchmarks to include them.
+This creates synthetic NITF imagery in `data/integration/synthetic/` and appends
+entries to `benchmark_datasets.yaml`.
+
+For multi-resolution and TIFF coverage, also generate:
+
+```bash
+# Synthetic TIFF (exercises TiffTileCodec in the Zarr path)
+python scripts/generate_synthetic_image.py data/integration/synthetic/synth_small_tiff.tif \
+    --format tiff --width 1024 --height 1024 --bands 1 \
+    --tile-width 256 --tile-height 256 --compression none
+
+# COG pyramid (multi-resolution TIFF with overview IFDs)
+python scripts/generate_synthetic_image_pyramid.py data/integration/synthetic/synth_cog_pyramid.tif \
+    --mode cog --width 2048 --height 2048 --tile-width 256 --tile-height 256 --levels 3
+
+# NITF R-set pyramid (multi-file NITF with overview levels)
+python scripts/generate_synthetic_image_pyramid.py data/integration/synthetic/synth_rset_pyramid.ntf \
+    --mode rset --width 2048 --height 2048 --tile-width 256 --tile-height 256 --levels 3
+```
+
+Set `OSML_IO_BENCHMARK_DATA=data/integration` when running benchmarks to include
+the synthetic datasets.
 
 ### 2. Run the benchmarks
 

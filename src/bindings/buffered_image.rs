@@ -114,36 +114,38 @@ fn extract_array_bytes(py: Python<'_>, data: &Py<PyAny>) -> PyResult<Vec<u8>> {
 /// Optionally attach a :class:`BufferedMetadataProvider` to supply encoding
 /// hints such as compression type (``IC``) and interleave mode (``IMODE``).
 ///
-/// Example::
+/// Example:
 ///
-///     import numpy as np
-///     from aws.osml.io import BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
+/// ```python
+/// import numpy as np
+/// from aws.osml.io import BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 ///
-///     metadata = BufferedMetadataProvider()
-///     metadata.set("IC", "NC")
-///     metadata.set("IMODE", "B")
+/// metadata = BufferedMetadataProvider()
+/// metadata.set("IC", "NC")
+/// metadata.set("IMODE", "B")
 ///
-///     # Create a 512x512 RGB image with 256x256 blocks
-///     provider = BufferedImageAssetProvider.create(
-///         key="synthetic_image",
-///         num_columns=512,
-///         num_rows=512,
-///         num_bands=3,
-///         block_width=256,
-///         block_height=256,
-///         pixel_type=PixelType.UInt8,
-///         metadata=metadata,
-///     )
+/// # Create a 512x512 RGB image with 256x256 blocks
+/// provider = BufferedImageAssetProvider.create(
+///     key="synthetic_image",
+///     num_columns=512,
+///     num_rows=512,
+///     num_bands=3,
+///     block_width=256,
+///     block_height=256,
+///     pixel_type=PixelType.UInt8,
+///     metadata=metadata,
+/// )
 ///
-///     # Populate the full image at once
-///     image_data = np.random.randint(0, 255, (3, 512, 512), dtype=np.uint8)
-///     provider.set_full_image(image_data)
+/// # Populate the full image at once
+/// image_data = np.random.randint(0, 255, (3, 512, 512), dtype=np.uint8)
+/// provider.set_full_image(image_data)
 ///
-///     # Or set blocks individually for large/sparse images
-///     for row in range(2):
-///         for col in range(2):
-///             block = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
-///             provider.set_block(row, col, block)
+/// # Or set blocks individually for large/sparse images
+/// for row in range(2):
+///     for col in range(2):
+///         block = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
+///         provider.set_block(row, col, block)
+/// ```
 #[pyclass(name = "BufferedImageAssetProvider")]
 pub struct PyBufferedImageAssetProvider {
     inner: Arc<BufferedImageAssetProvider>,
@@ -192,22 +194,24 @@ impl PyBufferedImageAssetProvider {
     /// :returns: A new in-memory image asset.
     /// :rtype: BufferedImageAssetProvider
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     from aws.osml.io import BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
+    /// ```python
+    /// from aws.osml.io import BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
     ///
-    ///     metadata = BufferedMetadataProvider()
-    ///     metadata.set("IC", "NC")
-    ///     metadata.set("IMODE", "B")
+    /// metadata = BufferedMetadataProvider()
+    /// metadata.set("IC", "NC")
+    /// metadata.set("IMODE", "B")
     ///
-    ///     provider = BufferedImageAssetProvider.create(
-    ///         key="synthetic_image",
-    ///         num_columns=512,
-    ///         num_rows=512,
-    ///         num_bands=3,
-    ///         pixel_type=PixelType.UInt8,
-    ///         metadata=metadata,
-    ///     )
+    /// provider = BufferedImageAssetProvider.create(
+    ///     key="synthetic_image",
+    ///     num_columns=512,
+    ///     num_rows=512,
+    ///     num_bands=3,
+    ///     pixel_type=PixelType.UInt8,
+    ///     metadata=metadata,
+    /// )
+    /// ```
     #[staticmethod]
     #[pyo3(signature = (
         key,
@@ -298,14 +302,16 @@ impl PyBufferedImageAssetProvider {
     /// :returns: A new mutable provider backed by the source.
     /// :rtype: BufferedImageAssetProvider
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     from aws.osml.io import IO, BufferedImageAssetProvider
+    /// ```python
+    /// from aws.osml.io import IO, BufferedImageAssetProvider
     ///
-    ///     with IO.open(["input.ntf"], "r") as reader:
-    ///         source = reader.get_asset("image:0")
-    ///         copy = BufferedImageAssetProvider.from_provider(source)
-    ///         # Override specific blocks or metadata, then write
+    /// with IO.open(["input.ntf"], "r") as reader:
+    ///     source = reader.get_asset("image:0")
+    ///     copy = BufferedImageAssetProvider.from_provider(source)
+    ///     # Override specific blocks or metadata, then write
+    /// ```
     #[staticmethod]
     #[pyo3(signature = (provider, key=None, block_width=None, block_height=None, metadata=None))]
     fn from_provider(
@@ -357,14 +363,16 @@ impl PyBufferedImageAssetProvider {
     ///     configuration (expected size = bands x rows x cols x bytes_per_pixel).
     /// :raises TypeError: If the array dtype is not supported.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     import numpy as np
+    /// ```python
+    /// import numpy as np
     ///
-    ///     # Create RGB image data in CHW format
-    ///     image_data = np.zeros((3, 512, 512), dtype=np.uint8)
-    ///     image_data[0, :, :] = 255  # Red channel
-    ///     provider.set_full_image(image_data)
+    /// # Create RGB image data in CHW format
+    /// image_data = np.zeros((3, 512, 512), dtype=np.uint8)
+    /// image_data[0, :, :] = 255  # Red channel
+    /// provider.set_full_image(image_data)
+    /// ```
     fn set_full_image(&self, py: Python<'_>, data: Py<PyAny>) -> PyResult<()> {
         let bytes = extract_array_bytes(py, &data)?;
         self.inner.set_full_image(&bytes)?;
@@ -390,15 +398,17 @@ impl PyBufferedImageAssetProvider {
     ///     are out of range.
     /// :raises TypeError: If the array dtype is not supported.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     import numpy as np
+    /// ```python
+    /// import numpy as np
     ///
-    ///     # Set blocks individually for a 1024x1024 image with 256x256 blocks
-    ///     for row in range(4):
-    ///         for col in range(4):
-    ///             block = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
-    ///             provider.set_block(row, col, block)
+    /// # Set blocks individually for a 1024x1024 image with 256x256 blocks
+    /// for row in range(4):
+    ///     for col in range(4):
+    ///         block = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
+    ///         provider.set_block(row, col, block)
+    /// ```
     fn set_block(&self, py: Python<'_>, block_row: u32, block_col: u32, data: Py<PyAny>) -> PyResult<()> {
         let bytes = extract_array_bytes(py, &data)?;
         self.inner.set_block(block_row, block_col, &bytes)?;
@@ -582,15 +592,17 @@ impl PyBufferedImageAssetProvider {
     /// :raises IndexError: If the block coordinates are out of bounds.
     /// :raises ValueError: If the resolution level is invalid.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     # Get full block with all bands
-    ///     block = provider.get_block(0, 0, 0)
-    ///     print(block.shape)  # (3, 256, 256) for RGB with 256x256 blocks
+    /// ```python
+    /// # Get full block with all bands
+    /// block = provider.get_block(0, 0, 0)
+    /// print(block.shape)  # (3, 256, 256) for RGB with 256x256 blocks
     ///
-    ///     # Get only the red channel (band 0)
-    ///     red_band = provider.get_block(0, 0, 0, bands=[0])
-    ///     print(red_band.shape)  # (1, 256, 256)
+    /// # Get only the red channel (band 0)
+    /// red_band = provider.get_block(0, 0, 0, bands=[0])
+    /// print(red_band.shape)  # (1, 256, 256)
+    /// ```
     #[pyo3(signature = (block_row, block_col, resolution_level, bands=None))]
     fn get_block<'py>(
         &self,

@@ -16,4 +16,6 @@ parser
 types
 zarr-codecs
 virtualizarr-parsers
+multi-reference-fs
+jbp-utils
 ```

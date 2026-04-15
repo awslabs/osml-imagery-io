@@ -30,7 +30,30 @@ could offer:
   where appropriate (e.g. NROWS, NCOLS, COMRAT).
 - **Security marking helpers** — surface CLAS, CLSY, CODE, etc. as a
   structured object.
-- **TRE field lookup** — resolve TRE tag names to human-readable descriptions.
 
 The `datetime.rs` Rust implementation could back the datetime conversion if
 exposed through PyO3, or it could be implemented purely in Python.
+
+## GeoZarr Conventions
+
+The hierarchical tile index currently declares the
+[GeoZarr multiscales convention](https://github.com/zarr-conventions/multiscales)
+(UUID `d35379db-88df-4056-af3a-620245f8e347`) in the `zarr_conventions` array.
+Two additional GeoZarr conventions are planned but not yet implemented.
+
+### `proj:` Convention (CRS)
+
+UUID `f17cb550-5864-4468-aeb7-f3180cfb622f`
+
+Provides Coordinate Reference System (CRS) information for the dataset. When
+implemented, attributes such as `proj:code` will be added to the root group
+and a corresponding entry will be appended to the `zarr_conventions` array.
+
+### `spatial:` Convention (Affine Transforms and Bounding Boxes)
+
+UUID `689b58e2-cf7b-45e0-9fff-9cfc0883d6b4`
+
+Provides affine transforms, bounding boxes, and spatial dimension metadata.
+When implemented, attributes such as `spatial:transform`, `spatial:bbox`, and
+`spatial:dimensions` will be added to the root group and a corresponding entry
+will be appended to the `zarr_conventions` array.

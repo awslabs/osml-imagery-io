@@ -24,19 +24,21 @@ use crate::traits::{AssetProvider, DatasetWriter};
 /// supports the Python context manager protocol, so resources are flushed and
 /// released automatically when the ``with`` block exits.
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import IO, BufferedMetadataProvider
+/// ```python
+/// from aws.osml.io import IO, BufferedMetadataProvider
 ///
-///     metadata = BufferedMetadataProvider()
-///     metadata.set("IC", "NC")
+/// metadata = BufferedMetadataProvider()
+/// metadata.set("IC", "NC")
 ///
-///     with IO.open(["output.ntf"], "w", "nitf") as writer:
-///         writer.metadata = metadata
-///         writer.add_asset(
-///             "image:0", image_provider,
-///             "Primary Image", "RGB scene", ["data"],
-///         )
+/// with IO.open(["output.ntf"], "w", "nitf") as writer:
+///     writer.metadata = metadata
+///     writer.add_asset(
+///         "image:0", image_provider,
+///         "Primary Image", "RGB scene", ["data"],
+///     )
+/// ```
 #[pyclass(name = "DatasetWriter")]
 pub struct PyDatasetWriter {
     inner: Option<Box<dyn DatasetWriter>>,
@@ -82,12 +84,14 @@ impl PyDatasetWriter {
     /// :raises ValueError: If an asset with the given key already exists.
     /// :raises TypeError: If *provider* is not a valid asset provider type.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     writer.add_asset(
-    ///         "image:0", image_provider,
-    ///         "Primary Image", "RGB scene", ["data"],
-    ///     )
+    /// ```python
+    /// writer.add_asset(
+    ///     "image:0", image_provider,
+    ///     "Primary Image", "RGB scene", ["data"],
+    /// )
+    /// ```
     #[pyo3(signature = (key, provider, title, description, roles))]
     fn add_asset(
         &mut self,

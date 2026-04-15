@@ -1,6 +1,6 @@
 # Zarr Codecs
 
-Zarr v3 codec plugins for decoding JPEG 2000, JPEG, and uncompressed JBP/NITF imagery.
+Zarr v3 codec plugins for decoding JPEG 2000, JPEG, TIFF, and uncompressed JBP/NITF imagery.
 
 These codecs implement the zarr-python v3 codec protocol and are registered via Python entry points
 for automatic discovery by the Zarr codec registry. They enable reading cloud-hosted NITF and TIFF
@@ -40,6 +40,15 @@ Zarr codec support.
    :show-inheritance:
 ```
 
+### TiffTileCodec
+
+```{eval-rst}
+.. autoclass:: aws.osml.io.zarr_codecs.TiffTileCodec
+   :members:
+   :undoc-members:
+   :show-inheritance:
+```
+
 ## Decode Binding Functions
 
 ### decode_jpeg2000
@@ -58,4 +67,10 @@ Zarr codec support.
 
 ```{eval-rst}
 .. autofunction:: aws.osml.io.zarr_codecs.decode_jbp_block
+```
+
+### decode_tiff_tile
+
+```{eval-rst}
+.. autofunction:: aws.osml.io.zarr_codecs.decode_tiff_tile
 ```

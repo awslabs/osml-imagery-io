@@ -77,11 +77,13 @@ impl From<WriteError> for PyErr {
 /// strings, so these converters handle trimming and numeric parsing
 /// automatically.
 ///
-/// Example::
+/// Example:
 ///
-///     value = accessor["NROWS"]
-///     num_rows = value.as_int()
-///     print(value.as_str())
+/// ```python
+/// value = accessor["NROWS"]
+/// num_rows = value.as_int()
+/// print(value.as_str())
+/// ```
 #[pyclass(name = "Value")]
 pub struct PyValue {
     /// The underlying value (owned for Python lifetime management)
@@ -261,15 +263,17 @@ impl PyValue {
 /// at runtime. Use :meth:`get` to obtain a :class:`StructureDefinition` for use
 /// with :class:`StructureAccessor` or :class:`StructureWriter`.
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import StructureRegistry
+/// ```python
+/// from aws.osml.io import StructureRegistry
 ///
-///     registry = StructureRegistry()
-///     registry.add_search_path("/path/to/my/structures")
-///     definition = registry.get("TRE_GEOLOB")
-///     for name in registry.list():
-///         print(name)
+/// registry = StructureRegistry()
+/// registry.add_search_path("/path/to/my/structures")
+/// definition = registry.get("TRE_GEOLOB")
+/// for name in registry.list():
+///     print(name)
+/// ```
 #[pyclass(name = "StructureRegistry")]
 pub struct PyStructureRegistry {
     inner: StructureRegistry,
@@ -371,10 +375,12 @@ impl PyStructureRegistry {
 /// binary data. Obtain instances from :class:`StructureRegistry` via
 /// :meth:`StructureRegistry.get`.
 ///
-/// Example::
+/// Example:
 ///
-///     definition = registry.get("TRE_GEOLOB")
-///     print(definition.id, definition.field_names)
+/// ```python
+/// definition = registry.get("TRE_GEOLOB")
+/// print(definition.id, definition.field_names)
+/// ```
 #[pyclass(name = "StructureDefinition")]
 pub struct PyStructureDefinition {
     inner: Arc<StructureDefinition>,
@@ -433,16 +439,18 @@ impl PyStructureDefinition {
 /// over all accessible paths with :meth:`fields`. Each field access returns
 /// a :class:`Value` object.
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import StructureAccessor
+/// ```python
+/// from aws.osml.io import StructureAccessor
 ///
-///     accessor = StructureAccessor(definition, data)
-///     value = accessor["field_name"]
-///     if accessor.has("optional_field"):
-///         print(accessor["optional_field"].as_str())
-///     for path in accessor.fields():
-///         print(path, accessor[path])
+/// accessor = StructureAccessor(definition, data)
+/// value = accessor["field_name"]
+/// if accessor.has("optional_field"):
+///     print(accessor["optional_field"].as_str())
+/// for path in accessor.fields():
+///     print(path, accessor[path])
+/// ```
 #[pyclass(name = "StructureAccessor")]
 pub struct PyStructureAccessor {
     /// The structure definition
@@ -509,11 +517,13 @@ impl PyStructureAccessor {
     /// :rtype: Value
     /// :raises KeyError: If the field path does not exist.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     value = accessor["NROWS"]
-    ///     num_rows = value.as_int()
-    ///     nested = accessor["parent.child"]
+    /// ```python
+    /// value = accessor["NROWS"]
+    /// num_rows = value.as_int()
+    /// nested = accessor["parent.child"]
+    /// ```
     fn __getitem__(&self, path: &str) -> PyResult<PyValue> {
         let accessor = self.get_accessor()?;
         let value = accessor.get(path)?;
@@ -604,14 +614,16 @@ impl PyStructureAccessor {
 /// For repeated fields, write elements sequentially with indexed paths
 /// (``field_0``, ``field_1``, ...).
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import StructureWriter
+/// ```python
+/// from aws.osml.io import StructureWriter
 ///
-///     writer = StructureWriter.new_streaming(definition)
-///     writer["field1"] = "value1"
-///     writer["field2"] = 42
-///     data = writer.finish()
+/// writer = StructureWriter.new_streaming(definition)
+/// writer["field1"] = "value1"
+/// writer["field2"] = 42
+/// data = writer.finish()
+/// ```
 #[pyclass(name = "StructureWriter")]
 pub struct PyStructureWriter {
     inner: Option<StructureWriter>,
@@ -693,12 +705,14 @@ impl PyStructureWriter {
     /// :raises ValueError: If required fields have not been written.
     /// :raises RuntimeError: If the writer has already been finalized.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     writer = StructureWriter.new_fixed(definition)
-    ///     writer["FHDR"] = "NITF"
-    ///     writer["FVER"] = "02.10"
-    ///     data = writer.finish()
+    /// ```python
+    /// writer = StructureWriter.new_fixed(definition)
+    /// writer["FHDR"] = "NITF"
+    /// writer["FVER"] = "02.10"
+    /// data = writer.finish()
+    /// ```
     fn finish<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let writer = self
             .inner

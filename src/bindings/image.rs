@@ -28,26 +28,28 @@ use crate::types::{AssetType, PixelType};
 /// (HWC) layout expected by OpenCV or Pillow, use
 /// ``np.transpose(block, (1, 2, 0))``.
 ///
-/// Example::
+/// Example:
 ///
-///     import numpy as np
-///     from aws.osml.io import IO
+/// ```python
+/// import numpy as np
+/// from aws.osml.io import IO
 ///
-///     with IO.open(["image.ntf"], "r") as dataset:
-///         image = dataset.get_asset("image:0")
+/// with IO.open(["image.ntf"], "r") as dataset:
+///     image = dataset.get_asset("image:0")
 ///
-///         # Read an RGB composite from a multispectral image
-///         rgb = image.get_block(0, 0, resolution_level=0, bands=[3, 2, 1])
+///     # Read an RGB composite from a multispectral image
+///     rgb = image.get_block(0, 0, resolution_level=0, bands=[3, 2, 1])
 ///
-///         # Convert CHW to HWC for display with matplotlib or Pillow
-///         rgb_hwc = np.transpose(rgb, (1, 2, 0))
+///     # Convert CHW to HWC for display with matplotlib or Pillow
+///     rgb_hwc = np.transpose(rgb, (1, 2, 0))
 ///
-///         # Iterate over all blocks, skipping masked regions
-///         grid_rows, grid_cols = image.block_grid_size
-///         for row in range(grid_rows):
-///             for col in range(grid_cols):
-///                 if image.has_block(row, col, resolution_level=0):
-///                     block = image.get_block(row, col, resolution_level=0)
+///     # Iterate over all blocks, skipping masked regions
+///     grid_rows, grid_cols = image.block_grid_size
+///     for row in range(grid_rows):
+///         for col in range(grid_cols):
+///             if image.has_block(row, col, resolution_level=0):
+///                 block = image.get_block(row, col, resolution_level=0)
+/// ```
 #[pyclass(name = "ImageAssetProvider")]
 pub struct PyImageAssetProvider {
     inner: Arc<dyn ImageAssetProvider>,
@@ -219,13 +221,15 @@ impl PyImageAssetProvider {
     /// :returns: ``True`` if the block contains data, ``False`` otherwise.
     /// :rtype: bool
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     grid_rows, grid_cols = image.block_grid_size
-    ///     for row in range(grid_rows):
-    ///         for col in range(grid_cols):
-    ///             if image.has_block(row, col, resolution_level=0):
-    ///                 block = image.get_block(row, col, resolution_level=0)
+    /// ```python
+    /// grid_rows, grid_cols = image.block_grid_size
+    /// for row in range(grid_rows):
+    ///     for col in range(grid_cols):
+    ///         if image.has_block(row, col, resolution_level=0):
+    ///             block = image.get_block(row, col, resolution_level=0)
+    /// ```
     fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
         self.inner.has_block(block_row, block_col, resolution_level)
     }
@@ -250,16 +254,18 @@ impl PyImageAssetProvider {
     /// :raises IndexError: If the block coordinates are out of bounds.
     /// :raises ValueError: If the resolution level is invalid.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     # All bands at full resolution
-    ///     block = image.get_block(0, 0, resolution_level=0)
+    /// ```python
+    /// # All bands at full resolution
+    /// block = image.get_block(0, 0, resolution_level=0)
     ///
-    ///     # Natural color from a multispectral image (R, G, B)
-    ///     rgb = image.get_block(0, 0, resolution_level=0, bands=[3, 2, 1])
+    /// # Natural color from a multispectral image (R, G, B)
+    /// rgb = image.get_block(0, 0, resolution_level=0, bands=[3, 2, 1])
     ///
-    ///     # Near-infrared band for vegetation analysis
-    ///     nir = image.get_block(0, 0, resolution_level=0, bands=[4])
+    /// # Near-infrared band for vegetation analysis
+    /// nir = image.get_block(0, 0, resolution_level=0, bands=[4])
+    /// ```
     #[pyo3(signature = (block_row, block_col, resolution_level, bands=None))]
     fn get_block<'py>(
         &self,

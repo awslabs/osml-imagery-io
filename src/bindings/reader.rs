@@ -22,16 +22,18 @@ use crate::types::AssetType;
 /// supports the Python context manager protocol, so resources are released
 /// automatically when the ``with`` block exits.
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import IO
+/// ```python
+/// from aws.osml.io import IO
 ///
-///     with IO.open(["image.ntf"], "r") as dataset:
-///         image_keys = dataset.get_asset_keys(asset_type="image")
-///         print(f"Found {len(image_keys)} image assets")
+/// with IO.open(["image.ntf"], "r") as dataset:
+///     image_keys = dataset.get_asset_keys(asset_type="image")
+///     print(f"Found {len(image_keys)} image assets")
 ///
-///         image = dataset.get_asset(image_keys[0])
-///         print(type(image))  # ImageAssetProvider
+///     image = dataset.get_asset(image_keys[0])
+///     print(type(image))  # ImageAssetProvider
+/// ```
 #[pyclass(name = "DatasetReader")]
 pub struct PyDatasetReader {
     inner: Option<Box<dyn DatasetReader>>,
@@ -71,9 +73,11 @@ impl PyDatasetReader {
     /// :rtype: ImageAssetProvider | TextAssetProvider | DataAssetProvider | GraphicsAssetProvider
     /// :raises KeyError: If no asset with the given key exists.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     image = dataset.get_asset("image:0")
+    /// ```python
+    /// image = dataset.get_asset("image:0")
+    /// ```
     fn get_asset(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
         let inner = self.get_inner()?;
         let asset = inner.get_asset(key)?;
@@ -105,10 +109,12 @@ impl PyDatasetReader {
     /// :returns: Asset keys matching the filter criteria.
     /// :rtype: list[str]
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     image_keys = dataset.get_asset_keys(asset_type="image")
-    ///     text_keys = dataset.get_asset_keys(asset_type="text")
+    /// ```python
+    /// image_keys = dataset.get_asset_keys(asset_type="image")
+    /// text_keys = dataset.get_asset_keys(asset_type="text")
+    /// ```
     #[pyo3(signature = (asset_type=None, roles=None))]
     fn get_asset_keys(
         &self,

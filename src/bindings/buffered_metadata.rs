@@ -80,26 +80,28 @@ fn python_to_json(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<serde_json::Value
 /// always ASCII strings, and ``set_json`` for GeoTIFF tags that require numeric
 /// or array values.
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import BufferedMetadataProvider
+/// ```python
+/// from aws.osml.io import BufferedMetadataProvider
 ///
-///     # Create an empty provider and populate encoding hints
-///     metadata = BufferedMetadataProvider()
-///     metadata.set("IC", "NC")
-///     metadata.set("IMODE", "B")
-///     metadata.set("NPPBH", "256")
-///     metadata.set("NPPBV", "256")
+/// # Create an empty provider and populate encoding hints
+/// metadata = BufferedMetadataProvider()
+/// metadata.set("IC", "NC")
+/// metadata.set("IMODE", "B")
+/// metadata.set("NPPBH", "256")
+/// metadata.set("NPPBV", "256")
 ///
-///     # Retrieve a value
-///     imode = metadata.get("IMODE")  # "B"
+/// # Retrieve a value
+/// imode = metadata.get("IMODE")  # "B"
 ///
-///     # View all entries as a dict (inherited from MetadataProvider)
-///     all_fields = metadata.as_dict()
+/// # View all entries as a dict (inherited from MetadataProvider)
+/// all_fields = metadata.as_dict()
 ///
-///     # Use set_json for GeoTIFF tags that need typed values
-///     metadata.set_json("33550", [0.5, 0.5, 0.0])  # ModelPixelScale
-///     metadata.set_json("GeoProjectedCRS", 32618)
+/// # Use set_json for GeoTIFF tags that need typed values
+/// metadata.set_json("33550", [0.5, 0.5, 0.0])  # ModelPixelScale
+/// metadata.set_json("GeoProjectedCRS", 32618)
+/// ```
 #[pyclass(name = "BufferedMetadataProvider", extends = PyMetadataProvider)]
 pub struct PyBufferedMetadataProvider {
     inner: Arc<BufferedMetadataProvider>,
@@ -127,13 +129,15 @@ impl PyBufferedMetadataProvider {
     /// :returns: A new ``BufferedMetadataProvider`` instance.
     /// :rtype: BufferedMetadataProvider
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     # Create an empty provider
-    ///     provider = BufferedMetadataProvider()
+    /// ```python
+    /// # Create an empty provider
+    /// provider = BufferedMetadataProvider()
     ///
-    ///     # Create from an existing provider (copies all metadata)
-    ///     copied = BufferedMetadataProvider(source=existing_provider)
+    /// # Create from an existing provider (copies all metadata)
+    /// copied = BufferedMetadataProvider(source=existing_provider)
+    /// ```
     #[new]
     #[pyo3(signature = (source=None))]
     fn py_new(source: Option<PyRef<'_, PyMetadataProvider>>) -> (Self, PyMetadataProvider) {
@@ -161,12 +165,14 @@ impl PyBufferedMetadataProvider {
     /// :param value: The string value to store.
     /// :type value: str
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     metadata = BufferedMetadataProvider()
-    ///     metadata.set("IC", "NC")
-    ///     metadata.set("IMODE", "B")
-    ///     metadata.set("NPPBH", "256")
+    /// ```python
+    /// metadata = BufferedMetadataProvider()
+    /// metadata.set("IC", "NC")
+    /// metadata.set("IMODE", "B")
+    /// metadata.set("NPPBH", "256")
+    /// ```
     fn set(&self, key: &str, value: &str) {
         self.inner.set(key, value);
     }
@@ -187,11 +193,13 @@ impl PyBufferedMetadataProvider {
     /// :raises ValueError: If the value cannot be represented as JSON
     ///     (e.g. ``float('nan')``).
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     metadata = BufferedMetadataProvider()
-    ///     metadata.set_json("GeoProjectedCRS", 32618)
-    ///     metadata.set_json("33550", [0.5, 0.5, 0.0])  # ModelPixelScale
+    /// ```python
+    /// metadata = BufferedMetadataProvider()
+    /// metadata.set_json("GeoProjectedCRS", 32618)
+    /// metadata.set_json("33550", [0.5, 0.5, 0.0])  # ModelPixelScale
+    /// ```
     fn set_json(&self, py: Python<'_>, key: &str, value: Py<PyAny>) -> PyResult<()> {
         let json_val = python_to_json(py, &value)?;
         self.inner.set_json(key, json_val);
@@ -205,9 +213,11 @@ impl PyBufferedMetadataProvider {
     /// :returns: The value as a string, or ``None`` if the key is not present.
     /// :rtype: str or None
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     imode = metadata.get("IMODE")  # "B" or None
+    /// ```python
+    /// imode = metadata.get("IMODE")  # "B" or None
+    /// ```
     fn get(&self, key: &str) -> Option<String> {
         self.inner.get(key)
     }
@@ -219,18 +229,22 @@ impl PyBufferedMetadataProvider {
     /// :returns: The previous value if the key existed, or ``None`` otherwise.
     /// :rtype: str or None
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     old_value = metadata.remove("IMODE")  # previous value or None
+    /// ```python
+    /// old_value = metadata.remove("IMODE")  # previous value or None
+    /// ```
     fn remove(&self, key: &str) -> Option<String> {
         self.inner.remove(key)
     }
 
     /// Remove all key-value pairs from the store.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     metadata.clear()
+    /// ```python
+    /// metadata.clear()
+    /// ```
     fn clear(&self) {
         self.inner.clear();
     }

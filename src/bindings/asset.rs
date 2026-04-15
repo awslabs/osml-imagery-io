@@ -33,14 +33,16 @@ use crate::types::AssetType;
 /// :meth:`DatasetReader.get_asset`. To create an asset from raw bytes for
 /// writing, use the :meth:`AssetProvider.from_bytes` static method.
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import IO
+/// ```python
+/// from aws.osml.io import IO
 ///
-///     with IO.open(["image.ntf"], "r") as dataset:
-///         keys = dataset.get_asset_keys(asset_type="image")
-///         asset = dataset.get_asset(keys[0])
-///         print(asset.key, asset.title, asset.asset_type)
+/// with IO.open(["image.ntf"], "r") as dataset:
+///     keys = dataset.get_asset_keys(asset_type="image")
+///     asset = dataset.get_asset(keys[0])
+///     print(asset.key, asset.title, asset.asset_type)
+/// ```
 #[pyclass(name = "AssetProvider")]
 pub struct PyAssetProvider {
     inner: AssetProvider,
@@ -100,10 +102,12 @@ impl PyAssetProvider {
     /// :rtype: io.BytesIO
     /// :raises IOError: If the asset data cannot be read.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     raw = asset.get_raw_asset()
-    ///     data = raw.read()
+    /// ```python
+    /// raw = asset.get_raw_asset()
+    /// data = raw.read()
+    /// ```
     fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let bytes = self.inner.raw_asset()?;
         let py_bytes = PyBytes::new(py, &bytes);
@@ -145,16 +149,18 @@ impl PyAssetProvider {
     /// :raises ValueError: If *asset_type* is ``AssetType.Image`` — use
     ///     :class:`BufferedImageAssetProvider` instead.
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     from aws.osml.io import AssetProvider, AssetType
+    /// ```python
+    /// from aws.osml.io import AssetProvider, AssetType
     ///
-    ///     asset = AssetProvider.from_bytes(
-    ///         key="my_text",
-    ///         data=b"Hello, world!",
-    ///         asset_type=AssetType.Text,
-    ///         title="Greeting",
-    ///     )
+    /// asset = AssetProvider.from_bytes(
+    ///     key="my_text",
+    ///     data=b"Hello, world!",
+    ///     asset_type=AssetType.Text,
+    ///     title="Greeting",
+    /// )
+    /// ```
     #[staticmethod]
     #[pyo3(signature = (key, data, asset_type, title=None, description=None, roles=None, media_type=None))]
     fn from_bytes(

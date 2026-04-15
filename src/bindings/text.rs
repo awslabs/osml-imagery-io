@@ -22,16 +22,18 @@ use crate::types::AssetType;
 /// metadata. Use :meth:`DatasetReader.get_asset` to obtain an instance for
 /// a specific text asset in the dataset.
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import IO
+/// ```python
+/// from aws.osml.io import IO
 ///
-///     with IO.open(["image.ntf"], "r") as dataset:
-///         for key in dataset.get_asset_keys(asset_type="text"):
-///             text_asset = dataset.get_asset(key)
-///             print(f"Encoding: {text_asset.encoding}")
-///             print(f"Format:   {text_asset.format}")
-///             print(f"Text:     {text_asset.text[:200]}...")
+/// with IO.open(["image.ntf"], "r") as dataset:
+///     for key in dataset.get_asset_keys(asset_type="text"):
+///         text_asset = dataset.get_asset(key)
+///         print(f"Encoding: {text_asset.encoding}")
+///         print(f"Format:   {text_asset.format}")
+///         print(f"Text:     {text_asset.text[:200]}...")
+/// ```
 #[pyclass(name = "TextAssetProvider")]
 pub struct PyTextAssetProvider {
     inner: Arc<dyn TextAssetProvider>,

@@ -93,16 +93,28 @@ a layout convention for efficient range-request access.
 
 ### What standards were used?
 
-The functionality described in this guide is based on the following specifications:
+The functionality described in this guide is based on the following specifications,
+maintained by their respective standards bodies:
+
+#### NITF / Defense Imagery
+
+Maintained by the [NSG Standards Registry (NGA)](https://nsgreg.nga.mil/):
 
 - **Joint BIIF Profile (JBP) v2024.1** — NITF 2.0 / 2.1 / NSIF 1.0 file format
 - **STDI-0002 v2024.1** — Tagged Record Extension (TRE) and Data Extension Segment (DES) definitions
 - **NGA SICD v1.3.0** — Sensor Independent Complex Data (SAR complex imagery)
 - **NGA SIDD v3.0** — Sensor Independent Derived Data (SAR derived products)
 - **MIL-STD-188-199** — Vector Quantization (VQ) decompression for NITF imagery
-- **TIFF Revision 6.0** — Base TIFF file format
-- **OGC GeoTIFF Standard** — Geospatial extensions for TIFF
-- **OGC Cloud Optimized GeoTIFF (COG)** — Cloud-native GeoTIFF conventions
 
-These standards are maintained by the [NSG Standards Registry (NGA)](https://nsgreg.nga.mil/)
-and the [Open Geospatial Consortium (OGC)](https://www.ogc.org/standards/).
+#### TIFF / GeoTIFF
+
+- **TIFF Revision 6.0** — Base TIFF file format (Adobe)
+- **OGC GeoTIFF Standard** — Geospatial extensions for TIFF ([OGC](https://www.ogc.org/standards/))
+- **OGC Cloud Optimized GeoTIFF (COG)** — Cloud-native GeoTIFF conventions ([OGC](https://www.ogc.org/standards/))
+
+#### Image Compression
+
+- **ISO/IEC 15444-1 (JPEG 2000 Part 1)** — Wavelet-based image compression ([ISO/IEC JTC 1](https://www.iso.org/committee/45382.html))
+- **ISO/IEC 15444-15 (HTJ2K)** — High-Throughput JPEG 2000 ([ISO/IEC JTC 1](https://www.iso.org/committee/45382.html))
+- **ITU-T T.81 / ISO/IEC 10918-1 (JPEG)** — DCT-based lossy image compression ([ITU-T](https://www.itu.int/rec/T-REC-T.81) / [ISO/IEC JTC 1](https://www.iso.org/committee/45382.html))
+- **ISO/IEC 15948 (PNG)** — Portable Network Graphics, lossless compression ([ISO/IEC JTC 1](https://www.iso.org/committee/45382.html) / [W3C](https://www.w3.org/TR/png-3/))

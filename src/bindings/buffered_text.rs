@@ -25,31 +25,33 @@ use crate::types::AssetType;
 /// and ``"MTF"``. You can optionally attach a title, description, and
 /// semantic roles to describe the text asset's purpose within the dataset.
 ///
-/// Example::
+/// Example:
 ///
-///     from aws.osml.io import BufferedTextAssetProvider
+/// ```python
+/// from aws.osml.io import BufferedTextAssetProvider
 ///
-///     # Create a UTF-8 text asset
-///     provider = BufferedTextAssetProvider.create(
-///         key="text_0",
-///         text_content="Hello, World!",
-///         encoding="UTF-8",
-///     )
+/// # Create a UTF-8 text asset
+/// provider = BufferedTextAssetProvider.create(
+///     key="text_0",
+///     text_content="Hello, World!",
+///     encoding="UTF-8",
+/// )
 ///
-///     # Access text content and metadata
-///     print(provider.text)      # "Hello, World!"
-///     print(provider.encoding)  # "UTF-8"
-///     print(provider.format)    # "U8S"
+/// # Access text content and metadata
+/// print(provider.text)      # "Hello, World!"
+/// print(provider.encoding)  # "UTF-8"
+/// print(provider.format)    # "U8S"
 ///
-///     # Create a text asset with title, description, and roles
-///     provider = BufferedTextAssetProvider.create(
-///         key="text:0",
-///         text_content="Mission report content...",
-///         encoding="UTF-8",
-///         title="Mission Report",
-///         description="Operational text",
-///         roles=["data", "annotation"],
-///     )
+/// # Create a text asset with title, description, and roles
+/// provider = BufferedTextAssetProvider.create(
+///     key="text:0",
+///     text_content="Mission report content...",
+///     encoding="UTF-8",
+///     title="Mission Report",
+///     description="Operational text",
+///     roles=["data", "annotation"],
+/// )
+/// ```
 #[pyclass(name = "BufferedTextAssetProvider")]
 pub struct PyBufferedTextAssetProvider {
     inner: Arc<BufferedTextAssetProvider>,
@@ -90,17 +92,19 @@ impl PyBufferedTextAssetProvider {
     /// :returns: A new in-memory text asset.
     /// :rtype: BufferedTextAssetProvider
     ///
-    /// Example::
+    /// Example:
     ///
-    ///     from aws.osml.io import BufferedTextAssetProvider
+    /// ```python
+    /// from aws.osml.io import BufferedTextAssetProvider
     ///
-    ///     provider = BufferedTextAssetProvider.create(
-    ///         key="text_0",
-    ///         text_content="Hello, World!",
-    ///         encoding="UTF-8",
-    ///         title="Sample Text",
-    ///         description="A sample text asset",
-    ///     )
+    /// provider = BufferedTextAssetProvider.create(
+    ///     key="text_0",
+    ///     text_content="Hello, World!",
+    ///     encoding="UTF-8",
+    ///     title="Sample Text",
+    ///     description="A sample text asset",
+    /// )
+    /// ```
     #[staticmethod]
     #[pyo3(signature = (
         key,
