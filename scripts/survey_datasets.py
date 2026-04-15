@@ -7,8 +7,8 @@ reader, and prints a summary table of the first image segment found in each
 file.
 
 Usage:
-    python scripts/survey_images.py <directory>
-    python scripts/survey_images.py <directory> --recursive
+    python scripts/survey_datasets.py <directory>
+    python scripts/survey_datasets.py <directory> --recursive
 """
 
 import argparse

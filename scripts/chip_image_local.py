@@ -7,9 +7,9 @@ Supports any format the IO library can read, including NITF (.ntf),
 TIFF/GeoTIFF (.tif, .tiff), and PNG (.png).
 
 Usage:
-    python scripts/chip_image.py input.ntf output.png --bbox 0 0 512 512
-    python scripts/chip_image.py input.tif output.png --bbox 0 0 512 512
-    python scripts/chip_image.py input.ntf output.png --bbox 100 200 300 400 --asset image:0
+    python scripts/chip_image_local.py input.ntf output.png --bbox 0 0 512 512
+    python scripts/chip_image_local.py input.tif output.png --bbox 0 0 512 512
+    python scripts/chip_image_local.py input.ntf output.png --bbox 100 200 300 400 --asset image:0
 
 The bounding box is specified as: x_min y_min x_max y_max (column/row coordinates)
 """
@@ -259,13 +259,13 @@ def main():
         epilog="""
 Examples:
     # Extract a 512x512 chip from the top-left corner
-    python scripts/chip_image.py input.ntf output.png --bbox 0 0 512 512
+    python scripts/chip_image_local.py input.ntf output.png --bbox 0 0 512 512
 
     # Extract a chip from a GeoTIFF file
-    python scripts/chip_image.py input.tif output.png --bbox 0 0 512 512
+    python scripts/chip_image_local.py input.tif output.png --bbox 0 0 512 512
 
     # Extract a region from a specific asset
-    python scripts/chip_image.py input.ntf output.png --bbox 100 200 400 500 --asset image:1
+    python scripts/chip_image_local.py input.ntf output.png --bbox 100 200 400 500 --asset image:1
 """
     )
     parser.add_argument(

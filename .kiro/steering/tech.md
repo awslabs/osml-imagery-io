@@ -334,6 +334,27 @@ Property tests use hypothesis profiles defined in `tests/property/conftest.py`:
 
 Set the profile via the `HYPOTHESIS_PROFILE` environment variable. CI should set `HYPOTHESIS_PROFILE=ci`.
 
+## Example Scripts
+
+The `scripts/` directory contains user-facing example scripts that demonstrate common library workflows. See `scripts/README.md` for full documentation.
+
+### Available Scripts
+
+- `survey_datasets.py` — Scan a directory and summarize datasets in a table
+- `describe_dataset.py` — Dump detailed info and metadata for a single dataset
+- `chip_image_local.py` — Extract a region from a local file and save as PNG
+- `chip_image_zarr.py` — Extract a region via a Zarr tile index (local or S3), supports `--level` for multiscale
+- `generate_synthetic_image.py` — Create a single-level test image (NITF, TIFF, PNG, J2K, JPEG)
+- `generate_synthetic_image_pyramid.py` — Create a multi-resolution pyramid (COG or NITF R-set)
+- `generate_tile_index.py` — Build a Zarr tile index (JSON or Parquet) for cloud-native access
+
+### When to Use
+
+- To quickly generate test data for development or debugging, use `generate_synthetic_image.py` or `generate_synthetic_image_pyramid.py`.
+- To inspect existing imagery files, use `survey_datasets.py` (directory scan) or `describe_dataset.py` (single file).
+- To test the Zarr/cloud-native read path end-to-end: generate a pyramid → build a tile index → chip via Zarr.
+- Internal scripts (`generate_benchmark_data.py`, `generate_test_data.py`, `generate_benchmark_report.py`, `setup-dev-env.sh`) support the build and are not user examples.
+
 ## Benchmarking
 
 This project uses two distinct benchmarking tiers:

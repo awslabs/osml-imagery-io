@@ -219,10 +219,10 @@ Examples:
         help="List available image segments and exit without generating an index.",
     )
     parser.add_argument(
-        "--segments",
+        "--segments", "-a",
         nargs="+",
         metavar="KEY",
-        help="Image segment keys to index (default: all segments). "
+        help="Image asset keys to index (default: all). "
         "Use --list-segments to see available keys.",
     )
 
