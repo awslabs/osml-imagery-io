@@ -67,8 +67,8 @@ class TestBuildManifestArrayBehaviorPreserving:
     """
 
     def test_single_segment_nitf_produces_correct_store_structure(self, tmp_dir):
-        """A single-segment NITF produces a ManifestStore with expected arrays,
-        chunk entries, multi_range_refs, and source attribute."""
+        """A single-segment NITF produces a ManifestStore with a hierarchical
+        structure: subgroup '0' containing a 'data' array."""
         from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
         path = tmp_dir / "test.ntf"
@@ -78,20 +78,26 @@ class TestBuildManifestArrayBehaviorPreserving:
         parser = OversightMLParser(local_paths=str(path))
         store = parser(url=url)
 
-        # Root group has at least one array keyed "image:0"
+        # Root group has subgroup "0" with a "data" array
         group = store._group
-        assert "image:0" in group.arrays, (
-            f"Expected 'image:0' in arrays, got {list(group.arrays.keys())}"
+        assert "0" in group.groups, (
+            f"Expected subgroup '0' in groups, got {list(group.groups.keys())}"
         )
-
-        # No subgroups — flat store for single-segment, no-overview input
-        assert not group.groups, "Expected no subgroups for single-segment NITF"
+        assert "data" in group.groups["0"].arrays, (
+            f"Expected 'data' in subgroup '0' arrays, got {list(group.groups['0'].arrays.keys())}"
+        )
 
         # Source attribute matches the URL
         attrs = group.metadata.attributes if group.metadata else {}
         assert attrs.get("source") == url, (
             f"Expected source='{url}', got '{attrs.get('source')}'"
         )
+
+        # GeoZarr multiscales metadata present with single layout entry
+        assert "multiscales" in attrs, "Expected 'multiscales' in root attributes"
+        layout = attrs["multiscales"]["layout"]
+        assert len(layout) == 1, f"Expected 1 layout entry, got {len(layout)}"
+        assert layout[0]["asset"] == "0"
 
     def test_manifest_array_shape_and_chunks(self, tmp_dir):
         """The ManifestArray has correct shape and chunk shape matching the NITF."""
@@ -102,7 +108,7 @@ class TestBuildManifestArrayBehaviorPreserving:
         _write_nitf(path, num_cols=num_cols, num_rows=num_rows, num_bands=num_bands)
 
         store = OversightMLParser(local_paths=str(path))(url="s3://bucket/test.ntf")
-        array = store._group.arrays["image:0"]
+        array = store._group.groups["0"].arrays["data"]
 
         # Shape: (bands, rows, cols)
         assert array.shape == (num_bands, num_rows, num_cols), (
@@ -123,7 +129,7 @@ class TestBuildManifestArrayBehaviorPreserving:
         _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
 
         store = OversightMLParser(local_paths=str(path))(url="s3://bucket/test.ntf")
-        array = store._group.arrays["image:0"]
+        array = store._group.groups["0"].arrays["data"]
 
         manifest = array.manifest
         # Single tile for 128x128 image with 256x256 block size → 1 chunk
@@ -147,7 +153,7 @@ class TestBuildManifestArrayBehaviorPreserving:
                      block_width=64, block_height=64)
 
         store = OversightMLParser(local_paths=str(path))(url="s3://bucket/test.ntf")
-        array = store._group.arrays["image:0"]
+        array = store._group.groups["0"].arrays["data"]
 
         manifest = array.manifest
         # 4 rows × 4 cols = 16 tiles, each with chunk key "0.row.col"
@@ -219,9 +225,10 @@ class TestURLNormalization:
 
         # Should succeed without error; all chunk refs use the single URL
         group = store._group
-        for array in group.arrays.values():
-            for _key, entry in array.manifest.items():
-                assert entry["path"] == url
+        for sg in group.groups.values():
+            for array in sg.arrays.values():
+                for _key, entry in array.manifest.items():
+                    assert entry["path"] == url
 
     def test_url_list_matching_path_count(self, tmp_dir):
         """A URL list matching path count is used as-is (no error).
@@ -658,14 +665,15 @@ class TestMultiFileRSetPyramid:
 
 
 class TestSingleFileBackwardCompat:
-    """Verify single-file, no-overview path produces a flat store (backward compat).
+    """Verify single-file, no-overview path produces a hierarchical store with one level.
 
     Requirements: 3.4, 7.1, 7.2
     """
 
-    def test_single_file_produces_flat_store_with_no_subgroups(self, tmp_dir):
-        """A single NITF file with single path and URL produces a flat store
-        with no subgroups, an 'image:0' array, no multiscales, and correct source."""
+    def test_single_file_produces_hierarchical_store_with_one_level(self, tmp_dir):
+        """A single NITF file with single path and URL produces a hierarchical
+        store with subgroup '0', GeoZarr multiscales metadata with one layout
+        entry, and correct source."""
         from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
         path = tmp_dir / "single.ntf"
@@ -677,24 +685,28 @@ class TestSingleFileBackwardCompat:
 
         group = store._group
 
-        # No subgroups — flat store for single-file, no-overview input
-        assert not group.groups, (
-            f"Expected no subgroups for single-file input, got {list(group.groups.keys())}"
+        # Has subgroup "0" with a "data" array
+        assert "0" in group.groups, (
+            f"Expected subgroup '0', got {list(group.groups.keys())}"
+        )
+        assert "data" in group.groups["0"].arrays, (
+            f"Expected 'data' in subgroup '0' arrays, got {list(group.groups['0'].arrays.keys())}"
         )
 
-        # Arrays dict has 'image:0' key
-        assert "image:0" in group.arrays, (
-            f"Expected 'image:0' in arrays, got {list(group.arrays.keys())}"
-        )
-
-        # No multiscales or zarr_conventions in attributes
+        # GeoZarr multiscales metadata present with single layout entry
         attrs = group.metadata.attributes if group.metadata else {}
-        assert "multiscales" not in attrs, (
-            "Expected no 'multiscales' attribute for single-file, no-overview input"
+        assert "multiscales" in attrs, (
+            "Expected 'multiscales' attribute for single-file input"
         )
-        assert "zarr_conventions" not in attrs, (
-            "Expected no 'zarr_conventions' attribute for single-file, no-overview input"
+        assert "zarr_conventions" in attrs, (
+            "Expected 'zarr_conventions' attribute for single-file input"
         )
+        layout = attrs["multiscales"]["layout"]
+        assert len(layout) == 1, (
+            f"Expected 1 layout entry for single-file input, got {len(layout)}"
+        )
+        assert layout[0]["asset"] == "0"
+        assert layout[0]["transform"]["scale"] == [1.0, 1.0]
 
         # Source attribute matches the URL
         assert attrs.get("source") == url, (
@@ -709,8 +721,8 @@ class TestWriteTileIndex:
     """
 
     def test_flat_store_json_output_structure(self, tmp_dir):
-        """A flat ManifestStore (single NITF, single path) serializes to JSON
-        with expected kerchunk structure.
+        """A single-file ManifestStore serializes to JSON with hierarchical
+        structure (subgroup '0' with 'data' array) and GeoZarr metadata.
 
         Requirements: 6.2, 7.3
         """
@@ -740,19 +752,23 @@ class TestWriteTileIndex:
         assert ".zgroup" in refs, "Expected '.zgroup' in refs"
         assert ".zattrs" in refs, "Expected '.zattrs' in refs"
 
-        # Flat store .zattrs should NOT contain zarr_conventions or multiscales
+        # Single-file .zattrs should contain zarr_conventions and multiscales
         import json as _json
-        flat_zattrs = _json.loads(refs[".zattrs"])
-        assert "zarr_conventions" not in flat_zattrs, (
-            "Expected no 'zarr_conventions' in flat store .zattrs"
+        zattrs = _json.loads(refs[".zattrs"])
+        assert "zarr_conventions" in zattrs, (
+            "Expected 'zarr_conventions' in single-file store .zattrs"
         )
-        assert "multiscales" not in flat_zattrs, (
-            "Expected no 'multiscales' in flat store .zattrs"
+        assert "multiscales" in zattrs, (
+            "Expected 'multiscales' in single-file store .zattrs"
+        )
+        layout = zattrs["multiscales"]["layout"]
+        assert len(layout) == 1, (
+            f"Expected 1 layout entry for single-file, got {len(layout)}"
         )
 
-        # At least one chunk reference exists (for the 128x128 image)
-        chunk_keys = [k for k in refs if not k.startswith(".")]
-        assert len(chunk_keys) > 0, "Expected at least one chunk reference key"
+        # Chunk keys should be under 0/data/ prefix
+        chunk_keys = [k for k in refs if k.startswith("0/data/") and not k.startswith("0/data/.")]
+        assert len(chunk_keys) > 0, "Expected at least one chunk reference key under 0/data/"
 
     def test_hierarchical_store_json_output_structure(self, tmp_dir):
         """A hierarchical ManifestStore (2 NITF files with R-set naming)
@@ -1150,3 +1166,219 @@ class TestEndToEndPyramidRoundTrip:
                 ovr_tile, data_r1,
                 err_msg="Overview tile data should match written data",
             )
+
+
+class TestPortableIndex:
+    """Verify portable index creation (url=None) and template-based resolution.
+
+    When url is omitted, chunk references use {{base}}filename instead of
+    absolute URLs.  The serialized JSON includes a Kerchunk v1 "templates"
+    dict with {"base": ""}.  At read time, template_overrides resolves the
+    placeholders.
+    """
+
+    def test_url_none_produces_template_refs(self, tmp_dir):
+        """Parser with url=None stores local file URI in chunk entries
+        and sets use_templates flag for write-time rewriting."""
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+        path = tmp_dir / "image.ntf"
+        _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
+
+        store = OversightMLParser(str(path))()
+
+        # Check that use_templates flag is set
+        assert store.use_templates is True
+        assert len(store.template_rewrites) == 1
+
+        # ChunkEntry uses a path derived from the local file
+        group = store._group
+        array = group.groups["0"].arrays["data"]
+        manifest = array.manifest
+        entry = manifest["0.0.0"]
+        # VirtualiZarr may convert to file:// URI; just verify it ends
+        # with the filename
+        assert entry["path"].endswith("image.ntf"), (
+            f"Expected path ending with 'image.ntf', got '{entry['path']}'"
+        )
+
+    def test_url_none_with_subdirectory_uses_basename_only(self, tmp_dir):
+        """template_rewrites maps the chunk path to {{base}}filename."""
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+        subdir = tmp_dir / "deep" / "nested"
+        subdir.mkdir(parents=True)
+        path = subdir / "myfile.ntf"
+        _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
+
+        store = OversightMLParser(str(path))()
+
+        # template_rewrites should map the chunk path → {{base}}myfile.ntf
+        rewrites = store.template_rewrites
+        assert len(rewrites) == 1
+        rewrite_value = list(rewrites.values())[0]
+        assert rewrite_value == "{{base}}myfile.ntf"
+
+    def test_flat_json_includes_templates_dict(self, tmp_dir):
+        """Flat store JSON output includes "templates": {"base": ""}."""
+        import json
+
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
+
+        path = tmp_dir / "image.ntf"
+        _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
+
+        store = OversightMLParser(str(path))()
+        output = str(tmp_dir / "portable.tile_index.json")
+        write_tile_index(store, output)
+
+        with open(output) as f:
+            data = json.load(f)
+
+        assert "templates" in data, "Expected 'templates' key in portable JSON"
+        assert data["templates"] == {"base": ""}, (
+            f"Expected templates={{'base': ''}}, got {data['templates']}"
+        )
+
+        # Chunk refs should contain {{base}} prefix
+        refs = data.get("refs", data)
+        chunk_keys = [k for k in refs if not k.startswith(".")]
+        assert len(chunk_keys) > 0
+        for k in chunk_keys:
+            ref = refs[k]
+            if isinstance(ref, list):
+                assert "{{base}}" in ref[0], (
+                    f"Chunk ref URL should contain '{{{{base}}}}', got '{ref[0]}'"
+                )
+
+    def test_hierarchical_json_includes_templates_dict(self, tmp_dir):
+        """Hierarchical store JSON output includes "templates": {"base": ""}."""
+        import json
+
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
+
+        path_base = tmp_dir / "image.ntf"
+        path_r1 = tmp_dir / "image.ntf.r1"
+        _write_nitf(path_base, num_cols=256, num_rows=256, num_bands=1)
+        _write_nitf(path_r1, num_cols=128, num_rows=128, num_bands=1)
+
+        store = OversightMLParser([str(path_base), str(path_r1)])()
+        output = str(tmp_dir / "portable_hier.tile_index.json")
+        write_tile_index(store, output)
+
+        with open(output) as f:
+            data = json.load(f)
+
+        assert "templates" in data, "Expected 'templates' key in portable JSON"
+        assert data["templates"] == {"base": ""}, (
+            f"Expected templates={{'base': ''}}, got {data['templates']}"
+        )
+
+        # Level 0 refs should use {{base}}image.ntf
+        # Level 1 refs should use {{base}}image.ntf.r1
+        refs = data["refs"]
+        data_keys_0 = [
+            k for k in refs
+            if k.startswith("0/data/") and not k.startswith("0/data/.")
+        ]
+        data_keys_1 = [
+            k for k in refs
+            if k.startswith("1/data/") and not k.startswith("1/data/.")
+        ]
+        assert len(data_keys_0) > 0
+        assert len(data_keys_1) > 0
+
+        for k in data_keys_0:
+            ref = refs[k]
+            assert ref[0] == "{{base}}image.ntf", (
+                f"Level 0 ref should be '{{{{base}}}}image.ntf', got '{ref[0]}'"
+            )
+        for k in data_keys_1:
+            ref = refs[k]
+            assert ref[0] == "{{base}}image.ntf.r1", (
+                f"Level 1 ref should be '{{{{base}}}}image.ntf.r1', got '{ref[0]}'"
+            )
+
+    def test_absolute_url_does_not_include_templates(self, tmp_dir):
+        """When url is provided, no templates dict is emitted."""
+        import json
+
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
+
+        path = tmp_dir / "image.ntf"
+        _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
+
+        store = OversightMLParser(str(path))(url="s3://bucket/image.ntf")
+        output = str(tmp_dir / "absolute.tile_index.json")
+        write_tile_index(store, output)
+
+        with open(output) as f:
+            data = json.load(f)
+
+        assert "templates" not in data, (
+            "Absolute URL index should not contain 'templates'"
+        )
+
+    def test_portable_index_round_trip_with_template_overrides(self, tmp_dir):
+        """End-to-end: create portable index, open with template_overrides,
+        verify chunk data is readable via zarr.
+        """
+        import json
+
+        import zarr
+        from zarr.storage._fsspec import FsspecStore
+
+        from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
+        from aws.osml.io.virtualizarr_parsers import (
+            OversightMLParser,
+            write_tile_index,
+        )
+
+        # Write a NITF with known data
+        rng = np.random.default_rng(42)
+        path = tmp_dir / "image.ntf"
+        metadata = BufferedMetadataProvider()
+        metadata.set("IC", "NC")
+        metadata.set("IMODE", "B")
+        provider = BufferedImageAssetProvider.create(
+            key="image:0",
+            num_columns=128,
+            num_rows=128,
+            num_bands=1,
+            block_width=128,
+            block_height=128,
+            metadata=metadata,
+        )
+        data = rng.integers(1, 255, size=(1, 128, 128), dtype=np.uint8)
+        provider.set_full_image(data)
+        writer = IO.open([str(path)], "w", "nitf")
+        writer.add_asset("image:0", provider, "Image", "test", ["data"])
+        writer.close()
+
+        # Create portable index (no URL)
+        store = OversightMLParser(str(path))()
+        index_path = str(tmp_dir / "image.tile_index.json")
+        write_tile_index(store, index_path)
+
+        # Verify the JSON has templates
+        with open(index_path) as f:
+            index_data = json.load(f)
+        assert index_data["templates"] == {"base": ""}
+
+        # Open with template_overrides pointing to the local directory
+        base_url = str(tmp_dir) + "/"
+        fs = MultiReferenceFileSystem(
+            fo=index_path,
+            template_overrides={"base": base_url},
+            skip_instance_cache=True,
+        )
+
+        store_zarr = FsspecStore(fs=fs, read_only=True, path="")
+        root = zarr.open_group(store_zarr, mode="r", zarr_format=2)
+
+        # Read the tile and verify shape
+        arr = root["0/data"]
+        tile = np.asarray(arr[0:1, 0:128, 0:128])
+        assert tile.shape == (1, 128, 128), (
+            f"Expected (1, 128, 128), got {tile.shape}"
+        )

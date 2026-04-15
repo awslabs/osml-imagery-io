@@ -160,7 +160,7 @@ For example, a tile with six tile-parts scattered across a file:
 
 ```json
 {
-  "image:0/0.0.0": [
+  "0/data/0.0.0": [
     "s3://bucket/image.ntf",
     [[66132, 1518], [2534029, 3385], [7216065, 11460],
      [22566527, 38566], [74210429, 116812], [242293202, 339534]]
@@ -284,53 +284,25 @@ Zarr. The parser handles tile indexing, and Zarr's built-in codecs handle the
 decoding.
 ```
 
-
 ## Zarr Access to Image Pyramids
-
-### The problem with geospatial multi-resolution standards
-
-Tiled image pyramids are fundamental to working with large imagery. A pyramid
-stores the same image at multiple resolution levels — the full-resolution
-original plus progressively downsampled overviews. Visualization tools use
-lower-resolution levels for zoomed-out views and fetch full-resolution tiles
-only when the user zooms in. Analytics pipelines use overviews for fast
-screening before committing to full-resolution processing.
-
-Historically, the geospatial community had no single standard for how pyramids
-are stored or described. The situation was fragmented across formats:
-
-- **Cloud Optimized GeoTIFF (COG)** embeds overview images as additional IFDs
-  within a single file. The `NewSubfileType` tag distinguishes full-resolution
-  IFDs from reduced-resolution ones. This is TIFF-specific.
-- **NITF R-sets** store each resolution level as a separate file. The base
-  image is `image.ntf`, and overviews are sibling files named `image.ntf.r1`,
-  `image.ntf.r2`, etc. This is a de facto convention used by commercial data
-  providers (notably Maxar/DigitalGlobe), not a formal part of the NITF or JBP
-  specification. Each `.rN` file is a standalone valid NITF with no internal
-  metadata linking it to its parent.
-- **JPEG 2000** has native multi-resolution support through wavelet
-  decomposition. A single codestream can be decoded at multiple resolution
-  levels without separate overview files. However, this is a decompression-time
-  optimization — the tile grid stays fixed and each tile decodes to a smaller
-  block at lower resolutions. It is not the same as a tiled pyramid where the
-  number of tiles shrinks at each level.
-
-None of these approaches produce a Zarr-compatible multi-resolution structure
-out of the box. The [GeoZarr](https://geozarr.org/) effort under OGC is
-changing this by standardizing conventions for geospatial data in Zarr —
-including a [multiscales convention](https://github.com/zarr-conventions/multiscales)
-that describes how resolution levels relate to each other. We adopt GeoZarr
-multiscales as the convention for our hierarchical tile indexes.
 
 ### The GeoZarr multiscales convention
 
 The GeoZarr [multiscales convention](https://github.com/zarr-conventions/multiscales)
-defines how multi-resolution image pyramids are stored in Zarr groups. The core
-idea is simple: each resolution level is a numbered subgroup (`"0"`, `"1"`,
-`"2"`, ...) under a root group. Level `"0"` is the highest resolution. Each
-subgroup contains a single array (named `"data"` in our implementation). The
-root group's `.zattrs` carries metadata that describes the relationship between
-levels.
+defines how multi-resolution image pyramids are stored in Zarr groups. Each
+resolution level is identified by an `asset` path in the `layout` array. The
+`asset` field uses Zarr path nomenclature: it can be a simple name referencing
+a direct child group or array (e.g., `"0"`, `"level1"`, `"full"`), or a path
+with `/` separators for nested resources (e.g., `"0/data"`). All paths are
+relative to the group containing the multiscales metadata. In our
+implementation, each asset path points to a numbered subgroup (`"0"`, `"1"`,
+`"2"`, ...) where level `"0"` is the highest resolution and each subgroup
+contains a single array named `"data"`. This structure is used consistently
+for all tile indexes — including single-resolution images, which are
+represented as a one-level pyramid. This means the access path
+``root["0/data"]`` works the same way regardless of whether overviews are
+present. The root group's `.zattrs` carries metadata that describes the
+relationship between levels.
 
 The convention has three key parts:
 
@@ -362,9 +334,10 @@ will appear in the `zarr_conventions` array alongside the multiscales entry.
 
 ### How pyramids map to the chunk index
 
-For a single-resolution image, the tile index is a flat Zarr store: one array
-with chunk references pointing into the source file. For a multi-resolution
-pyramid, the index becomes a Zarr group hierarchy:
+The tile index is always a Zarr group hierarchy with GeoZarr multiscales
+metadata, regardless of how many resolution levels exist. A single-resolution
+image is a one-level pyramid; adding overviews adds levels without changing
+how the base image is addressed:
 
 ```
 image.tile_index.json
@@ -482,36 +455,50 @@ and accessing its tiles through Zarr.
 ### Step 1: Generate the tile index
 
 Run this once per file, typically as part of an ingest pipeline. The file must be
-available locally for indexing. The `url` parameter sets the S3 path that tile
-references will point to.
+available locally for indexing.
 
 ```{note}
 Index generation requires the `virtualizarr` optional dependency:
 `pip install osml-imagery-io[virtualizarr]`
 ```
 
+When the `url` parameter is omitted, the index stores only filenames with a
+`{{base}}` template placeholder instead of absolute S3 URLs. This makes the
+index portable — it can be created before the upload destination is known and
+resolved at read time. The serialized JSON uses the Kerchunk v1 `templates`
+feature, which `ReferenceFileSystem` and `MultiReferenceFileSystem` both
+support natively.
+
 ```python
 from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
-# Generate index from a local file — works for NITF, JPEG 2000, TIFF, GeoTIFF
+# Generate a portable index — no URL needed at index time
 parser = OversightMLParser(local_paths="local/image.ntf")
-store = parser(url="s3://my-bucket/imagery/image.ntf")
+store = parser()
 
 # Serialize as Kerchunk JSON (or .parquet) with multi-range support
 write_tile_index(store, "image.ntf.tile_index.json")
 ```
 
-Upload the index to S3 alongside the image:
+Upload both the image and the index to S3:
 
 ```python
 import boto3
 
 s3 = boto3.client("s3")
+s3.upload_file("local/image.ntf", "my-bucket", "imagery/image.ntf")
 s3.upload_file(
     "image.ntf.tile_index.json",
     "my-bucket",
     "imagery/image.ntf.tile_index.json",
 )
+```
+
+If you already know the final S3 location at index time, you can pass `url`
+directly and skip `template_overrides` at read time:
+
+```python
+store = parser(url="s3://my-bucket/imagery/image.ntf")
 ```
 
 ### Step 2: Open and access tiles
@@ -525,15 +512,19 @@ interleaved tile-parts. When you slice into the dataset, the filesystem issues
 HTTP range requests for only the bytes backing the requested tiles and the
 registered codec decodes them into NumPy arrays.
 
+For portable indexes, pass `template_overrides` to resolve the `{{base}}`
+placeholder to the S3 directory containing the image (with a trailing slash).
+The same index works unchanged if the image moves to a different bucket or
+path — just update the override.
+
 ```python
 import zarr
 from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
 from zarr.storage._fsspec import FsspecStore
 
-# MultiReferenceFileSystem is a drop-in replacement for ReferenceFileSystem
-# that adds support for multi-range chunk references
 fs = MultiReferenceFileSystem(
     fo="s3://my-bucket/imagery/image.ntf.tile_index.json",
+    template_overrides={"base": "s3://my-bucket/imagery/"},
     asynchronous=True,
     remote_options={"asynchronous": True, "profile": "my-profile"},
     skip_instance_cache=True,
@@ -545,7 +536,7 @@ root = zarr.open_group(store, mode="r", zarr_format=2)
 # Read a single tile region
 import numpy as np
 
-arr = root["image:0"]
+arr = root["0/data"]
 tile = np.asarray(arr[0:3, 768:1024, 1024:1280])
 print(tile.shape)  # (3, 256, 256)
 print(tile.dtype)  # uint8
@@ -567,15 +558,16 @@ one subgroup per resolution level.
 
 ### Step 1: Generate the hierarchical tile index
 
+Portable indexes work with multi-file pyramids too. Each file gets its own
+`{{base}}filename` reference, and a single `template_overrides` resolves all
+of them at read time (assuming the files are co-located).
+
 ```python
 from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
-# A COG with embedded overviews — single file, single URL
+# A COG with embedded overviews — single file, portable index
 parser = OversightMLParser(local_paths="local/image.tif")
-store = parser(url="s3://my-bucket/imagery/image.tif")
-
-# The parser detects overview IFDs and builds a hierarchical store.
-# write_tile_index serializes the full hierarchy automatically.
+store = parser()
 write_tile_index(store, "image.tif.tile_index.json")
 ```
 
@@ -583,8 +575,8 @@ For a COG with two overview levels, the resulting JSON contains subgroups `"0"`
 (full resolution), `"1"` (first overview), and `"2"` (second overview). All
 chunk references point to byte ranges within the same file.
 
-The same workflow works for multi-file NITF R-set pyramids. The only difference
-is that you pass multiple paths and URLs:
+The same workflow works for multi-file NITF R-set pyramids. Pass multiple paths
+and the index will contain `{{base}}image.ntf`, `{{base}}image.ntf.r1`, etc.:
 
 ```python
 # Multi-file NITF pyramid (R-set convention)
@@ -593,11 +585,7 @@ parser = OversightMLParser(local_paths=[
     "local/image.ntf.r1",
     "local/image.ntf.r2",
 ])
-store = parser(url=[
-    "s3://my-bucket/imagery/image.ntf",
-    "s3://my-bucket/imagery/image.ntf.r1",
-    "s3://my-bucket/imagery/image.ntf.r2",
-])
+store = parser()
 write_tile_index(store, "image.ntf.tile_index.json")
 ```
 
@@ -610,6 +598,7 @@ from zarr.storage._fsspec import FsspecStore
 
 fs = MultiReferenceFileSystem(
     fo="s3://my-bucket/imagery/image.tif.tile_index.json",
+    template_overrides={"base": "s3://my-bucket/imagery/"},
     asynchronous=True,
     remote_options={"asynchronous": True},
     skip_instance_cache=True,
@@ -658,7 +647,7 @@ level_1_ds = dt["1"].ds
 print(level_1_ds["data"].shape)  # (3, 4096, 4096)
 ```
 
-For single-file inputs without overviews, the parser produces a flat store with
-no subgroups — identical to the single-resolution workflow in the NITF example
-above. The hierarchical structure only appears when the parser detects overview
-assets.
+For single-file inputs without overviews, the parser produces a one-level
+pyramid with a single subgroup `"0"`. The access path `root["0/data"]` is the
+same regardless of whether overviews are present, so adding overviews later
+does not change how existing code addresses the full-resolution image.

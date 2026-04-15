@@ -10,6 +10,15 @@ tile-parts (RLCP / RPCL progression order).
 
 All existing reference forms (inline, whole-file, single-range) are handled
 by the parent class unchanged.
+
+Template expansion (Kerchunk v1 ``"templates"`` dict) is supported for all
+reference forms including multi-range entries.  Use ``template_overrides``
+at construction time to resolve portable ``{{base}}`` placeholders::
+
+    fs = MultiReferenceFileSystem(
+        fo="image.tile_index.json",
+        template_overrides={"base": "s3://bucket/path/"},
+    )
 """
 
 from __future__ import annotations
@@ -73,6 +82,54 @@ class MultiReferenceFileSystem(ReferenceFileSystem):
                     self.dircache[child] = []
 
             self.dircache[par].append({"name": path, "type": "file", "size": size})
+
+    def _process_references1(self, references, template_overrides=None):
+        """Extend parent to handle template expansion for multi-range entries.
+
+        The parent ``_process_references1`` expands ``{{template}}``
+        placeholders in URL strings for standard reference forms (1-element
+        and 3-element lists).  Multi-range entries ``["url", [[o, l], ...]]``
+        are 2-element lists whose second element is a list of lists — the
+        parent crashes on these because it only handles ``len(v) == 1`` or
+        ``len(v) == 3``.
+
+        This override extracts multi-range entries before calling the parent,
+        then adds them back with templates expanded.
+        """
+        # Extract multi-range entries from refs before parent processes them
+        raw_refs = references.get("refs", {})
+        multi_range_entries = {}
+        if isinstance(raw_refs, dict):
+            for k, v in list(raw_refs.items()):
+                if isinstance(v, list) and self._is_multi_range(v):
+                    multi_range_entries[k] = v
+
+            # Remove multi-range entries so parent doesn't choke on them
+            if multi_range_entries:
+                filtered_refs = {
+                    k: v for k, v in raw_refs.items()
+                    if k not in multi_range_entries
+                }
+                references = dict(references)
+                references["refs"] = filtered_refs
+
+        # Let parent handle standard refs + templates
+        super()._process_references1(references, template_overrides)
+
+        # Now add multi-range entries back, expanding templates if active
+        for k, v in multi_range_entries.items():
+            u = v[0]
+            if self.templates and "{{" in u:
+                if self.simple_templates:
+                    u = (
+                        u.replace("{{", "{")
+                        .replace("}}", "}")
+                        .format(**self.templates)
+                    )
+                else:
+                    import jinja2
+                    u = jinja2.Template(u).render(**self.templates)
+            self.references[k] = [u, v[1]]
 
     @staticmethod
     def _is_multi_range(part) -> bool:

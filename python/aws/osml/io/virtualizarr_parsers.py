@@ -15,11 +15,17 @@ Usage::
 
     parser = OversightMLParser(local_paths="/data/image.ntf")
     manifest_store = parser(url="s3://bucket/image.ntf")
+
+Portable indexes (no URL required at index time)::
+
+    parser = OversightMLParser(local_paths="/data/image.ntf")
+    manifest_store = parser()  # uses filename-only refs with {{base}} template
 """
 
 from __future__ import annotations
 
 import base64
+import os
 import re
 from typing import TYPE_CHECKING
 
@@ -384,13 +390,17 @@ class OversightMLParser:
 
     Examples
     --------
-    ::
+    Portable index (no URL needed at index time)::
+
+        parser = OversightMLParser(local_paths="/data/image.ntf")
+        manifest_store = parser()  # refs use {{base}}filename.ntf
+
+    Absolute URL index::
 
         parser = OversightMLParser(local_paths="/data/image.ntf")
         manifest_store = parser(url="s3://bucket/image.ntf")
 
-        parser = OversightMLParser(local_paths="/data/image.tif")
-        manifest_store = parser(url="s3://bucket/image.tif")
+    Multi-file pyramid::
 
         parser = OversightMLParser(local_paths=["/data/image.ntf", "/data/image.ntf.r1"])
         manifest_store = parser(url=["s3://bucket/image.ntf", "s3://bucket/image.ntf.r1"])
@@ -401,16 +411,23 @@ class OversightMLParser:
             local_paths = [local_paths]
         self.local_paths = local_paths
 
-    def __call__(self, url: str | list[str], registry=None, **kwargs):
+    def __call__(self, url: str | list[str] | None = None, registry=None, **kwargs):
         """Scan the local file(s) and build a ManifestStore.
 
         Parameters
         ----------
-        url : str or list[str]
+        url : str, list[str], or None
             Cloud URI(s) written into chunk references.  A single string is
             used for all assets (e.g. a COG with embedded overviews).  A list
             must have the same length as ``local_paths`` — each URL
             corresponds to the local path at the same index.
+
+            When ``None`` (the default), chunk references use the local
+            filename prefixed with the Kerchunk template variable
+            ``{{base}}``.  This produces a portable index that can be
+            resolved at read time by passing
+            ``template_overrides={"base": "s3://bucket/path/"}`` to
+            ``MultiReferenceFileSystem`` or ``ReferenceFileSystem``.
         registry : optional
             Object store registry (accepted for protocol conformance, ignored).
 
@@ -429,8 +446,14 @@ class OversightMLParser:
 
         from virtualizarr.manifests import ManifestGroup, ManifestStore
 
-        # --- URL normalization (Task 6.1) ---
-        if isinstance(url, str):
+        # --- URL normalization ---
+        use_templates = url is None
+        if url is None:
+            # Portable mode: use local paths during parsing (VirtualiZarr
+            # requires absolute paths or URIs in ChunkEntry).  The write
+            # step will rewrite these to {{base}}filename.
+            urls = [os.path.abspath(p) for p in self.local_paths]
+        elif isinstance(url, str):
             urls: list[str] = [url]
         else:
             urls = list(url)
@@ -440,7 +463,7 @@ class OversightMLParser:
                     f"local_paths length ({len(self.local_paths)})"
                 )
 
-        # --- Build URL lookup from paths (Task 6.2) ---
+        # --- Build URL lookup from paths ---
         # Map overview level N → urls[i] by parsing .rN suffix from each path.
         # The base path (no .rN or .r0) maps to urls[0].
         # When a single URL is provided for multiple paths, all levels use urls[0].
@@ -458,7 +481,6 @@ class OversightMLParser:
                 # Base file (no .rN suffix) — always level 0
                 url_by_overview_level[0] = u
 
-        arrays = {}
         multi_range_refs: dict[str, list] = {}
 
         with IO.open(self.local_paths, "r") as reader:
@@ -470,103 +492,70 @@ class OversightMLParser:
             # Classify into parents + overviews
             parents, overviews = _classify_assets(all_assets)
 
-            has_overviews = bool(overviews)
+            # Always produce a hierarchical store with GeoZarr multiscales
+            # metadata.  Single-resolution images become a one-level pyramid
+            # so the access path (``root["0/data"]``) is the same regardless
+            # of whether overviews are present.
+            group = None
+            for parent_key, parent_asset in parents.items():
+                levels = []
 
-            if has_overviews:
-                # Hierarchical path — build one multiscale group per parent
-                # with overviews
-                group = None
-                for parent_key, parent_asset in parents.items():
-                    if parent_key in overviews:
-                        # Build levels list: parent as level 0, overviews
-                        # as levels 1+
-                        levels = []
+                # Level 0: parent asset (always present)
+                parent_url = url_by_overview_level.get(0, urls[0])
+                parent_array = _build_manifest_array(
+                    parent_asset, parent_url, multi_range_refs,
+                    key_prefix="0/data/"
+                )
+                if parent_array is not None:
+                    levels.append((
+                        parent_array,
+                        parent_asset.num_rows,
+                        parent_asset.num_columns,
+                    ))
 
-                        # Level 0: parent asset
-                        parent_url = url_by_overview_level.get(0, urls[0])
-                        parent_array = _build_manifest_array(
-                            parent_asset, parent_url, multi_range_refs,
-                            key_prefix="0/data/"
+                # Levels 1+: overviews (if any)
+                if parent_key in overviews:
+                    for level_num, ovr_asset in overviews[parent_key]:
+                        ovr_url = url_by_overview_level.get(
+                            level_num, urls[0]
                         )
-                        if parent_array is not None:
+                        ovr_array = _build_manifest_array(
+                            ovr_asset, ovr_url, multi_range_refs,
+                            key_prefix=f"{len(levels)}/data/"
+                        )
+                        if ovr_array is not None:
                             levels.append((
-                                parent_array,
-                                parent_asset.num_rows,
-                                parent_asset.num_columns,
+                                ovr_array,
+                                ovr_asset.num_rows,
+                                ovr_asset.num_columns,
                             ))
 
-                        # Levels 1+: overviews
-                        for level_num, ovr_asset in overviews[parent_key]:
-                            ovr_url = url_by_overview_level.get(
-                                level_num, urls[0]
-                            )
-                            ovr_array = _build_manifest_array(
-                                ovr_asset, ovr_url, multi_range_refs,
-                                key_prefix=f"{len(levels)}/data/"
-                            )
-                            if ovr_array is not None:
-                                levels.append((
-                                    ovr_array,
-                                    ovr_asset.num_rows,
-                                    ovr_asset.num_columns,
-                                ))
-
-                        if levels:
-                            group = _build_multiscale_group(
-                                levels, urls[0], multi_range_refs,
-                                downsampling_method=kwargs.get(
-                                    "downsampling_method"
-                                ),
-                            )
-                    else:
-                        # Parent without overviews — add as flat array
-                        asset_url = urls[0]
-                        array = _build_manifest_array(
-                            parent_asset, asset_url, multi_range_refs,
-                            key_prefix=f"{parent_key}/"
-                        )
-                        if array is not None:
-                            arrays[parent_key] = array
-
-                if group is None and not arrays:
-                    raise ValueError(
-                        f"No indexable image segments found in "
-                        f"{self.local_paths}"
+                if levels:
+                    group = _build_multiscale_group(
+                        levels, urls[0], multi_range_refs,
+                        downsampling_method=kwargs.get(
+                            "downsampling_method"
+                        ),
                     )
 
-                # If we built a hierarchical group, use it
-                if group is not None:
-                    store = ManifestStore(group=group)
-                else:
-                    store = ManifestStore(
-                        group=ManifestGroup(
-                            arrays=arrays,
-                            attributes={"source": urls[0]},
-                        )
-                    )
-            else:
-                # Flat path — identical to current implementation
-                for key, asset in all_assets:
-                    asset_url = urls[0]
-                    array = _build_manifest_array(
-                        asset, asset_url, multi_range_refs,
-                        key_prefix=f"{key}/"
-                    )
-                    if array is not None:
-                        arrays[key] = array
-
-                if not arrays:
-                    raise ValueError(
-                        f"No indexable image segments found in "
-                        f"{self.local_paths}"
-                    )
-
-                group = ManifestGroup(
-                    arrays=arrays, attributes={"source": urls[0]}
+            if group is None:
+                raise ValueError(
+                    f"No indexable image segments found in "
+                    f"{self.local_paths}"
                 )
-                store = ManifestStore(group=group)
+
+            store = ManifestStore(group=group)
 
         store.multi_range_refs = multi_range_refs
+        store.use_templates = use_templates
+        if use_templates:
+            # Build mapping: absolute local path → {{base}}filename
+            store.template_rewrites = {
+                os.path.abspath(p): "{{base}}" + os.path.basename(p)
+                for p in self.local_paths
+            }
+        else:
+            store.template_rewrites = {}
         return store
 
 
@@ -589,78 +578,42 @@ def _patch_multi_range_refs(refs: dict, multi_range_refs: dict) -> dict:
     return patched
 
 
-def _write_flat_tile_index(store, output, ext, multi_range_refs, segments):
-    """Serialize a flat ManifestStore (no subgroups) to JSON or Parquet.
+def _rewrite_refs_urls(refs: dict, rewrites: dict) -> dict:
+    """Rewrite URLs in chunk references using a mapping dict.
 
-    This is the original serialization path, extracted as a helper so that
-    ``write_tile_index()`` can dispatch between flat and hierarchical stores.
+    For each reference value that is a list (single-range or multi-range),
+    if the URL (first element) matches a key in *rewrites*, it is replaced
+    with the corresponding value.  Metadata keys (strings, dicts) are left
+    unchanged.
+
+    Parameters
+    ----------
+    refs : dict
+        The refs dict to rewrite.
+    rewrites : dict
+        Mapping from original URL to replacement URL.
+
+    Returns
+    -------
+    dict
+        A new refs dict with URLs rewritten.
     """
-    import json
-
-    from virtualizarr.accessor import dataset_to_kerchunk_refs
-    from virtualizarr.manifests import ManifestGroup, ManifestStore
-
-    # Filter segments if requested
-    if segments:
-        group = store._group
-        available = list(group.arrays.keys())
-        missing = [s for s in segments if s not in group.arrays]
-        if missing:
-            raise ValueError(
-                f"Segment(s) not found: {', '.join(missing)}. "
-                f"Available: {', '.join(available)}"
-            )
-        filtered_arrays = {k: v for k, v in group.arrays.items() if k in segments}
-        attrs = group.metadata.attributes if group.metadata else None
-        store = ManifestStore(
-            group=ManifestGroup(arrays=filtered_arrays, attributes=attrs)
-        )
-        multi_range_refs = {
-            k: v for k, v in multi_range_refs.items()
-            if any(k.startswith(seg + "/") for seg in segments)
-        }
-
-    vds = store.to_virtual_dataset()
-
-    if ext == ".json":
-        kerchunk = dataset_to_kerchunk_refs(vds)
-        if "refs" in kerchunk:
-            kerchunk["refs"] = _patch_multi_range_refs(
-                kerchunk["refs"], multi_range_refs
-            )
+    if not rewrites:
+        return refs
+    patched = {}
+    for k, v in refs.items():
+        if isinstance(v, list) and len(v) >= 1 and isinstance(v[0], str):
+            url = v[0]
+            if url in rewrites:
+                patched[k] = [rewrites[url]] + v[1:]
+            else:
+                patched[k] = v
         else:
-            kerchunk = _patch_multi_range_refs(kerchunk, multi_range_refs)
-        with open(output, "w") as f:
-            json.dump(kerchunk, f)
-
-    elif ext == ".parquet":
-        import fsspec
-        from fsspec.implementations.reference import LazyReferenceMapper
-
-        refs = dataset_to_kerchunk_refs(vds)
-        if "refs" in refs:
-            refs = refs["refs"]
-        if multi_range_refs:
-            refs = _patch_multi_range_refs(refs, multi_range_refs)
-
-        fs, _ = fsspec.core.url_to_fs(output)
-        out = LazyReferenceMapper.create(
-            record_size=100_000,
-            root=output,
-            fs=fs,
-            engine="pyarrow",
-        )
-        for k in sorted(refs):
-            out[k] = refs[k]
-        out.flush()
-
-    else:
-        raise ValueError(
-            f"Unsupported output extension '{ext}'. Use .json or .parquet"
-        )
+            patched[k] = v
+    return patched
 
 
-def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segments):
+def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segments, use_templates, template_rewrites):
     """Serialize a hierarchical ManifestStore with GeoZarr multiscales metadata.
 
     Walks the ManifestGroup tree and builds a flat refs dict with
@@ -702,6 +655,11 @@ def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segment
 
     # Root group metadata
     root_attrs = group.metadata.attributes if group.metadata else {}
+    if template_rewrites and "source" in root_attrs:
+        src = root_attrs["source"]
+        if src in template_rewrites:
+            root_attrs = dict(root_attrs)
+            root_attrs["source"] = template_rewrites[src]
     refs[".zgroup"] = json.dumps({"zarr_format": 2})
     refs[".zattrs"] = json.dumps(root_attrs)
 
@@ -718,10 +676,18 @@ def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segment
             refs[f"{sg_name}/{k}"] = v
 
     # Patch multi-range refs
+    if template_rewrites:
+        multi_range_refs = _rewrite_refs_urls(multi_range_refs, template_rewrites)
     refs = _patch_multi_range_refs(refs, multi_range_refs)
+
+    # Rewrite URLs for portable indexes
+    if template_rewrites:
+        refs = _rewrite_refs_urls(refs, template_rewrites)
 
     if ext == ".json":
         kerchunk = {"version": 1, "refs": refs}
+        if use_templates:
+            kerchunk["templates"] = {"base": ""}
         with open(output, "w") as f:
             json.dump(kerchunk, f)
 
@@ -753,6 +719,11 @@ def write_tile_index(store, output: str, segments: list[str] | None = None) -> N
     :class:`OversightMLParser`.  It handles the multi-range reference entries
     that VirtualiZarr's built-in serialization does not support.
 
+    When the store was created with ``url=None`` (portable mode), the
+    serialized output includes a Kerchunk v1 ``"templates"`` dict with
+    ``{"base": ""}`` so that ``{{base}}`` placeholders in chunk reference
+    URLs can be resolved at read time via ``template_overrides``.
+
     Parameters
     ----------
     store : ManifestStore
@@ -761,9 +732,8 @@ def write_tile_index(store, output: str, segments: list[str] | None = None) -> N
         Output file path.  Extension determines format: ``.json`` for
         Kerchunk JSON, ``.parquet`` for Kerchunk Parquet.
     segments : list[str], optional
-        Image segment keys to include.  If ``None``, all segments are
-        included.  For flat stores, these are array keys.  For hierarchical
-        stores, these are subgroup keys (e.g. ``["0", "2"]``).
+        Subgroup keys to include (e.g. ``["0", "2"]``).  If ``None``, all
+        subgroups are included.
 
     Raises
     ------
@@ -773,26 +743,26 @@ def write_tile_index(store, output: str, segments: list[str] | None = None) -> N
 
     Examples
     --------
-    ::
+    Portable index (resolve URL at read time)::
 
-        from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
+        parser = OversightMLParser(local_paths="local/image.ntf")
+        store = parser()  # no url — portable mode
+        write_tile_index(store, "image.tile_index.json")
+
+    Absolute URL index::
 
         parser = OversightMLParser(local_paths="local/image.ntf")
         store = parser(url="s3://my-bucket/imagery/image.ntf")
         write_tile_index(store, "image.tile_index.json")
-
-        # Or index only specific segments
-        write_tile_index(store, "image.tile_index.json", segments=["image:0"])
     """
     from pathlib import Path
 
     ext = Path(output).suffix.lower()
     multi_range_refs = getattr(store, "multi_range_refs", {}) or {}
+    use_templates = getattr(store, "use_templates", False)
+    template_rewrites = getattr(store, "template_rewrites", {}) or {}
 
-    # Detect hierarchical vs flat store
-    is_hierarchical = bool(store._group.groups)
-
-    if is_hierarchical:
-        _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segments)
-    else:
-        _write_flat_tile_index(store, output, ext, multi_range_refs, segments)
+    _write_hierarchical_tile_index(
+        store, output, ext, multi_range_refs, segments,
+        use_templates, template_rewrites,
+    )

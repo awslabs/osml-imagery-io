@@ -154,16 +154,18 @@ def _read_all_tiles_via_io(path: Path):
 def _read_all_tiles_via_zarr(index_path: Path):
     """Read all tiles via fsspec ReferenceFileSystem + zarr.
 
+    The index is always hierarchical (GeoZarr multiscales convention).
+    Level 0 is the full-resolution image at ``root["0/data"]``.
+
     Returns (row, col) → ndarray.
     """
     fs = fsspec.filesystem("reference", fo=str(index_path))
     store = fs.get_mapper("")
 
     root = zarr.open_group(store, mode="r")
-    segment_keys = list(root.array_keys())
-    assert segment_keys, "No arrays found in zarr store"
 
-    arr = root[segment_keys[0]]
+    # Access level 0 (full resolution) data array
+    arr = root["0/data"]
     tile_bands, tile_h, tile_w = arr.chunks
     _, total_rows, total_cols = arr.shape
 
@@ -185,15 +187,14 @@ def _read_all_tiles_via_zarr(index_path: Path):
 
 def _generate_and_save_index(path: Path) -> Path:
     """Generate a Kerchunk JSON index via VirtualiZarr parser, return the index path."""
-    from aws.osml.io.virtualizarr_parsers import OversightMLParser
+    from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
     parser = OversightMLParser(local_paths=str(path))
-    ms = parser(url=str(path))
-    vds = ms.to_virtual_dataset()
+    store = parser(url=str(path))
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         index_path = Path(f.name)
-    vds.vz.to_kerchunk(str(index_path), format="json")
+    write_tile_index(store, str(index_path))
     return index_path
 
 

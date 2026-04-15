@@ -262,23 +262,20 @@ class TestProperty7EndToEndDecodeEquivalence:
             # Path B: Read via Kerchunk index + codec
             parser = OversightMLParser(local_paths=str(path))
             ms = parser(url=str(path))
-            vds = ms.to_virtual_dataset()
+
+            from aws.osml.io.virtualizarr_parsers import write_tile_index
 
             with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
                 index_path = Path(f.name)
-            vds.vz.to_kerchunk(str(index_path), format="json")
+            write_tile_index(ms, str(index_path))
 
             try:
                 with open(index_path) as f:
                     refs = json.load(f)
 
-                # Find the segment key (first image segment)
-                segment_key = None
-                for k in refs["refs"]:
-                    if k.endswith("/.zarray"):
-                        segment_key = k.replace("/.zarray", "")
-                        break
-                assert segment_key is not None, "No .zarray found in index"
+                # The store is always hierarchical: level 0 data at "0/data/"
+                segment_key = "0/data"
+                assert f"{segment_key}/.zarray" in refs["refs"], "No .zarray found for 0/data"
 
                 zarray = json.loads(refs["refs"][f"{segment_key}/.zarray"])
                 codec = _codec_from_zarray(zarray)

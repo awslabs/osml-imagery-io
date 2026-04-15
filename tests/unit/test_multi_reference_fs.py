@@ -295,3 +295,131 @@ class TestConstructor:
 
     def test_is_subclass(self):
         assert issubclass(MultiReferenceFileSystem, ReferenceFileSystem)
+
+
+# ---------------------------------------------------------------------------
+# Template expansion for multi-range entries
+# ---------------------------------------------------------------------------
+
+
+class TestTemplateExpansion:
+    """Verify template expansion works for all reference types including multi-range."""
+
+    def test_single_range_template_expanded(self, data_file):
+        """Standard single-range refs with {{base}} are expanded via templates."""
+        path, _ = data_file
+        url = _file_url(path)
+        # Split URL into base + filename
+        base = url.rsplit("/", 1)[0] + "/"
+        filename = url.rsplit("/", 1)[1]
+
+        fo = {
+            "version": 1,
+            "templates": {"base": base},
+            "refs": {"k": ["{{base}}" + filename, 0, 5]},
+        }
+        fs = MultiReferenceFileSystem(fo=fo, skip_instance_cache=True)
+        result = fs.cat("k")
+        assert len(result) == 5
+
+    def test_multi_range_template_expanded(self, data_file):
+        """Multi-range refs with {{base}} are expanded via templates."""
+        path, content = data_file
+        url = _file_url(path)
+        base = url.rsplit("/", 1)[0] + "/"
+        filename = url.rsplit("/", 1)[1]
+
+        fo = {
+            "version": 1,
+            "templates": {"base": base},
+            "refs": {
+                "k": ["{{base}}" + filename, [[0, 5], [10, 3]]],
+            },
+        }
+        fs = MultiReferenceFileSystem(fo=fo, skip_instance_cache=True)
+        result = fs.cat("k")
+        expected = content[0:5] + content[10:13]
+        assert result == expected
+
+    def test_template_overrides_applied_to_multi_range(self, data_file):
+        """template_overrides replaces template values for multi-range refs."""
+        path, content = data_file
+        url = _file_url(path)
+        base = url.rsplit("/", 1)[0] + "/"
+        filename = url.rsplit("/", 1)[1]
+
+        fo = {
+            "version": 1,
+            "templates": {"base": ""},
+            "refs": {
+                "k": ["{{base}}" + filename, [[0, 5], [10, 3]]],
+            },
+        }
+        fs = MultiReferenceFileSystem(
+            fo=fo, skip_instance_cache=True,
+            template_overrides={"base": base},
+        )
+        result = fs.cat("k")
+        expected = content[0:5] + content[10:13]
+        assert result == expected
+
+    def test_template_overrides_applied_to_single_range(self, data_file):
+        """template_overrides replaces template values for single-range refs."""
+        path, _ = data_file
+        url = _file_url(path)
+        base = url.rsplit("/", 1)[0] + "/"
+        filename = url.rsplit("/", 1)[1]
+
+        fo = {
+            "version": 1,
+            "templates": {"base": ""},
+            "refs": {"k": ["{{base}}" + filename, 0, 5]},
+        }
+        fs = MultiReferenceFileSystem(
+            fo=fo, skip_instance_cache=True,
+            template_overrides={"base": base},
+        )
+        result = fs.cat("k")
+        assert len(result) == 5
+
+    def test_no_templates_multi_range_unchanged(self, data_file):
+        """Multi-range refs without templates work as before."""
+        path, content = data_file
+        url = _file_url(path)
+
+        fo = {
+            "version": 1,
+            "refs": {
+                "k": [url, [[0, 5], [10, 3]]],
+            },
+        }
+        fs = MultiReferenceFileSystem(fo=fo, skip_instance_cache=True)
+        result = fs.cat("k")
+        expected = content[0:5] + content[10:13]
+        assert result == expected
+
+    def test_mixed_template_refs(self, data_file):
+        """Mix of single-range, multi-range, and inline refs all resolve correctly."""
+        path, content = data_file
+        url = _file_url(path)
+        base = url.rsplit("/", 1)[0] + "/"
+        filename = url.rsplit("/", 1)[1]
+
+        fo = {
+            "version": 1,
+            "templates": {"base": ""},
+            "refs": {
+                "inline": "hello",
+                "single": ["{{base}}" + filename, 0, 5],
+                "multi": ["{{base}}" + filename, [[0, 3], [5, 2]]],
+            },
+        }
+        fs = MultiReferenceFileSystem(
+            fo=fo, skip_instance_cache=True,
+            template_overrides={"base": base},
+        )
+
+        assert fs.cat("inline") == b"hello"
+        assert len(fs.cat("single")) == 5
+        expected_multi = content[0:3] + content[5:7]
+        assert fs.cat("multi") == expected_multi

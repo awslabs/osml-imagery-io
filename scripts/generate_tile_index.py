@@ -116,14 +116,10 @@ def _write_parquet(vds, output: str, multi_range_refs: dict | None = None) -> No
 
 def generate_index(path: str, source_uri: str, output: str, segments: list[str] | None) -> int:
     """Generate a tile index and save it to disk."""
-    from aws.osml.io.virtualizarr_parsers import OversightMLParser
+    from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
     ext = Path(output).suffix.lower()
-    if ext == ".json":
-        fmt = "json"
-    elif ext == ".parquet":
-        fmt = "parquet"
-    else:
+    if ext not in (".json", ".parquet"):
         print(f"Error: Unsupported output extension '{ext}'. Use .json or .parquet", file=sys.stderr)
         return 1
 
@@ -138,54 +134,24 @@ def generate_index(path: str, source_uri: str, output: str, segments: list[str] 
 
     t0 = time.perf_counter()
     try:
-        from virtualizarr.manifests import ManifestGroup, ManifestStore
-
         parser = OversightMLParser(local_paths=path)
-        ms = parser(url=source_uri)
-
-        # Capture multi-range refs before any filtering
-        multi_range_refs = getattr(ms, "multi_range_refs", {}) or {}
-
-        # Filter segments BEFORE to_virtual_dataset() to avoid dimension
-        # conflicts when segments have different image sizes.
-        if segments:
-            group = ms._group
-            available = list(group.arrays.keys())
-            missing = [s for s in segments if s not in group.arrays]
-            if missing:
-                print(f"Error: Segment(s) not found: {', '.join(missing)}", file=sys.stderr)
-                print(f"Available: {', '.join(available)}", file=sys.stderr)
-                return 1
-            filtered_arrays = {k: v for k, v in group.arrays.items() if k in segments}
-            attrs = group.metadata.attributes if group.metadata else None
-            ms = ManifestStore(
-                group=ManifestGroup(arrays=filtered_arrays, attributes=attrs)
-            )
-            # Filter multi-range refs to only include selected segments
-            multi_range_refs = {
-                k: v for k, v in multi_range_refs.items()
-                if any(k.startswith(seg + "/") for seg in segments)
-            }
-
-        vds = ms.to_virtual_dataset()
+        store = parser(url=source_uri)
     except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
     elapsed_gen = time.perf_counter() - t0
 
-    num_segments = len(vds.data_vars)
+    multi_range_refs = getattr(store, "multi_range_refs", {}) or {}
+    num_levels = len(store._group.groups)
     num_multi = len(multi_range_refs)
-    print(f"Generated index: {num_segments} segment(s) ({elapsed_gen:.3f}s)")
+    print(f"Generated index: {num_levels} level(s) ({elapsed_gen:.3f}s)")
     if num_multi:
         print(f"  {num_multi} multi-range entries (interleaved tile-parts)")
 
     t1 = time.perf_counter()
     try:
-        if fmt == "parquet":
-            _write_parquet(vds, output, multi_range_refs)
-        else:
-            _write_json(vds, output, multi_range_refs)
+        write_tile_index(store, output, segments=segments)
     except (ImportError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
