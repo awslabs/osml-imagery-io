@@ -252,6 +252,25 @@ def _first_image_segments(store) -> list[str]:
     return []
 
 
+def _discover_rset_files(base_path: Path) -> list[str]:
+    """Discover R-set companion files for a base NITF path.
+
+    Looks for files named ``<base>.r1``, ``<base>.r2``, etc. alongside the
+    base file.  Returns a list of all paths (base + companions) if any
+    companions exist, otherwise returns a single-element list with the base.
+    """
+    paths = [str(base_path)]
+    i = 1
+    while True:
+        companion = base_path.parent / f"{base_path.name}.r{i}"
+        if companion.exists():
+            paths.append(str(companion))
+            i += 1
+        else:
+            break
+    return paths
+
+
 def _generate_tile_index(dataset_path: Path, cache: dict, tmp_dir: Path,
                          source_url: str | None = None) -> Path:
     """Generate tile index for a dataset, caching the result.
@@ -259,6 +278,9 @@ def _generate_tile_index(dataset_path: Path, cache: dict, tmp_dir: Path,
     Uses ``OversightMLParser`` + ``write_tile_index()`` to produce a Kerchunk
     JSON tile index. Results are cached by (dataset_path, source_url) so
     repeated calls return the previously generated index.
+
+    Automatically discovers R-set companion files (``*.r1``, ``*.r2``, etc.)
+    for NITF datasets so multi-resolution pyramids are fully indexed.
 
     Parameters
     ----------
@@ -282,8 +304,15 @@ def _generate_tile_index(dataset_path: Path, cache: dict, tmp_dir: Path,
     if key not in cache:
         from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
-        parser = OversightMLParser(local_paths=str(dataset_path))
-        store = parser(url=url)
+        # Auto-discover R-set companion files for multi-resolution NITF
+        local_paths = _discover_rset_files(dataset_path)
+        if source_url:
+            urls = source_url
+        else:
+            urls = local_paths if len(local_paths) > 1 else str(dataset_path)
+
+        parser = OversightMLParser(local_paths=local_paths if len(local_paths) > 1 else str(dataset_path))
+        store = parser(url=urls)
         suffix = "_s3" if source_url else ""
         index_path = tmp_dir / f"{dataset_path.stem}{suffix}.tile_index.json"
         # Discover the first image segment dynamically to avoid brittle

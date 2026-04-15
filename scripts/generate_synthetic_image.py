@@ -619,9 +619,15 @@ class ImageWriter:
             # TagNameResolver resolves human-readable compression names
             # (e.g. "None", "LZW", "Deflate") to their numeric TIFF values.
             resolver["Compression"] = config.compression.capitalize() if config.compression != "none" else "None"
-            # Write resolved numeric keys back into the metadata provider
+            # Write resolved numeric keys back into the metadata provider.
+            # Integer values must stay as integers — the Rust writer expects
+            # numeric types for tags like Compression (259).  Use set_json()
+            # for non-string values so the type is preserved.
             for key, value in tag_dict.items():
-                metadata.set(key, str(value) if not isinstance(value, str) else value)
+                if isinstance(value, str):
+                    metadata.set(key, value)
+                else:
+                    metadata.set_json(key, value)
 
         # J2K-specific metadata (lossless flag)
         if config.io_format == "j2k":
