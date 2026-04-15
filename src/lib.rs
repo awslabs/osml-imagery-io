@@ -67,5 +67,7 @@ fn _io(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "libjpeg-turbo")]
     m.add_function(wrap_pyfunction!(bindings::codecs::decode_jpeg, m)?)?;
     m.add_function(wrap_pyfunction!(bindings::codecs::decode_jbp_block, m)?)?;
+    #[cfg(feature = "libtiff")]
+    m.add_function(wrap_pyfunction!(bindings::codecs::decode_tiff_tile, m)?)?;
     Ok(())
 }

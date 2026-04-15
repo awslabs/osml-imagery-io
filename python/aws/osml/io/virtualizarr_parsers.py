@@ -85,7 +85,7 @@ def _build_codec_instance(asset):
     The mapping logic mirrors ``tile_index.py:_build_zarray()`` but produces
     zarr v3 codec class instances instead of zarr v2 filter dicts.
     """
-    from aws.osml.io.zarr_codecs import JbpBlockCodec, Jpeg2000Codec, JpegCodec
+    from aws.osml.io.zarr_codecs import JbpBlockCodec, Jpeg2000Codec, JpegCodec, TiffTileCodec
 
     codec_config = asset.codec_configuration()
     if codec_config is None:
@@ -98,6 +98,10 @@ def _build_codec_instance(asset):
             raw[key] = base64.b64encode(value).decode("ascii")
         elif isinstance(value, (bytes, bytearray)) and len(value) == 1:
             raw[key] = value[0]
+        elif isinstance(value, (bytes, bytearray)) and len(value) == 2:
+            raw[key] = int.from_bytes(value, "little")
+        elif isinstance(value, (bytes, bytearray)) and len(value) == 4:
+            raw[key] = int.from_bytes(value, "little")
         elif isinstance(value, (bytes, bytearray)):
             try:
                 raw[key] = value.decode("ascii")
@@ -145,6 +149,28 @@ def _build_codec_instance(asset):
             nbpp=nbpp,
             imode=imode,
             pvtype=raw["pvtype"],
+        )
+    elif "compression" in raw:
+        # TIFF tile codec
+        jpeg_tables_raw = raw.get("jpeg_tables")
+        jpeg_tables = None
+        if jpeg_tables_raw is not None:
+            if isinstance(jpeg_tables_raw, (bytes, bytearray)):
+                jpeg_tables = base64.b64encode(jpeg_tables_raw).decode("ascii")
+            else:
+                jpeg_tables = str(jpeg_tables_raw)
+
+        return TiffTileCodec(
+            compression=raw["compression"],
+            bits_per_sample=raw.get("bits_per_sample", asset.num_bits_per_pixel),
+            samples_per_pixel=raw.get("samples_per_pixel", num_bands),
+            photometric=raw.get("photometric", 1),
+            planar_config=raw.get("planar_config", 1),
+            predictor=raw.get("predictor", 1),
+            tile_width=raw.get("tile_width", block_w),
+            tile_height=raw.get("tile_height", block_h),
+            sample_format=raw.get("sample_format", 1),
+            jpeg_tables=jpeg_tables,
         )
 
     return None

@@ -6,6 +6,7 @@ Technical design documentation for osml-imagery-io internals.
 :maxdepth: 2
 
 api-design
+codec-design
 parser-design
 property-testing
 ```

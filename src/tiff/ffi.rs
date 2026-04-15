@@ -1409,6 +1409,34 @@ impl TiffHandle {
         }
     }
 
+    /// Read a BYTE/UNDEFINED array tag from the current IFD.
+    ///
+    /// libtiff returns variable-length byte arrays (e.g., JPEGTables tag 347)
+    /// via `TIFFGetField(tif, tag, &count, &ptr)` where count is `u32` and ptr
+    /// points to libtiff-owned memory. We copy into a `Vec<u8>` before returning.
+    pub fn get_field_u8_array(&self, tag: u32) -> Result<Vec<u8>, CodecError> {
+        let mut count: u32 = 0;
+        let mut ptr: *const u8 = ptr::null();
+        let ret = unsafe {
+            sys::TIFFGetField(
+                self.handle,
+                tag,
+                &mut count as *mut u32,
+                &mut ptr as *mut *const u8,
+            )
+        };
+        if ret == 1 && !ptr.is_null() {
+            let len = count as usize;
+            let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+            Ok(slice.to_vec())
+        } else {
+            Err(CodecError::Decode(format!(
+                "TIFF tag {} not found or not a u8 array",
+                tag
+            )))
+        }
+    }
+
     /// Read a DOUBLE array tag from the current IFD.
     ///
     /// libtiff returns variable-length DOUBLE arrays (e.g., GeoDoubleParamsTag 34736,
@@ -2531,6 +2559,91 @@ mod tests {
         assert_eq!(entry.field_type, 2); // ASCII
         let val = handle.read_tag_value(entry).unwrap();
         assert_eq!(val.as_str().unwrap(), input);
+    }
+
+    // =========================================================================
+    // get_field_u8_array Tests
+    // =========================================================================
+
+    /// Helper: create a JPEG-compressed tiled TIFF with a known JPEGTables tag
+    /// via the write path, then return the assembled bytes.
+    fn make_jpeg_tiff_with_tables(jpeg_tables: &[u8]) -> Vec<u8> {
+        let handle = TiffHandle::from_write().unwrap();
+
+        // Minimal 16×16 RGB tiled image with JPEG compression
+        handle.set_field_u32(tags::IMAGE_WIDTH, 16).unwrap();
+        handle.set_field_u32(tags::IMAGE_LENGTH, 16).unwrap();
+        handle.set_field_u16(tags::BITS_PER_SAMPLE, 8).unwrap();
+        handle.set_field_u16(tags::SAMPLES_PER_PIXEL, 3).unwrap();
+        handle.set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT).unwrap();
+        handle
+            .set_field_u16(tags::PHOTOMETRIC_INTERPRETATION, tags::PHOTOMETRIC_YCBCR)
+            .unwrap();
+        handle.set_field_u32(tags::TILE_WIDTH, 16).unwrap();
+        handle.set_field_u32(tags::TILE_LENGTH, 16).unwrap();
+        handle
+            .set_field_u16(tags::COMPRESSION, tags::COMPRESSION_JPEG)
+            .unwrap();
+        handle
+            .set_field_u16(tags::PLANAR_CONFIGURATION, tags::PLANAR_CONFIG_CONTIG)
+            .unwrap();
+
+        // Set the JPEGTables tag with our known bytes
+        handle
+            .set_field_u8_array(tags::JPEG_TABLES, jpeg_tables)
+            .unwrap();
+
+        // Write one tile of pixel data (16×16×3 = 768 bytes)
+        let tile_data = vec![128u8; 16 * 16 * 3];
+        handle.write_encoded_tile(0, &tile_data).unwrap();
+        handle.write_directory().unwrap();
+
+        handle.into_bytes().unwrap()
+    }
+
+    #[test]
+    fn test_get_field_u8_array_jpeg_tables() {
+        // Write a JPEG-compressed TIFF with known JPEGTables, read them back
+        // Note: libtiff may modify the JPEGTables during JPEG setup, so we
+        // read back whatever libtiff stored and verify it's a non-empty byte array.
+        // The key property: get_field_u8_array returns Ok with bytes for a present tag.
+        let input_tables: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xDB, 0x00, 0x43, 0x00, 0xFF, 0xD9];
+        let bytes = make_jpeg_tiff_with_tables(&input_tables);
+
+        let reader = TiffHandle::from_bytes(&bytes).unwrap();
+        let result = reader.get_field_u8_array(tags::JPEG_TABLES);
+        assert!(result.is_ok(), "get_field_u8_array should succeed for JPEGTables: {:?}", result.err());
+
+        let tables = result.unwrap();
+        // libtiff generates its own JPEGTables during JPEG encoding, so the
+        // returned bytes will be valid JPEG tables (starting with SOI marker
+        // 0xFF 0xD8 and ending with EOI marker 0xFF 0xD9).
+        assert!(!tables.is_empty(), "JPEGTables should not be empty");
+        assert_eq!(tables[0], 0xFF, "JPEGTables should start with 0xFF");
+        assert_eq!(tables[1], 0xD8, "JPEGTables should start with SOI marker");
+        let len = tables.len();
+        assert_eq!(tables[len - 2], 0xFF, "JPEGTables should end with 0xFF");
+        assert_eq!(tables[len - 1], 0xD9, "JPEGTables should end with EOI marker");
+    }
+
+    #[test]
+    fn test_get_field_u8_array_absent_tag_returns_error() {
+        // Use a minimal stripped TIFF that has no JPEGTables tag
+        let data = make_minimal_tiff();
+        let handle = TiffHandle::from_bytes(&data).unwrap();
+
+        let result = handle.get_field_u8_array(tags::JPEG_TABLES);
+        assert!(result.is_err(), "get_field_u8_array should fail for absent tag");
+        match result.unwrap_err() {
+            CodecError::Decode(msg) => {
+                assert!(
+                    msg.contains("not found") || msg.contains("not a u8 array"),
+                    "Unexpected error message: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected CodecError::Decode, got: {:?}", other),
+        }
     }
 
 }

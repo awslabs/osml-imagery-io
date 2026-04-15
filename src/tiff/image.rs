@@ -78,6 +78,8 @@ pub struct TIFFImageAssetProvider {
     planar_config: u16,
     /// Compression type (tag 259)
     compression: u16,
+    /// Photometric interpretation (tag 262)
+    photometric: u16,
     /// Shared libtiff handle (Arc for thread-safe sharing between providers)
     handle: Arc<Mutex<TiffHandle>>,
     /// STAC-aligned roles (e.g., "data", "overview")
@@ -120,6 +122,10 @@ impl TIFFImageAssetProvider {
             .get_field_u16(tags::COMPRESSION)
             .unwrap_or(tags::COMPRESSION_NONE);
 
+        let photometric = guard
+            .get_field_u16(tags::PHOTOMETRIC_INTERPRETATION)
+            .unwrap_or(tags::PHOTOMETRIC_MINISBLACK);
+
         let is_tiled = guard.is_tiled();
 
         let (block_width, block_height) = if is_tiled {
@@ -146,6 +152,7 @@ impl TIFFImageAssetProvider {
             block_height,
             planar_config,
             compression,
+            photometric,
             handle,
             roles,
             metadata,
@@ -325,13 +332,95 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
     }
 
     fn codec_configuration(&self) -> Option<std::collections::HashMap<String, Vec<u8>>> {
-        // For lossless compression types, no configuration needed
-        // COMPRESSION_NONE=1, COMPRESSION_LZW=5, COMPRESSION_DEFLATE=8, COMPRESSION_ADOBE_DEFLATE=32946
         match self.compression {
-            1 | 5 | 8 | 32946 => None,
-            // For JPEG and other compression types, configuration would be needed
-            // but requires additional FFI support to read JPEGTables tag.
-            // Return None for now.
+            // Compression=1 (None): raw bytes, Zarr reads directly
+            tags::COMPRESSION_NONE => None,
+
+            // Compression=7 (JPEG): needs JPEGTables for decoding
+            tags::COMPRESSION_JPEG => {
+                let guard = self.handle.lock().ok()?;
+                guard.set_directory(self.ifd_index).ok()?;
+
+                // JPEGTables is required — if absent, tiles can't be decoded
+                let jpeg_tables = match guard.get_field_u8_array(tags::JPEG_TABLES) {
+                    Ok(tables) => tables,
+                    Err(_) => return None,
+                };
+
+                let predictor = guard
+                    .get_field_u16(tags::PREDICTOR)
+                    .unwrap_or(1);
+                let sample_format = guard
+                    .get_field_u16(tags::SAMPLE_FORMAT)
+                    .unwrap_or(tags::SAMPLE_FORMAT_UINT);
+
+                drop(guard);
+
+                let mut config = std::collections::HashMap::new();
+                config.insert("compression".to_string(), self.compression.to_le_bytes().to_vec());
+                config.insert("bits_per_sample".to_string(), (self.bits_per_sample as u16).to_le_bytes().to_vec());
+                config.insert("samples_per_pixel".to_string(), (self.bands as u16).to_le_bytes().to_vec());
+                config.insert("photometric".to_string(), self.photometric.to_le_bytes().to_vec());
+                config.insert("planar_config".to_string(), self.planar_config.to_le_bytes().to_vec());
+                config.insert("predictor".to_string(), predictor.to_le_bytes().to_vec());
+                config.insert("tile_width".to_string(), self.block_width.to_le_bytes().to_vec());
+                config.insert("tile_height".to_string(), self.block_height.to_le_bytes().to_vec());
+                config.insert("sample_format".to_string(), sample_format.to_le_bytes().to_vec());
+                config.insert("jpeg_tables".to_string(), jpeg_tables);
+                Some(config)
+            }
+
+            // Compression=5 (LZW), 8 (Deflate), 32946 (Adobe Deflate): include predictor
+            tags::COMPRESSION_LZW | tags::COMPRESSION_DEFLATE | 32946 => {
+                let guard = self.handle.lock().ok()?;
+                guard.set_directory(self.ifd_index).ok()?;
+
+                let predictor = guard
+                    .get_field_u16(tags::PREDICTOR)
+                    .unwrap_or(1);
+                let sample_format = guard
+                    .get_field_u16(tags::SAMPLE_FORMAT)
+                    .unwrap_or(tags::SAMPLE_FORMAT_UINT);
+
+                drop(guard);
+
+                let mut config = std::collections::HashMap::new();
+                config.insert("compression".to_string(), self.compression.to_le_bytes().to_vec());
+                config.insert("bits_per_sample".to_string(), (self.bits_per_sample as u16).to_le_bytes().to_vec());
+                config.insert("samples_per_pixel".to_string(), (self.bands as u16).to_le_bytes().to_vec());
+                config.insert("photometric".to_string(), self.photometric.to_le_bytes().to_vec());
+                config.insert("planar_config".to_string(), self.planar_config.to_le_bytes().to_vec());
+                config.insert("predictor".to_string(), predictor.to_le_bytes().to_vec());
+                config.insert("tile_width".to_string(), self.block_width.to_le_bytes().to_vec());
+                config.insert("tile_height".to_string(), self.block_height.to_le_bytes().to_vec());
+                config.insert("sample_format".to_string(), sample_format.to_le_bytes().to_vec());
+                Some(config)
+            }
+
+            // Compression=32773 (PackBits): no predictor or jpeg_tables
+            tags::COMPRESSION_PACKBITS => {
+                let guard = self.handle.lock().ok()?;
+                guard.set_directory(self.ifd_index).ok()?;
+
+                let sample_format = guard
+                    .get_field_u16(tags::SAMPLE_FORMAT)
+                    .unwrap_or(tags::SAMPLE_FORMAT_UINT);
+
+                drop(guard);
+
+                let mut config = std::collections::HashMap::new();
+                config.insert("compression".to_string(), self.compression.to_le_bytes().to_vec());
+                config.insert("bits_per_sample".to_string(), (self.bits_per_sample as u16).to_le_bytes().to_vec());
+                config.insert("samples_per_pixel".to_string(), (self.bands as u16).to_le_bytes().to_vec());
+                config.insert("photometric".to_string(), self.photometric.to_le_bytes().to_vec());
+                config.insert("planar_config".to_string(), self.planar_config.to_le_bytes().to_vec());
+                config.insert("tile_width".to_string(), self.block_width.to_le_bytes().to_vec());
+                config.insert("tile_height".to_string(), self.block_height.to_le_bytes().to_vec());
+                config.insert("sample_format".to_string(), sample_format.to_le_bytes().to_vec());
+                Some(config)
+            }
+
+            // Unknown compression types: return None
             _ => None,
         }
     }
@@ -513,7 +602,7 @@ impl TIFFImageAssetProvider {
 ///
 /// Handles edge blocks where `actual_cols < block_width` or `actual_rows < block_height`
 /// by extracting only the valid pixel region from the padded tile/strip data.
-fn deinterleave_chunky_to_bsq(
+pub(crate) fn deinterleave_chunky_to_bsq(
     raw: &[u8],
     block_width: u32,
     _block_height: u32,
@@ -1129,5 +1218,241 @@ mod tests {
 
         // Uncompressed TIFF should return None for codec_configuration
         assert!(provider.codec_configuration().is_none());
+    }
+
+    // =========================================================================
+    // codec_configuration() Tests
+    // =========================================================================
+
+    /// Helper: build a minimal tiled TIFF with a given compression type.
+    /// Uses manual byte buffer construction (same pattern as make_tiled_tiff).
+    /// For compression types that don't require actual compressed data to test
+    /// codec_configuration() (which only reads tags, not tile data).
+    fn make_tiled_tiff_with_compression(compression: u16, predictor: Option<u16>) -> Vec<u8> {
+        let width: u32 = 256;
+        let height: u32 = 256;
+        let tile_width: u32 = 256;
+        let tile_height: u32 = 256;
+        let tile_bytes: u32 = 256; // dummy compressed size
+
+        let has_predictor = predictor.is_some();
+        let num_entries: u16 = if has_predictor { 13 } else { 12 };
+
+        let mut buf = Vec::new();
+
+        // TIFF Header
+        buf.extend_from_slice(b"II");
+        buf.extend_from_slice(&42u16.to_le_bytes());
+        buf.extend_from_slice(&8u32.to_le_bytes()); // IFD at offset 8
+
+        buf.extend_from_slice(&num_entries.to_le_bytes());
+
+        let short_type: u16 = 3;
+        let long_type: u16 = 4;
+
+        // Calculate offsets
+        let ifd_size = 2 + num_entries as u32 * 12 + 4;
+        let tile_offsets_offset = 8 + ifd_size;
+        let tile_byte_counts_offset = tile_offsets_offset + 4; // 1 u32 value
+        let pixel_data_offset = tile_byte_counts_offset + 4;
+
+        // Tag entries (must be in ascending tag order)
+        write_ifd_entry(&mut buf, 256, short_type, 1, width);       // ImageWidth
+        write_ifd_entry(&mut buf, 257, short_type, 1, height);      // ImageLength
+        write_ifd_entry(&mut buf, 258, short_type, 1, 8);           // BitsPerSample
+        write_ifd_entry(&mut buf, 259, short_type, 1, compression as u32); // Compression
+        write_ifd_entry(&mut buf, 262, short_type, 1, 1);           // PhotometricInterpretation=MinIsBlack
+        write_ifd_entry(&mut buf, 277, short_type, 1, 1);           // SamplesPerPixel
+        write_ifd_entry(&mut buf, 284, short_type, 1, 1);           // PlanarConfiguration=Contig
+        if let Some(pred) = predictor {
+            write_ifd_entry(&mut buf, 317, short_type, 1, pred as u32); // Predictor
+        }
+        write_ifd_entry(&mut buf, 322, short_type, 1, tile_width);  // TileWidth
+        write_ifd_entry(&mut buf, 323, short_type, 1, tile_height); // TileLength
+        write_ifd_entry(&mut buf, 324, long_type, 1, pixel_data_offset); // TileOffsets (inline)
+        write_ifd_entry(&mut buf, 325, long_type, 1, tile_bytes);   // TileByteCounts (inline)
+        write_ifd_entry(&mut buf, 339, short_type, 1, 1);           // SampleFormat=UInt
+
+        // Next IFD offset = 0
+        buf.extend_from_slice(&0u32.to_le_bytes());
+
+        // TileOffsets: 1 tile
+        buf.extend_from_slice(&pixel_data_offset.to_le_bytes());
+
+        // TileByteCounts: 1 tile
+        buf.extend_from_slice(&tile_bytes.to_le_bytes());
+
+        // Dummy pixel data
+        buf.extend(std::iter::repeat_n(0u8, tile_bytes as usize));
+
+        buf
+    }
+
+    /// Helper: create a provider from raw TIFF bytes.
+    fn provider_from_bytes(data: &[u8]) -> TIFFImageAssetProvider {
+        let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(data).unwrap()));
+        let metadata = Arc::new(
+            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
+        );
+        TIFFImageAssetProvider::new(
+            "image:0".to_string(),
+            0,
+            handle,
+            metadata,
+            vec!["data".to_string()],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_codec_config_compression_none_returns_none() {
+        // Compression=1 (None) should return None
+        let data = make_tiled_tiff_with_compression(tags::COMPRESSION_NONE, None);
+        let provider = provider_from_bytes(&data);
+        assert!(provider.codec_configuration().is_none());
+    }
+
+    #[test]
+    fn test_codec_config_jpeg_with_tables() {
+        // Build a JPEG TIFF using from_write() so libtiff generates valid JPEGTables
+        let handle = TiffHandle::from_write().unwrap();
+        handle.set_field_u32(tags::IMAGE_WIDTH, 256).unwrap();
+        handle.set_field_u32(tags::IMAGE_LENGTH, 256).unwrap();
+        handle.set_field_u16(tags::BITS_PER_SAMPLE, 8).unwrap();
+        handle.set_field_u16(tags::SAMPLES_PER_PIXEL, 3).unwrap();
+        handle.set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT).unwrap();
+        handle.set_field_u16(tags::PHOTOMETRIC_INTERPRETATION, tags::PHOTOMETRIC_YCBCR).unwrap();
+        handle.set_field_u32(tags::TILE_WIDTH, 256).unwrap();
+        handle.set_field_u32(tags::TILE_LENGTH, 256).unwrap();
+        handle.set_field_u16(tags::COMPRESSION, tags::COMPRESSION_JPEG).unwrap();
+        handle.set_field_u16(tags::PLANAR_CONFIGURATION, tags::PLANAR_CONFIG_CONTIG).unwrap();
+
+        let tile_data = vec![128u8; 256 * 256 * 3];
+        handle.write_encoded_tile(0, &tile_data).unwrap();
+        handle.write_directory().unwrap();
+        let data = handle.into_bytes().unwrap();
+
+        let provider = provider_from_bytes(&data);
+        let config = provider.codec_configuration();
+        assert!(config.is_some(), "JPEG with JPEGTables should return Some");
+
+        let config = config.unwrap();
+
+        // Verify expected keys are present
+        assert!(config.contains_key("compression"));
+        assert!(config.contains_key("bits_per_sample"));
+        assert!(config.contains_key("samples_per_pixel"));
+        assert!(config.contains_key("photometric"));
+        assert!(config.contains_key("planar_config"));
+        assert!(config.contains_key("predictor"));
+        assert!(config.contains_key("tile_width"));
+        assert!(config.contains_key("tile_height"));
+        assert!(config.contains_key("sample_format"));
+        assert!(config.contains_key("jpeg_tables"));
+
+        // Verify u16 values are 2-byte LE encoded
+        assert_eq!(config["compression"], 7u16.to_le_bytes().to_vec()); // JPEG=7
+        assert_eq!(config["bits_per_sample"], 8u16.to_le_bytes().to_vec());
+        assert_eq!(config["samples_per_pixel"], 3u16.to_le_bytes().to_vec());
+
+        // Verify u32 values are 4-byte LE encoded
+        assert_eq!(config["tile_width"], 256u32.to_le_bytes().to_vec());
+        assert_eq!(config["tile_height"], 256u32.to_le_bytes().to_vec());
+
+        // Verify jpeg_tables is non-empty and has SOI/EOI markers
+        let tables = &config["jpeg_tables"];
+        assert!(!tables.is_empty());
+        assert_eq!(tables[0], 0xFF);
+        assert_eq!(tables[1], 0xD8); // SOI
+    }
+
+    #[test]
+    fn test_codec_config_jpeg_without_tables_returns_none() {
+        // Build a tiled TIFF with Compression=7 but no JPEGTables tag.
+        // We use manual byte construction to avoid libtiff auto-generating tables.
+        let data = make_tiled_tiff_with_compression(tags::COMPRESSION_JPEG, None);
+        let provider = provider_from_bytes(&data);
+        assert!(
+            provider.codec_configuration().is_none(),
+            "JPEG without JPEGTables should return None"
+        );
+    }
+
+    #[test]
+    fn test_codec_config_lzw_with_predictor() {
+        let data = make_tiled_tiff_with_compression(tags::COMPRESSION_LZW, Some(2));
+        let provider = provider_from_bytes(&data);
+        let config = provider.codec_configuration();
+        assert!(config.is_some(), "LZW should return Some");
+
+        let config = config.unwrap();
+
+        // Verify predictor key is present with correct value
+        assert!(config.contains_key("predictor"));
+        assert_eq!(config["predictor"], 2u16.to_le_bytes().to_vec());
+
+        // Verify compression is LZW (5) encoded as 2-byte LE
+        assert_eq!(config["compression"], 5u16.to_le_bytes().to_vec());
+
+        // Verify u32 tile dimensions are 4-byte LE
+        assert_eq!(config["tile_width"], 256u32.to_le_bytes().to_vec());
+        assert_eq!(config["tile_height"], 256u32.to_le_bytes().to_vec());
+
+        // Verify no jpeg_tables key
+        assert!(!config.contains_key("jpeg_tables"));
+    }
+
+    #[test]
+    fn test_codec_config_deflate_with_predictor() {
+        let data = make_tiled_tiff_with_compression(tags::COMPRESSION_DEFLATE, Some(2));
+        let provider = provider_from_bytes(&data);
+        let config = provider.codec_configuration();
+        assert!(config.is_some(), "Deflate should return Some");
+
+        let config = config.unwrap();
+        assert!(config.contains_key("predictor"));
+        assert_eq!(config["predictor"], 2u16.to_le_bytes().to_vec());
+        assert_eq!(config["compression"], 8u16.to_le_bytes().to_vec());
+        assert!(!config.contains_key("jpeg_tables"));
+    }
+
+    #[test]
+    fn test_codec_config_adobe_deflate_with_predictor() {
+        let data = make_tiled_tiff_with_compression(32946, Some(1));
+        let provider = provider_from_bytes(&data);
+        let config = provider.codec_configuration();
+        assert!(config.is_some(), "Adobe Deflate (32946) should return Some");
+
+        let config = config.unwrap();
+        assert!(config.contains_key("predictor"));
+        assert_eq!(config["predictor"], 1u16.to_le_bytes().to_vec());
+        assert_eq!(config["compression"], 32946u16.to_le_bytes().to_vec());
+        assert!(!config.contains_key("jpeg_tables"));
+    }
+
+    #[test]
+    fn test_codec_config_packbits_no_predictor() {
+        let data = make_tiled_tiff_with_compression(tags::COMPRESSION_PACKBITS, None);
+        let provider = provider_from_bytes(&data);
+        let config = provider.codec_configuration();
+        assert!(config.is_some(), "PackBits should return Some");
+
+        let config = config.unwrap();
+
+        // PackBits should NOT have predictor or jpeg_tables
+        assert!(!config.contains_key("predictor"));
+        assert!(!config.contains_key("jpeg_tables"));
+
+        // Verify compression is PackBits (32773) encoded as 2-byte LE
+        assert_eq!(config["compression"], 32773u16.to_le_bytes().to_vec());
+
+        // Verify other standard keys are present
+        assert!(config.contains_key("bits_per_sample"));
+        assert!(config.contains_key("samples_per_pixel"));
+        assert!(config.contains_key("photometric"));
+        assert!(config.contains_key("planar_config"));
+        assert!(config.contains_key("tile_width"));
+        assert!(config.contains_key("tile_height"));
+        assert!(config.contains_key("sample_format"));
     }
 }

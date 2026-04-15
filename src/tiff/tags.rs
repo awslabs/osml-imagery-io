@@ -60,6 +60,12 @@ pub const SAMPLE_FORMAT: u32 = 339;
 /// Tag 317: Predictor for compression pre-filtering.
 pub const PREDICTOR: u32 = 317;
 
+/// Tag 347: JPEGTables — shared JPEG quantization and Huffman tables.
+/// Present in JPEG-compressed TIFFs (Compression=7). Contains SOI/EOI markers.
+/// Individual JPEG tiles are not standalone JFIF files; this table data is
+/// required to decode them.
+pub const JPEG_TABLES: u32 = 347;
+
 /// Tag 530: YCbCrSubSampling — chroma subsampling factors [horiz, vert].
 /// Default is [2, 2]. Only meaningful when PhotometricInterpretation = YCbCr (6).
 pub const YCBCR_SUB_SAMPLING: u32 = 530;

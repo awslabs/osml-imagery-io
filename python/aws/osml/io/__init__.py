@@ -25,6 +25,7 @@ from aws.osml.io._io import (
     TextAssetProvider,
     Value,
     __version__,
+    decode_tiff_tile,
 )
 
 # Convenience alias for IO.open
@@ -58,6 +59,8 @@ __all__ = [
     "StructureWriter",
     "StructureDefinition",
     "Value",
+    # Codec decode functions
+    "decode_tiff_tile",
 ]
 
 # Optional VirtualiZarr parser exports — only available when virtualizarr is installed

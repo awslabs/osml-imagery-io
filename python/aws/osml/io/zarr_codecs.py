@@ -19,15 +19,17 @@ import asyncio
 import base64
 from dataclasses import dataclass
 
-from aws.osml.io._io import decode_jbp_block, decode_jpeg, decode_jpeg2000
+from aws.osml.io._io import decode_jbp_block, decode_jpeg, decode_jpeg2000, decode_tiff_tile
 
 __all__ = [
     "Jpeg2000Codec",
     "JpegCodec",
     "JbpBlockCodec",
+    "TiffTileCodec",
     "decode_jpeg2000",
     "decode_jpeg",
     "decode_jbp_block",
+    "decode_tiff_tile",
 ]
 
 
@@ -576,6 +578,245 @@ class JbpBlockCodec(_import_zarr_bytescodec()):
         )
 
 
+@dataclass(frozen=True)
+class TiffTileCodec(_import_zarr_bytescodec()):
+    """Zarr v3 bytes-to-bytes codec for TIFF tile codestreams.
+
+    Registered as: https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile
+
+    Configuration:
+        compression: int          — TIFF compression tag value (default 1)
+        bits_per_sample: int      — bits per sample (default 8)
+        samples_per_pixel: int    — number of bands (default 1)
+        photometric: int          — photometric interpretation (default 1)
+        planar_config: int        — planar configuration (default 1)
+        predictor: int            — differencing predictor (default 1)
+        tile_width: int           — tile width in pixels (default 256)
+        tile_height: int          — tile height in pixels (default 256)
+        sample_format: int        — sample format (default 1)
+        jpeg_tables: str | None   — base64-encoded JPEG tables (default None)
+    """
+
+    codec_name = "https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile"
+    codec_id = "https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile"
+    is_fixed_size = False
+
+    compression: int = 1
+    bits_per_sample: int = 8
+    samples_per_pixel: int = 1
+    photometric: int = 1
+    planar_config: int = 1
+    predictor: int = 1
+    tile_width: int = 256
+    tile_height: int = 256
+    sample_format: int = 1
+    jpeg_tables: str | None = None
+
+    def __init__(
+        self,
+        *,
+        compression: int = 1,
+        bits_per_sample: int = 8,
+        samples_per_pixel: int = 1,
+        photometric: int = 1,
+        planar_config: int = 1,
+        predictor: int = 1,
+        tile_width: int = 256,
+        tile_height: int = 256,
+        sample_format: int = 1,
+        jpeg_tables: str | None = None,
+    ):
+        if jpeg_tables is not None:
+            try:
+                jpeg_tables_bytes = base64.b64decode(jpeg_tables)
+            except Exception as e:
+                raise ValueError(f"Invalid base64 in jpeg_tables: {e}")
+        else:
+            jpeg_tables_bytes = None
+
+        object.__setattr__(self, "compression", compression)
+        object.__setattr__(self, "bits_per_sample", bits_per_sample)
+        object.__setattr__(self, "samples_per_pixel", samples_per_pixel)
+        object.__setattr__(self, "photometric", photometric)
+        object.__setattr__(self, "planar_config", planar_config)
+        object.__setattr__(self, "predictor", predictor)
+        object.__setattr__(self, "tile_width", tile_width)
+        object.__setattr__(self, "tile_height", tile_height)
+        object.__setattr__(self, "sample_format", sample_format)
+        object.__setattr__(self, "jpeg_tables", jpeg_tables)
+        object.__setattr__(self, "_jpeg_tables_bytes", jpeg_tables_bytes)
+
+    def _decode_sync(self, chunk_bytes, chunk_spec):
+        """Synchronous decode — delegates to the Rust TIFF tile decoder."""
+        from zarr.core.buffer.cpu import as_numpy_array_wrapper
+
+        expected_shape = chunk_spec.shape
+
+        def _decode_and_pad(buf):
+            arr = decode_tiff_tile(
+                bytes(buf),
+                compression=self.compression,
+                bits_per_sample=self.bits_per_sample,
+                samples_per_pixel=self.samples_per_pixel,
+                photometric=self.photometric,
+                planar_config=self.planar_config,
+                predictor=self.predictor,
+                tile_width=self.tile_width,
+                tile_height=self.tile_height,
+                sample_format=self.sample_format,
+                jpeg_tables=self._jpeg_tables_bytes,
+            )
+            # Edge tiles may decode to smaller dimensions than the chunk shape.
+            # Pad to the expected chunk shape so zarr's reshape succeeds; zarr
+            # will trim the padding when the array boundary is reached.
+            if arr.shape != expected_shape:
+                import numpy as np
+
+                padded = np.zeros(expected_shape, dtype=arr.dtype)
+                slices = tuple(slice(0, s) for s in arr.shape)
+                padded[slices] = arr
+                return padded.tobytes()
+            return arr.tobytes()
+
+        return as_numpy_array_wrapper(
+            _decode_and_pad,
+            chunk_bytes,
+            chunk_spec.prototype,
+        )
+
+    async def _decode_single(self, chunk_bytes, chunk_spec):
+        """Decode TIFF tile chunk bytes into pixel data.
+
+        Args:
+            chunk_bytes: Buffer containing compressed TIFF tile data.
+            chunk_spec: ArraySpec describing the expected output.
+
+        Returns:
+            Buffer with decoded pixel data.
+        """
+        return await asyncio.to_thread(self._decode_sync, chunk_bytes, chunk_spec)
+
+    async def _encode_single(self, chunk_bytes, chunk_spec):
+        """Encoding is not supported.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError("TiffTileCodec: encoding is not supported")
+
+    def compute_encoded_size(self, input_byte_length: int, chunk_spec) -> int:
+        """Return *input_byte_length* — compressed size is not predictable."""
+        return input_byte_length
+
+    def evolve_from_array_spec(self, array_spec):
+        """Codec configuration is fixed at construction time."""
+        return self
+
+    def to_dict(self):
+        """Serialize codec configuration to a JSON-compatible dictionary.
+
+        Returns:
+            dict with 'name' and 'configuration' keys.
+        """
+        return {
+            "name": self.codec_name,
+            "configuration": {
+                "compression": self.compression,
+                "bits_per_sample": self.bits_per_sample,
+                "samples_per_pixel": self.samples_per_pixel,
+                "photometric": self.photometric,
+                "planar_config": self.planar_config,
+                "predictor": self.predictor,
+                "tile_width": self.tile_width,
+                "tile_height": self.tile_height,
+                "sample_format": self.sample_format,
+                "jpeg_tables": self.jpeg_tables,
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        """Construct a TiffTileCodec from a serialized configuration dictionary.
+
+        Accepts both ``{"name": ..., "configuration": {...}}`` format and a
+        flat configuration dictionary.
+
+        Args:
+            data: Configuration dictionary.
+
+        Returns:
+            TiffTileCodec instance.
+        """
+        config = data.get("configuration", data)
+        return cls(
+            compression=config.get("compression", 1),
+            bits_per_sample=config.get("bits_per_sample", 8),
+            samples_per_pixel=config.get("samples_per_pixel", 1),
+            photometric=config.get("photometric", 1),
+            planar_config=config.get("planar_config", 1),
+            predictor=config.get("predictor", 1),
+            tile_width=config.get("tile_width", 256),
+            tile_height=config.get("tile_height", 256),
+            sample_format=config.get("sample_format", 1),
+            jpeg_tables=config.get("jpeg_tables"),
+        )
+
+    # -- numcodecs compatibility (consumer path) ---------------------------
+
+    def decode(self, buf, out=None):
+        """Synchronous decode for numcodecs filter protocol."""
+        data = bytes(buf) if not isinstance(buf, bytes) else buf
+        return decode_tiff_tile(
+            data,
+            compression=self.compression,
+            bits_per_sample=self.bits_per_sample,
+            samples_per_pixel=self.samples_per_pixel,
+            photometric=self.photometric,
+            planar_config=self.planar_config,
+            predictor=self.predictor,
+            tile_width=self.tile_width,
+            tile_height=self.tile_height,
+            sample_format=self.sample_format,
+            jpeg_tables=self._jpeg_tables_bytes,
+        )
+
+    def encode(self, buf):
+        """Encoding is not supported."""
+        raise NotImplementedError("TiffTileCodec: encoding is not supported")
+
+    def get_config(self):
+        """Return numcodecs-compatible configuration dict."""
+        return {
+            "id": self.codec_id,
+            "compression": self.compression,
+            "bits_per_sample": self.bits_per_sample,
+            "samples_per_pixel": self.samples_per_pixel,
+            "photometric": self.photometric,
+            "planar_config": self.planar_config,
+            "predictor": self.predictor,
+            "tile_width": self.tile_width,
+            "tile_height": self.tile_height,
+            "sample_format": self.sample_format,
+            "jpeg_tables": self.jpeg_tables,
+        }
+
+    @classmethod
+    def from_config(cls, config):
+        """Construct from a numcodecs configuration dict."""
+        return cls(
+            compression=config.get("compression", 1),
+            bits_per_sample=config.get("bits_per_sample", 8),
+            samples_per_pixel=config.get("samples_per_pixel", 1),
+            photometric=config.get("photometric", 1),
+            planar_config=config.get("planar_config", 1),
+            predictor=config.get("predictor", 1),
+            tile_width=config.get("tile_width", 256),
+            tile_height=config.get("tile_height", 256),
+            sample_format=config.get("sample_format", 1),
+            jpeg_tables=config.get("jpeg_tables"),
+        )
+
+
 # ---------------------------------------------------------------------------
 # numcodecs registration (consumer path)
 # ---------------------------------------------------------------------------
@@ -597,6 +838,7 @@ def _register_numcodecs():
     numcodecs.register_codec(Jpeg2000Codec)
     numcodecs.register_codec(JpegCodec)
     numcodecs.register_codec(JbpBlockCodec)
+    numcodecs.register_codec(TiffTileCodec)
 
 
 _register_numcodecs()

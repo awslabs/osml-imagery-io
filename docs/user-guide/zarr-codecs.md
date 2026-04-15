@@ -75,7 +75,9 @@ component:
 3. **Decoders for Geospatial Formats** — The fetched bytes are still in the source
    format's native encoding. NITF pixel data uses big-endian byte order and
    format-specific interleave modes. JPEG 2000 tile-parts are not
-   self-contained codestreams. Standard Zarr codecs cannot decode any of these.
+   self-contained codestreams. Compressed TIFF tiles depend on shared IFD tag
+   metadata (predictor settings, JPEG tables) that lives outside the tile data.
+   Standard Zarr codecs cannot decode any of these.
 
 The following sections describe each component in pipeline order: the parser
 produces the tile index, the filesystem fetches the bytes, and the codec decodes
@@ -223,7 +225,7 @@ elsewhere, `MultiReferenceFileSystem` is the component that makes it work.
 
 Once the filesystem delivers the raw bytes for a chunk, those bytes are still in
 the source format's native encoding. Standard Zarr codecs cannot decode them.
-This library registers three Zarr v3 codecs that handle the format-specific
+This library registers four Zarr v3 codecs that handle the format-specific
 decoding:
 
 `JbpBlockCodec` handles uncompressed NITF tiles. NITF raw pixel data uses
@@ -266,23 +268,30 @@ interleaved codestream, the codec receives the complete concatenated bytes and
 reconstructs the codestream exactly the same way. The filesystem handles the
 scatter-gather complexity so codecs remain simple bytes-to-bytes transforms.
 
-All three codecs are registered with the Zarr codec registry via Python entry
+`TiffTileCodec` decodes compressed TIFF tiles. Individual compressed tiles
+extracted from a TIFF file cannot be decoded in isolation — the decoder needs
+IFD tag metadata (compression type, predictor, photometric interpretation,
+JPEG tables, etc.) that lives in the file header, not in the tile data itself.
+The codec stores the required IFD tag values in its configuration. At decode
+time it constructs a minimal single-tile TIFF in memory from the configuration
+and the compressed tile bytes, then hands it to libtiff via `TIFFClientOpen` +
+`TIFFReadEncodedTile`. This approach supports LZW, JPEG, Deflate, Adobe
+Deflate, and PackBits compression, including horizontal differencing predictors
+and YCbCr-to-RGB conversion for JPEG tiles. Uncompressed TIFF tiles
+(Compression=1) do not require a codec — Zarr reads the raw tile bytes
+directly.
+
+All four codecs are registered with the Zarr codec registry via Python entry
 points. They use URI-based names per the Zarr v3 specification to avoid
 conflicts with existing codecs:
 
 - `https://awslabs.github.io/osml-imagery-io/codecs/jpeg2000`
 - `https://awslabs.github.io/osml-imagery-io/codecs/jpeg`
 - `https://awslabs.github.io/osml-imagery-io/codecs/jbp-block`
+- `https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile`
 
 The URIs resolve to human-readable documentation. Implementations do not fetch
 them at runtime.
-
-```{note}
-No custom codec is needed for TIFF. The compression formats commonly used in
-TIFF files (Deflate, LZW, and uncompressed) are already supported natively by
-Zarr. The parser handles tile indexing, and Zarr's built-in codecs handle the
-decoding.
-```
 
 ## Zarr Access to Image Pyramids
 
