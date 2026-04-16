@@ -139,6 +139,17 @@ def _build_codec_instance(asset):
         # Uncompressed JBP block
         imode_raw = raw.get("imode", 66)
         imode = chr(imode_raw) if isinstance(imode_raw, int) else str(imode_raw)
+        pvtype_raw = raw["pvtype"]
+        if isinstance(pvtype_raw, int):
+            # Rust sends pvtype as raw ASCII bytes (e.g. b"SI", b"R").  The
+            # byte-length normalizer above converts 1-byte and 2-byte values
+            # to ints.  Reverse that to recover the original ASCII string.
+            if pvtype_raw < 256:
+                pvtype = chr(pvtype_raw)
+            else:
+                pvtype = pvtype_raw.to_bytes(2, "little").decode("ascii").rstrip("\x00")
+        else:
+            pvtype = str(pvtype_raw)
         nbpp = raw.get("nbpp", raw.get("abpp", asset.num_bits_per_pixel))
         if isinstance(nbpp, str):
             nbpp = int(nbpp)
@@ -148,7 +159,7 @@ def _build_codec_instance(asset):
             block_width=block_w,
             nbpp=nbpp,
             imode=imode,
-            pvtype=raw["pvtype"],
+            pvtype=pvtype,
         )
     elif "compression" in raw:
         # TIFF tile codec
