@@ -60,10 +60,10 @@ Bridging archival imagery formats into the Zarr ecosystem required solving three
 problems that the existing tooling does not handle. Each problem led to a
 component:
 
-1. **Tile Indexing for Geospatial Formats** — Zarr needs to know where each tile
-   lives in the source file. Archival formats store this information in format-specific 
-   structures (SOT markers, IFD tags, length-prefixed headers) that VirtualiZarr cannot
-   parse out of the box.
+1. **Multi-Resolution Tile Indexing for Geospatial Formats** — Zarr needs to know where 
+   each tile lives in the source file. Archival formats store this information in 
+   format-specific structures (SOT markers, IFD tags, length-prefixed headers) that 
+   VirtualiZarr cannot parse out of the box.
 
 2. **New Support for Non-contiguous Chunk Data** — The Kerchunk reference spec 
    assumes each chunk maps to a single contiguous byte range. JPEG 2000 codestreams 
@@ -82,6 +82,12 @@ component:
 The following sections describe each component in pipeline order: the parser
 produces the tile index, the filesystem fetches the bytes, and the codec decodes
 them into pixels.
+
+```{image} /_static/images/zarr-decode-flow.png
+:alt: Figure showing overall flow of Zarr decode path.
+:width: 700px
+:align: center
+```
 
 ### Tile Indexing with VirtualiZarr Parsers
 
@@ -251,8 +257,10 @@ We solve this by inlining the shared main header (base64-encoded, typically
 100–500 bytes) in the codec configuration stored in `.zarray`. At decode time
 the codec reconstructs a minimal single-tile codestream on the fly:
 
-```
-[main_header bytes] + [tile-part bytes] + [EOC marker]
+```{image} /_static/images/reconstructed-j2k-codestream.png
+:alt: Figure showing reconstruction of a single tile J2K codestream.
+:width: 700px
+:align: center
 ```
 
 OpenJPEG receives what looks like a normal single-tile codestream and decodes
@@ -262,11 +270,11 @@ the main header. Because the codec operates on the J2K codestream directly, it
 works for standalone `.j2k`/`.jp2` files and for J2K codestreams embedded in
 container formats like NITF.
 
-Note that the codec layer is intentionally pure — it performs no I/O. When
-`MultiReferenceFileSystem` fetches and concatenates multiple tile-parts for an
-interleaved codestream, the codec receives the complete concatenated bytes and
-reconstructs the codestream exactly the same way. The filesystem handles the
-scatter-gather complexity so codecs remain simple bytes-to-bytes transforms.
+Note that the codec layer performs no I/O. When `MultiReferenceFileSystem` 
+fetches and concatenates multiple tile-parts for an interleaved codestream, 
+the codec receives the complete concatenated bytes and reconstructs the 
+codestream exactly the same way. The filesystem handles the scatter-gather 
+complexity so codecs remain simple bytes-to-bytes transforms.
 
 `TiffTileCodec` decodes compressed TIFF tiles. Individual compressed tiles
 extracted from a TIFF file cannot be decoded in isolation — the decoder needs
@@ -280,6 +288,12 @@ Deflate, and PackBits compression, including horizontal differencing predictors
 and YCbCr-to-RGB conversion for JPEG tiles. Uncompressed TIFF tiles
 (Compression=1) do not require a codec — Zarr reads the raw tile bytes
 directly.
+
+```{image} /_static/images/reconstructed-single-tile-tiff.png
+:alt: Figure showing reconstruction of a single tile TIFF.
+:width: 700px
+:align: center
+```
 
 All four codecs are registered with the Zarr codec registry via Python entry
 points. They use URI-based names per the Zarr v3 specification to avoid
