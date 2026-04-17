@@ -13,6 +13,39 @@ use pyo3::prelude::*;
 
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
 use crate::composite::{CompositeDatasetReader, CompositeDatasetWriter};
+
+/// Accepts either a single string or a list of strings from Python.
+///
+/// This enum allows `IO.open()` to accept both `str` and `list[str]` as the
+/// `paths` argument, normalizing a bare string to a single-element list.
+#[cfg_attr(test, derive(Debug))]
+enum PathsArg {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for PathsArg {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        if let Ok(s) = ob.extract::<String>() {
+            Ok(PathsArg::Single(s))
+        } else if let Ok(v) = ob.extract::<Vec<String>>() {
+            Ok(PathsArg::Multiple(v))
+        } else {
+            Err(PyValueError::new_err("paths must be a str or list[str]"))
+        }
+    }
+}
+
+impl From<PathsArg> for Vec<String> {
+    fn from(arg: PathsArg) -> Vec<String> {
+        match arg {
+            PathsArg::Single(s) => vec![s],
+            PathsArg::Multiple(v) => v,
+        }
+    }
+}
 use crate::error::CodecError;
 #[cfg(feature = "openjpeg")]
 use crate::j2k::{J2KDatasetReader, J2KDatasetWriter};
@@ -72,25 +105,25 @@ impl ParsedUri {
 
 /// Entry point for opening geospatial datasets for reading or writing.
 ///
-/// The ``IO`` class provides a single static method, ``open``, that accepts one
-/// or more file paths (or URIs) and returns either a :class:`DatasetReader` or a
-/// :class:`DatasetWriter` depending on the requested mode. The file format is
-/// auto-detected from the extension and file header bytes when reading; supported
-/// formats include NITF 2.0/2.1, NSIF 1.0, and TIFF/GeoTIFF. Both local file
-/// paths and ``file://`` URIs are supported.
+/// The ``IO`` class provides a single static method, ``open``, that accepts a
+/// file path string or a list of file paths (or URIs) and returns either a
+/// :class:`DatasetReader` or a :class:`DatasetWriter` depending on the requested
+/// mode. The file format is auto-detected from the extension and file header
+/// bytes when reading; supported formats include NITF 2.0/2.1, NSIF 1.0, and
+/// TIFF/GeoTIFF. Both local file paths and ``file://`` URIs are supported.
 ///
 /// Example:
 ///
 /// ```python
 /// from aws.osml.io import IO
 ///
-/// # Read mode — returns a DatasetReader (format auto-detected)
-/// with IO.open(["image.ntf"], "r") as dataset:
+/// # Read mode — single string path (format auto-detected)
+/// with IO.open("image.ntf", "r") as dataset:
 ///     keys = dataset.get_asset_keys()
 ///     asset = dataset.get_asset(keys[0])
 ///
 /// # Write mode — returns a DatasetWriter
-/// with IO.open(["output.ntf"], "w", "nitf") as writer:
+/// with IO.open("output.ntf", "w", "nitf") as writer:
 ///     writer.add_asset("image", provider, "Title", "Description", ["data"])
 /// ```
 #[pyclass(name = "IO")]
@@ -104,10 +137,11 @@ impl IO {
     /// writing, a format string must be provided. Use a context manager (``with``
     /// statement) on the returned object to ensure file handles are released.
     ///
-    /// :param paths: One or more URIs or file paths to the dataset. For
-    ///     single-file formats only the first path is used. Accepts local paths
-    ///     (``["image.ntf"]``), ``file://`` URIs, and ``s3://`` URIs.
-    /// :type paths: list[str]
+    /// :param paths: A file path or list of file paths to the dataset. For
+    ///     single-file formats a bare string is accepted (``"image.ntf"``).
+    ///     For multi-file R-set datasets a list is required. Accepts local
+    ///     paths, ``file://`` URIs, and ``s3://`` URIs.
+    /// :type paths: str | list[str]
     /// :param mode: ``"r"`` for reading or ``"w"`` for writing. Defaults to
     ///     ``"r"``.
     /// :type mode: str
@@ -126,26 +160,38 @@ impl IO {
     /// ```python
     /// from aws.osml.io import IO
     ///
-    /// # Read mode — format auto-detected from extension
-    /// with IO.open(["image.ntf"], "r") as dataset:
+    /// # Read mode — single string path
+    /// with IO.open("image.ntf", "r") as dataset:
+    ///     print(type(dataset))  # DatasetReader
+    ///
+    /// # Read mode — list of paths (R-set)
+    /// with IO.open(["image.ntf", "image.ntf.r1"], "r") as dataset:
     ///     print(type(dataset))  # DatasetReader
     ///
     /// # Write mode — format must be specified
-    /// with IO.open(["output.ntf"], "w", "nitf") as writer:
+    /// with IO.open("output.ntf", "w", "nitf") as writer:
     ///     print(type(writer))  # DatasetWriter
     /// ```
     #[staticmethod]
     #[pyo3(signature = (paths, mode="r", format=None))]
     fn open(
         py: Python<'_>,
-        paths: Vec<String>,
+        paths: PathsArg,
         mode: &str,
         format: Option<&str>,
     ) -> PyResult<Py<PyAny>> {
+        // Normalize PathsArg to Vec<String>
+        let paths: Vec<String> = paths.into();
+
         // Validate that paths is not empty
         let uri = paths.first().ok_or_else(|| {
             PyValueError::new_err("paths list cannot be empty")
         })?;
+
+        // Validate that no path is an empty string
+        if paths.iter().any(|p| p.is_empty()) {
+            return Err(PyValueError::new_err("paths list cannot be empty"));
+        }
 
         let parsed = ParsedUri::parse(uri);
 
@@ -745,6 +791,51 @@ mod tests {
         let parsed = ParsedUri::parse("/path/to/.hidden");
         // .hidden has no extension (hidden is the filename)
         assert_eq!(parsed.extension(), Some("hidden"));
+    }
+
+    // =========================================================================
+    // PathsArg extraction tests
+    // =========================================================================
+
+    #[test]
+    fn test_paths_arg_extract_string() {
+        // A Python str should produce PathsArg::Single
+        Python::attach(|py| {
+            let py_str = "image.ntf".into_pyobject(py).unwrap();
+            let any_ref = py_str.as_any();
+            let arg = PathsArg::extract(any_ref.as_borrowed()).unwrap();
+            let paths: Vec<String> = arg.into();
+            assert_eq!(paths, vec!["image.ntf".to_string()]);
+        });
+    }
+
+    #[test]
+    fn test_paths_arg_extract_list() {
+        // A Python list[str] should produce PathsArg::Multiple
+        Python::attach(|py| {
+            let py_list = vec!["a.ntf", "b.ntf"].into_pyobject(py).unwrap();
+            let any_ref = py_list.as_any();
+            let arg = PathsArg::extract(any_ref.as_borrowed()).unwrap();
+            let paths: Vec<String> = arg.into();
+            assert_eq!(paths, vec!["a.ntf".to_string(), "b.ntf".to_string()]);
+        });
+    }
+
+    #[test]
+    fn test_paths_arg_extract_invalid_type() {
+        // A Python int should produce an error
+        Python::attach(|py| {
+            let py_int = 42i64.into_pyobject(py).unwrap();
+            let any_ref = py_int.as_any();
+            let result = PathsArg::extract(any_ref.as_borrowed());
+            assert!(result.is_err());
+            let err_msg = result.unwrap_err().to_string();
+            assert!(
+                err_msg.contains("paths must be a str or list[str]"),
+                "Expected 'paths must be a str or list[str]' in error, got: {}",
+                err_msg
+            );
+        });
     }
 
     #[test]

@@ -1,6 +1,7 @@
 ```{toctree}
 :maxdepth: 2
 
+getting-started
 introduction
 datasets-and-io
 metadata

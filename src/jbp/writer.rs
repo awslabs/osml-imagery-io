@@ -1550,6 +1550,12 @@ impl JBPDatasetWriter {
         // ICORDS (1) - Image Coordinate Representation
         let icords = get_field("ICORDS", "", 1);
         subheader.extend_from_slice(format!("{:1}", icords).as_bytes());
+        // IGEOLO (60) - Image Geographic Location (conditional on ICORDS)
+        // Present when ICORDS is not blank/empty
+        if !icords.trim().is_empty() {
+            let igeolo = get_field("IGEOLO", "", 60);
+            subheader.extend_from_slice(format!("{:60}", igeolo).as_bytes());
+        }
         // NICOM (1) - Number of Image Comments
         subheader.extend_from_slice(b"0");
         // IC (2) - Image Compression (from encoding hints)

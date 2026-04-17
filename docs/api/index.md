@@ -7,6 +7,7 @@ The extension module must be built (`maturin develop`) before these pages render
 ```{toctree}
 :maxdepth: 2
 
+convenience
 io
 reader
 writer

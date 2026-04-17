@@ -17,7 +17,6 @@ osml-imagery-io provides read and write support for NITF (National Imagery Trans
 :maxdepth: 2
 :caption: Contents
 
-getting-started
 user-guide/index
 design/index
 api/index

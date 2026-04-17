@@ -1,50 +1,98 @@
 # Introduction
 
-## What is osml-imagery-io?
+## Why This Library
 
-The **osml-imagery-io** library provides low-level read and write access for data encoded
-using common geospatial imagery formats. It was built using Rust to provide reliable high 
-performance IO routines for both research and production workloads. Python bindings make 
-it easy to use within the broader machine learning and data science communities. It supports
-memory efficient, tiled access to large images and structured metadata encoded using the 
-NITF, SICD, SIDD, TIFF, GeoTIFF, PNG, JPEG 2000, and JPEG standards. Pixels are returned as NumPy arrays that 
-integrate directly with ML frameworks like PyTorch and computer vision libraries like 
-OpenCV and scikit-image.
+Engineers and scientists working with geospatial imagery face a recurring set of
+problems: heavyweight dependencies that complicate deployment, format libraries that
+expose a convenient subset of the spec but hide the details you actually need, and
+cloud-native tooling that falls apart when the data is compressed. osml-imagery-io
+was built to address these problems directly.
 
-The library is designed to serve as the low level IO layer for the
-[OversightML](https://aws.amazon.com/solutions/guidance/processing-overhead-imagery-on-aws/)
-ecosystem. It has a deliberately lean set of dependencies — just the Rust core, PyO3
-bindings, JPEG, TIFF, and JPEG 2000 libraries, and NumPy — giving it a clean install 
-footprint that works reliably in containerized environments, automation pipelines, and 
-secure deployment environments where heavyweight dependency chains are a problem.
+Three engineering decisions drove the architecture:
 
-### How does this compare to other libraries?
+### Deep compliance with geospatial standards
 
-Several established libraries work with geospatial imagery. osml-imagery-io occupies a
-different niche than most of them.
+The goal is to be a high performance reference implementation of the NITF/NSIF and 
+GeoTIFF specifications suitable for production workloads. The library currently supports 
+read/write for all NITF block interleave modes (IMODE == B, P, R, S), the most widely
+used IC compression codes — uncompressed, JPEG 2000, HTJ2K, and JPEG DCT — with masked variants for sparse imagery, and a data-driven Tagged Record Extension decoder/encoder
+that ships with definitions for all publicly available TREs. Data Extension Segments are first-class objects you can read, create, and modify. SICD and SIDD SAR metadata is 
+available through the NITF implementation.
 
-**GDAL** supports hundreds of raster formats and provides reprojection, resampling,
-virtual rasters, and a broad GIS-oriented abstraction layer. It is the right tool when
-you need wide format coverage or prebuilt GIS operations but it is a heavyweight 
-dependency that can be constraining for image scientists. Some IO operations have 
-degraded performance exasperated by layers of virtual file abstractions.
-osml-imagery-io operates at a lower level, giving direct access to individual segments,
-TRE fields, block masks, compression parameters, TIFF tags, and GeoKeys — the kind of 
-fine-grained control the image science community needs when the specifics of how data 
-was collected, modified, and encoded matter as much as the pixel values themselves.
+For GeoTIFF: OGC GeoTIFF 1.1 GeoKeys, Cloud Optimized GeoTIFF with correct
+NewSubfileType, and predictor support for Deflate and LZW compression.
 
-**SarPy** was a Python library from NGA for reading and writing SAR complex data in
-SICD and SIDD formats. NGA
-[ended support for SarPy](https://github.com/ngageoint/sarpy) in January 2026, pointing
-users to a relatively imature [SarKit](https://github.com/ValkyrieSystems/sarkit) as its successor.
-Instead of a dedicated SAR implementation, osml-imagery-io supports SICD and SIDD directly through
-its robust NITF implementation. The sensor independent XML metadata is available from the data segment
-— making it easy to integrate with other libraries that provide the SAR sensor models, image projections, and SAR processing algorithms (e.g.
-[osml-imagery-toolkit](https://github.com/aws-solutions-library-samples/osml-imagery-toolkit)).
+The goal is to give you direct access to individual segments, TRE fields, block
+masks, compression parameters, TIFF tags, and GeoKeys — the format-level detail
+that matters when the specifics of how data was collected, modified, and encoded
+are as important as the pixel values themselves.
 
-### What formats are supported?
+### Minimal, self-contained deployment
 
-#### File Formats
+`pip install` with no system libraries, no C toolchain, no conda. Self-contained
+wheels bundle the performant Rust core and C codecs. This is both a usability 
+benefit — easy to get started — and a production benefit. Fewer dependencies mean 
+a smaller attack surface and fewer packages to patch, which matters for 
+containerized environments, automation pipelines, and security-sensitive deployments.
+
+### Cloud-native tile access that works with compressed data
+
+Existing Zarr codecs cannot decode compressed tiles from TIFF or JPEG 2000 files
+because they lack support for format-specific context. TIFF predictor metadata lives
+outside the tile data. JPEG 2000 tile-parts can be scattered across non-contiguous
+byte ranges. These are not edge cases — they are the norm for satellite imagery.
+
+The library provides VirtualiZarr parsers, format-aware Zarr v3 codecs, and a
+scatter-gather filesystem extension that solve these specific problems. Generate a
+lightweight tile index once, and the Zarr / xarray / Dask ecosystem treats the file
+as a native chunked array. Multi-resolution pyramids follow the
+[GeoZarr multiscales convention](https://geozarr.org/) being developed by the OGC
+GeoZarr Standards Working Group.
+
+## The Dataset Model
+
+The library organizes files around a dataset model inspired by the
+[SpatioTemporal Asset Catalog (STAC)](https://stacspec.org/en) specification. Each
+file you open is a **dataset** (analogous to a STAC Item), and the segments inside
+it — images, text, graphics, data extensions — are **assets** (analogous to STAC
+Assets with typed roles).
+
+```python
+from aws.osml.io import IO
+
+with IO.open("satellite_scene.ntf", "r") as dataset:
+    # Navigate all segments in the file
+    for key in dataset.get_asset_keys():
+        print(key)  # "image:0", "image:1", "text:0", "data:0", ...
+
+    image = dataset.get_asset("image:0")
+    meta = image.metadata.as_dict()
+
+    # Rational polynomial coefficients for geopositioning
+    rpc = meta["RPC00B"]
+    lat_off = rpc["LAT_OFF"]
+    line_scale = rpc["LINE_SCALE"]
+
+    # Acquisition context — mission, pass, date
+    stdidc = meta["STDIDC"]
+    acq_date = stdidc["ACQ_DATE"]
+    mission = stdidc["MISSION"]
+
+    # Exploitation usability — GSD, sun angles, obliquity
+    use00a = meta["USE00A"]
+    gsd = use00a["MEAN_GSD"]
+    sun_el = use00a["SUN_EL"]
+
+    # Read a specific block at a reduced resolution level
+    block = image.get_block(4, 7, resolution_level=2)
+```
+
+This structural alignment makes it straightforward to publish datasets as STAC Items
+and integrate with the broader cloud-native geospatial ecosystem.
+
+## Supported Formats
+
+### File Formats
 
 | Format | Read | Write | Notes |
 |--------|------|-------|-------|
@@ -64,7 +112,7 @@ ModelTransformation) and Cloud Optimized GeoTIFF (COG) conventions. These are no
 separate formats — GeoTIFF adds geospatial tags to a standard TIFF, and COG defines
 a layout convention for efficient range-request access.
 
-#### NITF Image Compression
+### NITF Image Compression
 
 | IC Codes | Compression | Read | Write | Notes |
 |----------|-------------|------|-------|-------|
@@ -81,7 +129,7 @@ a layout convention for efficient range-request access.
 | C9 / M9 | H.264/AVC (MIE4NITF) | ❌ | ❌ | On roadmap. Motion imagery |
 | CA / MA | H.265/HEVC (MIE4NITF) | ❌ | ❌ | On roadmap. Motion imagery |
 
-#### TIFF Compression
+### TIFF Compression
 
 | Compression | Read | Write | Notes |
 |-------------|------|-------|-------|
@@ -91,12 +139,11 @@ a layout convention for efficient range-request access.
 | PackBits | ✅ | ✅ | Lossless; run-length encoding |
 | JPEG | ✅ | ✅ | Lossy; 8-bit only |
 
-### What standards were used?
+## Standards
 
-The functionality described in this guide is based on the following specifications,
-maintained by their respective standards bodies:
+The library is built against the following specifications:
 
-#### NITF / Defense Imagery
+### NITF / Defense Imagery
 
 Maintained by the [NSG Standards Registry (NGA)](https://nsgreg.nga.mil/):
 
@@ -106,13 +153,13 @@ Maintained by the [NSG Standards Registry (NGA)](https://nsgreg.nga.mil/):
 - **NGA SIDD v3.0** — Sensor Independent Derived Data (SAR derived products)
 - **MIL-STD-188-199** — Vector Quantization (VQ) decompression for NITF imagery
 
-#### TIFF / GeoTIFF
+### TIFF / GeoTIFF
 
 - **TIFF Revision 6.0** — Base TIFF file format (Adobe)
 - **OGC GeoTIFF Standard** — Geospatial extensions for TIFF ([OGC](https://www.ogc.org/standards/))
 - **OGC Cloud Optimized GeoTIFF (COG)** — Cloud-native GeoTIFF conventions ([OGC](https://www.ogc.org/standards/))
 
-#### Image Compression
+### Image Compression
 
 - **ISO/IEC 15444-1 (JPEG 2000 Part 1)** — Wavelet-based image compression ([ISO/IEC JTC 1](https://www.iso.org/committee/45382.html))
 - **ISO/IEC 15444-15 (HTJ2K)** — High-Throughput JPEG 2000 ([ISO/IEC JTC 1](https://www.iso.org/committee/45382.html))

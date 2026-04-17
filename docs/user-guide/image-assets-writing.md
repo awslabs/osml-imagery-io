@@ -1,5 +1,36 @@
 # Writing Imagery Assets
 
+## The Simple Path
+
+For common write tasks — saving a NumPy array to a file with sensible defaults —
+`imsave` handles format detection, compression, and blocking for you:
+
+```python
+from aws.osml.io import imsave
+import numpy as np
+
+data = np.random.randint(0, 255, (3, 512, 512), dtype=np.uint8)
+
+# Format inferred from extension, compression and block size auto-selected
+imsave("output.tif", data)   # GeoTIFF with Deflate compression, 256×256 tiles
+imsave("output.ntf", data)   # NITF with JPEG 2000 lossless, 1024×1024 blocks
+imsave("output.png", data)   # PNG
+
+# 2D arrays are treated as single-band images
+grayscale = np.zeros((256, 256), dtype=np.uint8)
+imsave("gray.png", grayscale)
+
+# Add georeferencing
+imsave("geo.tif", data,
+       corners=[(-77.0, 39.0), (-76.5, 39.0), (-76.5, 38.5), (-77.0, 38.5)],
+       crs="EPSG:4326")
+```
+
+When you need full control — custom metadata, specific compression parameters,
+multi-asset datasets, COG overviews, R-set pyramids, or TRE preservation — the
+low-level write API described below gives you direct access to every encoding
+detail.
+
 ## Choosing the Output Format
 
 This library supports writing imagery in multiple formats. NITF 2.1, NSIF 1.0,

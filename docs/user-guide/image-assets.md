@@ -1,5 +1,30 @@
 # Image Assets and Block-Level Access
 
+## The Simple Path
+
+For straightforward reads — load an image, grab a region, pick specific bands — the
+convenience functions handle block assembly and asset selection for you:
+
+```python
+from aws.osml.io import imread
+
+# Full image as a NumPy array (bands, height, width)
+pixels = imread("image.ntf")
+
+# Windowed region — only reads the blocks that overlap
+chip = imread("image.ntf", window=(100, 200, 256, 256))
+
+# Select specific bands (zero-based)
+rgb = imread("image.ntf", bands=[3, 2, 1])
+
+# Reduced resolution (JPEG 2000 only)
+thumbnail = imread("image.ntf", resolution_level=2)
+```
+
+When you need finer control — iterating individual blocks, checking for masked
+regions in sparse imagery, or working with the block grid directly — the
+block-level API described below gives you that access.
+
 ## Tiled Images
 
 Large geospatial images are stored as tiled images. Rather than storing pixel data as

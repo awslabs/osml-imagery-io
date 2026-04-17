@@ -1,5 +1,29 @@
 # Datasets and the IO Interface
 
+## The Simple Path
+
+For most tasks you don't need to think about datasets or assets at all. The
+convenience functions handle file opening, asset selection, and cleanup for you:
+
+```python
+from aws.osml.io import imread, imsave, iminfo
+
+# Read → NumPy array
+pixels = imread("image.ntf")
+
+# Inspect without reading pixels
+info = iminfo("image.ntf")
+print(f"{info.width}x{info.height}, {info.bands} bands, {info.dtype}")
+
+# Save — format inferred from extension
+imsave("output.tif", pixels)
+```
+
+When you need more control — multi-segment files, per-asset metadata, specific
+compression parameters, or write workflows that involve multiple assets — the
+full dataset API described below gives you direct access to everything in the
+file.
+
 ## Opening a Dataset
 
 The `IO` class is the entry point for reading and writing imagery files. It auto-detects

@@ -1746,3 +1746,250 @@ def pyramid_image(
         overviews.append((level, ovr_array, ovr_config))
 
     return (base_array, base_config, overviews)
+
+
+# =============================================================================
+# Convenience API Strategies
+# =============================================================================
+
+# Lossless format configurations for convenience strategies.
+# Each entry: (pixel_type_names, format_string, path_suffix)
+# pixel_type_names are numpy dtype strings that map to PixelType enum members.
+# PNG only supports uint8 and uint16; NITF and GeoTIFF support all four.
+_CONVENIENCE_LOSSLESS_FORMATS = [
+    (["uint8", "uint16", "int16", "float32"], "nitf", ".ntf"),
+    (["uint8", "uint16", "int16", "float32"], "geotiff", ".tif"),
+    (["uint8", "uint16"], "png", ".png"),
+]
+
+# Mapping from numpy dtype name to numpy dtype object for convenience strategies
+_CONVENIENCE_DTYPE_MAP = {
+    "uint8": np.dtype("uint8"),
+    "uint16": np.dtype("uint16"),
+    "int16": np.dtype("int16"),
+    "float32": np.dtype("float32"),
+}
+
+
+@st.composite
+def convenience_image(
+    draw,
+) -> Tuple[np.ndarray, str, str, str]:
+    """Strategy for convenience API round-trip testing across lossless formats.
+
+    Generates ``(array, pixel_type_name, format_string, path_suffix)`` tuples
+    covering all supported lossless format/dtype combinations.
+
+    Covered dtypes: uint8, uint16, int16, float32.
+    Covered formats:
+    - Uncompressed NITF (``.ntf``)
+    - Deflate GeoTIFF (``.tif``)
+    - PNG (``.png``, uint8/uint16 only)
+
+    Image dimensions are small (16–128) and include non-block-aligned sizes.
+    Band counts range from 1 to 4.
+
+    Returns:
+        Tuple of (array, pixel_type_name, format_string, path_suffix)
+        - array: numpy ndarray in CHW layout ``(bands, height, width)``
+        - pixel_type_name: string like ``"uint8"``, ``"float32"``
+        - format_string: format identifier like ``"nitf"``, ``"geotiff"``, ``"png"``
+        - path_suffix: file extension like ``".ntf"``, ``".tif"``, ``".png"``
+    """
+    # Pick a format configuration
+    supported_dtypes, format_string, path_suffix = draw(
+        st.sampled_from(_CONVENIENCE_LOSSLESS_FORMATS)
+    )
+
+    # Pick a dtype name valid for this format
+    pixel_type_name = draw(st.sampled_from(supported_dtypes))
+
+    # Image dimensions: small range, including non-block-aligned values
+    num_rows = draw(st.integers(min_value=16, max_value=128))
+    num_cols = draw(st.integers(min_value=16, max_value=128))
+
+    # Band count: 1–4
+    num_bands = draw(st.integers(min_value=1, max_value=4))
+
+    # Generate the image array
+    dtype = _CONVENIENCE_DTYPE_MAP[pixel_type_name]
+    array = draw(arrays(dtype=dtype, shape=(num_bands, num_rows, num_cols)))
+
+    return (array, pixel_type_name, format_string, path_suffix)
+
+
+@st.composite
+def window_coordinates(
+    draw,
+    width: int,
+    height: int,
+) -> Tuple[int, int, int, int]:
+    """Strategy for window ``(x, y, w, h)`` coordinates.
+
+    Generates a mix of windows that are fully within image bounds and
+    windows that extend beyond the image boundaries (for clamping tests).
+    Window dimensions are always positive.
+
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite).
+        width: Image width in pixels.
+        height: Image height in pixels.
+
+    Returns:
+        Tuple of ``(x, y, w, h)`` where ``w > 0`` and ``h > 0``.
+    """
+    window_type = draw(st.sampled_from(["within_bounds", "extends_beyond"]))
+
+    if window_type == "within_bounds":
+        # Window fully within image bounds
+        x = draw(st.integers(min_value=0, max_value=max(0, width - 1)))
+        y = draw(st.integers(min_value=0, max_value=max(0, height - 1)))
+        w = draw(st.integers(min_value=1, max_value=max(1, width - x)))
+        h = draw(st.integers(min_value=1, max_value=max(1, height - y)))
+    else:
+        # Window that may extend beyond image boundaries
+        # Allow negative offsets and sizes that exceed image dimensions
+        x = draw(st.integers(min_value=-width // 2, max_value=width - 1))
+        y = draw(st.integers(min_value=-height // 2, max_value=height - 1))
+        w = draw(st.integers(min_value=1, max_value=width))
+        h = draw(st.integers(min_value=1, max_value=height))
+
+    return (x, y, w, h)
+
+
+@st.composite
+def band_subsets(
+    draw,
+    num_bands: int,
+) -> list:
+    """Strategy for valid non-empty subsets of band indices.
+
+    Generates non-empty subsets of ``range(num_bands)`` as lists, including:
+    - Single-band selections
+    - Reordered bands
+    - Full band set
+
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite).
+        num_bands: Total number of bands in the image.
+
+    Returns:
+        A non-empty list of zero-based band indices. May contain
+        reordered indices but no duplicates.
+    """
+    all_indices = list(range(num_bands))
+
+    subset_type = draw(st.sampled_from(["single", "reordered", "full", "random_subset"]))
+
+    if subset_type == "single":
+        # Single band
+        idx = draw(st.integers(min_value=0, max_value=num_bands - 1))
+        return [idx]
+    elif subset_type == "full":
+        # All bands in order
+        return all_indices
+    elif subset_type == "reordered":
+        # All bands in a random permutation
+        perm = draw(st.permutations(all_indices))
+        return list(perm)
+    else:
+        # Random non-empty subset (may be reordered)
+        subset = draw(
+            st.lists(
+                st.sampled_from(all_indices),
+                min_size=1,
+                max_size=num_bands,
+                unique=True,
+            )
+        )
+        return subset
+
+
+def tile_sizes(
+    width: int,
+    height: int,
+) -> st.SearchStrategy[Tuple[int, int]]:
+    """Strategy for tile dimensions ``(tile_w, tile_h)``.
+
+    Generates tile sizes from 16×16 up to the full image dimensions.
+
+    Args:
+        width: Image width in pixels.
+        height: Image height in pixels.
+
+    Returns:
+        Strategy producing ``(tile_w, tile_h)`` tuples where
+        ``16 <= tile_w <= width`` and ``16 <= tile_h <= height``.
+    """
+    return st.tuples(
+        st.integers(min_value=16, max_value=max(16, width)),
+        st.integers(min_value=16, max_value=max(16, height)),
+    )
+
+
+def overlap_sizes(
+    tile_width: int,
+    tile_height: int,
+) -> st.SearchStrategy[Tuple[int, int]]:
+    """Strategy for valid overlap ``(overlap_w, overlap_h)`` tuples.
+
+    Generates overlaps where ``0 <= overlap_w < tile_width`` and
+    ``0 <= overlap_h < tile_height``.
+
+    Args:
+        tile_width: Tile width in pixels.
+        tile_height: Tile height in pixels.
+
+    Returns:
+        Strategy producing ``(overlap_w, overlap_h)`` tuples.
+    """
+    return st.tuples(
+        st.integers(min_value=0, max_value=max(0, tile_width - 1)),
+        st.integers(min_value=0, max_value=max(0, tile_height - 1)),
+    )
+
+
+@st.composite
+def axis_aligned_corners(
+    draw,
+) -> list:
+    """Strategy for four corner coordinate tuples forming axis-aligned rectangles.
+
+    Generates four ``(lon, lat)`` tuples in UL, UR, LR, LL order where:
+    - UL.lat == UR.lat (top edge is horizontal)
+    - UL.lon == LL.lon (left edge is vertical)
+    - LR.lon == UR.lon (right edge is vertical)
+    - LR.lat == LL.lat (bottom edge is horizontal)
+    - Coordinate ranges: lon in [-180, 180], lat in [-90, 90]
+    - The rectangle has positive width and height
+
+    Returns:
+        List of four ``(lon, lat)`` tuples: ``[UL, UR, LR, LL]``.
+    """
+    # Generate two distinct longitudes and two distinct latitudes
+    lon1 = draw(st.floats(min_value=-180.0, max_value=179.0,
+                          allow_nan=False, allow_infinity=False))
+    lon2 = draw(st.floats(min_value=lon1 + 0.001, max_value=180.0,
+                          allow_nan=False, allow_infinity=False))
+
+    lat1 = draw(st.floats(min_value=-89.0, max_value=89.0,
+                          allow_nan=False, allow_infinity=False))
+    lat2 = draw(st.floats(min_value=lat1 + 0.001, max_value=90.0,
+                          allow_nan=False, allow_infinity=False))
+
+    # Ensure lon1 < lon2 and lat1 < lat2
+    assume(lon2 > lon1)
+    assume(lat2 > lat1)
+
+    left_lon = lon1
+    right_lon = lon2
+    bottom_lat = lat1
+    top_lat = lat2
+
+    # UL, UR, LR, LL
+    ul = (left_lon, top_lat)
+    ur = (right_lon, top_lat)
+    lr = (right_lon, bottom_lat)
+    ll = (left_lon, bottom_lat)
+
+    return [ul, ur, lr, ll]

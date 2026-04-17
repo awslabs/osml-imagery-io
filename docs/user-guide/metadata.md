@@ -1,5 +1,46 @@
 # Metadata
 
+## The Simple Path
+
+For a quick look at image properties without reading any pixels, `iminfo` gives
+you dimensions, band count, pixel type, and block layout in one call:
+
+```python
+from aws.osml.io import iminfo
+
+info = iminfo("image.ntf")
+print(f"{info.width}x{info.height}, {info.bands} bands, {info.dtype}")
+print(f"Block size: {info.block_size}")
+print(f"Resolution levels: {info.num_resolution_levels}")
+```
+
+`iminfo` also includes the full format-specific metadata dictionary for the
+image segment, so you can inspect compression, TREs, TIFF tags, and other
+fields without dropping down to the low-level API:
+
+```python
+# NITF: subheader fields and TREs
+info = iminfo("image.ntf")
+print(info.metadata["IC"])          # "C8" (JPEG 2000)
+print(info.metadata["IGEOLO"])      # 60-char geographic location string
+
+# TREs are nested dicts
+if "GEOLOB" in info.metadata:
+    print(info.metadata["GEOLOB"]["ARV"])
+
+# GeoTIFF: IFD tags keyed by numeric tag ID
+info = iminfo("image.tif")
+print(info.metadata["259"])         # Compression tag value
+print(info.metadata["33550"])       # ModelPixelScale
+```
+
+The `metadata` dict is a snapshot — a plain Python dictionary captured when
+`iminfo` is called. It is not a live reference to the file.
+
+When you need more control — prefix filtering, dataset-level metadata, or
+write-side metadata — the full `MetadataProvider` interface described below
+gives you access to everything in the file.
+
 ## The MetadataProvider Interface
 
 All assets and datasets expose metadata through the `MetadataProvider` interface,

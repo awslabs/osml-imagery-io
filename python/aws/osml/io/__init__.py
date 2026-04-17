@@ -27,6 +27,7 @@ from aws.osml.io._io import (
     __version__,
     decode_tiff_tile,
 )
+from aws.osml.io.convenience import ImageInfo, Tile, iminfo, imread, imsave, tiles
 
 # Convenience alias for IO.open
 open = IO.open
@@ -61,6 +62,13 @@ __all__ = [
     "Value",
     # Codec decode functions
     "decode_tiff_tile",
+    # Convenience API
+    "imread",
+    "imsave",
+    "iminfo",
+    "tiles",
+    "ImageInfo",
+    "Tile",
 ]
 
 # Optional VirtualiZarr parser exports — only available when virtualizarr is installed

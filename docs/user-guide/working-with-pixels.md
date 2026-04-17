@@ -1,5 +1,27 @@
 # Working with Pixels
 
+## The Simple Path
+
+For most pixel workflows, the convenience functions give you NumPy arrays
+directly without thinking about blocks or assets:
+
+```python
+from aws.osml.io import imread, tiles
+
+# Full image as a CHW NumPy array
+pixels = imread("image.ntf")
+print(pixels.shape)  # (3, 1024, 1024) — (bands, height, width)
+print(pixels.dtype)  # uint8
+
+# Process a large image in tiles without loading it all into memory
+for tile in tiles("large_image.tif", tile_size=(256, 256)):
+    process(tile.data)  # tile.data is a CHW NumPy array
+```
+
+The sections below cover the details of how pixel data is represented, how to
+convert between channel orderings for different libraries, and how to work with
+in-memory image buffers for writing.
+
 ## Image Data Arrays
 
 Block data is returned as a [NumPy](https://numpy.org/) `ndarray`. NumPy is the

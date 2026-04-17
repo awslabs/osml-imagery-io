@@ -1,37 +1,175 @@
 # OversightML Imagery IO
 
 [![CI](https://github.com/awslabs/osml-imagery-io/actions/workflows/ci.yml/badge.svg)](https://github.com/awslabs/osml-imagery-io/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/osml-imagery-io)](https://pypi.org/project/osml-imagery-io/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![Rust](https://img.shields.io/badge/rust-2021_edition-orange)](https://www.rust-lang.org/)
 
-High-performance read/write library for geospatial imagery formats, built in Rust with Python bindings.
+Specification-compliant read/write for NITF, GeoTIFF, JPEG 2000, and more — with no
+system dependencies and cloud-native tile access. Built in Rust, used from Python.
 
-OSML Imagery IO gives you direct, tiled access to NITF, GeoTIFF, JPEG 2000, JPEG, and PNG imagery — the formats that power defense, intelligence, and commercial satellite workflows. Pixels come back as NumPy arrays ready for PyTorch, OpenCV, or any ML pipeline.
+<p align="center">
+  <img src="docs/_static/images/hero.png" alt="Satellite imagery decoded with osml-imagery-io" width="640">
+</p>
 
-## Key Features
+## Why This Library
 
-- **Read and write** NITF 2.1, TIFF/GeoTIFF, Cloud Optimized GeoTIFF (COG), JPEG 2000, JPEG, and PNG
-- **SICD/SIDD support** for SAR complex and derived data via the NITF implementation
-- **Cloud-native access** through [Zarr](https://zarr.dev/), [VirtualiZarr](https://github.com/zarr-developers/VirtualiZarr), and [Kerchunk](https://fsspec.github.io/kerchunk/) integration — access tiles in S3 via HTTP range requests without downloading entire files
-- **Rust performance with Python convenience** — a lean native core with PyO3 bindings and minimal dependencies
-- **Fine-grained control** over segments, TRE fields, block masks, compression parameters, TIFF tags, and GeoKeys
-- **Memory-efficient tiled access** to multi-GB imagery with block-level reads
+- **`pip install` and go** — self-contained wheels with a Rust core and bundled codecs.
+  No system libraries, no C toolchain, no conda. Minimal dependencies also mean a
+  smaller attack surface and fewer packages to patch — a real consideration for
+  production and security-sensitive deployments.
 
-## Cloud Imagery Access
+- **Specification-compliant NITF read/write** — supports all four IMODE interleave
+  modes (B, P, R, S) and compression types including uncompressed, JPEG 2000, HTJ2K,
+  and JPEG DCT — with masked variants for sparse imagery. An extensible, data-driven
+  TRE parser ships with definitions for all publicly available Tagged Record Extensions,
+  and Data Extension Segments are first-class objects you can read, create, and modify.
+  SICD and SIDD SAR data are supported through the NITF implementation.
 
-Existing geospatial imagery sitting in S3 can be accessed as virtual Zarr arrays — no format conversion needed. The library provides:
+- **Cloud-native tile access that works with compressed data** — existing Zarr codecs
+  cannot decode compressed tiles from TIFF or JPEG 2000 files because they lack support
+  for format-specific context like TIFF predictor metadata and JPEG 2000 multi-tile-part
+  reassembly. This library provides custom Zarr v3 codecs that solve these problems,
+  along with VirtualiZarr parsers and a scatter-gather filesystem for non-contiguous
+  byte ranges — making the promise of virtual Zarr access work with real compressed
+  geospatial imagery.
 
-- **VirtualiZarr parsers** that scan NITF, TIFF, and JPEG 2000 files to build lightweight tile indexes (Kerchunk JSON/Parquet)
-- **Custom Zarr v3 codecs** that decode format-specific tile data (endian swap, interleave conversion, JPEG 2000 tile-part reconstruction)
-- **MultiReferenceFileSystem** — an fsspec extension that handles scatter-gather I/O for JPEG 2000 codestreams with non-contiguous tile-parts
+- **Simple when you want it, deep when you need it** — `imread` / `imsave` / `tiles`
+  for common tasks; full low-level API for format-specific control over segments,
+  metadata, block masks, and compression parameters.
 
-Generate a tile index once, upload it alongside your imagery, and the Zarr ecosystem ([xarray](https://xarray.dev/), [Dask](https://www.dask.org/)) treats the file as a native chunked array.
+## Quick Start
+
+```bash
+pip install osml-imagery-io
+```
+
+```python
+from aws.osml.io import imread, imsave, tiles
+
+# Read an image as a NumPy array
+pixels = imread("image.ntf")                              # shape: (bands, height, width)
+
+# Read a windowed region
+chip = imread("image.ntf", window=(100, 200, 256, 256))   # (x, y, width, height)
+
+# Save to any supported format — inferred from extension
+imsave("output.tif", chip)
+
+# Iterate over tiles for memory-efficient processing of large images
+for tile in tiles("large_image.tif", tile_size=(256, 256)):
+    process(tile.data)
+```
+
+## Full Format Access
+
+The convenience functions cover common tasks. When you need to work with the format
+itself — multi-segment NITF files, TRE fields, block masks, resolution levels — the
+full API is there.
+
+```python
+from aws.osml.io import IO
+
+with IO.open("satellite_scene.ntf", "r") as dataset:
+    # Navigate all segments in the file
+    for key in dataset.get_asset_keys():
+        print(key)  # "image:0", "image:1", "text:0", "data:0", ...
+
+    image = dataset.get_asset("image:0")
+    meta = image.metadata.as_dict()
+
+    # Rational polynomial coefficients for geopositioning
+    rpc = meta["RPC00B"]
+    lat_off = rpc["LAT_OFF"]
+    line_scale = rpc["LINE_SCALE"]
+
+    # Acquisition context — mission, pass, date
+    stdidc = meta["STDIDC"]
+    acq_date = stdidc["ACQ_DATE"]
+    mission = stdidc["MISSION"]
+
+    # Exploitation usability — GSD, sun angles, obliquity
+    use00a = meta["USE00A"]
+    gsd = use00a["MEAN_GSD"]
+    sun_el = use00a["SUN_EL"]
+
+    # Read a specific block at a reduced resolution level
+    block = image.get_block(4, 7, resolution_level=2)
+```
+
+The dataset model is inspired by the
+[SpatioTemporal Asset Catalog (STAC)](https://stacspec.org/en) specification — each
+dataset maps to a STAC Item, assets map to STAC Assets with typed roles, and the
+structural alignment makes it straightforward to publish datasets as STAC Items.
+
+See the [User Guide](docs/user-guide/index.md) for the full API including
+[metadata and TRE access](docs/user-guide/metadata.md),
+[writing imagery](docs/user-guide/image-assets-writing.md), and
+[cloud-native Zarr access](docs/user-guide/zarr-codecs.md).
+
+## Supported Formats
+
+### NITF / NSIF
+
+| Capability | Details |
+|------------|---------|
+| Versions | NITF 2.1, NSIF 1.0 |
+| Compression (IC) | NC, NM (uncompressed/masked), C8, M8 (JPEG 2000), CD, MD (HTJ2K), C3, M3, I1 (JPEG DCT) |
+| Interleave (IMODE) | B (band), P (pixel), R (row), S (sequential) |
+| TRE parser | Data-driven with definitions for all publicly available TREs |
+| Data Extensions | Read and write DES payloads (SICD/SIDD XML, TRE overflow, etc.) |
+| SAR | SICD complex data, SIDD derived products |
+| Pixel types | 8/16/32-bit unsigned, 16/32-bit signed, 32/64-bit float, 32/64-bit complex |
+| Block masks | Sparse imagery via masked compression modes (NM, M8, MD, M3) |
+| Multi-segment | Multiple image, text, graphic, and data segments per file |
+| Multi-file pyramids | R-set resolution pyramids across separate files |
+
+### TIFF / GeoTIFF / COG
+
+| Capability | Details |
+|------------|---------|
+| Compression | Deflate, LZW, None — with horizontal differencing predictor |
+| Tiling | Configurable tile dimensions (multiples of 16) |
+| GeoKeys | OGC GeoTIFF 1.1 — CRS, pixel scale, tiepoints, affine transforms |
+| COG | Cloud Optimized GeoTIFF with overview IFDs and correct NewSubfileType |
+| Pixel types | 8/16/32-bit unsigned, 16/32-bit signed, 32/64-bit float |
+
+### Other Formats
+
+JPEG 2000, JPEG, and PNG are also supported for read and write. These are not
+geospatial formats, but they appear frequently as interchange formats and
+quick-look products alongside NITF and GeoTIFF imagery.
+
+## Cloud-Native Access
+
+Access tiles from NITF, TIFF, and JPEG 2000 files in S3 as virtual Zarr arrays — no
+format conversion needed. Generate a lightweight tile index once, and the
+[Zarr](https://zarr.dev/) / [xarray](https://xarray.dev/) / [Dask](https://www.dask.org/)
+ecosystem treats the file as a native chunked array.
+
+The library provides three components that together make this work for real compressed
+geospatial data:
+
+- **VirtualiZarr parsers** that scan NITF, TIFF, and JPEG 2000 files to build
+  multi-resolution tile indexes (Kerchunk JSON/Parquet)
+- **Format-aware Zarr v3 codecs** that handle the decoding problems standard codecs
+  cannot — NITF endian swap and interleave conversion, JPEG 2000 tile-part
+  reconstruction from non-contiguous byte ranges, and TIFF predictor reversal using
+  metadata from outside the tile data
+- **MultiReferenceFileSystem** — an fsspec extension that adds scatter-gather I/O for
+  JPEG 2000 codestreams where a single tile's data is scattered across multiple
+  non-contiguous locations in the file (common with RLCP/RPCL progression orders in
+  satellite imagery)
+
+Multi-resolution pyramids follow the
+[GeoZarr multiscales convention](https://geozarr.org/) being developed by the OGC
+GeoZarr Standards Working Group.
 
 ```python
 from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
-# Index a file (works for NITF, TIFF, JPEG 2000)
+# Build a tile index (works for NITF, TIFF, JPEG 2000)
 parser = OversightMLParser(local_paths="image.ntf")
 store = parser(url="s3://my-bucket/imagery/image.ntf")
 write_tile_index(store, "image.ntf.tile_index.json")
@@ -51,62 +189,18 @@ fs = MultiReferenceFileSystem(
 )
 store = FsspecStore(fs=fs, read_only=True, path="")
 root = zarr.open_group(store, mode="r", zarr_format=2)
-tile = root["image_segment_0"][0:3, 768:1024, 1024:1280]
+tile = root["0/data"][0:3, 768:1024, 1024:1280]
 ```
 
-## Quick Start
+See the [Cloud Imagery Access guide](docs/user-guide/zarr-codecs.md) for the full
+workflow.
 
-### Installation
+## Documentation
 
-```bash
-pip install osml-imagery-io
-```
-
-### Reading Imagery
-
-```python
-from aws.osml.io import IO
-
-with IO.open(["image.ntf"], "r") as dataset:
-    image_keys = dataset.get_asset_keys(asset_type="image")
-    image = dataset.get_asset(image_keys[0])
-    block = image.get_block(0, 0, resolution_level=0)
-    print(block.shape)
-```
-
-### Writing Imagery
-
-```python
-from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
-import numpy as np
-
-metadata = BufferedMetadataProvider()
-metadata.set("IC", "NC")
-metadata.set("IMODE", "B")
-metadata.set("NPPBH", "256")
-metadata.set("NPPBV", "256")
-
-image_data = np.zeros((3, 512, 512), dtype=np.uint8)
-provider = BufferedImageAssetProvider.create(
-    key="image_0", num_columns=512, num_rows=512, num_bands=3,
-    block_width=256, block_height=256, pixel_type=PixelType.UInt8, metadata=metadata,
-)
-provider.set_full_image(image_data)
-
-with IO.open(["output.ntf"], "w", "nitf") as writer:
-    writer.add_asset("image_segment_0", provider)
-```
-
-## Supported Formats
-
-| Format | Read | Write |
-|--------|------|-------|
-| NITF 2.1 / NSIF 1.0 | ✅ | ✅ |
-| SICD / SIDD (via NITF) | ✅ | ✅ |
-| TIFF / GeoTIFF / COG | ✅ | ✅ |
-| JPEG 2000 (.j2k, .jp2) | ✅ | ✅ |
-| JPEG | ✅ | ✅ |
-| PNG | ✅ | ✅ |
+- [Getting Started](docs/user-guide/getting-started.md) — install, read, write, tile in a few lines
+- [User Guide](docs/user-guide/index.md) — datasets, metadata, block access, writing, cloud access
+- [API Reference](docs/api/index.md) — full Python API documentation
+- [Design Documents](docs/design/index.md) — architecture and design decisions
 
 ## Development
 
@@ -119,14 +213,13 @@ pytest
 cargo test
 ```
 
-## Documentation
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
-Full documentation is available at [docs/](docs/index.md), including API reference, user guides, and design documents.
+## Security
 
-## Contributing
-
-This project welcomes contributions and suggestions. If you would like to submit a pull request, see our [Contribution Guide](CONTRIBUTING.md) for more information. We kindly ask that you do not open a public GitHub issue to report security concerns. Instead follow reporting mechanisms described in [SECURITY](SECURITY.md).
+Please do not open a public GitHub issue to report security concerns. Follow the
+reporting mechanisms described in [SECURITY](SECURITY.md).
 
 ## License
 
-This library is licensed under the Apache 2.0 License. See the [LICENSE](LICENSE) file.
+This project is licensed under the Apache 2.0 License. See the [LICENSE](LICENSE) file.
