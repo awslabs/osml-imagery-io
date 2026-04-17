@@ -191,12 +191,26 @@ pub struct opj_dparameters_t {
     pub decod_format: c_int,
     /// Output format (not used)
     pub cod_format: c_int,
+    /// Decoding area left boundary
+    pub da_x0: u32,
+    /// Decoding area right boundary
+    pub da_x1: u32,
+    /// Decoding area up boundary
+    pub da_y0: u32,
+    /// Decoding area bottom boundary
+    pub da_y1: u32,
     /// Verbose mode
-    pub m_verbose: u32,
+    pub m_verbose: c_int,
     /// Tile number to decode (0 = all tiles)
     pub tile_index: u32,
     /// Number of tiles to decode
     pub nb_tile_to_decode: u32,
+    /// JPWL correction capabilities
+    pub jpwl_correct: c_int,
+    /// Expected number of components (JPWL)
+    pub jpwl_exp_comps: c_int,
+    /// Maximum number of tiles (JPWL)
+    pub jpwl_max_tiles: c_int,
     /// Flags (internal use)
     pub flags: u32,
 }
@@ -221,6 +235,8 @@ pub struct opj_cparameters_t {
     pub cp_fixed_alloc: c_int,
     /// Fixed layer (not used)
     pub cp_fixed_quality: c_int,
+    /// Fixed layer
+    pub cp_matrice: *mut c_int,
     /// Comment for coding
     pub cp_comment: *mut c_char,
     /// CSIZ: coding style
@@ -329,46 +345,53 @@ pub struct opj_cparameters_t {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct opj_poc_t {
-    /// Resolution level index for the start of a progression
+    /// Resolution num start, Component num start, given by POC
     pub resno0: u32,
-    /// Component index for the start of a progression
     pub compno0: u32,
-    /// Layer index for the start of a progression
-    pub layno0: u32,
-    /// Resolution level index for the end of a progression
-    pub resno1: u32,
-    /// Component index for the end of a progression
-    pub compno1: u32,
-    /// Layer index for the end of a progression
+    /// Layer num end, Resolution num end, Component num end, given by POC
     pub layno1: u32,
-    /// Layer index for the end of a progression
-    pub layno_end: u32,
-    /// Precinct index for the start of a progression
+    pub resno1: u32,
+    pub compno1: u32,
+    /// Layer num start, Precinct num start, Precinct num end
+    pub layno0: u32,
     pub precno0: u32,
-    /// Precinct index for the end of a progression
     pub precno1: u32,
-    /// Progression order
+    /// Progression order enum
     pub prg1: c_int,
-    /// Progression order
     pub prg: c_int,
-    /// Progression order name
+    /// Progression order string
     pub progorder: [c_char; 5],
-    /// Tile index
-    pub tile: u16,
-    /// Start of packet (not used)
+    /// Tile number (starting at 1)
+    pub tile: u32,
+    /// Start and end values for Tile width and height
     pub tx0: i32,
-    /// Start of packet (not used)
     pub tx1: i32,
-    /// Start of packet (not used)
     pub ty0: i32,
-    /// Start of packet (not used)
     pub ty1: i32,
-    /// Start of packet (not used)
+    /// Start value, initialised in pi_initialise_encode
+    pub lay_s: u32,
+    pub res_s: u32,
+    pub comp_s: u32,
+    pub prc_s: u32,
+    /// End value, initialised in pi_initialise_encode
+    pub lay_e: u32,
+    pub res_e: u32,
+    pub comp_e: u32,
+    pub prc_e: u32,
+    /// Start and end values of Tile width and height, initialised in pi_initialise_encode
+    pub tx_s: u32,
+    pub tx_e: u32,
+    pub ty_s: u32,
+    pub ty_e: u32,
     pub dx: u32,
-    /// Start of packet (not used)
     pub dy: u32,
-    /// Comp index for the start of a progression (not used)
+    /// Temporary values for Tile parts, initialised in pi_create_encode
+    pub lay_t: u32,
+    pub res_t: u32,
     pub comp_t: u32,
+    pub prc_t: u32,
+    pub tx0_t: u32,
+    pub ty0_t: u32,
 }
 
 
@@ -845,3 +868,11 @@ extern "C" {
         p_options: *const *const c_char,
     ) -> c_int;
 }
+
+// Compile-time size assertions — ensures Rust struct layouts match C ABI
+const _: () = assert!(std::mem::size_of::<opj_image_comp_t>() == 64);
+const _: () = assert!(std::mem::size_of::<opj_image_t>() == 48);
+const _: () = assert!(std::mem::size_of::<opj_image_cmptparm_t>() == 36);
+const _: () = assert!(std::mem::size_of::<opj_poc_t>() == 148);
+const _: () = assert!(std::mem::size_of::<opj_dparameters_t>() == 8252);
+const _: () = assert!(std::mem::size_of::<opj_cparameters_t>() == 18720);

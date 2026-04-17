@@ -49,7 +49,7 @@ pub use writer::J2KDatasetWriter;
 
 // OpenJPEG implementation (feature-gated)
 #[cfg(feature = "openjpeg")]
-mod sys;
+pub(crate) mod sys;
 
 #[cfg(feature = "openjpeg")]
 pub(crate) mod ffi;

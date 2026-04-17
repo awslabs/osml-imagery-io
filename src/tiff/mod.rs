@@ -1,6 +1,6 @@
 //! TIFF format support via libtiff FFI bindings.
 
-mod sys;
+pub(crate) mod sys;
 pub(crate) mod ffi;
 pub(crate) mod tags;
 mod geotiff;

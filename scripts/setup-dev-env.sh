@@ -133,6 +133,114 @@ else
     echo_warning "Maturin not found. Install with: pip install maturin"
 fi
 
+# =============================================================================
+# Native Library Version Checks
+# =============================================================================
+# These checks verify that the dynamically linked C libraries in the conda
+# environment match the versions and ABI expected by the Rust FFI bindings in
+# src/*/sys.rs. A mismatch can cause silent memory corruption.
+#
+# See docs/design/native-library-ffi.md for background.
+# =============================================================================
+
+FFI_CHECK_FAILED=0
+
+# --- Expected versions (must match release.yml and sys.rs) ---
+# JPEG_LIB_VERSION is the emulated IJG ABI version, NOT the libjpeg-turbo
+# release version. It is controlled by the -DWITH_JPEG8 build flag.
+# Our release workflow builds with -DWITH_JPEG8=1, so the expected ABI is 80.
+EXPECTED_JPEG_LIB_VERSION=80
+EXPECTED_OPENJPEG_MAJOR=2
+EXPECTED_OPENJPEG_MINOR=5
+
+check_native_libs() {
+    local include_dir=""
+
+    if [ -n "$CONDA_PREFIX" ] && [ -d "$CONDA_PREFIX/include" ]; then
+        include_dir="$CONDA_PREFIX/include"
+    elif [ -d "/usr/local/include" ]; then
+        include_dir="/usr/local/include"
+    elif [ -d "/opt/homebrew/include" ]; then
+        include_dir="/opt/homebrew/include"
+    fi
+
+    if [ -z "$include_dir" ]; then
+        echo_warning "Could not find native library headers. Skipping FFI checks."
+        return
+    fi
+
+    # --- libjpeg-turbo: check JPEG_LIB_VERSION (ABI version) ---
+    local jconfig="$include_dir/jconfig.h"
+    if [ -f "$jconfig" ]; then
+        local jpeg_lib_ver
+        jpeg_lib_ver=$(grep '#define JPEG_LIB_VERSION ' "$jconfig" 2>/dev/null | awk '{print $3}')
+        local jpeg_turbo_ver
+        jpeg_turbo_ver=$(grep '#define LIBJPEG_TURBO_VERSION ' "$jconfig" 2>/dev/null | awk '{print $3}')
+
+        if [ -n "$jpeg_lib_ver" ]; then
+            if [ "$jpeg_lib_ver" -eq "$EXPECTED_JPEG_LIB_VERSION" ]; then
+                echo_success "libjpeg-turbo ${jpeg_turbo_ver:-unknown} (JPEG_LIB_VERSION=$jpeg_lib_ver)"
+            else
+                echo_error "libjpeg-turbo JPEG_LIB_VERSION=$jpeg_lib_ver, expected $EXPECTED_JPEG_LIB_VERSION"
+                echo "  The Rust FFI structs in src/jpeg/sys.rs are written for ABI version $EXPECTED_JPEG_LIB_VERSION."
+                echo "  The installed library uses ABI version $jpeg_lib_ver (struct layouts differ)."
+                echo "  This will cause incorrect field offsets when using the libjpeg API."
+                echo "  See docs/design/native-library-ffi.md for details."
+                FFI_CHECK_FAILED=1
+            fi
+        fi
+    else
+        echo_warning "jconfig.h not found — cannot verify libjpeg-turbo ABI version"
+    fi
+
+    # --- OpenJPEG: check major.minor version ---
+    local opj_config="$include_dir/openjpeg-2.5/opj_config.h"
+    # Try alternate paths
+    [ ! -f "$opj_config" ] && opj_config="$include_dir/openjpeg-2.4/opj_config.h"
+    [ ! -f "$opj_config" ] && opj_config="$include_dir/openjpeg.h"
+
+    if [ -f "$opj_config" ]; then
+        local opj_major opj_minor opj_build
+        opj_major=$(grep '#define OPJ_VERSION_MAJOR' "$opj_config" 2>/dev/null | awk '{print $3}')
+        opj_minor=$(grep '#define OPJ_VERSION_MINOR' "$opj_config" 2>/dev/null | awk '{print $3}')
+        opj_build=$(grep '#define OPJ_VERSION_BUILD' "$opj_config" 2>/dev/null | awk '{print $3}')
+
+        if [ -n "$opj_major" ] && [ -n "$opj_minor" ]; then
+            if [ "$opj_major" -eq "$EXPECTED_OPENJPEG_MAJOR" ] && [ "$opj_minor" -eq "$EXPECTED_OPENJPEG_MINOR" ]; then
+                echo_success "OpenJPEG ${opj_major}.${opj_minor}.${opj_build:-0}"
+            else
+                echo_warning "OpenJPEG ${opj_major}.${opj_minor}.${opj_build:-0} (expected ${EXPECTED_OPENJPEG_MAJOR}.${EXPECTED_OPENJPEG_MINOR}.x)"
+                echo "  A different major.minor version may have different struct layouts."
+                echo "  Run the FFI verification procedure in docs/design/native-library-ffi.md."
+            fi
+        fi
+    else
+        echo_warning "OpenJPEG headers not found — cannot verify version"
+    fi
+
+    # --- libtiff: report version (low risk, opaque handles) ---
+    local tiffvers="$include_dir/tiffvers.h"
+    if [ -f "$tiffvers" ]; then
+        local tiff_ver
+        tiff_ver=$(grep '#define TIFFLIB_VERSION_STR_MAJ_MIN_MIC' "$tiffvers" 2>/dev/null | sed 's/.*"\(.*\)".*/\1/')
+        if [ -n "$tiff_ver" ]; then
+            echo_success "libtiff $tiff_ver"
+        fi
+    else
+        echo_warning "libtiff headers not found — cannot verify version"
+    fi
+}
+
+check_native_libs
+
+if [ "$FFI_CHECK_FAILED" -eq 1 ]; then
+    echo ""
+    echo_warning "FFI version mismatch detected. The Rust FFI struct definitions may not"
+    echo "  match the installed C library headers. This can cause silent memory"
+    echo "  corruption when using the libjpeg API (not TurboJPEG)."
+    echo "  See docs/design/native-library-ffi.md for the verification procedure."
+fi
+
 echo ""
 echo "Environment ready. Available commands:"
 echo "  maturin develop    - Build and install Python extension"

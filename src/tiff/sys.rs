@@ -381,3 +381,6 @@ pub const TIFF_DOUBLE: u32 = 12;
 
 /// Field bit value for custom (non-standard) tags
 pub const FIELD_CUSTOM: u16 = 65;
+
+// Compile-time size assertions — ensures Rust struct layouts match C ABI
+const _: () = assert!(std::mem::size_of::<TIFFFieldInfo>() == 24);

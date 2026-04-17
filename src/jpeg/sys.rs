@@ -275,7 +275,7 @@ extern "C" {
 // =============================================================================
 
 /// JPEG library version
-pub const JPEG_LIB_VERSION: c_int = 62;
+pub const JPEG_LIB_VERSION: c_int = 80;
 
 /// Maximum number of components
 pub const MAX_COMPONENTS: usize = 10;
@@ -524,6 +524,16 @@ pub struct jpeg_compress_struct {
     /// Input gamma
     pub input_gamma: f64,
 
+    /// Scale numerator // JPEG_LIB_VERSION >= 70
+    pub scale_num: c_uint,
+    /// Scale denominator // JPEG_LIB_VERSION >= 70
+    pub scale_denom: c_uint,
+
+    /// JPEG image width // JPEG_LIB_VERSION >= 70
+    pub jpeg_width: c_uint,
+    /// JPEG image height // JPEG_LIB_VERSION >= 70
+    pub jpeg_height: c_uint,
+
     /// Data precision (8 or 12 bits)
     pub data_precision: c_int,
 
@@ -537,6 +547,8 @@ pub struct jpeg_compress_struct {
 
     /// Quantization tables
     pub quant_tbl_ptrs: [*mut JQUANT_TBL; 4],
+    /// Quantization scale factors // JPEG_LIB_VERSION >= 70
+    pub q_scale_factor: [c_int; 4],
     /// DC Huffman tables
     pub dc_huff_tbl_ptrs: [*mut JHUFF_TBL; 4],
     /// AC Huffman tables
@@ -562,6 +574,8 @@ pub struct jpeg_compress_struct {
     pub optimize_coding: boolean,
     /// CCIR601 sampling flag
     pub CCIR601_sampling: boolean,
+    /// Fancy downsampling flag // JPEG_LIB_VERSION >= 70
+    pub do_fancy_downsampling: boolean,
     /// Smoothing factor
     pub smoothing_factor: c_int,
     /// DCT algorithm selector
@@ -592,6 +606,10 @@ pub struct jpeg_compress_struct {
     pub progressive_mode: boolean,
     pub max_h_samp_factor: c_int,
     pub max_v_samp_factor: c_int,
+    /// Minimum DCT horizontal scaled size // JPEG_LIB_VERSION >= 70
+    pub min_DCT_h_scaled_size: c_int,
+    /// Minimum DCT vertical scaled size // JPEG_LIB_VERSION >= 70
+    pub min_DCT_v_scaled_size: c_int,
     pub total_iMCU_rows: c_uint,
     pub comps_in_scan: c_int,
     pub cur_comp_info: [*mut jpeg_component_info; 4],
@@ -603,6 +621,12 @@ pub struct jpeg_compress_struct {
     pub Se: c_int,
     pub Ah: c_int,
     pub Al: c_int,
+    /// Block size for DCT // JPEG_LIB_VERSION >= 80
+    pub block_size: c_int,
+    /// Natural order pointer // JPEG_LIB_VERSION >= 80
+    pub natural_order: *const c_int,
+    /// Limit for Se // JPEG_LIB_VERSION >= 80
+    pub lim_Se: c_int,
 
     // Master record
     pub master: *mut c_void,
@@ -734,6 +758,9 @@ pub struct jpeg_decompress_struct {
     /// Component info
     pub comp_info: *mut jpeg_component_info,
 
+    /// Is baseline JPEG // JPEG_LIB_VERSION >= 80
+    pub is_baseline: boolean,
+
     /// Progressive mode
     pub progressive_mode: boolean,
     /// Arithmetic coding
@@ -789,6 +816,12 @@ pub struct jpeg_decompress_struct {
     pub Se: c_int,
     pub Ah: c_int,
     pub Al: c_int,
+    /// Block size for DCT // JPEG_LIB_VERSION >= 80
+    pub block_size: c_int,
+    /// Natural order pointer // JPEG_LIB_VERSION >= 80
+    pub natural_order: *const c_int,
+    /// Limit for Se // JPEG_LIB_VERSION >= 80
+    pub lim_Se: c_int,
     pub unread_marker: c_int,
 
     // Module pointers
@@ -1012,4 +1045,189 @@ extern "C" {
         scanlines: JSAMPARRAY12,
         max_lines: c_uint,
     ) -> c_uint;
+}
+
+// =============================================================================
+// Compile-time size assertions
+// =============================================================================
+
+// Compile-time size assertions — ensures Rust struct layouts match C ABI
+const _: () = assert!(std::mem::size_of::<jpeg_compress_struct>() == 584);
+const _: () = assert!(std::mem::size_of::<jpeg_decompress_struct>() == 656);
+const _: () = assert!(std::mem::size_of::<jpeg_component_info>() == 96);
+const _: () = assert!(std::mem::size_of::<JQUANT_TBL>() == 132);
+const _: () = assert!(std::mem::size_of::<JHUFF_TBL>() == 280);
+const _: () = assert!(std::mem::size_of::<jpeg_common_struct>() == 40);
+const _: () = assert!(std::mem::size_of::<jpeg_error_mgr>() == 168);
+const _: () = assert!(std::mem::size_of::<jpeg_destination_mgr>() == 40);
+const _: () = assert!(std::mem::size_of::<jpeg_source_mgr>() == 56);
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bug condition exploration test: verifies FFI struct sizes match the
+    /// expected C struct sizes for JPEG_LIB_VERSION = 80 (libjpeg-turbo with
+    /// -DWITH_JPEG8=1).
+    ///
+    /// **Validates: Requirements 1.1, 1.2, 1.3, 2.1, 2.2, 2.3**
+    ///
+    /// On UNFIXED code, the three bug-condition assertions will FAIL:
+    /// - jpeg_compress_struct is 520 bytes (expected 584)
+    /// - jpeg_decompress_struct is 640 bytes (expected 656)
+    /// - JPEG_LIB_VERSION is 62 (expected 80)
+    ///
+    /// The already-correct struct assertions should PASS on both unfixed and
+    /// fixed code.
+    #[test]
+    fn test_ffi_struct_sizes() {
+        // --- Bug-condition assertions (EXPECTED TO FAIL on unfixed code) ---
+
+        // 1. jpeg_compress_struct: expected 584 bytes for v80 ABI
+        assert_eq!(
+            std::mem::size_of::<jpeg_compress_struct>(),
+            584,
+            "jpeg_compress_struct size mismatch: expected 584 bytes (v80 ABI), got {}",
+            std::mem::size_of::<jpeg_compress_struct>()
+        );
+
+        // 2. jpeg_decompress_struct: expected 656 bytes for v80 ABI
+        assert_eq!(
+            std::mem::size_of::<jpeg_decompress_struct>(),
+            656,
+            "jpeg_decompress_struct size mismatch: expected 656 bytes (v80 ABI), got {}",
+            std::mem::size_of::<jpeg_decompress_struct>()
+        );
+
+        // 3. JPEG_LIB_VERSION: expected 80 for v80 ABI
+        assert_eq!(
+            JPEG_LIB_VERSION, 80,
+            "JPEG_LIB_VERSION mismatch: expected 80, got {}",
+            JPEG_LIB_VERSION
+        );
+
+        // --- Already-correct struct assertions (should PASS on unfixed code) ---
+
+        assert_eq!(
+            std::mem::size_of::<jpeg_component_info>(),
+            96,
+            "jpeg_component_info size mismatch: expected 96, got {}",
+            std::mem::size_of::<jpeg_component_info>()
+        );
+
+        assert_eq!(
+            std::mem::size_of::<JQUANT_TBL>(),
+            132,
+            "JQUANT_TBL size mismatch: expected 132, got {}",
+            std::mem::size_of::<JQUANT_TBL>()
+        );
+
+        assert_eq!(
+            std::mem::size_of::<JHUFF_TBL>(),
+            280,
+            "JHUFF_TBL size mismatch: expected 280, got {}",
+            std::mem::size_of::<JHUFF_TBL>()
+        );
+
+        assert_eq!(
+            std::mem::size_of::<jpeg_common_struct>(),
+            40,
+            "jpeg_common_struct size mismatch: expected 40, got {}",
+            std::mem::size_of::<jpeg_common_struct>()
+        );
+
+        assert_eq!(
+            std::mem::size_of::<jpeg_error_mgr>(),
+            168,
+            "jpeg_error_mgr size mismatch: expected 168, got {}",
+            std::mem::size_of::<jpeg_error_mgr>()
+        );
+
+        assert_eq!(
+            std::mem::size_of::<jpeg_destination_mgr>(),
+            40,
+            "jpeg_destination_mgr size mismatch: expected 40, got {}",
+            std::mem::size_of::<jpeg_destination_mgr>()
+        );
+
+        assert_eq!(
+            std::mem::size_of::<jpeg_source_mgr>(),
+            56,
+            "jpeg_source_mgr size mismatch: expected 56, got {}",
+            std::mem::size_of::<jpeg_source_mgr>()
+        );
+    }
+
+    /// Baseline assertion test: verifies J2K and TIFF FFI struct sizes are
+    /// already correct and remain unchanged after the JPEG fix.
+    ///
+    /// **Validates: Requirements 3.4, 3.5**
+    ///
+    /// These structs are NOT affected by the JPEG_LIB_VERSION bug — they
+    /// should PASS on both unfixed and fixed code.
+    #[test]
+    fn test_j2k_tiff_ffi_struct_sizes() {
+        use crate::j2k::sys::{
+            opj_cparameters_t, opj_dparameters_t, opj_image_cmptparm_t, opj_image_comp_t,
+            opj_image_t, opj_poc_t,
+        };
+        use crate::tiff::sys::TIFFFieldInfo;
+
+        // --- J2K struct size assertions ---
+
+        assert_eq!(
+            std::mem::size_of::<opj_image_comp_t>(),
+            64,
+            "opj_image_comp_t size mismatch: expected 64, got {}",
+            std::mem::size_of::<opj_image_comp_t>()
+        );
+
+        assert_eq!(
+            std::mem::size_of::<opj_image_t>(),
+            48,
+            "opj_image_t size mismatch: expected 48, got {}",
+            std::mem::size_of::<opj_image_t>()
+        );
+
+        assert_eq!(
+            std::mem::size_of::<opj_image_cmptparm_t>(),
+            36,
+            "opj_image_cmptparm_t size mismatch: expected 36, got {}",
+            std::mem::size_of::<opj_image_cmptparm_t>()
+        );
+
+        assert_eq!(
+            std::mem::size_of::<opj_poc_t>(),
+            148,
+            "opj_poc_t size mismatch: expected 148, got {}",
+            std::mem::size_of::<opj_poc_t>()
+        );
+
+        assert_eq!(
+            std::mem::size_of::<opj_dparameters_t>(),
+            8252,
+            "opj_dparameters_t size mismatch: expected 8252, got {}",
+            std::mem::size_of::<opj_dparameters_t>()
+        );
+
+        assert_eq!(
+            std::mem::size_of::<opj_cparameters_t>(),
+            18720,
+            "opj_cparameters_t size mismatch: expected 18720, got {}",
+            std::mem::size_of::<opj_cparameters_t>()
+        );
+
+        // --- TIFF struct size assertion ---
+
+        assert_eq!(
+            std::mem::size_of::<TIFFFieldInfo>(),
+            24,
+            "TIFFFieldInfo size mismatch: expected 24, got {}",
+            std::mem::size_of::<TIFFFieldInfo>()
+        );
+    }
 }
