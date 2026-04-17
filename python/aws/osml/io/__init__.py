@@ -25,7 +25,6 @@ from aws.osml.io._io import (
     TextAssetProvider,
     Value,
     __version__,
-    decode_tiff_tile,
 )
 from aws.osml.io.convenience import ImageInfo, Tile, iminfo, imread, imsave, tiles
 
@@ -60,8 +59,6 @@ __all__ = [
     "StructureWriter",
     "StructureDefinition",
     "Value",
-    # Codec decode functions
-    "decode_tiff_tile",
     # Convenience API
     "imread",
     "imsave",

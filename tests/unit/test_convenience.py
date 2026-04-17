@@ -538,7 +538,6 @@ class TestPublicApiSurface:
             "StructureWriter",
             "StructureDefinition",
             "Value",
-            "decode_tiff_tile",
         }
 
         expected = convenience_members | core_members
@@ -592,7 +591,6 @@ class TestExistingApiPreserved:
             "StructureWriter",
             "StructureDefinition",
             "Value",
-            "decode_tiff_tile",
         }
 
         removed = pre_existing_members - all_members
