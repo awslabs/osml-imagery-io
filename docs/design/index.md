@@ -9,4 +9,5 @@ api-design
 zarr-codec-design
 parser-design
 property-testing
+native-library-ffi
 ```
