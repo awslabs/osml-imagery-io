@@ -31,6 +31,14 @@ from aws.osml.io import (
 from .quality import MIN_PSNR_DB, MIN_SSIM, calculate_psnr, calculate_ssim
 from .strategies import get_numpy_dtype
 
+# Compression name → TIFF tag 259 value mapping (used by write_tiff_native)
+_COMPRESSION_TAG = {
+    "None": 1,
+    "LZW": 5,
+    "Deflate": 8,
+    "PackBits": 32773,
+}
+
 # ---------------------------------------------------------------------------
 # Full-image reassembly
 # ---------------------------------------------------------------------------
@@ -69,6 +77,98 @@ def read_full_image(asset, num_bands: int, num_rows: int, num_cols: int) -> np.n
             result[:, start_row:end_row, start_col:end_col] = block[:, :actual_rows, :actual_cols]
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Native TIFF writer (replaces PIL for test TIFF generation)
+# ---------------------------------------------------------------------------
+
+
+def write_tiff_native(cfg: dict, array_chw: np.ndarray) -> Path:
+    """Write a TIFF using the native TIFFDatasetWriter and return the temp file path.
+
+    This replaces the former PIL-based ``_write_tiff`` / ``_create_tiff_pil``
+    helpers.  The caller is responsible for deleting the returned file.
+
+    The native writer always produces tiled TIFFs. To approximate stripped
+    layout, tile width is set to the image width (rounded up to a multiple
+    of 16 per the TIFF spec) and tile height is derived from rows_per_strip.
+
+    Args:
+        cfg: Configuration dict from ``tiff_image_config`` with keys:
+            pixel_type, width, height, bands, compression, rows_per_strip.
+        array_chw: Image data in BSQ layout (bands, rows, cols).
+
+    Returns:
+        Path to the written temporary TIFF file.
+    """
+    pixel_type = cfg["pixel_type"]
+    width = cfg["width"]
+    height = cfg["height"]
+    bands = cfg["bands"]
+    compression = cfg["compression"]
+    rps = cfg["rows_per_strip"]
+
+    comp_tag = _COMPRESSION_TAG.get(compression, 1)
+
+    # Round up to multiples of 16 (TIFF spec requirement for tiles)
+    tile_w = (width + 15) & ~15
+    tile_h = (rps + 15) & ~15
+
+    metadata = BufferedMetadataProvider()
+    metadata.set("322", str(tile_w))         # TileWidth
+    metadata.set("323", str(tile_h))         # TileLength
+    metadata.set_json("259", comp_tag)       # Compression
+    metadata.set_json("284", 1)              # PlanarConfiguration = Chunky
+
+    provider = BufferedImageAssetProvider.create(
+        key="image:0",
+        num_columns=width,
+        num_rows=height,
+        num_bands=bands,
+        block_width=min(width, tile_w),
+        block_height=min(height, tile_h),
+        pixel_type=pixel_type,
+        metadata=metadata,
+    )
+    provider.set_full_image(array_chw)
+
+    f = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
+    path = Path(f.name)
+    f.close()
+
+    writer = IO.open([str(path)], "w", "tiff")
+    writer.metadata = metadata
+    writer.add_asset(
+        key="image:0",
+        provider=provider,
+        title="Test Image",
+        description="Property test",
+        roles=["data"],
+    )
+    writer.close()
+
+    return path
+
+
+def write_tiff_native_bytes(cfg: dict, array_chw: np.ndarray) -> bytes:
+    """Write a TIFF using the native writer and return the file contents as bytes.
+
+    Convenience wrapper around :func:`write_tiff_native` that reads the file
+    into memory and cleans up the temp file.
+
+    Args:
+        cfg: Configuration dict from ``tiff_image_config``.
+        array_chw: Image data in BSQ layout (bands, rows, cols).
+
+    Returns:
+        Raw bytes of the written TIFF file.
+    """
+    path = write_tiff_native(cfg, array_chw)
+    try:
+        return path.read_bytes()
+    finally:
+        path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------

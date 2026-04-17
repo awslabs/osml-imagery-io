@@ -10,7 +10,7 @@ This module tests correctness properties for the TIFF reader API:
 - Custom tags coexist with structural tags
 
 Tests use the existing data/unit/tiff-256x256-1band-8bit-tiled-deflate.tif
-(tiled, 256x256, uint8, 1-band, 128x128 tiles, Deflate) and PIL-generated
+(tiled, 256x256, uint8, 1-band, 128x128 tiles, Deflate) and native-writer
 stripped TIFFs.
 """
 
@@ -29,41 +29,13 @@ from aws.osml.io import (
 )
 from hypothesis import given
 from hypothesis import strategies as st
-from PIL import Image
 
 from ..conftest import pbt_settings
+from ..helpers import write_tiff_native
 from ..strategies import get_numpy_dtype, tiff_image_config
 
 UNIT_DATA_DIR = Path("data/unit")
 SMALL_TIF = UNIT_DATA_DIR / "tiff-256x256-1band-8bit-tiled-deflate.tif"
-
-# PIL mode mapping (dtype_name, bands) -> PIL mode
-_PIL_MODE = {
-    ("uint8", 1): "L",
-    ("uint8", 3): "RGB",
-    ("uint16", 1): "I;16",
-    ("int32", 1): "I",
-    ("float32", 1): "F",
-}
-
-
-def _write_tiff(cfg: dict, array_chw: np.ndarray) -> Path:
-    """Write a TIFF via PIL and return the temp file path (caller must delete)."""
-    pixel_type = cfg["pixel_type"]
-    bands = cfg["bands"]
-    rps = cfg["rows_per_strip"]
-    pil_comp = cfg["pil_compression"]
-    dtype = get_numpy_dtype(pixel_type)
-    mode = _PIL_MODE[(dtype.name, bands)]
-
-    hw = array_chw[0] if bands == 1 else np.transpose(array_chw, (1, 2, 0))
-    img = Image.fromarray(hw, mode)
-
-    f = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
-    path = Path(f.name)
-    f.close()
-    img.save(str(path), compression=pil_comp, tiffinfo={278: rps})
-    return path
 
 
 def _make_array(cfg: dict) -> np.ndarray:
@@ -134,7 +106,7 @@ class TestTiffBlockCoordinateValidation:
     def test_stripped_valid_coordinates(self, config):
         """All valid block coordinates return True for has_block on stripped TIFF."""
         array_chw = _make_array(config)
-        path = _write_tiff(config, array_chw)
+        path = write_tiff_native(config, array_chw)
 
         try:
             reader = IO.open([str(path)], "r")
@@ -196,7 +168,7 @@ class TestTiffIFDEnumeration:
     def test_single_ifd_stripped(self, config):
         """Single-IFD stripped TIFF has exactly one image segment."""
         array_chw = _make_array(config)
-        path = _write_tiff(config, array_chw)
+        path = write_tiff_native(config, array_chw)
 
         try:
             reader = IO.open([str(path)], "r")
@@ -249,7 +221,7 @@ class TestTiffNonImageAssetAccess:
     def test_stripped_non_image_empty(self, config):
         """Stripped TIFFs also have no text/graphics/data segments."""
         array_chw = _make_array(config)
-        path = _write_tiff(config, array_chw)
+        path = write_tiff_native(config, array_chw)
 
         try:
             reader = IO.open([str(path)], "r")
@@ -293,7 +265,7 @@ class TestTiffDatasetMetadata:
     def test_stripped_dataset_metadata(self, config):
         """Stripped TIFF dataset metadata has exactly the expected keys."""
         array_chw = _make_array(config)
-        path = _write_tiff(config, array_chw)
+        path = write_tiff_native(config, array_chw)
 
         try:
             reader = IO.open([str(path)], "r")
@@ -360,7 +332,7 @@ class TestTiffPerIFDMetadata:
         expected_bps = dtype.itemsize * 8
 
         array_chw = _make_array(config)
-        path = _write_tiff(config, array_chw)
+        path = write_tiff_native(config, array_chw)
 
         try:
             reader = IO.open([str(path)], "r")

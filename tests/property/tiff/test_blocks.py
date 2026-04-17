@@ -1,6 +1,7 @@
 """Property-based tests for TIFF block dimensions.
 
-This module tests stripped TIFF block dimensions.
+This module tests TIFF block dimensions for tiled TIFFs written by the
+native writer.
 """
 
 import math
@@ -11,60 +12,24 @@ import numpy as np
 import pytest
 from aws.osml.io import IO
 from hypothesis import assume, given
-from PIL import Image
 
 from ..conftest import pbt_settings
+from ..helpers import write_tiff_native_bytes
 from ..strategies import get_numpy_dtype, tiff_image_config
-
-_PIL_MODE = {
-    ("uint8", 1): "L",
-    ("uint8", 3): "RGB",
-    ("uint16", 1): "I;16",
-    ("int32", 1): "I",
-    ("float32", 1): "F",
-}
-
-
-def _create_tiff_pil(cfg: dict, array_chw: np.ndarray) -> bytes:
-    """Create a TIFF file in memory using PIL from a CHW numpy array."""
-    pixel_type = cfg["pixel_type"]
-    bands = cfg["bands"]
-    rps = cfg["rows_per_strip"]
-    pil_comp = cfg["pil_compression"]
-
-    dtype = get_numpy_dtype(pixel_type)
-    mode = _PIL_MODE[(dtype.name, bands)]
-
-    if bands == 1:
-        hw = array_chw[0]
-    else:
-        hw = np.transpose(array_chw, (1, 2, 0))
-
-    img = Image.fromarray(hw, mode)
-
-    with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
-        path = Path(f.name)
-
-    try:
-        img.save(str(path), compression=pil_comp, tiffinfo={278: rps})
-        return path.read_bytes()
-    finally:
-        path.unlink(missing_ok=True)
 
 
 @pytest.mark.property
-class TestTiffStrippedBlockDimensions:
-    """Stripped TIFF block dimensions.
+class TestTiffBlockDimensions:
+    """Tiled TIFF block dimensions.
 
-    For any stripped TIFF, num_pixels_per_block_horizontal == ImageWidth,
-    num_pixels_per_block_vertical == RowsPerStrip, and
-    block_grid_size == (ceil(ImageLength / RowsPerStrip), 1).
+    For any tiled TIFF, the block grid covers the full image and the
+    block dimensions match the tile dimensions used during writing.
     """
 
     @given(config=tiff_image_config(min_size=16, max_size=128))
     @pbt_settings
-    def test_stripped_block_layout(self, config):
-        """Stripped TIFF reports correct block dimensions and grid size."""
+    def test_block_layout(self, config):
+        """TIFF reports correct block dimensions and grid size."""
         width, height = config["width"], config["height"]
         bands = config["bands"]
         pixel_type = config["pixel_type"]
@@ -83,7 +48,7 @@ class TestTiffStrippedBlockDimensions:
             info = np.iinfo(dtype)
             array_chw = rng.randint(0, info.max + 1, (bands, height, width), dtype=dtype)
 
-        tiff_bytes = _create_tiff_pil(config, array_chw)
+        tiff_bytes = write_tiff_native_bytes(config, array_chw)
 
         with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
             f.write(tiff_bytes)
@@ -94,21 +59,25 @@ class TestTiffStrippedBlockDimensions:
             asset = reader.get_asset("image:0")
             asset.get_metadata().as_dict()
 
-            assert asset.num_pixels_per_block_horizontal == width, (
-                f"Block width should be ImageWidth ({width}), got {asset.num_pixels_per_block_horizontal}"
-            )
-
-            # The effective block height reported by the provider may differ
-            # from the raw RowsPerStrip tag when libtiff adjusts strip sizes
-            # internally.  Validate consistency: the block height times the
-            # grid row count must cover the full image height.
+            bw = asset.num_pixels_per_block_horizontal
             bh = asset.num_pixels_per_block_vertical
             grid_rows, grid_cols = asset.block_grid_size
-            assert grid_cols == 1, (
-                f"Stripped TIFF should have 1 column in grid, got {grid_cols}"
-            )
+
+            # Block grid must cover the full image
             assert grid_rows == math.ceil(height / bh), (
                 f"Grid rows should be ceil({height}/{bh})={math.ceil(height / bh)}, got {grid_rows}"
+            )
+            assert grid_cols == math.ceil(width / bw), (
+                f"Grid cols should be ceil({width}/{bw})={math.ceil(width / bw)}, got {grid_cols}"
+            )
+
+            # Block dimensions must be at least as large as the image
+            # dimensions divided by the grid size
+            assert bw * grid_cols >= width, (
+                f"Block grid does not cover image width: {bw}*{grid_cols} < {width}"
+            )
+            assert bh * grid_rows >= height, (
+                f"Block grid does not cover image height: {bh}*{grid_rows} < {height}"
             )
         finally:
             path.unlink(missing_ok=True)

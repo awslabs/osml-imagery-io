@@ -36,7 +36,6 @@ dev = [
     "pyyaml>=6.0",
     "ruff>=0.1",
     "hypothesis>=6.0",
-    "pillow>=9.0",
     "pyarrow>=14.0",
 ]
 

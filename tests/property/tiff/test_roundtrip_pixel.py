@@ -1,7 +1,7 @@
 """Property-based tests for TIFF pixel roundtrip operations.
 
 This module tests:
-- Pixel data roundtrip (stripped TIFFs via PIL → our reader)
+- Pixel data roundtrip (stripped TIFFs via native writer → our reader)
 - Lossless pixel roundtrip (our writer → our reader)
 - Band subsetting preserves correct data
 """
@@ -13,65 +13,33 @@ import numpy as np
 import pytest
 from aws.osml.io import IO, PixelType
 from hypothesis import assume, given
-from PIL import Image
 
 from ..conftest import pbt_settings
-from ..helpers import assert_lossless_match, assert_lossy_quality, read_full_image, write_and_read_tiff
+from ..helpers import (
+    assert_lossless_match,
+    assert_lossy_quality,
+    read_full_image,
+    write_and_read_tiff,
+    write_tiff_native_bytes,
+)
 from ..strategies import (
     get_numpy_dtype,
     tiff_image_config,
     tiff_writable_image,
 )
 
-# PIL mode mapping for creating images from numpy arrays.
-_PIL_MODE = {
-    ("uint8", 1): "L",
-    ("uint8", 3): "RGB",
-    ("uint16", 1): "I;16",
-    ("int32", 1): "I",
-    ("float32", 1): "F",
-}
-
-
-def _create_tiff_pil(cfg: dict, array_chw: np.ndarray) -> bytes:
-    """Create a TIFF file in memory using PIL from a CHW numpy array."""
-    pixel_type = cfg["pixel_type"]
-    bands = cfg["bands"]
-    rps = cfg["rows_per_strip"]
-    pil_comp = cfg["pil_compression"]
-
-    dtype = get_numpy_dtype(pixel_type)
-    mode = _PIL_MODE[(dtype.name, bands)]
-
-    if bands == 1:
-        hw = array_chw[0]
-    else:
-        hw = np.transpose(array_chw, (1, 2, 0))
-
-    img = Image.fromarray(hw, mode)
-
-    with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
-        path = Path(f.name)
-
-    try:
-        img.save(str(path), compression=pil_comp, tiffinfo={278: rps})
-        return path.read_bytes()
-    finally:
-        path.unlink(missing_ok=True)
-
-
 # =============================================================================
-# Pixel data roundtrip (PIL → our reader)
+# Pixel data roundtrip (native writer → our reader)
 # =============================================================================
 
 
 @pytest.mark.property
 class TestTiffPixelRoundtrip:
-    """Pixel data roundtrip (PIL writer → our reader).
+    """Pixel data roundtrip (native writer → our reader).
 
-    For any valid image configuration writable by PIL, writing a TIFF and
-    reading it back through TIFFImageAssetProvider.get_block() produces
-    byte-identical pixel data in band-sequential (CHW) format.
+    For any valid image configuration, writing a TIFF and reading it back
+    through TIFFImageAssetProvider.get_block() produces byte-identical
+    pixel data in band-sequential (CHW) format.
     """
 
     @given(config=tiff_image_config(min_size=16, max_size=64, min_bands=1, max_bands=3))
@@ -92,7 +60,7 @@ class TestTiffPixelRoundtrip:
             info = np.iinfo(dtype)
             array_chw = rng.randint(0, info.max + 1, (bands, height, width), dtype=dtype)
 
-        tiff_bytes = _create_tiff_pil(config, array_chw)
+        tiff_bytes = write_tiff_native_bytes(config, array_chw)
 
         with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
             f.write(tiff_bytes)
@@ -200,7 +168,7 @@ class TestTiffBandSubsetting:
         rng = np.random.RandomState(123)
         array_chw = rng.randint(0, 256, (bands, height, width), dtype=dtype)
 
-        tiff_bytes = _create_tiff_pil(config, array_chw)
+        tiff_bytes = write_tiff_native_bytes(config, array_chw)
 
         with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
             f.write(tiff_bytes)

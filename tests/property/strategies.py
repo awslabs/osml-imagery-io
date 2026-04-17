@@ -1027,22 +1027,20 @@ def masked_jpeg_image(
 # TIFF Format Strategies
 # =============================================================================
 
-# Pixel types that PIL can write to TIFF (used for property test generation).
-# PIL writes int16 as int32 and doesn't support int8/uint32/float64,
-# so we limit to what PIL can actually produce correctly.
-TIFF_PIL_PIXEL_TYPES = [
+# Pixel types supported for TIFF property test generation.
+# The native writer supports all of these.
+TIFF_CONFIG_PIXEL_TYPES = [
     PixelType.UInt8,
     PixelType.UInt16,
     PixelType.Int32,
     PixelType.Float32,
 ]
 
-# Compression names mapped to PIL compression strings
+# Compression names for TIFF property tests
 TIFF_COMPRESSION_MAP = {
-    "None": "raw",
-    "LZW": "tiff_lzw",
-    "Deflate": "tiff_adobe_deflate",
-    "PackBits": "packbits",
+    "None": 1,
+    "LZW": 5,
+    "Deflate": 8,
 }
 
 
@@ -1051,14 +1049,13 @@ def tiff_compression() -> st.SearchStrategy[str]:
 
     Returns a strategy that samples from supported lossless compressions.
     """
-    return st.sampled_from(["None", "LZW", "Deflate", "PackBits"])
+    return st.sampled_from(["None", "LZW", "Deflate"])
 
 
 def tiff_planar_config() -> st.SearchStrategy[int]:
     """Strategy for TIFF planar configuration.
 
     Returns 1 (chunky/RGBRGB) or 2 (planar/RRR...GGG...BBB...).
-    Note: PIL only writes chunky (1). Planar tests deferred to Phase 2.
     """
     return st.sampled_from([1, 2])
 
@@ -1067,18 +1064,16 @@ def tiff_layout() -> st.SearchStrategy[str]:
     """Strategy for TIFF data layout.
 
     Returns 'tiled' or 'stripped'.
-    Note: PIL only writes stripped. Tiled tests use the existing tiff-256x256 fixture.
     """
     return st.sampled_from(["tiled", "stripped"])
 
 
-def tiff_pil_pixel_types() -> st.SearchStrategy[PixelType]:
-    """Strategy for pixel types that PIL can write to TIFF.
+def tiff_config_pixel_types() -> st.SearchStrategy[PixelType]:
+    """Strategy for pixel types supported by the TIFF property tests.
 
-    Limited to types PIL produces with correct TIFF tags:
-    UInt8, UInt16, Int32, Float32.
+    Limited to: UInt8, UInt16, Int32, Float32.
     """
-    return st.sampled_from(TIFF_PIL_PIXEL_TYPES)
+    return st.sampled_from(TIFF_CONFIG_PIXEL_TYPES)
 
 
 def tiff_rows_per_strip(
@@ -1109,16 +1104,16 @@ def tiff_image_config(
     min_bands: int = 1,
     max_bands: int = 3,
 ) -> dict:
-    """Composite strategy for TIFF image configurations writable by PIL.
+    """Composite strategy for TIFF image configurations.
 
     Generates a complete configuration dict for creating a test TIFF:
     pixel_type, width, height, bands, compression, rows_per_strip.
 
-    PIL limitations applied:
+    Constraints applied:
     - Always chunky (PlanarConfiguration=1)
     - Always stripped (no tile support)
-    - Bands: 1 or 3 (PIL modes L/I;16/I/F for 1-band, RGB for 3-band uint8)
-    - Float32 and Int32 are single-band only in PIL
+    - Bands: 1 or 3 (1-band for all types, 3-band for uint8 only)
+    - Float32 and Int32 are single-band only
 
     Args:
         draw: Hypothesis draw function
@@ -1129,14 +1124,14 @@ def tiff_image_config(
 
     Returns:
         Dict with keys: pixel_type, width, height, bands, compression,
-        rows_per_strip, pil_compression
+        rows_per_strip
     """
-    pixel_type = draw(tiff_pil_pixel_types())
+    pixel_type = draw(tiff_config_pixel_types())
     compression = draw(tiff_compression())
     height = draw(st.integers(min_value=min_size, max_value=max_size))
     width = draw(st.integers(min_value=min_size, max_value=max_size))
 
-    # PIL only supports multi-band (RGB) for uint8
+    # Multi-band (RGB) only for uint8
     if pixel_type == PixelType.UInt8:
         bands = draw(st.sampled_from([b for b in [1, 3] if min_bands <= b <= max_bands]))
     else:
@@ -1151,7 +1146,6 @@ def tiff_image_config(
         "bands": bands,
         "compression": compression,
         "rows_per_strip": rows_per_strip,
-        "pil_compression": TIFF_COMPRESSION_MAP[compression],
     }
 
 

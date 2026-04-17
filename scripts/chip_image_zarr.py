@@ -50,7 +50,7 @@ def chip_zarr(
         0 on success, 1 on error
     """
     import zarr
-    from PIL import Image
+    from aws.osml.io import IO, BufferedImageAssetProvider, PixelType
     from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
     from zarr.storage._fsspec import FsspecStore
 
@@ -124,7 +124,7 @@ def chip_zarr(
         y_max = min(img_h, y_max)
 
         if x_max <= x_min or y_max <= y_min:
-            print(f"Error: invalid region after clamping to image bounds", file=sys.stderr)
+            print("Error: invalid region after clamping to image bounds", file=sys.stderr)
             return 1
 
         # Read the region
@@ -137,16 +137,52 @@ def chip_zarr(
             print(f"Read time: {elapsed_read:.1f} ms")
             print(f"Min/Max: {region.min()} / {region.max()}")
 
-        # Convert to PIL-friendly format and save
-        if region.shape[0] == 1:
-            img_data = region[0]
-        elif region.shape[0] in (3, 4):
-            img_data = np.transpose(region, (1, 2, 0))
-        else:
-            img_data = region[0]
-            print(f"Note: {region.shape[0]} bands — saving band 0 only")
+        # Save as PNG using the library's own writer
+        num_bands = region.shape[0]
+        height = region.shape[1]
+        width = region.shape[2]
 
-        Image.fromarray(img_data).save(output_path)
+        # PNG supports 1, 2, 3, or 4 bands; fall back to band 0 for others
+        if num_bands not in (1, 2, 3, 4):
+            region = region[:1]
+            num_bands = 1
+            print(f"Note: original had {region.shape[0]} bands — saving band 0 only")
+
+        dtype = region.dtype
+        if dtype == np.uint8:
+            pixel_type = PixelType.UInt8
+        elif dtype == np.uint16:
+            pixel_type = PixelType.UInt16
+        else:
+            # Convert to uint8 for unsupported dtypes
+            if np.issubdtype(dtype, np.floating):
+                region = np.clip(region * 255, 0, 255).astype(np.uint8)
+            else:
+                info = np.iinfo(dtype)
+                region = ((region.astype(np.float64) - info.min) / (info.max - info.min) * 255).astype(np.uint8)
+            pixel_type = PixelType.UInt8
+
+        bsq = np.ascontiguousarray(region)
+        provider = BufferedImageAssetProvider.create(
+            key="image:0",
+            num_columns=width,
+            num_rows=height,
+            num_bands=num_bands,
+            block_width=width,
+            block_height=height,
+            pixel_type=pixel_type,
+        )
+        provider.set_full_image(bsq)
+
+        writer = IO.open([str(output_path)], "w", "png")
+        writer.add_asset(
+            key="image:0",
+            provider=provider,
+            title="Chip",
+            description="Extracted chip",
+            roles=["data"],
+        )
+        writer.close()
         print(f"Saved: {output_path}")
         return 0
 
