@@ -81,6 +81,64 @@ impl OpenJpegCodec {
     pub fn with_threads(num_threads: usize) -> Self {
         Self { num_threads }
     }
+
+    /// Scan a J2K codestream for the COD marker (0xFF52) and extract the number of
+    /// decomposition levels from the SPcod parameter.
+    ///
+    /// The caller must ensure the codestream starts with a valid SOC marker (0xFF4F).
+    fn parse_cod_decomposition_levels(codestream: &[u8]) -> Result<u8, CodecError> {
+        let len = codestream.len();
+        let mut pos = 2; // skip SOC marker
+
+        while pos + 1 < len {
+            // Each marker starts with 0xFF
+            if codestream[pos] != 0xFF {
+                return Err(CodecError::Decode(
+                    "Invalid JPEG 2000 codestream: expected marker".into(),
+                ));
+            }
+
+            let marker_type = codestream[pos + 1];
+
+            // SOC (0x4F) and SOD (0x93) have no length field; skip them
+            if marker_type == 0x4F {
+                pos += 2;
+                continue;
+            }
+
+            // SOD marks the start of tile data — stop scanning
+            if marker_type == 0x93 {
+                break;
+            }
+
+            // All other markers have a 2-byte length field after the marker
+            if pos + 3 >= len {
+                break;
+            }
+            let seg_len =
+                ((codestream[pos + 2] as usize) << 8) | (codestream[pos + 3] as usize);
+
+            // COD marker: 0xFF52
+            if marker_type == 0x52 {
+                // Need at least 8 bytes after marker: Lcod(2) + Scod(1) + SGcod(4) + SPcod(1)
+                if pos + 9 >= len || seg_len < 8 {
+                    return Err(CodecError::Decode(
+                        "JPEG 2000 COD marker segment too short".into(),
+                    ));
+                }
+                // SPcod byte 0 is at offset 9 from marker start:
+                // marker(2) + Lcod(2) + Scod(1) + SGcod(4) = 9
+                return Ok(codestream[pos + 9]);
+            }
+
+            // Advance past this marker segment: marker(2) + segment body(seg_len)
+            pos += 2 + seg_len;
+        }
+
+        Err(CodecError::Decode(
+            "JPEG 2000 codestream: COD marker not found".into(),
+        ))
+    }
 }
 
 impl Default for OpenJpegCodec {
@@ -231,37 +289,26 @@ impl J2KCodec for OpenJpegCodec {
     }
 
     fn get_resolution_levels(&self, codestream: &[u8]) -> Result<u32, CodecError> {
-        // Validate codestream
+        // Validate codestream: must start with SOC marker (0xFF4F)
         if codestream.len() < 2 || codestream[0] != 0xFF || codestream[1] != 0x4F {
             return Err(CodecError::Decode(
                 "Invalid JPEG 2000 codestream: missing SOC marker".into(),
             ));
         }
 
-        // Quick decode of just the header to get resolution info
-        let codec = OjpCodec::new_decompress()?;
-
-        let mut dparams: opj_dparameters_t = unsafe { std::mem::zeroed() };
-        unsafe {
-            sys::opj_set_default_decoder_parameters(&mut dparams);
-        }
-        codec.setup_decoder(&mut dparams)?;
-
-        let stream = OjpStream::from_memory_read(codestream)?;
-        let image = codec.read_header(&stream)?;
-
-        // Get component info to determine resolution levels
-        let comp = image
-            .component(0)
-            .ok_or_else(|| CodecError::Decode("No components in image".into()))?;
-
-        // The number of resolution levels is typically decomposition_levels + 1
-        // We estimate based on image dimensions - typical J2K uses 5-6 decomposition levels
-        let max_dim = comp.width.max(comp.height);
-        let max_levels = (max_dim as f64).log2().floor() as u32;
-
-        // Return a reasonable estimate (typically 1-6 levels)
-        Ok(max_levels.min(6).max(1))
+        // Parse the COD marker (0xFF52) from the codestream header to read the actual
+        // number of decomposition levels. The COD marker segment layout is:
+        //   [0..2]  marker: 0xFF52
+        //   [2..4]  Lcod: segment length (big-endian u16, includes itself but not marker)
+        //   [4]     Scod: coding style
+        //   [5]     SGcod byte 0: progression order
+        //   [6..8]  SGcod bytes 1-2: number of layers (big-endian u16)
+        //   [8]     SGcod byte 3: multiple component transform
+        //   [9]     SPcod byte 0: number of decomposition levels
+        //
+        // Resolution levels = decomposition_levels + 1.
+        let decomp_levels = Self::parse_cod_decomposition_levels(codestream)?;
+        Ok(decomp_levels as u32 + 1)
     }
 
     fn get_dimensions(&self, codestream: &[u8]) -> Result<(u32, u32, u32), CodecError> {
@@ -859,6 +906,70 @@ mod tests {
 
         // Invalid magic
         let result = codec.get_resolution_levels(&[0x00, 0x00]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_resolution_levels_from_encoded_codestream() {
+        // Encode a codestream with a known number of decomposition levels and verify
+        // that get_resolution_levels reads the actual count from the COD marker.
+        let codec = OpenJpegCodec::new();
+
+        for decomp_levels in 1u8..=5 {
+            let params = J2KEncodeParams {
+                width: 64,
+                height: 64,
+                num_components: 1,
+                bits_per_component: 8,
+                tile_width: 64,
+                tile_height: 64,
+                lossless: true,
+                num_decomposition_levels: decomp_levels,
+                ..Default::default()
+            };
+
+            let mut state = codec.start_encode(&params).unwrap();
+            let data = vec![128u8; 64 * 64];
+            state.encode_tile(0, &data).unwrap();
+            let codestream = Box::new(state).finalize().unwrap();
+
+            let levels = codec.get_resolution_levels(&codestream).unwrap();
+            assert_eq!(
+                levels,
+                decomp_levels as u32 + 1,
+                "For {} decomposition levels, expected {} resolution levels but got {}",
+                decomp_levels,
+                decomp_levels as u32 + 1,
+                levels
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_resolution_levels_no_cod_marker() {
+        // SOC marker followed by SOD (no COD marker) — should fail
+        let codestream = [0xFF, 0x4F, 0xFF, 0x93];
+        let codec = OpenJpegCodec::new();
+        let result = codec.get_resolution_levels(&codestream);
+        assert!(result.is_err());
+        if let Err(CodecError::Decode(msg)) = result {
+            assert!(msg.contains("COD marker not found"));
+        } else {
+            panic!("Expected Decode error about missing COD marker");
+        }
+    }
+
+    #[test]
+    fn test_get_resolution_levels_truncated_cod() {
+        // SOC + COD marker but truncated before SPcod
+        let codestream = [
+            0xFF, 0x4F, // SOC
+            0xFF, 0x52, // COD marker
+            0x00, 0x04, // Lcod = 4 (too short for SPcod)
+            0x00, 0x00, // partial Scod + SGcod
+        ];
+        let codec = OpenJpegCodec::new();
+        let result = codec.get_resolution_levels(&codestream);
         assert!(result.is_err());
     }
 
