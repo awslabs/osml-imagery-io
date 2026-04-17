@@ -36,6 +36,8 @@ dev = [
     "pyyaml>=6.0",
     "ruff>=0.1",
     "hypothesis>=6.0",
+    "pillow>=9.0",
+    "pyarrow>=14.0",
 ]
 
 virtualizarr = ["virtualizarr>=2.0"]
@@ -61,7 +63,7 @@ Repository = "https://github.com/awslabs/osml-imagery-io"
 [tool.maturin]
 python-source = "python"
 module-name = "aws.osml.io._io"
-features = ["extension-module", "openjpeg", "libjpeg-turbo"]
+features = ["extension-module", "openjpeg", "libjpeg-turbo", "libtiff"]
 
 [tool.ruff]
 line-length = 120

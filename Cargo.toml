@@ -24,9 +24,11 @@ openjpeg = []
 libjpeg-turbo = []
 # Enable libtiff-based TIFF codec (requires libtiff)
 libtiff = []
+# Enable static linking of native C libraries (used in CI release builds)
+static = []
 
 [dependencies]
-pyo3 = { version = "0.28", features = ["auto-initialize"] }
+pyo3 = { version = "0.28", features = ["auto-initialize", "abi3-py39"] }
 numpy = "0.28"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

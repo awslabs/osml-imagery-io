@@ -2,143 +2,270 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
-  workflow_dispatch:
+    tags:
+      - "v*"
 
-permissions:
-  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  OPENJPEG_VERSION: "2.5.3"
+  LIBJPEG_TURBO_VERSION: "3.1.0"
+  LIBDEFLATE_VERSION: "1.25"
+  ZSTD_VERSION: "1.5.7"
+  LERC_VERSION: "4.1.0"
+  LIBTIFF_VERSION: "4.7.0"
 
 jobs:
-  # ── Linux wheels (x86_64 + aarch64) ──────────────────────────
-  linux:
-    runs-on: ${{ matrix.platform.runner }}
-    strategy:
-      matrix:
-        platform:
-          - runner: ubuntu-latest
-            target: x86_64
-          - runner: ubuntu-latest
-            target: aarch64
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Build wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          args: --release --out dist --features extension-module,openjpeg,libjpeg-turbo
-          manylinux: auto
-          before-script-linux: |
-            # Install native libraries inside the manylinux container
-            if command -v yum &> /dev/null; then
-              yum install -y openjpeg2-devel libjpeg-turbo-devel
-            elif command -v apk &> /dev/null; then
-              apk add openjpeg-dev libjpeg-turbo-dev
-            else
-              apt-get update && apt-get install -y libopenjp2-7-dev libjpeg-turbo8-dev
-            fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wheels-linux-${{ matrix.platform.target }}-py${{ matrix.python-version }}
-          path: dist
-
-  # ── macOS wheels (x86_64 + arm64) ───────────────────────────
+  # ---------------------------------------------------------------------------
+  # macOS wheels (x86_64 on macos-13, arm64 on macos-14)
+  # ---------------------------------------------------------------------------
   macos:
-    runs-on: ${{ matrix.platform.runner }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        platform:
-          - runner: macos-13
-            target: x86_64
-          - runner: macos-14
-            target: aarch64
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-13
+          - target: aarch64-apple-darwin
+            runner: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install native deps
-        run: brew install openjpeg jpeg-turbo
-      - name: Build wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          args: --release --out dist --features extension-module,openjpeg,libjpeg-turbo
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wheels-macos-${{ matrix.platform.target }}-py${{ matrix.python-version }}
-          path: dist
 
-  # ── Windows wheels (x86_64 only) ────────────────────────────
-  windows:
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install native deps
+      - name: Install build tools
+        run: brew install cmake zlib
+
+      - name: Build static C libraries
         run: |
-          vcpkg install openjpeg:x64-windows libjpeg-turbo:x64-windows
-          echo "OPENJP2_LIBRARY_DIR=C:\vcpkg\installed\x64-windows\lib" >> $env:GITHUB_ENV
-          echo "OPENJP2_INCLUDE_DIR=C:\vcpkg\installed\x64-windows\include" >> $env:GITHUB_ENV
-      - name: Build wheel
-        uses: PyO3/maturin-action@v1
+          set -euo pipefail
+          PREFIX="${RUNNER_TEMP}/deps"
+
+          # --- OpenJPEG ---
+          curl -sL "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
+          cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
+            -DCMAKE_INSTALL_PREFIX="${PREFIX}/openjpeg" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_CODEC=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-openjpeg --config Release
+          cmake --install build-openjpeg
+
+          # --- libjpeg-turbo ---
+          curl -sL "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_TURBO_VERSION}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" | tar xz
+          cmake -S "libjpeg-turbo-${LIBJPEG_TURBO_VERSION}" -B build-jpeg \
+            -DCMAKE_INSTALL_PREFIX="${PREFIX}/jpeg" \
+            -DENABLE_SHARED=OFF \
+            -DWITH_JPEG8=1 \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-jpeg --config Release
+          cmake --install build-jpeg
+
+          # --- libdeflate ---
+          curl -sL "https://github.com/ebiggers/libdeflate/archive/refs/tags/v${LIBDEFLATE_VERSION}.tar.gz" | tar xz
+          cmake -S "libdeflate-${LIBDEFLATE_VERSION}" -B build-libdeflate \
+            -DCMAKE_INSTALL_PREFIX="${PREFIX}/libdeflate" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLIBDEFLATE_BUILD_SHARED_LIB=OFF \
+            -DLIBDEFLATE_BUILD_GZIP=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-libdeflate --config Release
+          cmake --install build-libdeflate
+
+          # --- zstd ---
+          curl -sL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz
+          cmake -S "zstd-${ZSTD_VERSION}/build/cmake" -B build-zstd \
+            -DCMAKE_INSTALL_PREFIX="${PREFIX}/zstd" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DZSTD_BUILD_PROGRAMS=OFF \
+            -DZSTD_BUILD_SHARED=OFF \
+            -DZSTD_BUILD_STATIC=ON \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-zstd --config Release
+          cmake --install build-zstd
+
+          # --- LERC ---
+          curl -sL "https://github.com/Esri/lerc/archive/refs/tags/v${LERC_VERSION}.tar.gz" | tar xz
+          cmake -S "lerc-${LERC_VERSION}" -B build-lerc \
+            -DCMAKE_INSTALL_PREFIX="${PREFIX}/lerc" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-lerc --config Release
+          cmake --install build-lerc
+
+          # --- libtiff (with all codec dependencies) ---
+          curl -sL "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz" | tar xz
+          cmake -S "tiff-${LIBTIFF_VERSION}" -B build-tiff \
+            -DCMAKE_INSTALL_PREFIX="${PREFIX}/tiff" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_PREFIX_PATH="${PREFIX}/jpeg;${PREFIX}/libdeflate;${PREFIX}/zstd;${PREFIX}/lerc" \
+            -Djbig=OFF -Dwebp=OFF \
+            -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-tiff --config Release
+          cmake --install build-tiff
+
+      - uses: PyO3/maturin-action@v1
         with:
-          target: x64
-          args: --release --out dist --features extension-module,openjpeg,libjpeg-turbo
+          target: ${{ matrix.target }}
+          args: --release --features static,extension-module,openjpeg,libjpeg-turbo,libtiff
+        env:
+          DEP_OPENJP2_ROOT: ${{ runner.temp }}/deps/openjpeg
+          DEP_JPEG_ROOT: ${{ runner.temp }}/deps/jpeg
+          DEP_TIFF_ROOT: ${{ runner.temp }}/deps/tiff
+          DEP_DEFLATE_ROOT: ${{ runner.temp }}/deps/libdeflate
+          DEP_ZSTD_ROOT: ${{ runner.temp }}/deps/zstd
+          DEP_LERC_ROOT: ${{ runner.temp }}/deps/lerc
+
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-windows-x64-py${{ matrix.python-version }}
-          path: dist
+          name: wheel-macos-${{ matrix.target }}
+          path: target/wheels/*.whl
 
-  # ── Source distribution ─────────────────────────────────────
+  # ---------------------------------------------------------------------------
+  # Linux wheels (x86_64 and aarch64 via manylinux_2_28)
+  # ---------------------------------------------------------------------------
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: "2_28"
+          args: --release --features static,extension-module,openjpeg,libjpeg-turbo,libtiff
+          before-script-linux: |
+            set -euo pipefail
+
+            # Install build tools (manylinux_2_28 is CentOS Stream 8-based)
+            yum install -y cmake3 make gcc gcc-c++ zlib-devel xz-devel
+
+            # Use cmake3 as cmake if cmake is not available
+            if ! command -v cmake &> /dev/null; then
+              ln -s /usr/bin/cmake3 /usr/local/bin/cmake
+            fi
+
+            PREFIX="/tmp/deps"
+
+            # --- OpenJPEG ---
+            curl -sL "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
+            cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
+              -DCMAKE_INSTALL_PREFIX="${PREFIX}/openjpeg" \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DBUILD_CODEC=OFF \
+              -DCMAKE_BUILD_TYPE=Release
+            cmake --build build-openjpeg --config Release
+            cmake --install build-openjpeg
+
+            # --- libjpeg-turbo ---
+            curl -sL "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_TURBO_VERSION}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" | tar xz
+            cmake -S "libjpeg-turbo-${LIBJPEG_TURBO_VERSION}" -B build-jpeg \
+              -DCMAKE_INSTALL_PREFIX="${PREFIX}/jpeg" \
+              -DENABLE_SHARED=OFF \
+              -DWITH_JPEG8=1 \
+              -DCMAKE_BUILD_TYPE=Release
+            cmake --build build-jpeg --config Release
+            cmake --install build-jpeg
+
+            # --- libdeflate ---
+            curl -sL "https://github.com/ebiggers/libdeflate/archive/refs/tags/v${LIBDEFLATE_VERSION}.tar.gz" | tar xz
+            cmake -S "libdeflate-${LIBDEFLATE_VERSION}" -B build-libdeflate \
+              -DCMAKE_INSTALL_PREFIX="${PREFIX}/libdeflate" \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DLIBDEFLATE_BUILD_SHARED_LIB=OFF \
+              -DLIBDEFLATE_BUILD_GZIP=OFF \
+              -DCMAKE_BUILD_TYPE=Release
+            cmake --build build-libdeflate --config Release
+            cmake --install build-libdeflate
+
+            # --- zstd ---
+            curl -sL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz
+            cmake -S "zstd-${ZSTD_VERSION}/build/cmake" -B build-zstd \
+              -DCMAKE_INSTALL_PREFIX="${PREFIX}/zstd" \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DZSTD_BUILD_PROGRAMS=OFF \
+              -DZSTD_BUILD_SHARED=OFF \
+              -DZSTD_BUILD_STATIC=ON \
+              -DCMAKE_BUILD_TYPE=Release
+            cmake --build build-zstd --config Release
+            cmake --install build-zstd
+
+            # --- LERC ---
+            curl -sL "https://github.com/Esri/lerc/archive/refs/tags/v${LERC_VERSION}.tar.gz" | tar xz
+            cmake -S "lerc-${LERC_VERSION}" -B build-lerc \
+              -DCMAKE_INSTALL_PREFIX="${PREFIX}/lerc" \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DCMAKE_BUILD_TYPE=Release
+            cmake --build build-lerc --config Release
+            cmake --install build-lerc
+
+            # --- libtiff (with all codec dependencies) ---
+            curl -sL "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz" | tar xz
+            cmake -S "tiff-${LIBTIFF_VERSION}" -B build-tiff \
+              -DCMAKE_INSTALL_PREFIX="${PREFIX}/tiff" \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DCMAKE_PREFIX_PATH="${PREFIX}/jpeg;${PREFIX}/libdeflate;${PREFIX}/zstd;${PREFIX}/lerc" \
+              -Djbig=OFF -Dwebp=OFF \
+              -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF \
+              -DCMAKE_BUILD_TYPE=Release
+            cmake --build build-tiff --config Release
+            cmake --install build-tiff
+
+            export DEP_OPENJP2_ROOT="${PREFIX}/openjpeg"
+            export DEP_JPEG_ROOT="${PREFIX}/jpeg"
+            export DEP_TIFF_ROOT="${PREFIX}/tiff"
+            export DEP_DEFLATE_ROOT="${PREFIX}/libdeflate"
+            export DEP_ZSTD_ROOT="${PREFIX}/zstd"
+            export DEP_LERC_ROOT="${PREFIX}/lerc"
+        env:
+          DEP_OPENJP2_ROOT: /tmp/deps/openjpeg
+          DEP_JPEG_ROOT: /tmp/deps/jpeg
+          DEP_TIFF_ROOT: /tmp/deps/tiff
+          DEP_DEFLATE_ROOT: /tmp/deps/libdeflate
+          DEP_ZSTD_ROOT: /tmp/deps/zstd
+          DEP_LERC_ROOT: /tmp/deps/lerc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-${{ matrix.target }}
+          path: target/wheels/*.whl
+
+  # ---------------------------------------------------------------------------
+  # Source distribution
+  # ---------------------------------------------------------------------------
   sdist:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build sdist
-        uses: PyO3/maturin-action@v1
+
+      - uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
+
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-sdist
-          path: dist
+          name: sdist
+          path: dist/*.tar.gz
 
-  # ── Publish to PyPI ─────────────────────────────────────────
+  # ---------------------------------------------------------------------------
+  # Publish to PyPI via OIDC trusted publishing
+  # ---------------------------------------------------------------------------
   publish:
-    name: Publish to PyPI
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [linux, macos, windows, sdist]
-    # Uncomment for trusted publishing (recommended):
-    # environment: release
-    # permissions:
-    #   id-token: write
+    needs: [macos, linux, sdist]
+    permissions:
+      id-token: write
+    environment: release
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
-          merge-multiple: true
           path: dist
-      - name: Publish to PyPI
-        uses: PyO3/maturin-action@v1
-        # Option A: API token (set PYPI_API_TOKEN in repo secrets)
-        env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          merge-multiple: true
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          command: upload
-          args: --skip-existing dist/*
-        # Option B: Trusted publishing (uncomment above permissions + environment)
-        # with:
-        #   command: upload
-        #   args: --skip-existing dist/*
+          packages-dir: dist/

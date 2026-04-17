@@ -108,6 +108,28 @@ Four hooks are configured in `.kiro/hooks/`:
 
 The `static-analysis` job in `.github/workflows/ci.yml` runs cargo-deny and cargo-machete on every push/PR. Cognitive complexity is checked in the `lint` job via clippy (the `#![warn(clippy::cognitive_complexity)]` attribute in `lib.rs` combined with `-D warnings` makes it a hard failure).
 
+## Cargo Feature Flags
+
+### `static`
+
+The `static` feature enables static linking of native C libraries (libopenjp2, libjpeg-turbo, libtiff) into the extension module. It is used exclusively in CI release builds to produce self-contained wheels that don't require users to have C libraries installed.
+
+When enabled, `build.rs` reads `DEP_OPENJP2_ROOT`, `DEP_JPEG_ROOT`, and `DEP_TIFF_ROOT` environment variables to locate pre-compiled static archives (`.a` files) and emits `cargo:rustc-link-lib=static=...` directives. When not enabled, the existing dynamic linking path is used unchanged.
+
+This feature is not in the `default` set — it must be explicitly activated. Local development always uses dynamic linking.
+
+## Release Workflow
+
+The project uses a GitHub Actions workflow (`.github/workflows/release.yml`) to build and publish wheels to PyPI. It is completely separate from the CI workflow (`ci.yml`).
+
+- Triggered by pushing a tag matching `v*` (e.g., `v0.1.0`)
+- Compiles OpenJPEG, libjpeg-turbo, and libtiff from source as static libraries for each target platform
+- Builds abi3 wheels (Python 3.9+ stable ABI) for 4 platforms: Linux x86_64, Linux aarch64, macOS x86_64, macOS arm64
+- Builds an sdist as fallback for unsupported platforms
+- Publishes all artifacts to PyPI via OIDC trusted publishing (no API tokens)
+
+See `RELEASING.md` at the project root for the full release process.
+
 ## Common Commands
 
 ```bash
@@ -116,6 +138,9 @@ maturin develop
 
 # Release build
 maturin build --release
+
+# Release build with static linking (CI only — requires DEP_*_ROOT env vars)
+maturin build --release --features static,extension-module,openjpeg,libjpeg-turbo,libtiff
 
 # Run Python tests
 pytest
