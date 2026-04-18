@@ -34,6 +34,9 @@ intersphinx_mapping = {
 # Theme
 html_theme = "furo"
 
+# GitHub Pages base URL (Pages serves from /osml-imagery-io/)
+html_baseurl = "https://awslabs.github.io/osml-imagery-io/"
+
 # Static files (images, custom CSS, etc.)
 html_static_path = ["_static"]
 

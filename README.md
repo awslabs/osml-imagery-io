@@ -1,6 +1,7 @@
 # OversightML Imagery IO
 
 [![CI](https://github.com/awslabs/osml-imagery-io/actions/workflows/ci.yml/badge.svg)](https://github.com/awslabs/osml-imagery-io/actions/workflows/ci.yml)
+[![Docs](https://github.com/awslabs/osml-imagery-io/actions/workflows/docs.yml/badge.svg)](https://awslabs.github.io/osml-imagery-io/)
 [![PyPI](https://img.shields.io/pypi/v/osml-imagery-io)](https://pypi.org/project/osml-imagery-io/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
@@ -198,10 +199,12 @@ workflow.
 
 ## Documentation
 
-- [Getting Started](docs/user-guide/getting-started.md) — install, read, write, tile in a few lines
-- [User Guide](docs/user-guide/index.md) — datasets, metadata, block access, writing, cloud access
-- [API Reference](docs/api/index.md) — full Python API documentation
-- [Design Documents](docs/design/index.md) — architecture and design decisions
+Full documentation is published at **[awslabs.github.io/osml-imagery-io](https://awslabs.github.io/osml-imagery-io/)**.
+
+- [Getting Started](https://awslabs.github.io/osml-imagery-io/user-guide/getting-started.html) — install, read, write, tile in a few lines
+- [User Guide](https://awslabs.github.io/osml-imagery-io/user-guide/) — datasets, metadata, block access, writing, cloud access
+- [API Reference](https://awslabs.github.io/osml-imagery-io/api/) — full Python API documentation
+- [Design Documents](https://awslabs.github.io/osml-imagery-io/design/) — architecture and design decisions
 
 ## Development
 
