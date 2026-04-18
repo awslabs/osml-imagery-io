@@ -63,7 +63,6 @@ mod prop_7_conditional_field_presence {
     }
 }
 
-
 /// Property 8: Expression-Based Repetition Count
 /// For any repeated field with `repeat: expr`, the number of elements in the
 /// returned `Value::Array` SHALL equal the evaluated repeat-expr value.
@@ -214,7 +213,6 @@ mod prop_9_until_condition_repetition {
         }
     }
 }
-
 
 /// Property 10: End-of-Stream Repetition
 /// For any repeated field with `repeat: eos`, the total bytes consumed by all
@@ -424,7 +422,6 @@ mod prop_11_repeated_field_array_access {
     }
 }
 
-
 /// Property 1: TypeRef Size Accuracy
 /// For any field with `FieldType::TypeRef(type_name)` where `type_name` exists in the
 /// definition's types map, `get_simple_field_size()` SHALL return the same size as
@@ -452,7 +449,10 @@ mod prop_1_typeref_size_accuracy {
     }
 
     /// Create a structure definition with a nested type containing multiple fields
-    fn create_multi_field_nested_def(field1_size: usize, field2_size: usize) -> StructureDefinition {
+    fn create_multi_field_nested_def(
+        field1_size: usize,
+        field2_size: usize,
+    ) -> StructureDefinition {
         let nested_type = StructureDefinition::new("multi_field_type")
             .with_field(
                 FieldDefinition::new("field1", FieldType::String)

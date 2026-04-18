@@ -39,7 +39,9 @@ use crate::jbp::tre::{parse_tre_fields_from_metadata, write_tre_envelopes, TreEn
 use crate::jbp::tre_fields::serialize_tre_groups_to_envelopes;
 use crate::jbp::types::{NitfFormat, SegmentType};
 use crate::parser::StructureRegistry;
-use crate::traits::{AssetMetadata, AssetProvider, DatasetWriter, ImageAssetProvider, MetadataProvider};
+use crate::traits::{
+    AssetMetadata, AssetProvider, DatasetWriter, ImageAssetProvider, MetadataProvider,
+};
 use crate::types::AssetType;
 
 /// Maximum TRE data size for UDID field (UDIDL max 99999 - 3 bytes for UDOFL).
@@ -424,7 +426,14 @@ impl JBPDatasetWriter {
     }
 
     /// Get assets grouped by segment type in order.
-    fn get_assets_by_type(&self) -> (Vec<&QueuedAsset>, Vec<&QueuedAsset>, Vec<&QueuedAsset>, Vec<&QueuedAsset>) {
+    fn get_assets_by_type(
+        &self,
+    ) -> (
+        Vec<&QueuedAsset>,
+        Vec<&QueuedAsset>,
+        Vec<&QueuedAsset>,
+        Vec<&QueuedAsset>,
+    ) {
         let mut images = Vec::new();
         let mut graphics = Vec::new();
         let mut text = Vec::new();
@@ -456,7 +465,10 @@ impl JBPDatasetWriter {
     /// A tuple of (fits, overflow) where:
     /// - `fits` contains envelopes that fit within max_size
     /// - `overflow` contains the remaining envelopes
-    fn split_tres_by_size(envelopes: Vec<TreEnvelope>, max_size: usize) -> (Vec<TreEnvelope>, Vec<TreEnvelope>) {
+    fn split_tres_by_size(
+        envelopes: Vec<TreEnvelope>,
+        max_size: usize,
+    ) -> (Vec<TreEnvelope>, Vec<TreEnvelope>) {
         let mut fits = Vec::new();
         let mut overflow = Vec::new();
         let mut current_size = 0;
@@ -526,31 +538,35 @@ impl JBPDatasetWriter {
     ) -> Result<(Vec<u8>, Option<OverflowTreData>, EncodingHints), CodecError> {
         // Extract image properties and encoding hints
         let props = Self::extract_image_properties(asset);
-        
+
         // Detect and resolve conflicts between provider properties and metadata
         // Provider structural properties always override metadata
         let warnings = Self::detect_and_resolve_conflicts(asset, &props);
         for warning in warnings {
             eprintln!("Warning: {}", warning);
         }
-        
+
         let hints = Self::extract_encoding_hints(asset, &props);
         let validated_hints = Self::validate_encoding_hints(&hints, &props)?;
-        
+
         // Extract TRE envelopes from asset metadata
         let envelopes = self.extract_tre_envelopes_from_asset(asset);
-        
+
         if envelopes.is_empty() {
             // No TREs, create subheader without TRE data
-            return Ok((self.create_image_subheader_with_tres(asset, &[], None, &validated_hints), None, validated_hints));
+            return Ok((
+                self.create_image_subheader_with_tres(asset, &[], None, &validated_hints),
+                None,
+                validated_hints,
+            ));
         }
 
         // Split TREs by UDID size limit
         let (fits, overflow) = Self::split_tres_by_size(envelopes, MAX_UDID_TRE_SIZE);
-        
+
         // Serialize the TREs that fit
         let tre_bytes = write_tre_envelopes(&fits);
-        
+
         // Create overflow data if needed
         let overflow_data = if overflow.is_empty() {
             None
@@ -564,37 +580,47 @@ impl JBPDatasetWriter {
 
         // Create subheader with TRE bytes and overflow index placeholder
         // The overflow index will be set later when we know the DES index
-        let subheader = self.create_image_subheader_with_tres(asset, &tre_bytes, overflow_data.as_ref(), &validated_hints);
-        
+        let subheader = self.create_image_subheader_with_tres(
+            asset,
+            &tre_bytes,
+            overflow_data.as_ref(),
+            &validated_hints,
+        );
+
         Ok((subheader, overflow_data, validated_hints))
     }
 
-
     /// Create a minimal image subheader.
-    fn create_image_subheader(&self, asset: &QueuedAsset) -> Result<(Vec<u8>, EncodingHints), CodecError> {
+    fn create_image_subheader(
+        &self,
+        asset: &QueuedAsset,
+    ) -> Result<(Vec<u8>, EncodingHints), CodecError> {
         // Extract image properties and encoding hints
         let props = Self::extract_image_properties(asset);
-        
+
         // Detect and resolve conflicts between provider properties and metadata
         // Provider structural properties always override metadata
         let warnings = Self::detect_and_resolve_conflicts(asset, &props);
         for warning in warnings {
             eprintln!("Warning: {}", warning);
         }
-        
+
         let hints = Self::extract_encoding_hints(asset, &props);
         let validated_hints = Self::validate_encoding_hints(&hints, &props)?;
-        
+
         // Extract TRE bytes from asset metadata if registry is available
         let tre_bytes = self.extract_tre_bytes_from_asset(asset);
-        Ok((self.create_image_subheader_with_tres(asset, &tre_bytes, None, &validated_hints), validated_hints))
+        Ok((
+            self.create_image_subheader_with_tres(asset, &tre_bytes, None, &validated_hints),
+            validated_hints,
+        ))
     }
 
     /// Extract image properties from an asset provider.
-    /// 
+    ///
     /// If the provider is an `AssetProvider::Image` variant, extract the image
     /// properties. Otherwise, return default values.
-    /// 
+    ///
     /// Note: NPPBH and NPPBV are set to defaults here. The actual values
     /// should come from encoding hints extracted via `extract_encoding_hints()`.
     /// Callers should override these fields with validated encoding hints.
@@ -703,111 +729,124 @@ impl JBPDatasetWriter {
     /// EncodingHints with values from metadata or defaults.
     fn extract_encoding_hints(asset: &QueuedAsset, image_props: &ImageProperties) -> EncodingHints {
         use crate::j2k::comrat::{J2KComrat, J2KEncodingHints};
-        
+
         let metadata = asset.provider.metadata();
         let dict = metadata.as_dict(None);
-        
+
         // Extract imode - default to "B" if not present
         // Field names use uppercase to match .ksy parser output
-        let imode = dict.get("IMODE")
+        let imode = dict
+            .get("IMODE")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| "B".to_string());
-        
+
         // Extract ic - default to "NC" (no compression) if not present
-        let ic = dict.get("IC")
+        let ic = dict
+            .get("IC")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| "NC".to_string());
-        
+
         // Extract nppbh - default to provider's block width if not present or 0
-        let nppbh = dict.get("NPPBH")
+        let nppbh = dict
+            .get("NPPBH")
             .and_then(|v| {
                 // Try to parse as integer from string or number
                 if let Some(s) = v.as_str() {
                     s.trim().parse::<u32>().ok()
                 } else if let Some(n) = v.as_u64() {
                     Some(n as u32)
-                } else { v.as_i64().map(|n| n as u32) }
+                } else {
+                    v.as_i64().map(|n| n as u32)
+                }
             })
             .filter(|&n| n > 0)
             .unwrap_or(image_props.nppbh);
-        
+
         // Extract nppbv - default to provider's block height if not present or 0
-        let nppbv = dict.get("NPPBV")
+        let nppbv = dict
+            .get("NPPBV")
             .and_then(|v| {
                 // Try to parse as integer from string or number
                 if let Some(s) = v.as_str() {
                     s.trim().parse::<u32>().ok()
                 } else if let Some(n) = v.as_u64() {
                     Some(n as u32)
-                } else { v.as_i64().map(|n| n as u32) }
+                } else {
+                    v.as_i64().map(|n| n as u32)
+                }
             })
             .filter(|&n| n > 0)
             .unwrap_or(image_props.nppbv);
-        
+
         // Extract comrat - optional, only used for compressed images
-        let comrat = dict.get("COMRAT")
+        let comrat = dict
+            .get("COMRAT")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        
+
         // Extract J2K-specific encoding hints for IC=C8, CD, M8, or MD
         let ic_trimmed = ic.trim();
-        let j2k_hints = if ic_trimmed == "C8" || ic_trimmed == "CD" || ic_trimmed == "M8" || ic_trimmed == "MD" {
-            // Derive lossless and compression_ratio from COMRAT (single source of truth).
-            // J2K_LOSSLESS and J2K_COMPRESSION_RATIO are intentionally ignored.
-            let (lossless, compression_ratio) = if let Some(ref comrat_str) = comrat {
-                match J2KComrat::parse(comrat_str) {
-                    Ok(J2KComrat::NumericallyLossless) => (true, None),
-                    Ok(J2KComrat::VisuallyLossless(bpp)) => (false, Some(8.0 / bpp as f64)),
-                    Ok(J2KComrat::TargetBpp(bpp)) => (false, Some(8.0 / bpp as f64)),
-                    Ok(J2KComrat::Unknown) | Err(_) => (true, None),
-                }
+        let j2k_hints =
+            if ic_trimmed == "C8" || ic_trimmed == "CD" || ic_trimmed == "M8" || ic_trimmed == "MD"
+            {
+                // Derive lossless and compression_ratio from COMRAT (single source of truth).
+                // J2K_LOSSLESS and J2K_COMPRESSION_RATIO are intentionally ignored.
+                let (lossless, compression_ratio) = if let Some(ref comrat_str) = comrat {
+                    match J2KComrat::parse(comrat_str) {
+                        Ok(J2KComrat::NumericallyLossless) => (true, None),
+                        Ok(J2KComrat::VisuallyLossless(bpp)) => (false, Some(8.0 / bpp as f64)),
+                        Ok(J2KComrat::TargetBpp(bpp)) => (false, Some(8.0 / bpp as f64)),
+                        Ok(J2KComrat::Unknown) | Err(_) => (true, None),
+                    }
+                } else {
+                    // No COMRAT provided — default to numerically lossless
+                    (true, None)
+                };
+
+                // Extract decomposition levels
+                let decomposition_levels = dict
+                    .get("J2K_DECOMPOSITION_LEVELS")
+                    .and_then(|v| {
+                        if let Some(n) = v.as_u64() {
+                            Some(n as u8)
+                        } else if let Some(s) = v.as_str() {
+                            s.trim().parse::<u8>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(5);
+
+                // Extract quality layers
+                let quality_layers = dict
+                    .get("J2K_QUALITY_LAYERS")
+                    .and_then(|v| {
+                        if let Some(n) = v.as_u64() {
+                            Some(n as u8)
+                        } else if let Some(s) = v.as_str() {
+                            s.trim().parse::<u8>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(1);
+
+                // HTJ2K is determined by IC=CD or MD
+                let htj2k = ic_trimmed == "CD" || ic_trimmed == "MD";
+
+                Some(J2KEncodingHints {
+                    compression_ratio,
+                    lossless,
+                    decomposition_levels,
+                    quality_layers,
+                    htj2k,
+                })
             } else {
-                // No COMRAT provided — default to numerically lossless
-                (true, None)
+                None
             };
-            
-            // Extract decomposition levels
-            let decomposition_levels = dict.get("J2K_DECOMPOSITION_LEVELS")
-                .and_then(|v| {
-                    if let Some(n) = v.as_u64() {
-                        Some(n as u8)
-                    } else if let Some(s) = v.as_str() {
-                        s.trim().parse::<u8>().ok()
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(5);
-            
-            // Extract quality layers
-            let quality_layers = dict.get("J2K_QUALITY_LAYERS")
-                .and_then(|v| {
-                    if let Some(n) = v.as_u64() {
-                        Some(n as u8)
-                    } else if let Some(s) = v.as_str() {
-                        s.trim().parse::<u8>().ok()
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(1);
-            
-            // HTJ2K is determined by IC=CD or MD
-            let htj2k = ic_trimmed == "CD" || ic_trimmed == "MD";
-            
-            Some(J2KEncodingHints {
-                compression_ratio,
-                lossless,
-                decomposition_levels,
-                quality_layers,
-                htj2k,
-            })
-        } else {
-            None
-        };
-        
+
         EncodingHints {
             imode,
             ic,
@@ -836,7 +875,10 @@ impl JBPDatasetWriter {
     ///
     /// # Returns
     /// A vector of warning messages for any detected conflicts.
-    fn detect_and_resolve_conflicts(asset: &QueuedAsset, image_props: &ImageProperties) -> Vec<String> {
+    fn detect_and_resolve_conflicts(
+        asset: &QueuedAsset,
+        image_props: &ImageProperties,
+    ) -> Vec<String> {
         let metadata = asset.provider.metadata();
         let dict = metadata.as_dict(None);
         let mut warnings = Vec::new();
@@ -847,7 +889,9 @@ impl JBPDatasetWriter {
                 s.trim().parse::<u32>().ok()
             } else if let Some(n) = nbands_value.as_u64() {
                 Some(n as u32)
-            } else { nbands_value.as_i64().map(|n| n as u32) };
+            } else {
+                nbands_value.as_i64().map(|n| n as u32)
+            };
 
             if let Some(meta_bands) = metadata_nbands {
                 if meta_bands != image_props.nbands {
@@ -879,7 +923,9 @@ impl JBPDatasetWriter {
                 s.trim().parse::<u32>().ok()
             } else if let Some(n) = nrows_value.as_u64() {
                 Some(n as u32)
-            } else { nrows_value.as_i64().map(|n| n as u32) };
+            } else {
+                nrows_value.as_i64().map(|n| n as u32)
+            };
 
             if let Some(meta_rows) = metadata_nrows {
                 if meta_rows != image_props.nrows {
@@ -897,7 +943,9 @@ impl JBPDatasetWriter {
                 s.trim().parse::<u32>().ok()
             } else if let Some(n) = ncols_value.as_u64() {
                 Some(n as u32)
-            } else { ncols_value.as_i64().map(|n| n as u32) };
+            } else {
+                ncols_value.as_i64().map(|n| n as u32)
+            };
 
             if let Some(meta_cols) = metadata_ncols {
                 if meta_cols != image_props.ncols {
@@ -989,7 +1037,7 @@ impl JBPDatasetWriter {
     ) -> Result<EncodingHints, CodecError> {
         let ic_trimmed = hints.ic.trim();
         let is_j2k = ic_trimmed == "C8" || ic_trimmed == "CD";
-        
+
         // Validate IMODE
         let valid_imodes = ["B", "P", "R", "S"];
         if !valid_imodes.contains(&hints.imode.as_str()) {
@@ -998,7 +1046,7 @@ impl JBPDatasetWriter {
                 hints.imode
             )));
         }
-        
+
         // BPJ2K01.20: IMODE must be "B" for JPEG 2000 images
         if is_j2k && hints.imode != "B" {
             return Err(CodecError::InvalidFormat(format!(
@@ -1006,7 +1054,7 @@ impl JBPDatasetWriter {
                 ic_trimmed, hints.imode
             )));
         }
-        
+
         // BPJ2K01.20: NBPP must be 1-38 for JPEG 2000 images
         if is_j2k {
             if image_props.nbpp < 1 || image_props.nbpp > 38 {
@@ -1015,7 +1063,7 @@ impl JBPDatasetWriter {
                     ic_trimmed, image_props.nbpp
                 )));
             }
-            
+
             // BPJ2K01.20: ABPP must equal NBPP for JPEG 2000 images
             if image_props.abpp != image_props.nbpp {
                 return Err(CodecError::InvalidFormat(format!(
@@ -1024,7 +1072,7 @@ impl JBPDatasetWriter {
                 )));
             }
         }
-        
+
         // JPEG DCT specific validation (IC=C3, M3, I1)
         let is_jpeg = ic_trimmed == "C3" || ic_trimmed == "M3" || ic_trimmed == "I1";
         if is_jpeg {
@@ -1036,16 +1084,15 @@ impl JBPDatasetWriter {
                     ic_trimmed, image_props.nbpp
                 )));
             }
-            
+
             // I1 (Downsampled JPEG) has dimension constraints
-            if ic_trimmed == "I1"
-                && (image_props.nrows > 2048 || image_props.ncols > 2048) {
-                    return Err(CodecError::InvalidFormat(format!(
-                        "IC=I1 (Downsampled JPEG) requires dimensions ≤2048×2048, got {}×{}",
-                        image_props.ncols, image_props.nrows
-                    )));
-                }
-            
+            if ic_trimmed == "I1" && (image_props.nrows > 2048 || image_props.ncols > 2048) {
+                return Err(CodecError::InvalidFormat(format!(
+                    "IC=I1 (Downsampled JPEG) requires dimensions ≤2048×2048, got {}×{}",
+                    image_props.ncols, image_props.nrows
+                )));
+            }
+
             // JPEG supports IMODE=B, P, or S (not R for row interleaved)
             // For RGB/YCbCr, IMODE=P is typical
             // For multiband, IMODE=B or S is used
@@ -1057,7 +1104,7 @@ impl JBPDatasetWriter {
                 )));
             }
         }
-        
+
         // Validate NPPBH range
         if hints.nppbh < 1 || hints.nppbh > 8192 {
             return Err(CodecError::InvalidFormat(format!(
@@ -1065,7 +1112,7 @@ impl JBPDatasetWriter {
                 hints.nppbh
             )));
         }
-        
+
         // Validate NPPBV range
         if hints.nppbv < 1 || hints.nppbv > 8192 {
             return Err(CodecError::InvalidFormat(format!(
@@ -1073,33 +1120,33 @@ impl JBPDatasetWriter {
                 hints.nppbv
             )));
         }
-        
+
         // Auto-adjust block sizes if larger than image dimensions
         let mut adjusted = hints.clone();
-        
+
         if hints.nppbh > image_props.ncols {
             // Note: In production, this would log a warning
             // "NPPBH {} exceeds image width {}, adjusting to {}"
             adjusted.nppbh = image_props.ncols;
         }
-        
+
         if hints.nppbv > image_props.nrows {
             // Note: In production, this would log a warning
             // "NPPBV {} exceeds image height {}, adjusting to {}"
             adjusted.nppbv = image_props.nrows;
         }
-        
+
         // For JPEG 2000, force IMODE to "B" if not already set
         if is_j2k {
             adjusted.imode = "B".to_string();
         }
-        
+
         // For JPEG DCT, set default COMRAT if not specified
         if is_jpeg && adjusted.comrat.is_none() {
             // Default JPEG quality is 75, which maps to COMRAT "75.0"
             adjusted.comrat = Some("75.0".to_string());
         }
-        
+
         Ok(adjusted)
     }
 
@@ -1135,12 +1182,10 @@ impl JBPDatasetWriter {
         hints: &EncodingHints,
         props: &ImageProperties,
     ) -> Result<Vec<u8>, CodecError> {
-        use crate::jbp::image::{is_masked_ic, swap_ne_to_be, ImageDataMask, unmask_ic};
+        use crate::jbp::image::{is_masked_ic, swap_ne_to_be, unmask_ic, ImageDataMask};
 
         // Parse IMODE from hints
-        let imode = InterleaveMode::from_char(
-            hints.imode.chars().next().unwrap_or('B')
-        )?;
+        let imode = InterleaveMode::from_char(hints.imode.chars().next().unwrap_or('B'))?;
 
         // Validate blocks against IC value and get provided blocks
         let provided_blocks = Self::validate_blocks_for_ic(provider, &hints.ic)?;
@@ -1161,47 +1206,50 @@ impl JBPDatasetWriter {
         // For masked compressed images (M8, MD, M3), we don't need the initial multi-tile encoder
         // because we create per-block single-tile encoders later. Skip creating it
         // to avoid issues with decomposition levels vs image dimensions.
-        let is_masked_compressed = is_masked && (encoding_ic == "C8" || encoding_ic == "CD" || encoding_ic == "C3");
+        let is_masked_compressed =
+            is_masked && (encoding_ic == "C8" || encoding_ic == "CD" || encoding_ic == "C3");
 
         // Create the block encoder based on IC code (use underlying compression for masked)
         // Skip for masked compressed images - we'll create per-block encoders later
         #[cfg(feature = "openjpeg")]
-        let encoder: Option<Box<dyn crate::jbp::image::encoder::BlockEncoder>> = if is_masked_compressed {
-            None
-        } else {
-            Some(create_block_encoder(
-                &encoding_ic,
-                props.nrows,
-                props.ncols,
-                props.nbands,
-                props.nbpp as u8,
-                is_signed,
-                imode,
-                hints.nppbh,
-                hints.nppbv,
-                hints.j2k_hints.as_ref(),
-                hints.comrat.as_deref(),
-            )?)
-        };
+        let encoder: Option<Box<dyn crate::jbp::image::encoder::BlockEncoder>> =
+            if is_masked_compressed {
+                None
+            } else {
+                Some(create_block_encoder(
+                    &encoding_ic,
+                    props.nrows,
+                    props.ncols,
+                    props.nbands,
+                    props.nbpp as u8,
+                    is_signed,
+                    imode,
+                    hints.nppbh,
+                    hints.nppbv,
+                    hints.j2k_hints.as_ref(),
+                    hints.comrat.as_deref(),
+                )?)
+            };
 
         #[cfg(not(feature = "openjpeg"))]
-        let encoder: Option<Box<dyn crate::jbp::image::encoder::BlockEncoder>> = if is_masked_compressed {
-            None
-        } else {
-            Some(create_block_encoder(
-                &encoding_ic,
-                props.nrows,
-                props.ncols,
-                props.nbands,
-                props.nbpp as u8,
-                is_signed,
-                imode,
-                hints.nppbh,
-                hints.nppbv,
-                None,
-                hints.comrat.as_deref(),
-            )?)
-        };
+        let encoder: Option<Box<dyn crate::jbp::image::encoder::BlockEncoder>> =
+            if is_masked_compressed {
+                None
+            } else {
+                Some(create_block_encoder(
+                    &encoding_ic,
+                    props.nrows,
+                    props.ncols,
+                    props.nbands,
+                    props.nbpp as u8,
+                    is_signed,
+                    imode,
+                    hints.nppbh,
+                    hints.nppbv,
+                    None,
+                    hints.comrat.as_deref(),
+                )?)
+            };
 
         // Create tile assembler to read source tiles and produce output tiles
         let assembler = TileAssembler::new(provider, hints.nppbh, hints.nppbv);
@@ -1211,12 +1259,12 @@ impl JBPDatasetWriter {
             // For masked images, generate mask table and encode only provided blocks
             // Blocks are stored sequentially (not at calculated positions) and the
             // mask table contains offsets to each block's data.
-            
+
             // Create initial mask with placeholder offsets
             let mut mask = ImageDataMask::from_provided_blocks(
                 &provided_blocks,
-                grid_cols,  // num_blocks_per_row = grid_cols
-                grid_rows,  // num_blocks_per_col = grid_rows
+                grid_cols, // num_blocks_per_row = grid_cols
+                grid_rows, // num_blocks_per_col = grid_rows
                 props.nbands,
                 imode,
             );
@@ -1228,39 +1276,38 @@ impl JBPDatasetWriter {
                 // Uncompressed masked image: encode blocks sequentially
                 let mut encoded_data = Vec::new();
                 let bpp = (props.nbpp as usize).div_ceil(8);
-                
+
                 for block_row in 0..grid_rows {
                     for block_col in 0..grid_cols {
                         let block_index = (block_row * grid_cols + block_col) as usize;
-                        
+
                         if provided_blocks.contains(&(block_row, block_col)) {
                             // Record the offset where this block starts
                             mask.block_offsets[block_index] = encoded_data.len() as u32;
-                            
+
                             // Get the tile data
-                            let (tile_data, shape) = assembler.get_output_tile(block_row, block_col)?;
-                            
+                            let (tile_data, shape) =
+                                assembler.get_output_tile(block_row, block_col)?;
+
                             // NITF mandates big-endian for uncompressed multi-byte pixel data
                             // (JBP Section 4.6.2, requirement JBP-2021.2-013). Convert from
                             // native-endian (internal contract) to big-endian before writing.
                             let be_data = swap_ne_to_be(&tile_data, bpp);
-                            
+
                             // Convert from BSQ to target IMODE and append
                             let converted = crate::jbp::image::interleave::from_band_sequential(
-                                &be_data,
-                                imode,
-                                shape[1], // rows
+                                &be_data, imode, shape[1], // rows
                                 shape[2], // cols
                                 shape[0], // bands
                                 bpp,
                             )?;
-                            
+
                             encoded_data.extend_from_slice(&converted);
                         }
                         // Masked blocks already have EMPTY_BLOCK_OFFSET from from_provided_blocks
                     }
                 }
-                
+
                 // Serialize mask with updated offsets
                 let mask_bytes = mask.to_bytes();
 
@@ -1276,55 +1323,56 @@ impl JBPDatasetWriter {
                 //
                 // We create a new single-block encoder for each block, encode it, and
                 // concatenate the streams while tracking offsets.
-                
+
                 // Drop the encoder if it exists (it shouldn't for masked images)
                 drop(encoder);
-                
+
                 let mut encoded_data = Vec::new();
-                
+
                 for block_row in 0..grid_rows {
                     for block_col in 0..grid_cols {
                         let block_index = (block_row * grid_cols + block_col) as usize;
-                        
+
                         if provided_blocks.contains(&(block_row, block_col)) {
                             // Record the offset where this block's JPEG stream starts
                             mask.block_offsets[block_index] = encoded_data.len() as u32;
-                            
+
                             // Get the tile data
-                            let (tile_data, shape) = assembler.get_output_tile(block_row, block_col)?;
-                            
+                            let (tile_data, shape) =
+                                assembler.get_output_tile(block_row, block_col)?;
+
                             // Create a single-block JPEG encoder for this block
                             let block_height = shape[1];
                             let block_width = shape[2];
-                            
+
                             #[cfg(feature = "libjpeg-turbo")]
                             let mut block_encoder = create_block_encoder(
                                 &encoding_ic,
-                                block_height,  // Single block = block dimensions
+                                block_height, // Single block = block dimensions
                                 block_width,
                                 props.nbands,
                                 props.nbpp as u8,
                                 is_signed,
                                 imode,
-                                block_width,   // Tile size = full block (single tile)
+                                block_width, // Tile size = full block (single tile)
                                 block_height,
-                                None,  // No J2K hints for JPEG
+                                None, // No J2K hints for JPEG
                                 hints.comrat.as_deref(),
                             )?;
-                            
+
                             #[cfg(not(feature = "libjpeg-turbo"))]
                             return Err(CodecError::Unsupported(
                                 "JPEG DCT compression (IC=M3) requires the 'libjpeg-turbo' feature to be enabled.".into()
                             ));
-                            
+
                             #[cfg(feature = "libjpeg-turbo")]
                             {
                                 // Encode the single block (tile 0,0 in this single-tile image)
                                 block_encoder.encode_block(0, 0, &tile_data, shape)?;
-                                
+
                                 // Finalize to get the JPEG stream for this block
                                 let block_jpeg = block_encoder.finalize()?;
-                                
+
                                 // Append the JPEG stream
                                 encoded_data.extend_from_slice(&block_jpeg);
                             }
@@ -1350,28 +1398,29 @@ impl JBPDatasetWriter {
                 // We don't use the multi-tile encoder here. Instead, we create
                 // a new single-tile encoder for each block, encode it, and
                 // concatenate the codestreams while tracking offsets.
-                
+
                 // encoder is None for masked J2K, so nothing to drop
                 drop(encoder);
-                
+
                 let mut encoded_data = Vec::new();
-                
+
                 for block_row in 0..grid_rows {
                     for block_col in 0..grid_cols {
                         let block_index = (block_row * grid_cols + block_col) as usize;
-                        
+
                         if provided_blocks.contains(&(block_row, block_col)) {
                             // Record the offset where this block's codestream starts
                             mask.block_offsets[block_index] = encoded_data.len() as u32;
-                            
+
                             // Get the tile data
-                            let (tile_data, shape) = assembler.get_output_tile(block_row, block_col)?;
-                            
+                            let (tile_data, shape) =
+                                assembler.get_output_tile(block_row, block_col)?;
+
                             // Create a single-tile encoder for this block
                             // The tile dimensions are the actual block dimensions
                             let block_height = shape[1];
                             let block_width = shape[2];
-                            
+
                             // For masked J2K, we need to calculate safe decomposition levels
                             // based on the actual block dimensions, not the nominal block size.
                             // This is especially important for partial blocks at image edges.
@@ -1381,45 +1430,45 @@ impl JBPDatasetWriter {
                             #[cfg(feature = "openjpeg")]
                             let block_hints = {
                                 use crate::j2k::comrat::J2KEncodingHints;
-                                
+
                                 let min_dim = block_height.min(block_width);
                                 // Calculate safe decomposition levels based on OpenJPEG's requirement:
                                 // min_dim >= 2^decomposition_levels
                                 // Therefore: decomposition_levels <= floor(log2(min_dim))
                                 let safe_levels = if min_dim <= 1 {
-                                    0  // 1-pixel blocks can only have 0 decomposition levels
+                                    0 // 1-pixel blocks can only have 0 decomposition levels
                                 } else {
                                     // floor(log2(min_dim)) gives max safe levels
                                     // Cap at 5 for reasonable compression
                                     ((min_dim as f64).log2().floor() as u8).min(5)
                                 };
-                                
+
                                 // Create hints based on existing hints or defaults, but always
                                 // with safe decomposition levels for this block
                                 let base_hints = hints.j2k_hints.clone().unwrap_or_default();
                                 let final_levels = safe_levels.min(base_hints.decomposition_levels);
-                                
+
                                 Some(J2KEncodingHints {
                                     decomposition_levels: final_levels,
                                     ..base_hints
                                 })
                             };
-                            
+
                             #[cfg(feature = "openjpeg")]
                             let mut block_encoder = create_block_encoder(
                                 &encoding_ic,
-                                block_height,  // Single tile = block dimensions
+                                block_height, // Single tile = block dimensions
                                 block_width,
                                 props.nbands,
                                 props.nbpp as u8,
                                 is_signed,
                                 imode,
-                                block_width,   // Tile size = full block (single tile)
+                                block_width, // Tile size = full block (single tile)
                                 block_height,
                                 block_hints.as_ref(),
                                 hints.comrat.as_deref(),
                             )?;
-                            
+
                             #[cfg(not(feature = "openjpeg"))]
                             let mut block_encoder = create_block_encoder(
                                 &encoding_ic,
@@ -1434,13 +1483,13 @@ impl JBPDatasetWriter {
                                 None,
                                 hints.comrat.as_deref(),
                             )?;
-                            
+
                             // Encode the single block (tile 0,0 in this single-tile image)
                             block_encoder.encode_block(0, 0, &tile_data, shape)?;
-                            
+
                             // Finalize to get the codestream for this block
                             let block_codestream = block_encoder.finalize()?;
-                            
+
                             // Append the codestream
                             encoded_data.extend_from_slice(&block_codestream);
                         }
@@ -1490,11 +1539,11 @@ impl JBPDatasetWriter {
     ) -> Vec<u8> {
         // Extract image properties from the asset provider
         let props = Self::extract_image_properties(asset);
-        
+
         // Get metadata for user-settable fields
         let metadata = asset.provider.metadata();
         let metadata_dict = metadata.as_dict(None);
-        
+
         // Helper to get metadata value or default
         let get_field = |key: &str, default: &str, max_len: usize| -> String {
             metadata_dict
@@ -1506,7 +1555,7 @@ impl JBPDatasetWriter {
                 .take(max_len)
                 .collect::<String>()
         };
-        
+
         let mut subheader = Vec::new();
 
         // IM (2) - File Part Type
@@ -1560,7 +1609,7 @@ impl JBPDatasetWriter {
         subheader.extend_from_slice(b"0");
         // IC (2) - Image Compression (from encoding hints)
         subheader.extend_from_slice(format!("{:2}", hints.ic).as_bytes());
-        
+
         // COMRAT (4) - Compression Rate Code (only for compressed images)
         // Present when IC is not NC or NM
         let ic_trimmed = hints.ic.trim();
@@ -1581,7 +1630,7 @@ impl JBPDatasetWriter {
             };
             subheader.extend_from_slice(comrat.as_bytes());
         }
-        
+
         // NBANDS (1) or XBANDS (5) - Number of Bands
         // If nbands > 9, use XBANDS format (NBANDS=0, then XBANDS field)
         if props.nbands > 9 {
@@ -1590,7 +1639,7 @@ impl JBPDatasetWriter {
         } else {
             subheader.extend_from_slice(format!("{}", props.nbands).as_bytes());
         }
-        
+
         // Band info for each band
         for band in 0..props.nbands {
             // IREPBAND (2) - Band Representation
@@ -1611,16 +1660,16 @@ impl JBPDatasetWriter {
             // NLUTS (1) - Number of LUTs
             subheader.extend_from_slice(b"0");
         }
-        
+
         // ISYNC (1) - Image Sync Code
         subheader.extend_from_slice(b"0");
         // IMODE (1) - Image Mode (from encoding hints)
         subheader.extend_from_slice(hints.imode.as_bytes());
-        
+
         // Calculate blocking parameters using hints
         let nbpr = props.ncols.div_ceil(hints.nppbh);
         let nbpc = props.nrows.div_ceil(hints.nppbv);
-        
+
         // NBPR (4) - Number of Blocks Per Row
         subheader.extend_from_slice(format!("{:04}", nbpr).as_bytes());
         // NBPC (4) - Number of Blocks Per Column
@@ -1882,7 +1931,7 @@ impl JBPDatasetWriter {
     }
 
     /// Create a subheader for the given asset.
-    /// 
+    ///
     /// Note: For image segments, use `create_image_subheader_with_overflow` instead
     /// to properly handle TRE overflow and encoding hints.
     fn create_subheader(&self, asset: &QueuedAsset) -> Vec<u8> {
@@ -1904,9 +1953,15 @@ impl JBPDatasetWriter {
         }
     }
 
-
     /// Calculate the file header length based on segment counts.
-    fn calculate_header_length(&self, numi: usize, nums: usize, numt: usize, numdes: usize, numres: usize) -> usize {
+    fn calculate_header_length(
+        &self,
+        numi: usize,
+        nums: usize,
+        numt: usize,
+        numdes: usize,
+        numres: usize,
+    ) -> usize {
         // Fixed header portion (before segment info)
         let fixed_len = 9  // FHDR + FVER
             + 2   // CLEVEL
@@ -1937,20 +1992,27 @@ impl JBPDatasetWriter {
             + 24  // ONAME
             + 18  // OPHONE
             + 12  // FL
-            + 6;  // HL
+            + 6; // HL
 
         // Variable portion based on segment counts
-        let image_info_len = 3 + numi * (6 + 10);  // NUMI + (LISH + LI) * numi
+        let image_info_len = 3 + numi * (6 + 10); // NUMI + (LISH + LI) * numi
         let graphic_info_len = 3 + nums * (4 + 6); // NUMS + (LSSH + LS) * nums
-        let numx_len = 3;                          // NUMX (reserved)
-        let text_info_len = 3 + numt * (4 + 5);    // NUMT + (LTSH + LT) * numt
-        let des_info_len = 3 + numdes * (4 + 9);   // NUMDES + (LDSH + LD) * numdes
-        let res_info_len = 3 + numres * (4 + 7);   // NUMRES + (LRESH + LRE) * numres
-        let udhd_len = 5;                          // UDHDL
-        let xhd_len = 5;                           // XHDL
+        let numx_len = 3; // NUMX (reserved)
+        let text_info_len = 3 + numt * (4 + 5); // NUMT + (LTSH + LT) * numt
+        let des_info_len = 3 + numdes * (4 + 9); // NUMDES + (LDSH + LD) * numdes
+        let res_info_len = 3 + numres * (4 + 7); // NUMRES + (LRESH + LRE) * numres
+        let udhd_len = 5; // UDHDL
+        let xhd_len = 5; // XHDL
 
-        fixed_len + image_info_len + graphic_info_len + numx_len + text_info_len 
-            + des_info_len + res_info_len + udhd_len + xhd_len
+        fixed_len
+            + image_info_len
+            + graphic_info_len
+            + numx_len
+            + text_info_len
+            + des_info_len
+            + res_info_len
+            + udhd_len
+            + xhd_len
     }
 
     /// Write the file header.
@@ -1959,7 +2021,7 @@ impl JBPDatasetWriter {
         writer: &mut W,
         file_length: u64,
         header_length: usize,
-        image_info: &[(usize, usize)],   // (subheader_len, data_len)
+        image_info: &[(usize, usize)], // (subheader_len, data_len)
         graphic_info: &[(usize, usize)],
         text_info: &[(usize, usize)],
         des_info: &[(usize, usize)],
@@ -1973,119 +2035,150 @@ impl JBPDatasetWriter {
             .unwrap_or_else(|| empty_map.clone());
 
         // Magic number
-        writer.write_all(self.format.magic().as_bytes())
+        writer
+            .write_all(self.format.magic().as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
 
         // CLEVEL (2)
         let clevel = get_metadata_field(&metadata_dict, "CLEVEL", "03", 2);
-        writer.write_all(clevel.as_bytes())
+        writer
+            .write_all(clevel.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // STYPE (4)
-        writer.write_all(b"BF01")
+        writer
+            .write_all(b"BF01")
             .map_err(|e| JBPError::IoError { source: e })?;
         // OSTAID (10)
         let ostaid = get_metadata_field(&metadata_dict, "OSTAID", "OSML_IO", 10);
-        writer.write_all(ostaid.as_bytes())
+        writer
+            .write_all(ostaid.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // FDT (14)
         let fdt = get_metadata_field(&metadata_dict, "FDT", "", 14);
-        writer.write_all(fdt.as_bytes())
+        writer
+            .write_all(fdt.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // FTITLE (80)
         let ftitle = get_metadata_field(&metadata_dict, "FTITLE", "", 80);
-        writer.write_all(ftitle.as_bytes())
+        writer
+            .write_all(ftitle.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // Security fields (FSCLAS through FSCTLN) — 13 fields using "FS" prefix
         let mut security_buf = Vec::new();
         write_security_fields(&mut security_buf, &metadata_dict, "FS");
-        writer.write_all(&security_buf)
+        writer
+            .write_all(&security_buf)
             .map_err(|e| JBPError::IoError { source: e })?;
         // FSCOP (5)
-        writer.write_all(b"00000")
+        writer
+            .write_all(b"00000")
             .map_err(|e| JBPError::IoError { source: e })?;
         // FSCPYS (5)
-        writer.write_all(b"00000")
+        writer
+            .write_all(b"00000")
             .map_err(|e| JBPError::IoError { source: e })?;
         // ENCRYP (1)
-        writer.write_all(b"0")
+        writer
+            .write_all(b"0")
             .map_err(|e| JBPError::IoError { source: e })?;
         // FBKGC (3) - binary field
         let fbkgc = get_metadata_bytes(&metadata_dict, "FBKGC", &[0u8; 3], 3);
-        writer.write_all(&fbkgc)
+        writer
+            .write_all(&fbkgc)
             .map_err(|e| JBPError::IoError { source: e })?;
         // ONAME (24)
         let oname = get_metadata_field(&metadata_dict, "ONAME", "", 24);
-        writer.write_all(oname.as_bytes())
+        writer
+            .write_all(oname.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // OPHONE (18)
         let ophone = get_metadata_field(&metadata_dict, "OPHONE", "", 18);
-        writer.write_all(ophone.as_bytes())
+        writer
+            .write_all(ophone.as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
 
         // FL (12) - File Length
-        writer.write_all(format!("{:012}", file_length).as_bytes())
+        writer
+            .write_all(format!("{:012}", file_length).as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // HL (6) - Header Length
-        writer.write_all(format!("{:06}", header_length).as_bytes())
+        writer
+            .write_all(format!("{:06}", header_length).as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
 
         // NUMI (3)
-        writer.write_all(format!("{:03}", image_info.len()).as_bytes())
+        writer
+            .write_all(format!("{:03}", image_info.len()).as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // Image segment info - interleaved as nested type (LISH, LI) per segment
         for (lish, li) in image_info {
-            writer.write_all(format!("{:06}", lish).as_bytes())
+            writer
+                .write_all(format!("{:06}", lish).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
-            writer.write_all(format!("{:010}", li).as_bytes())
+            writer
+                .write_all(format!("{:010}", li).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
         }
 
         // NUMS (3)
-        writer.write_all(format!("{:03}", graphic_info.len()).as_bytes())
+        writer
+            .write_all(format!("{:03}", graphic_info.len()).as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // Graphic segment info - interleaved as nested type (LSSH, LS) per segment
         for (lssh, ls) in graphic_info {
-            writer.write_all(format!("{:04}", lssh).as_bytes())
+            writer
+                .write_all(format!("{:04}", lssh).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
-            writer.write_all(format!("{:06}", ls).as_bytes())
+            writer
+                .write_all(format!("{:06}", ls).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
         }
 
         // NUMX (3) - reserved
-        writer.write_all(b"000")
+        writer
+            .write_all(b"000")
             .map_err(|e| JBPError::IoError { source: e })?;
 
         // NUMT (3)
-        writer.write_all(format!("{:03}", text_info.len()).as_bytes())
+        writer
+            .write_all(format!("{:03}", text_info.len()).as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // Text segment info - interleaved as nested type (LTSH, LT) per segment
         for (ltsh, lt) in text_info {
-            writer.write_all(format!("{:04}", ltsh).as_bytes())
+            writer
+                .write_all(format!("{:04}", ltsh).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
-            writer.write_all(format!("{:05}", lt).as_bytes())
+            writer
+                .write_all(format!("{:05}", lt).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
         }
 
         // NUMDES (3)
-        writer.write_all(format!("{:03}", des_info.len()).as_bytes())
+        writer
+            .write_all(format!("{:03}", des_info.len()).as_bytes())
             .map_err(|e| JBPError::IoError { source: e })?;
         // DES segment info - interleaved as nested type (LDSH, LD) per segment
         for (ldsh, ld) in des_info {
-            writer.write_all(format!("{:04}", ldsh).as_bytes())
+            writer
+                .write_all(format!("{:04}", ldsh).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
-            writer.write_all(format!("{:09}", ld).as_bytes())
+            writer
+                .write_all(format!("{:09}", ld).as_bytes())
                 .map_err(|e| JBPError::IoError { source: e })?;
         }
 
         // NUMRES (3)
-        writer.write_all(b"000")
+        writer
+            .write_all(b"000")
             .map_err(|e| JBPError::IoError { source: e })?;
 
         // UDHDL (5)
-        writer.write_all(b"00000")
+        writer
+            .write_all(b"00000")
             .map_err(|e| JBPError::IoError { source: e })?;
         // XHDL (5)
-        writer.write_all(b"00000")
+        writer
+            .write_all(b"00000")
             .map_err(|e| JBPError::IoError { source: e })?;
 
         Ok(())
@@ -2178,8 +2271,9 @@ impl DatasetWriter for JBPDatasetWriter {
         let mut overflow_tres: Vec<OverflowTreData> = Vec::new();
 
         for (idx, asset) in images.iter().enumerate() {
-            let (subheader, overflow, hints) = self.create_image_subheader_with_overflow(asset, idx as u16)?;
-            
+            let (subheader, overflow, hints) =
+                self.create_image_subheader_with_overflow(asset, idx as u16)?;
+
             // Encode image data using BlockEncoder for ImageAssetProvider,
             // or fall back to raw data for other providers.
             let data = if let Some(image_provider) = asset.provider.as_image() {
@@ -2190,11 +2284,11 @@ impl DatasetWriter for JBPDatasetWriter {
                 // Non-image providers pass through raw data as-is
                 asset.provider.raw_asset()?
             };
-            
+
             image_info.push((subheader.len(), data.len()));
             image_subheaders.push(subheader);
             image_data.push(data);
-            
+
             if let Some(overflow_data) = overflow {
                 overflow_tres.push(overflow_data);
             }
@@ -2239,7 +2333,7 @@ impl DatasetWriter for JBPDatasetWriter {
         let base_des_count = des_info.len();
         for (overflow_idx, overflow_data) in overflow_tres.iter().enumerate() {
             let des_index = (base_des_count + overflow_idx + 1) as u16; // 1-based index
-            
+
             // Patch the overflow index in the source segment's subheader
             match overflow_data.source {
                 OverflowSource::ImageUdid | OverflowSource::ImageIxshd => {
@@ -2300,30 +2394,48 @@ impl DatasetWriter for JBPDatasetWriter {
 
         // Write image segments
         for (subheader, data) in image_subheaders.iter().zip(image_data.iter()) {
-            writer.write_all(subheader).map_err(|e| JBPError::IoError { source: e })?;
-            writer.write_all(data).map_err(|e| JBPError::IoError { source: e })?;
+            writer
+                .write_all(subheader)
+                .map_err(|e| JBPError::IoError { source: e })?;
+            writer
+                .write_all(data)
+                .map_err(|e| JBPError::IoError { source: e })?;
         }
 
         // Write graphic segments
         for (subheader, data) in graphic_subheaders.iter().zip(graphic_data.iter()) {
-            writer.write_all(subheader).map_err(|e| JBPError::IoError { source: e })?;
-            writer.write_all(data).map_err(|e| JBPError::IoError { source: e })?;
+            writer
+                .write_all(subheader)
+                .map_err(|e| JBPError::IoError { source: e })?;
+            writer
+                .write_all(data)
+                .map_err(|e| JBPError::IoError { source: e })?;
         }
 
         // Write text segments
         for (subheader, data) in text_subheaders.iter().zip(text_data.iter()) {
-            writer.write_all(subheader).map_err(|e| JBPError::IoError { source: e })?;
-            writer.write_all(data).map_err(|e| JBPError::IoError { source: e })?;
+            writer
+                .write_all(subheader)
+                .map_err(|e| JBPError::IoError { source: e })?;
+            writer
+                .write_all(data)
+                .map_err(|e| JBPError::IoError { source: e })?;
         }
 
         // Write DES segments (including TRE_OVERFLOW DES)
         for (subheader, data) in des_subheaders.iter().zip(des_data.iter()) {
-            writer.write_all(subheader).map_err(|e| JBPError::IoError { source: e })?;
-            writer.write_all(data).map_err(|e| JBPError::IoError { source: e })?;
+            writer
+                .write_all(subheader)
+                .map_err(|e| JBPError::IoError { source: e })?;
+            writer
+                .write_all(data)
+                .map_err(|e| JBPError::IoError { source: e })?;
         }
 
         // Flush and close
-        writer.flush().map_err(|e| JBPError::IoError { source: e })?;
+        writer
+            .flush()
+            .map_err(|e| JBPError::IoError { source: e })?;
 
         self.closed = true;
         Ok(())
@@ -2333,7 +2445,6 @@ impl DatasetWriter for JBPDatasetWriter {
 // Ensure JBPDatasetWriter is Send + Sync
 unsafe impl Send for JBPDatasetWriter {}
 unsafe impl Sync for JBPDatasetWriter {}
-
 
 #[cfg(test)]
 mod tests {
@@ -2400,20 +2511,48 @@ mod tests {
     }
 
     impl ImageAssetProvider for TestAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
-        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
+            true
+        }
+        fn get_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+            _bands: Option<&[u32]>,
+        ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
             Ok((self.data.clone(), [1, 1, 1]))
         }
-        fn num_resolution_levels(&self) -> u32 { 1 }
-        fn num_bands(&self) -> u32 { 1 }
-        fn num_rows(&self) -> u32 { 1 }
-        fn num_columns(&self) -> u32 { 1 }
-        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
-        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
-        fn num_bits_per_pixel(&self) -> u32 { 8 }
-        fn actual_bits_per_pixel(&self) -> u32 { 8 }
-        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
-        fn pad_pixel_value(&self) -> f64 { 0.0 }
+        fn num_resolution_levels(&self) -> u32 {
+            1
+        }
+        fn num_bands(&self) -> u32 {
+            1
+        }
+        fn num_rows(&self) -> u32 {
+            1
+        }
+        fn num_columns(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_horizontal(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_vertical(&self) -> u32 {
+            1
+        }
+        fn num_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn actual_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn pixel_value_type(&self) -> crate::types::PixelType {
+            crate::types::PixelType::UInt8
+        }
+        fn pad_pixel_value(&self) -> f64 {
+            0.0
+        }
     }
 
     struct TestMetadataProvider;
@@ -2436,24 +2575,47 @@ mod tests {
 
     impl TestTextAssetProvider {
         fn new(key: &str, data: Vec<u8>) -> Self {
-            Self { key: key.to_string(), data }
+            Self {
+                key: key.to_string(),
+                data,
+            }
         }
     }
 
     impl AssetMetadata for TestTextAssetProvider {
-        fn key(&self) -> &str { &self.key }
-        fn title(&self) -> &str { "Test Text" }
-        fn description(&self) -> &str { "Test text asset" }
-        fn media_type(&self) -> &str { "text/plain" }
-        fn roles(&self) -> &[String] { &[] }
-        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(self.data.clone()) }
-        fn metadata(&self) -> Arc<dyn MetadataProvider> { Arc::new(TestMetadataProvider) }
+        fn key(&self) -> &str {
+            &self.key
+        }
+        fn title(&self) -> &str {
+            "Test Text"
+        }
+        fn description(&self) -> &str {
+            "Test text asset"
+        }
+        fn media_type(&self) -> &str {
+            "text/plain"
+        }
+        fn roles(&self) -> &[String] {
+            &[]
+        }
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
+            Ok(self.data.clone())
+        }
+        fn metadata(&self) -> Arc<dyn MetadataProvider> {
+            Arc::new(TestMetadataProvider)
+        }
     }
 
     impl crate::traits::TextAssetProvider for TestTextAssetProvider {
-        fn text(&self) -> Result<String, CodecError> { Ok(String::from_utf8_lossy(&self.data).to_string()) }
-        fn encoding(&self) -> &str { "UTF-8" }
-        fn format(&self) -> &str { "MTF" }
+        fn text(&self) -> Result<String, CodecError> {
+            Ok(String::from_utf8_lossy(&self.data).to_string())
+        }
+        fn encoding(&self) -> &str {
+            "UTF-8"
+        }
+        fn format(&self) -> &str {
+            "MTF"
+        }
     }
 
     /// Simple graphics asset provider for testing non-image segments.
@@ -2464,18 +2626,35 @@ mod tests {
 
     impl TestGraphicsAssetProvider {
         fn new(key: &str, data: Vec<u8>) -> Self {
-            Self { key: key.to_string(), data }
+            Self {
+                key: key.to_string(),
+                data,
+            }
         }
     }
 
     impl AssetMetadata for TestGraphicsAssetProvider {
-        fn key(&self) -> &str { &self.key }
-        fn title(&self) -> &str { "Test Graphics" }
-        fn description(&self) -> &str { "Test graphics asset" }
-        fn media_type(&self) -> &str { "image/cgm" }
-        fn roles(&self) -> &[String] { &[] }
-        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(self.data.clone()) }
-        fn metadata(&self) -> Arc<dyn MetadataProvider> { Arc::new(TestMetadataProvider) }
+        fn key(&self) -> &str {
+            &self.key
+        }
+        fn title(&self) -> &str {
+            "Test Graphics"
+        }
+        fn description(&self) -> &str {
+            "Test graphics asset"
+        }
+        fn media_type(&self) -> &str {
+            "image/cgm"
+        }
+        fn roles(&self) -> &[String] {
+            &[]
+        }
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
+            Ok(self.data.clone())
+        }
+        fn metadata(&self) -> Arc<dyn MetadataProvider> {
+            Arc::new(TestMetadataProvider)
+        }
     }
 
     impl crate::traits::GraphicsAssetProvider for TestGraphicsAssetProvider {}
@@ -2488,33 +2667,56 @@ mod tests {
 
     impl TestDataAssetProvider {
         fn new(key: &str, data: Vec<u8>) -> Self {
-            Self { key: key.to_string(), data }
+            Self {
+                key: key.to_string(),
+                data,
+            }
         }
     }
 
     impl AssetMetadata for TestDataAssetProvider {
-        fn key(&self) -> &str { &self.key }
-        fn title(&self) -> &str { "Test Data" }
-        fn description(&self) -> &str { "Test data asset" }
-        fn media_type(&self) -> &str { "application/octet-stream" }
-        fn roles(&self) -> &[String] { &[] }
-        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(self.data.clone()) }
-        fn metadata(&self) -> Arc<dyn MetadataProvider> { Arc::new(TestMetadataProvider) }
+        fn key(&self) -> &str {
+            &self.key
+        }
+        fn title(&self) -> &str {
+            "Test Data"
+        }
+        fn description(&self) -> &str {
+            "Test data asset"
+        }
+        fn media_type(&self) -> &str {
+            "application/octet-stream"
+        }
+        fn roles(&self) -> &[String] {
+            &[]
+        }
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
+            Ok(self.data.clone())
+        }
+        fn metadata(&self) -> Arc<dyn MetadataProvider> {
+            Arc::new(TestMetadataProvider)
+        }
     }
 
     impl crate::traits::DataAssetProvider for TestDataAssetProvider {
-        fn mime_type(&self) -> &str { "application/octet-stream" }
-        fn parse_as_xml(&self) -> Result<String, CodecError> { Err(CodecError::Decode("Not XML".to_string())) }
-        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> { Err(CodecError::Decode("Not JSON".to_string())) }
+        fn mime_type(&self) -> &str {
+            "application/octet-stream"
+        }
+        fn parse_as_xml(&self) -> Result<String, CodecError> {
+            Err(CodecError::Decode("Not XML".to_string()))
+        }
+        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
+            Err(CodecError::Decode("Not JSON".to_string()))
+        }
     }
 
     #[test]
     fn writer_new_creates_instance() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        
+
         assert_eq!(writer.format(), NitfFormat::Nitf21);
         assert_eq!(writer.path(), path);
         assert_eq!(writer.asset_count(), 0);
@@ -2525,9 +2727,9 @@ mod tests {
     fn writer_new_nsif_format() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.nsif");
-        
+
         let writer = JBPDatasetWriter::new(&path, NitfFormat::Nsif10).unwrap();
-        
+
         assert_eq!(writer.format(), NitfFormat::Nsif10);
     }
 
@@ -2535,25 +2737,41 @@ mod tests {
     fn writer_add_asset_increments_count() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
-        
-        writer.add_asset("image_0", provider, "Test", "", &[]).unwrap();
+        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new(
+            "image_0",
+            AssetType::Image,
+            vec![0u8; 100],
+        )));
+
+        writer
+            .add_asset("image_0", provider, "Test", "", &[])
+            .unwrap();
     }
 
     #[test]
     fn writer_add_asset_duplicate_key_error() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        let provider1 = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
-        let provider2 = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
-        
-        writer.add_asset("image_0", provider1, "Test", "", &[]).unwrap();
+        let provider1 = AssetProvider::Image(Arc::new(TestAssetProvider::new(
+            "image_0",
+            AssetType::Image,
+            vec![0u8; 100],
+        )));
+        let provider2 = AssetProvider::Image(Arc::new(TestAssetProvider::new(
+            "image_0",
+            AssetType::Image,
+            vec![0u8; 100],
+        )));
+
+        writer
+            .add_asset("image_0", provider1, "Test", "", &[])
+            .unwrap();
         let result = writer.add_asset("image_0", provider2, "Test", "", &[]);
-        
+
         assert!(result.is_err());
         match result {
             Err(CodecError::DuplicateKey(key)) => assert_eq!(key, "image_0"),
@@ -2565,18 +2783,20 @@ mod tests {
     fn writer_add_asset_preserves_order() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        
+
         for i in 0..5 {
             let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new(
                 &format!("image_{}", i),
                 AssetType::Image,
                 vec![i as u8; 100],
             )));
-            writer.add_asset(&format!("image_{}", i), provider, "Test", "", &[]).unwrap();
+            writer
+                .add_asset(&format!("image_{}", i), provider, "Test", "", &[])
+                .unwrap();
         }
-        
+
         assert_eq!(writer.asset_count(), 5);
         // Order is preserved in the assets vector
         for (i, asset) in writer.assets.iter().enumerate() {
@@ -2588,12 +2808,12 @@ mod tests {
     fn writer_set_metadata() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
         let metadata = Arc::new(TestMetadataProvider);
-        
+
         let result = writer.set_metadata(metadata);
-        
+
         assert!(result.is_ok());
         assert!(writer.file_metadata.is_some());
     }
@@ -2602,13 +2822,19 @@ mod tests {
     fn writer_close_creates_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
-        writer.add_asset("image_0", provider, "Test", "", &[]).unwrap();
-        
+        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new(
+            "image_0",
+            AssetType::Image,
+            vec![0u8; 100],
+        )));
+        writer
+            .add_asset("image_0", provider, "Test", "", &[])
+            .unwrap();
+
         writer.close().unwrap();
-        
+
         assert!(path.exists());
         assert!(writer.is_closed());
     }
@@ -2617,11 +2843,11 @@ mod tests {
     fn writer_close_empty_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        
+
         writer.close().unwrap();
-        
+
         assert!(path.exists());
     }
 
@@ -2629,12 +2855,12 @@ mod tests {
     fn writer_close_idempotent() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        
+
         writer.close().unwrap();
         writer.close().unwrap(); // Should not error
-        
+
         assert!(writer.is_closed());
     }
 
@@ -2642,13 +2868,17 @@ mod tests {
     fn writer_add_asset_after_close_error() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
         writer.close().unwrap();
-        
-        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
+
+        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new(
+            "image_0",
+            AssetType::Image,
+            vec![0u8; 100],
+        )));
         let result = writer.add_asset("image_0", provider, "Test", "", &[]);
-        
+
         assert!(result.is_err());
     }
 
@@ -2676,9 +2906,9 @@ mod tests {
     fn writer_count_segments_by_type() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        
+
         // Add 2 images, 1 text, 1 graphic
         for i in 0..2 {
             let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new(
@@ -2686,17 +2916,29 @@ mod tests {
                 AssetType::Image,
                 vec![0u8; 100],
             )));
-            writer.add_asset(&format!("image_{}", i), provider, "Test", "", &[]).unwrap();
+            writer
+                .add_asset(&format!("image_{}", i), provider, "Test", "", &[])
+                .unwrap();
         }
-        
-        let provider = AssetProvider::Text(Arc::new(TestTextAssetProvider::new("text_0", vec![0u8; 50])));
-        writer.add_asset("text_0", provider, "Test", "", &[]).unwrap();
-        
-        let provider = AssetProvider::Graphics(Arc::new(TestGraphicsAssetProvider::new("graphic_0", vec![0u8; 75])));
-        writer.add_asset("graphic_0", provider, "Test", "", &[]).unwrap();
-        
+
+        let provider = AssetProvider::Text(Arc::new(TestTextAssetProvider::new(
+            "text_0",
+            vec![0u8; 50],
+        )));
+        writer
+            .add_asset("text_0", provider, "Test", "", &[])
+            .unwrap();
+
+        let provider = AssetProvider::Graphics(Arc::new(TestGraphicsAssetProvider::new(
+            "graphic_0",
+            vec![0u8; 75],
+        )));
+        writer
+            .add_asset("graphic_0", provider, "Test", "", &[])
+            .unwrap();
+
         let (numi, nums, numt, numdes, numres) = writer.count_segments_by_type();
-        
+
         assert_eq!(numi, 2);
         assert_eq!(nums, 1);
         assert_eq!(numt, 1);
@@ -2708,10 +2950,10 @@ mod tests {
     fn writer_creates_valid_nitf_magic() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
         writer.close().unwrap();
-        
+
         // Read the file and check magic number
         let data = std::fs::read(&path).unwrap();
         assert!(data.len() >= 9);
@@ -2722,10 +2964,10 @@ mod tests {
     fn writer_creates_valid_nsif_magic() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.nsif");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nsif10).unwrap();
         writer.close().unwrap();
-        
+
         // Read the file and check magic number
         let data = std::fs::read(&path).unwrap();
         assert!(data.len() >= 9);
@@ -2736,20 +2978,53 @@ mod tests {
     fn writer_fl_field_matches_file_size() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new("image_0", AssetType::Image, vec![0u8; 100])));
-        writer.add_asset("image_0", provider, "Test", "", &[]).unwrap();
+        let provider = AssetProvider::Image(Arc::new(TestAssetProvider::new(
+            "image_0",
+            AssetType::Image,
+            vec![0u8; 100],
+        )));
+        writer
+            .add_asset("image_0", provider, "Test", "", &[])
+            .unwrap();
         writer.close().unwrap();
-        
+
         // Read the file
         let data = std::fs::read(&path).unwrap();
-        
+
         // FL field is at offset 342 (after security fields), 12 bytes
-        let fl_offset = 9 + 2 + 4 + 10 + 14 + 80 + 1 + 2 + 11 + 2 + 20 + 2 + 8 + 4 + 1 + 8 + 43 + 1 + 40 + 1 + 8 + 15 + 5 + 5 + 1 + 3 + 24 + 18;
+        let fl_offset = 9
+            + 2
+            + 4
+            + 10
+            + 14
+            + 80
+            + 1
+            + 2
+            + 11
+            + 2
+            + 20
+            + 2
+            + 8
+            + 4
+            + 1
+            + 8
+            + 43
+            + 1
+            + 40
+            + 1
+            + 8
+            + 15
+            + 5
+            + 5
+            + 1
+            + 3
+            + 24
+            + 18;
         let fl_str = std::str::from_utf8(&data[fl_offset..fl_offset + 12]).unwrap();
         let fl_value: usize = fl_str.parse().unwrap();
-        
+
         assert_eq!(fl_value, data.len());
     }
 
@@ -2757,22 +3032,32 @@ mod tests {
     fn writer_mixed_segment_types() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.ntf");
-        
+
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        
+
         // Add different segment types
-        let img = AssetProvider::Image(Arc::new(TestAssetProvider::new("img", AssetType::Image, vec![1u8; 100])));
-        let txt = AssetProvider::Text(Arc::new(TestTextAssetProvider::new("txt", b"Hello".to_vec())));
-        let gfx = AssetProvider::Graphics(Arc::new(TestGraphicsAssetProvider::new("gfx", vec![2u8; 50])));
+        let img = AssetProvider::Image(Arc::new(TestAssetProvider::new(
+            "img",
+            AssetType::Image,
+            vec![1u8; 100],
+        )));
+        let txt = AssetProvider::Text(Arc::new(TestTextAssetProvider::new(
+            "txt",
+            b"Hello".to_vec(),
+        )));
+        let gfx = AssetProvider::Graphics(Arc::new(TestGraphicsAssetProvider::new(
+            "gfx",
+            vec![2u8; 50],
+        )));
         let des = AssetProvider::Data(Arc::new(TestDataAssetProvider::new("des", vec![3u8; 25])));
-        
+
         writer.add_asset("img", img, "Image", "", &[]).unwrap();
         writer.add_asset("txt", txt, "Text", "", &[]).unwrap();
         writer.add_asset("gfx", gfx, "Graphic", "", &[]).unwrap();
         writer.add_asset("des", des, "Data", "", &[]).unwrap();
-        
+
         writer.close().unwrap();
-        
+
         assert!(path.exists());
         let data = std::fs::read(&path).unwrap();
         assert!(data.len() > 0);
@@ -2781,15 +3066,15 @@ mod tests {
     #[test]
     fn split_tres_by_size_all_fit() {
         use crate::jbp::tre::TreEnvelope;
-        
+
         // Create small TREs that all fit
         let envelopes = vec![
             TreEnvelope::new("TEST01", vec![1, 2, 3]).unwrap(),
             TreEnvelope::new("TEST02", vec![4, 5, 6]).unwrap(),
         ];
-        
+
         let (fits, overflow) = JBPDatasetWriter::split_tres_by_size(envelopes, 1000);
-        
+
         assert_eq!(fits.len(), 2);
         assert!(overflow.is_empty());
     }
@@ -2797,7 +3082,7 @@ mod tests {
     #[test]
     fn split_tres_by_size_some_overflow() {
         use crate::jbp::tre::TreEnvelope;
-        
+
         // Create TREs where only some fit
         // Each envelope is 11 + data.len() bytes
         let envelopes = vec![
@@ -2805,10 +3090,10 @@ mod tests {
             TreEnvelope::new("TEST02", vec![0; 10]).unwrap(), // 21 bytes
             TreEnvelope::new("TEST03", vec![0; 10]).unwrap(), // 21 bytes
         ];
-        
+
         // Only allow 50 bytes - fits 2 envelopes (42 bytes)
         let (fits, overflow) = JBPDatasetWriter::split_tres_by_size(envelopes, 50);
-        
+
         assert_eq!(fits.len(), 2);
         assert_eq!(overflow.len(), 1);
         assert_eq!(overflow[0].tag, "TEST03");
@@ -2817,15 +3102,15 @@ mod tests {
     #[test]
     fn split_tres_by_size_none_fit() {
         use crate::jbp::tre::TreEnvelope;
-        
+
         // Create TREs that are too large
         let envelopes = vec![
             TreEnvelope::new("TEST01", vec![0; 100]).unwrap(), // 111 bytes
         ];
-        
+
         // Only allow 50 bytes - nothing fits
         let (fits, overflow) = JBPDatasetWriter::split_tres_by_size(envelopes, 50);
-        
+
         assert!(fits.is_empty());
         assert_eq!(overflow.len(), 1);
     }
@@ -2833,9 +3118,9 @@ mod tests {
     #[test]
     fn patch_overflow_index_replaces_placeholder() {
         let mut subheader = b"some data ??? more data".to_vec();
-        
+
         JBPDatasetWriter::patch_overflow_index(&mut subheader, 5);
-        
+
         assert_eq!(&subheader, b"some data 005 more data");
     }
 
@@ -2843,9 +3128,9 @@ mod tests {
     fn patch_overflow_index_no_placeholder() {
         let mut subheader = b"some data 000 more data".to_vec();
         let original = subheader.clone();
-        
+
         JBPDatasetWriter::patch_overflow_index(&mut subheader, 5);
-        
+
         // Should not change anything if no placeholder
         assert_eq!(subheader, original);
     }
@@ -2853,9 +3138,9 @@ mod tests {
     #[test]
     fn patch_overflow_index_large_index() {
         let mut subheader = b"prefix???suffix".to_vec();
-        
+
         JBPDatasetWriter::patch_overflow_index(&mut subheader, 123);
-        
+
         assert_eq!(&subheader, b"prefix123suffix");
     }
 
@@ -2932,20 +3217,48 @@ mod tests {
     }
 
     impl ImageAssetProvider for ConflictTestAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
-        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
+            true
+        }
+        fn get_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+            _bands: Option<&[u32]>,
+        ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
             Ok((vec![0u8; 1], [1, 1, 1]))
         }
-        fn num_resolution_levels(&self) -> u32 { 1 }
-        fn num_bands(&self) -> u32 { 1 }
-        fn num_rows(&self) -> u32 { 1 }
-        fn num_columns(&self) -> u32 { 1 }
-        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
-        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
-        fn num_bits_per_pixel(&self) -> u32 { 8 }
-        fn actual_bits_per_pixel(&self) -> u32 { 8 }
-        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
-        fn pad_pixel_value(&self) -> f64 { 0.0 }
+        fn num_resolution_levels(&self) -> u32 {
+            1
+        }
+        fn num_bands(&self) -> u32 {
+            1
+        }
+        fn num_rows(&self) -> u32 {
+            1
+        }
+        fn num_columns(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_horizontal(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_vertical(&self) -> u32 {
+            1
+        }
+        fn num_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn actual_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn pixel_value_type(&self) -> crate::types::PixelType {
+            crate::types::PixelType::UInt8
+        }
+        fn pad_pixel_value(&self) -> f64 {
+            0.0
+        }
     }
 
     #[test]
@@ -2960,7 +3273,7 @@ mod tests {
             segment_type: SegmentType::Image,
             provider: AssetProvider::Image(Arc::new(provider)),
         };
-        
+
         let props = ImageProperties {
             nrows: 100,
             ncols: 200,
@@ -2972,7 +3285,7 @@ mod tests {
             nppbh: 200,
             nppbv: 100,
         };
-        
+
         let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
         assert!(warnings.is_empty());
     }
@@ -2980,8 +3293,7 @@ mod tests {
     #[test]
     fn conflict_detection_nbands_mismatch() {
         let metadata = Arc::new(
-            ConflictTestMetadataProvider::new()
-                .with_field("NBANDS", serde_json::json!(5))
+            ConflictTestMetadataProvider::new().with_field("NBANDS", serde_json::json!(5)),
         );
         let provider = ConflictTestAssetProvider::new("test", metadata);
         let asset = QueuedAsset {
@@ -2992,7 +3304,7 @@ mod tests {
             segment_type: SegmentType::Image,
             provider: AssetProvider::Image(Arc::new(provider)),
         };
-        
+
         let props = ImageProperties {
             nrows: 100,
             ncols: 200,
@@ -3004,7 +3316,7 @@ mod tests {
             nppbh: 200,
             nppbv: 100,
         };
-        
+
         let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("NBANDS"));
@@ -3015,8 +3327,7 @@ mod tests {
     #[test]
     fn conflict_detection_pvtype_mismatch() {
         let metadata = Arc::new(
-            ConflictTestMetadataProvider::new()
-                .with_field("PVTYPE", serde_json::json!("R"))
+            ConflictTestMetadataProvider::new().with_field("PVTYPE", serde_json::json!("R")),
         );
         let provider = ConflictTestAssetProvider::new("test", metadata);
         let asset = QueuedAsset {
@@ -3027,7 +3338,7 @@ mod tests {
             segment_type: SegmentType::Image,
             provider: AssetProvider::Image(Arc::new(provider)),
         };
-        
+
         let props = ImageProperties {
             nrows: 100,
             ncols: 200,
@@ -3039,7 +3350,7 @@ mod tests {
             nppbh: 200,
             nppbv: 100,
         };
-        
+
         let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("PVTYPE"));
@@ -3050,8 +3361,7 @@ mod tests {
     #[test]
     fn conflict_detection_nrows_mismatch() {
         let metadata = Arc::new(
-            ConflictTestMetadataProvider::new()
-                .with_field("NROWS", serde_json::json!(500))
+            ConflictTestMetadataProvider::new().with_field("NROWS", serde_json::json!(500)),
         );
         let provider = ConflictTestAssetProvider::new("test", metadata);
         let asset = QueuedAsset {
@@ -3062,7 +3372,7 @@ mod tests {
             segment_type: SegmentType::Image,
             provider: AssetProvider::Image(Arc::new(provider)),
         };
-        
+
         let props = ImageProperties {
             nrows: 100,
             ncols: 200,
@@ -3074,7 +3384,7 @@ mod tests {
             nppbh: 200,
             nppbv: 100,
         };
-        
+
         let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("NROWS"));
@@ -3085,8 +3395,7 @@ mod tests {
     #[test]
     fn conflict_detection_ncols_mismatch() {
         let metadata = Arc::new(
-            ConflictTestMetadataProvider::new()
-                .with_field("NCOLS", serde_json::json!(800))
+            ConflictTestMetadataProvider::new().with_field("NCOLS", serde_json::json!(800)),
         );
         let provider = ConflictTestAssetProvider::new("test", metadata);
         let asset = QueuedAsset {
@@ -3097,7 +3406,7 @@ mod tests {
             segment_type: SegmentType::Image,
             provider: AssetProvider::Image(Arc::new(provider)),
         };
-        
+
         let props = ImageProperties {
             nrows: 100,
             ncols: 200,
@@ -3109,7 +3418,7 @@ mod tests {
             nppbh: 200,
             nppbv: 100,
         };
-        
+
         let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("NCOLS"));
@@ -3121,8 +3430,7 @@ mod tests {
     fn conflict_detection_irep_band_count_mismatch_from_metadata() {
         // Metadata says RGB (expects 3 bands) but provider has 1 band
         let metadata = Arc::new(
-            ConflictTestMetadataProvider::new()
-                .with_field("IREP", serde_json::json!("RGB"))
+            ConflictTestMetadataProvider::new().with_field("IREP", serde_json::json!("RGB")),
         );
         let provider = ConflictTestAssetProvider::new("test", metadata);
         let asset = QueuedAsset {
@@ -3133,7 +3441,7 @@ mod tests {
             segment_type: SegmentType::Image,
             provider: AssetProvider::Image(Arc::new(provider)),
         };
-        
+
         let props = ImageProperties {
             nrows: 100,
             ncols: 200,
@@ -3145,7 +3453,7 @@ mod tests {
             nppbh: 200,
             nppbv: 100,
         };
-        
+
         let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("IREP"));
@@ -3166,7 +3474,7 @@ mod tests {
             segment_type: SegmentType::Image,
             provider: AssetProvider::Image(Arc::new(provider)),
         };
-        
+
         let props = ImageProperties {
             nrows: 100,
             ncols: 200,
@@ -3178,7 +3486,7 @@ mod tests {
             nppbh: 200,
             nppbv: 100,
         };
-        
+
         let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("IREP"));
@@ -3193,7 +3501,7 @@ mod tests {
             ConflictTestMetadataProvider::new()
                 .with_field("NBANDS", serde_json::json!(5))
                 .with_field("NROWS", serde_json::json!(999))
-                .with_field("NCOLS", serde_json::json!(888))
+                .with_field("NCOLS", serde_json::json!(888)),
         );
         let provider = ConflictTestAssetProvider::new("test", metadata);
         let asset = QueuedAsset {
@@ -3204,7 +3512,7 @@ mod tests {
             segment_type: SegmentType::Image,
             provider: AssetProvider::Image(Arc::new(provider)),
         };
-        
+
         let props = ImageProperties {
             nrows: 100,
             ncols: 200,
@@ -3216,7 +3524,7 @@ mod tests {
             nppbh: 200,
             nppbv: 100,
         };
-        
+
         let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
         assert_eq!(warnings.len(), 3);
         assert!(warnings.iter().any(|w| w.contains("NBANDS")));
@@ -3230,7 +3538,7 @@ mod tests {
         let metadata = Arc::new(
             ConflictTestMetadataProvider::new()
                 .with_field("NBANDS", serde_json::json!("5"))
-                .with_field("NROWS", serde_json::json!("  999  "))
+                .with_field("NROWS", serde_json::json!("  999  ")),
         );
         let provider = ConflictTestAssetProvider::new("test", metadata);
         let asset = QueuedAsset {
@@ -3241,7 +3549,7 @@ mod tests {
             segment_type: SegmentType::Image,
             provider: AssetProvider::Image(Arc::new(provider)),
         };
-        
+
         let props = ImageProperties {
             nrows: 100,
             ncols: 200,
@@ -3253,7 +3561,7 @@ mod tests {
             nppbh: 200,
             nppbv: 100,
         };
-        
+
         let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
         assert_eq!(warnings.len(), 2);
     }
@@ -3267,7 +3575,7 @@ mod tests {
                 .with_field("NROWS", serde_json::json!(100))
                 .with_field("NCOLS", serde_json::json!(200))
                 .with_field("PVTYPE", serde_json::json!("INT"))
-                .with_field("IREP", serde_json::json!("RGB"))
+                .with_field("IREP", serde_json::json!("RGB")),
         );
         let provider = ConflictTestAssetProvider::new("test", metadata);
         let asset = QueuedAsset {
@@ -3278,7 +3586,7 @@ mod tests {
             segment_type: SegmentType::Image,
             provider: AssetProvider::Image(Arc::new(provider)),
         };
-        
+
         let props = ImageProperties {
             nrows: 100,
             ncols: 200,
@@ -3290,7 +3598,7 @@ mod tests {
             nppbh: 200,
             nppbv: 100,
         };
-        
+
         let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
         assert!(warnings.is_empty());
     }
@@ -3299,8 +3607,7 @@ mod tests {
     fn conflict_detection_multi_irep_no_warning() {
         // MULTI IREP can have any number of bands
         let metadata = Arc::new(
-            ConflictTestMetadataProvider::new()
-                .with_field("IREP", serde_json::json!("MULTI"))
+            ConflictTestMetadataProvider::new().with_field("IREP", serde_json::json!("MULTI")),
         );
         let provider = ConflictTestAssetProvider::new("test", metadata);
         let asset = QueuedAsset {
@@ -3311,7 +3618,7 @@ mod tests {
             segment_type: SegmentType::Image,
             provider: AssetProvider::Image(Arc::new(provider)),
         };
-        
+
         let props = ImageProperties {
             nrows: 100,
             ncols: 200,
@@ -3323,7 +3630,7 @@ mod tests {
             nppbh: 200,
             nppbv: 100,
         };
-        
+
         let warnings = JBPDatasetWriter::detect_and_resolve_conflicts(&asset, &props);
         assert!(warnings.is_empty());
     }
@@ -3337,17 +3644,17 @@ mod tests {
         use crate::jbp::reader::JBPDatasetReader;
         use crate::traits::{DatasetReader, ImageAssetProvider};
         use crate::types::AssetType;
-        
+
         let dir = tempdir().unwrap();
         let path = dir.path().join("round_trip_test.ntf");
-        
+
         // Create a small test image: 16x16 pixels, 3 bands, 8-bit
         let config = MemoryImageConfig::new(16, 16)
             .with_bands(3)
             .with_block_size(16, 16);
-        
+
         let provider = BufferedImageAssetProvider::new("test_image", config);
-        
+
         // Create test pixel data in BSQ format (band-sequential)
         // Band 0: all 100, Band 1: all 150, Band 2: all 200
         let pixels_per_band = 16 * 16;
@@ -3355,52 +3662,73 @@ mod tests {
         bsq_data.extend(std::iter::repeat(100u8).take(pixels_per_band));
         bsq_data.extend(std::iter::repeat(150u8).take(pixels_per_band));
         bsq_data.extend(std::iter::repeat(200u8).take(pixels_per_band));
-        
+
         // Set the full image data
         provider.set_full_image(&bsq_data).unwrap();
-        
+
         // Write the NITF file
         let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-        writer.add_asset("test_image", AssetProvider::Image(Arc::new(provider)), "Test Image", "Round-trip test", &[]).unwrap();
+        writer
+            .add_asset(
+                "test_image",
+                AssetProvider::Image(Arc::new(provider)),
+                "Test Image",
+                "Round-trip test",
+                &[],
+            )
+            .unwrap();
         writer.close().unwrap();
-        
+
         // Read the file back
         let data = std::fs::read(&path).unwrap();
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         // Verify we have one image asset
         let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
         assert_eq!(asset_keys.len(), 1);
-        
+
         // Get the image asset
         let asset = reader.get_asset(&asset_keys[0]).unwrap();
-        
+
         // Get the ImageAssetProvider via the enum's typed accessor
-        let image_provider = asset.as_image()
-            .expect("Asset should be an image provider");
-        
+        let image_provider = asset.as_image().expect("Asset should be an image provider");
+
         // Verify dimensions
         assert_eq!(image_provider.num_columns(), 16);
         assert_eq!(image_provider.num_rows(), 16);
         assert_eq!(image_provider.num_bands(), 3);
         assert_eq!(image_provider.num_bits_per_pixel(), 8);
-        
+
         // Read back the pixel data (block 0,0) - get all bands
         let (block_data, shape) = image_provider.get_block(0, 0, 0, None).unwrap();
-        
+
         // Verify shape - [bands, rows, cols] (CHW format)
         assert_eq!(shape, [3, 16, 16]);
-        
+
         // The block data is in BSQ format (band-sequential)
         // Band 0: all 100, Band 1: all 150, Band 2: all 200
         assert_eq!(block_data.len(), 16 * 16 * 3);
-        
+
         let pixels_per_band = 16 * 16;
         // Verify pixel values - check first few pixels of each band
         for pixel_idx in 0..10 {
-            assert_eq!(block_data[pixel_idx], 100, "Band 0 value mismatch at pixel {}", pixel_idx);
-            assert_eq!(block_data[pixels_per_band + pixel_idx], 150, "Band 1 value mismatch at pixel {}", pixel_idx);
-            assert_eq!(block_data[2 * pixels_per_band + pixel_idx], 200, "Band 2 value mismatch at pixel {}", pixel_idx);
+            assert_eq!(
+                block_data[pixel_idx], 100,
+                "Band 0 value mismatch at pixel {}",
+                pixel_idx
+            );
+            assert_eq!(
+                block_data[pixels_per_band + pixel_idx],
+                150,
+                "Band 1 value mismatch at pixel {}",
+                pixel_idx
+            );
+            assert_eq!(
+                block_data[2 * pixels_per_band + pixel_idx],
+                200,
+                "Band 2 value mismatch at pixel {}",
+                pixel_idx
+            );
         }
     }
 
@@ -3414,16 +3742,16 @@ mod tests {
         let config = MemoryImageConfig::new(32, 32)
             .with_bands(1)
             .with_block_size(16, 16);
-        
+
         let provider = BufferedImageAssetProvider::new("test", config);
-        
+
         // Set only blocks (0,0) and (1,1) - diagonal pattern
         let block_data = vec![128u8; 16 * 16];
         provider.set_block(0, 0, &block_data).unwrap();
         provider.set_block(1, 1, &block_data).unwrap();
-        
+
         let provided = JBPDatasetWriter::collect_provided_blocks(&provider);
-        
+
         assert_eq!(provided.len(), 2);
         assert!(provided.contains(&(0, 0)));
         assert!(provided.contains(&(1, 1)));
@@ -3441,16 +3769,16 @@ mod tests {
         let config = MemoryImageConfig::new(32, 32)
             .with_bands(1)
             .with_block_size(16, 16);
-        
+
         let provider = BufferedImageAssetProvider::new("test", config);
-        
+
         // Set all 4 blocks
         let block_data = vec![128u8; 16 * 16];
         provider.set_block(0, 0, &block_data).unwrap();
         provider.set_block(0, 1, &block_data).unwrap();
         provider.set_block(1, 0, &block_data).unwrap();
         provider.set_block(1, 1, &block_data).unwrap();
-        
+
         // Non-masked IC with all blocks should succeed
         let result = JBPDatasetWriter::validate_blocks_for_ic(&provider, "NC");
         assert!(result.is_ok());
@@ -3467,20 +3795,24 @@ mod tests {
         let config = MemoryImageConfig::new(32, 32)
             .with_bands(1)
             .with_block_size(16, 16);
-        
+
         let provider = BufferedImageAssetProvider::new("test", config);
-        
+
         // Set only 2 of 4 blocks
         let block_data = vec![128u8; 16 * 16];
         provider.set_block(0, 0, &block_data).unwrap();
         provider.set_block(1, 1, &block_data).unwrap();
-        
+
         // Non-masked IC with missing blocks should fail
         let result = JBPDatasetWriter::validate_blocks_for_ic(&provider, "NC");
         assert!(result.is_err());
-        
+
         match result.unwrap_err() {
-            CodecError::MissingBlocks { expected, provided, ic } => {
+            CodecError::MissingBlocks {
+                expected,
+                provided,
+                ic,
+            } => {
                 assert_eq!(expected, 4);
                 assert_eq!(provided, 2);
                 assert_eq!(ic, "NC");
@@ -3499,14 +3831,14 @@ mod tests {
         let config = MemoryImageConfig::new(32, 32)
             .with_bands(1)
             .with_block_size(16, 16);
-        
+
         let provider = BufferedImageAssetProvider::new("test", config);
-        
+
         // Set only 2 of 4 blocks
         let block_data = vec![128u8; 16 * 16];
         provider.set_block(0, 0, &block_data).unwrap();
         provider.set_block(1, 1, &block_data).unwrap();
-        
+
         // Masked IC with sparse blocks should succeed
         let result = JBPDatasetWriter::validate_blocks_for_ic(&provider, "NM");
         assert!(result.is_ok());
@@ -3522,18 +3854,24 @@ mod tests {
         let config = MemoryImageConfig::new(32, 32)
             .with_bands(1)
             .with_block_size(16, 16);
-        
+
         let provider = BufferedImageAssetProvider::new("test", config);
-        
+
         // Set only 1 of 4 blocks
         let block_data = vec![128u8; 16 * 16];
         provider.set_block(0, 0, &block_data).unwrap();
-        
+
         // All masked IC values should accept sparse data
-        let masked_ics = ["NM", "M1", "M3", "M4", "M5", "M7", "M8", "M9", "MA", "MB", "MC", "MD", "ME"];
+        let masked_ics = [
+            "NM", "M1", "M3", "M4", "M5", "M7", "M8", "M9", "MA", "MB", "MC", "MD", "ME",
+        ];
         for ic in masked_ics {
             let result = JBPDatasetWriter::validate_blocks_for_ic(&provider, ic);
-            assert!(result.is_ok(), "Masked IC '{}' should accept sparse data", ic);
+            assert!(
+                result.is_ok(),
+                "Masked IC '{}' should accept sparse data",
+                ic
+            );
         }
     }
 
@@ -3546,22 +3884,27 @@ mod tests {
         let config = MemoryImageConfig::new(32, 32)
             .with_bands(1)
             .with_block_size(16, 16);
-        
+
         let provider = BufferedImageAssetProvider::new("test", config);
-        
+
         // Set only 1 of 4 blocks
         let block_data = vec![128u8; 16 * 16];
         provider.set_block(0, 0, &block_data).unwrap();
-        
+
         // All non-masked IC values should reject sparse data
-        let non_masked_ics = ["NC", "C1", "C3", "C4", "C5", "C7", "C8", "C9", "CA", "CB", "CC", "CD", "CE"];
+        let non_masked_ics = [
+            "NC", "C1", "C3", "C4", "C5", "C7", "C8", "C9", "CA", "CB", "CC", "CD", "CE",
+        ];
         for ic in non_masked_ics {
             let result = JBPDatasetWriter::validate_blocks_for_ic(&provider, ic);
-            assert!(result.is_err(), "Non-masked IC '{}' should reject sparse data", ic);
+            assert!(
+                result.is_err(),
+                "Non-masked IC '{}' should reject sparse data",
+                ic
+            );
         }
     }
 }
-
 
 /// Property-based tests for JBPDatasetWriter.
 #[cfg(test)]
@@ -3623,34 +3966,74 @@ mod property_tests {
     }
 
     impl ImageAssetProvider for PropTestAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
-        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
+            true
+        }
+        fn get_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+            _bands: Option<&[u32]>,
+        ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
             Ok((self.data.clone(), [1, 1, 1]))
         }
-        fn num_resolution_levels(&self) -> u32 { 1 }
-        fn num_bands(&self) -> u32 { 1 }
-        fn num_rows(&self) -> u32 { 1 }
-        fn num_columns(&self) -> u32 { 1 }
-        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
-        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
-        fn num_bits_per_pixel(&self) -> u32 { 8 }
-        fn actual_bits_per_pixel(&self) -> u32 { 8 }
-        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
-        fn pad_pixel_value(&self) -> f64 { 0.0 }
+        fn num_resolution_levels(&self) -> u32 {
+            1
+        }
+        fn num_bands(&self) -> u32 {
+            1
+        }
+        fn num_rows(&self) -> u32 {
+            1
+        }
+        fn num_columns(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_horizontal(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_vertical(&self) -> u32 {
+            1
+        }
+        fn num_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn actual_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn pixel_value_type(&self) -> crate::types::PixelType {
+            crate::types::PixelType::UInt8
+        }
+        fn pad_pixel_value(&self) -> f64 {
+            0.0
+        }
     }
 
     impl crate::traits::TextAssetProvider for PropTestAssetProvider {
-        fn text(&self) -> Result<String, CodecError> { Ok(String::from_utf8_lossy(&self.data).to_string()) }
-        fn encoding(&self) -> &str { "UTF-8" }
-        fn format(&self) -> &str { "MTF" }
+        fn text(&self) -> Result<String, CodecError> {
+            Ok(String::from_utf8_lossy(&self.data).to_string())
+        }
+        fn encoding(&self) -> &str {
+            "UTF-8"
+        }
+        fn format(&self) -> &str {
+            "MTF"
+        }
     }
 
     impl crate::traits::GraphicsAssetProvider for PropTestAssetProvider {}
 
     impl crate::traits::DataAssetProvider for PropTestAssetProvider {
-        fn mime_type(&self) -> &str { "application/octet-stream" }
-        fn parse_as_xml(&self) -> Result<String, CodecError> { Err(CodecError::Decode("Not XML".to_string())) }
-        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> { Err(CodecError::Decode("Not JSON".to_string())) }
+        fn mime_type(&self) -> &str {
+            "application/octet-stream"
+        }
+        fn parse_as_xml(&self) -> Result<String, CodecError> {
+            Err(CodecError::Decode("Not XML".to_string()))
+        }
+        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
+            Err(CodecError::Decode("Not JSON".to_string()))
+        }
     }
 
     struct PropTestMetadataProvider;
@@ -3660,7 +4043,10 @@ mod property_tests {
             &[]
         }
 
-        fn as_dict(&self, _name: Option<&str>) -> std::collections::HashMap<String, serde_json::Value> {
+        fn as_dict(
+            &self,
+            _name: Option<&str>,
+        ) -> std::collections::HashMap<String, serde_json::Value> {
             std::collections::HashMap::new()
         }
     }
@@ -3698,7 +4084,7 @@ mod property_tests {
             #[test]
             fn asset_type_maps_to_segment_type(asset_type in asset_type_strategy()) {
                 let segment_type = JBPDatasetWriter::asset_type_to_segment_type(asset_type);
-                
+
                 match asset_type {
                     AssetType::Image => prop_assert_eq!(segment_type, SegmentType::Image),
                     AssetType::Text => prop_assert_eq!(segment_type, SegmentType::Text),
@@ -3714,16 +4100,16 @@ mod property_tests {
             ) {
                 let dir = tempdir().unwrap();
                 let path = dir.path().join("test.ntf");
-                
+
                 let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
                 let provider = wrap_provider(PropTestAssetProvider::new(
                     "test_asset".to_string(),
                     asset_type,
                     vec![0u8; data_len],
                 ));
-                
+
                 writer.add_asset("test_asset", provider, "Test", "", &[]).unwrap();
-                
+
                 prop_assert_eq!(writer.assets.len(), 1);
                 let expected_segment_type = JBPDatasetWriter::asset_type_to_segment_type(asset_type);
                 prop_assert_eq!(writer.assets[0].segment_type, expected_segment_type);
@@ -3749,9 +4135,9 @@ mod property_tests {
             ) {
                 let dir = tempdir().unwrap();
                 let path = dir.path().join("test.ntf");
-                
+
                 let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-                
+
                 let provider1 = wrap_provider(PropTestAssetProvider::new(
                     key.clone(),
                     asset_type1,
@@ -3762,15 +4148,15 @@ mod property_tests {
                     asset_type2,
                     vec![0u8; 100],
                 ));
-                
+
                 // First add should succeed
                 let result1 = writer.add_asset(&key, provider1, "Test", "", &[]);
                 prop_assert!(result1.is_ok());
-                
+
                 // Second add with same key should fail
                 let result2 = writer.add_asset(&key, provider2, "Test", "", &[]);
                 prop_assert!(result2.is_err());
-                
+
                 match result2 {
                     Err(CodecError::DuplicateKey(k)) => prop_assert_eq!(k, key),
                     _ => prop_assert!(false, "Expected DuplicateKey error"),
@@ -3781,9 +4167,9 @@ mod property_tests {
             fn unique_keys_all_succeed(num_assets in 1usize..10) {
                 let dir = tempdir().unwrap();
                 let path = dir.path().join("test.ntf");
-                
+
                 let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-                
+
                 for i in 0..num_assets {
                     let key = format!("asset_{}", i);
                     let provider = wrap_provider(PropTestAssetProvider::new(
@@ -3794,7 +4180,7 @@ mod property_tests {
                     let result = writer.add_asset(&key, provider, "Test", "", &[]);
                     prop_assert!(result.is_ok(), "Failed to add asset {}", i);
                 }
-                
+
                 prop_assert_eq!(writer.asset_count(), num_assets);
             }
         }
@@ -3814,14 +4200,14 @@ mod property_tests {
             fn assets_preserve_insertion_order(num_assets in 1usize..20) {
                 let dir = tempdir().unwrap();
                 let path = dir.path().join("test.ntf");
-                
+
                 let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
                 let mut expected_keys = Vec::new();
-                
+
                 for i in 0..num_assets {
                     let key = format!("asset_{}", i);
                     expected_keys.push(key.clone());
-                    
+
                     let provider = wrap_provider(PropTestAssetProvider::new(
                         key.clone(),
                         AssetType::Image,
@@ -3829,7 +4215,7 @@ mod property_tests {
                     ));
                     writer.add_asset(&key, provider, "Test", "", &[]).unwrap();
                 }
-                
+
                 // Verify order is preserved
                 for (i, asset) in writer.assets.iter().enumerate() {
                     prop_assert_eq!(&asset.key, &expected_keys[i],
@@ -3843,14 +4229,14 @@ mod property_tests {
             ) {
                 let dir = tempdir().unwrap();
                 let path = dir.path().join("test.ntf");
-                
+
                 let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
                 let mut expected_order: Vec<(String, AssetType)> = Vec::new();
-                
+
                 for (i, asset_type) in types.iter().enumerate() {
                     let key = format!("asset_{}", i);
                     expected_order.push((key.clone(), *asset_type));
-                    
+
                     let provider = wrap_provider(PropTestAssetProvider::new(
                         key.clone(),
                         *asset_type,
@@ -3858,7 +4244,7 @@ mod property_tests {
                     ));
                     writer.add_asset(&key, provider, "Test", "", &[]).unwrap();
                 }
-                
+
                 // Verify order is preserved
                 for (i, asset) in writer.assets.iter().enumerate() {
                     prop_assert_eq!(&asset.key, &expected_order[i].0);
@@ -3887,9 +4273,9 @@ mod property_tests {
             ) {
                 let dir = tempdir().unwrap();
                 let path = dir.path().join("test.ntf");
-                
+
                 let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-                
+
                 // Add image assets
                 for i in 0..num_images {
                     let provider = wrap_provider(PropTestAssetProvider::new(
@@ -3899,7 +4285,7 @@ mod property_tests {
                     ));
                     writer.add_asset(&format!("image_{}", i), provider, "Test", "", &[]).unwrap();
                 }
-                
+
                 // Add text assets
                 for i in 0..num_text {
                     let provider = wrap_provider(PropTestAssetProvider::new(
@@ -3909,17 +4295,17 @@ mod property_tests {
                     ));
                     writer.add_asset(&format!("text_{}", i), provider, "Test", "", &[]).unwrap();
                 }
-                
+
                 writer.close().unwrap();
-                
+
                 // Read the file
                 let data = std::fs::read(&path).unwrap();
-                
+
                 // Parse FL field (at fixed offset after security fields)
                 let fl_offset = 9 + 2 + 4 + 10 + 14 + 80 + 1 + 2 + 11 + 2 + 20 + 2 + 8 + 4 + 1 + 8 + 43 + 1 + 40 + 1 + 8 + 15 + 5 + 5 + 1 + 3 + 24 + 18;
                 let fl_str = std::str::from_utf8(&data[fl_offset..fl_offset + 12]).unwrap();
                 let fl_value: usize = fl_str.trim().parse().unwrap();
-                
+
                 prop_assert_eq!(fl_value, data.len(),
                     "FL field ({}) does not match actual file size ({})", fl_value, data.len());
             }
@@ -3931,9 +4317,9 @@ mod property_tests {
             ) {
                 let dir = tempdir().unwrap();
                 let path = dir.path().join("test.ntf");
-                
+
                 let mut writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
-                
+
                 for i in 0..num_images {
                     let provider = wrap_provider(PropTestAssetProvider::new(
                         format!("image_{}", i),
@@ -3942,25 +4328,25 @@ mod property_tests {
                     ));
                     writer.add_asset(&format!("image_{}", i), provider, "Test", "", &[]).unwrap();
                 }
-                
+
                 writer.close().unwrap();
-                
+
                 // Read the file
                 let data = std::fs::read(&path).unwrap();
-                
+
                 // Parse FL and HL fields
                 let fl_offset = 9 + 2 + 4 + 10 + 14 + 80 + 1 + 2 + 11 + 2 + 20 + 2 + 8 + 4 + 1 + 8 + 43 + 1 + 40 + 1 + 8 + 15 + 5 + 5 + 1 + 3 + 24 + 18;
                 let hl_offset = fl_offset + 12;
-                
+
                 let fl_str = std::str::from_utf8(&data[fl_offset..fl_offset + 12]).unwrap();
                 let fl_value: usize = fl_str.trim().parse().unwrap();
-                
+
                 let hl_str = std::str::from_utf8(&data[hl_offset..hl_offset + 6]).unwrap();
                 let hl_value: usize = hl_str.trim().parse().unwrap();
-                
+
                 // The file should be exactly FL bytes
                 prop_assert_eq!(data.len(), fl_value);
-                
+
                 // HL should be less than FL (unless no segments)
                 prop_assert!(hl_value <= fl_value,
                     "HL ({}) should be <= FL ({})", hl_value, fl_value);
@@ -3974,7 +4360,7 @@ mod property_tests {
     /// **Validates: Requirements 2.3, 4.1, 4.2, 4.3, 17.3**
     mod prop_2_unknown_tre_preservation {
         use super::*;
-        use crate::jbp::tre::{TreEnvelope, write_tre_envelopes};
+        use crate::jbp::tre::{write_tre_envelopes, TreEnvelope};
 
         /// Strategy for generating valid CETAGs (6 alphanumeric characters)
         fn unknown_cetag_strategy() -> impl Strategy<Value = String> {
@@ -3998,18 +4384,18 @@ mod property_tests {
             ) {
                 // Create an unknown TRE envelope
                 let envelope = TreEnvelope::new(&tag, data.clone()).unwrap();
-                
+
                 // Serialize to bytes
                 let bytes = envelope.to_bytes();
-                
+
                 // Parse back
                 let (parsed, consumed) = TreEnvelope::parse(&bytes).unwrap();
-                
+
                 // Verify round-trip
                 prop_assert_eq!(consumed, bytes.len(), "Should consume all bytes");
                 prop_assert_eq!(parsed.tag.trim(), tag.trim(), "Tag should match");
                 prop_assert_eq!(&parsed.data, &data, "Data should match");
-                
+
                 // Verify byte-identical output
                 let reparsed_bytes = parsed.to_bytes();
                 prop_assert_eq!(bytes, reparsed_bytes, "Bytes should be identical after round-trip");
@@ -4027,22 +4413,22 @@ mod property_tests {
                     .iter()
                     .map(|(tag, data)| TreEnvelope::new(tag, data.clone()).unwrap())
                     .collect();
-                
+
                 // Serialize all to bytes
                 let bytes = write_tre_envelopes(&tres);
-                
+
                 // Parse all back
                 let parsed = TreEnvelope::parse_all(&bytes).unwrap();
-                
+
                 // Verify count matches
                 prop_assert_eq!(parsed.len(), tres.len(), "Should parse same number of TREs");
-                
+
                 // Verify each TRE matches
                 for (original, parsed_tre) in tres.iter().zip(parsed.iter()) {
                     prop_assert_eq!(original.tag.trim(), parsed_tre.tag.trim());
                     prop_assert_eq!(&original.data, &parsed_tre.data);
                 }
-                
+
                 // Verify byte-identical output
                 let reparsed_bytes = write_tre_envelopes(&parsed);
                 prop_assert_eq!(bytes, reparsed_bytes, "Bytes should be identical after round-trip");
@@ -4068,11 +4454,11 @@ mod property_tests {
             ) {
                 let data = vec![0u8; data_len];
                 let envelope = TreEnvelope::new(&tag, data).unwrap();
-                
+
                 // Envelope size should be CETAG(6) + CEL(5) + CEDATA(data_len)
                 let expected_size = 6 + 5 + data_len;
                 prop_assert_eq!(envelope.envelope_size(), expected_size);
-                
+
                 // Serialized bytes should match envelope_size
                 let bytes = envelope.to_bytes();
                 prop_assert_eq!(bytes.len(), expected_size);
@@ -4085,13 +4471,13 @@ mod property_tests {
             ) {
                 let data = vec![0u8; data_len];
                 let envelope = TreEnvelope::new(&tag, data).unwrap();
-                
+
                 let bytes = envelope.to_bytes();
-                
+
                 // CEL field is at offset 6, 5 bytes
                 let cel_str = std::str::from_utf8(&bytes[6..11]).unwrap();
                 let cel_value: usize = cel_str.parse().unwrap();
-                
+
                 prop_assert_eq!(cel_value, data_len, "CEL should equal data length");
             }
 
@@ -4101,18 +4487,17 @@ mod property_tests {
                 data in prop::collection::vec(any::<u8>(), 0..100),
             ) {
                 let envelope = TreEnvelope::new(&tag, data).unwrap();
-                
+
                 let bytes = envelope.to_bytes();
-                
+
                 // CETAG field is at offset 0, 6 bytes
                 let cetag_str = std::str::from_utf8(&bytes[0..6]).unwrap();
-                
+
                 prop_assert_eq!(cetag_str, &tag, "CETAG should match input tag");
             }
         }
     }
 }
-
 
 /// Bug condition exploration tests for COMRAT-ignored bug.
 ///
@@ -4173,30 +4558,72 @@ mod bugfix_tests {
     }
 
     impl AssetMetadata for BugfixAssetProvider {
-        fn key(&self) -> &str { &self.key }
-        fn title(&self) -> &str { "Bugfix Test" }
-        fn description(&self) -> &str { "Bugfix test asset" }
-        fn media_type(&self) -> &str { "image/nitf" }
-        fn roles(&self) -> &[String] { &[] }
-        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(vec![0u8; 64]) }
-        fn metadata(&self) -> Arc<dyn MetadataProvider> { self.metadata.clone() }
+        fn key(&self) -> &str {
+            &self.key
+        }
+        fn title(&self) -> &str {
+            "Bugfix Test"
+        }
+        fn description(&self) -> &str {
+            "Bugfix test asset"
+        }
+        fn media_type(&self) -> &str {
+            "image/nitf"
+        }
+        fn roles(&self) -> &[String] {
+            &[]
+        }
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
+            Ok(vec![0u8; 64])
+        }
+        fn metadata(&self) -> Arc<dyn MetadataProvider> {
+            self.metadata.clone()
+        }
     }
 
     impl ImageAssetProvider for BugfixAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
-        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
+            true
+        }
+        fn get_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+            _bands: Option<&[u32]>,
+        ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
             Ok((vec![0u8; 1], [1, 1, 1]))
         }
-        fn num_resolution_levels(&self) -> u32 { 1 }
-        fn num_bands(&self) -> u32 { 1 }
-        fn num_rows(&self) -> u32 { 1 }
-        fn num_columns(&self) -> u32 { 1 }
-        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
-        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
-        fn num_bits_per_pixel(&self) -> u32 { 8 }
-        fn actual_bits_per_pixel(&self) -> u32 { 8 }
-        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
-        fn pad_pixel_value(&self) -> f64 { 0.0 }
+        fn num_resolution_levels(&self) -> u32 {
+            1
+        }
+        fn num_bands(&self) -> u32 {
+            1
+        }
+        fn num_rows(&self) -> u32 {
+            1
+        }
+        fn num_columns(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_horizontal(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_vertical(&self) -> u32 {
+            1
+        }
+        fn num_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn actual_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn pixel_value_type(&self) -> crate::types::PixelType {
+            crate::types::PixelType::UInt8
+        }
+        fn pad_pixel_value(&self) -> f64 {
+            0.0
+        }
     }
 
     fn make_queued_asset(metadata: BugfixMetadataProvider) -> QueuedAsset {
@@ -4452,7 +4879,9 @@ mod metadata_writing_tests {
 
     impl MetaProvider {
         fn new() -> Self {
-            Self { data: HashMap::new() }
+            Self {
+                data: HashMap::new(),
+            }
         }
 
         fn set(mut self, key: &str, value: impl Into<serde_json::Value>) -> Self {
@@ -4462,7 +4891,9 @@ mod metadata_writing_tests {
     }
 
     impl MetadataProvider for MetaProvider {
-        fn raw(&self) -> &[u8] { &[] }
+        fn raw(&self) -> &[u8] {
+            &[]
+        }
         fn as_dict(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
             self.data.clone()
         }
@@ -4489,44 +4920,98 @@ mod metadata_writing_tests {
     }
 
     impl AssetMetadata for MetaAssetProvider {
-        fn key(&self) -> &str { &self.key }
-        fn title(&self) -> &str { &self.title }
-        fn description(&self) -> &str { "" }
-        fn media_type(&self) -> &str { "application/octet-stream" }
-        fn roles(&self) -> &[String] { &[] }
-        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(self.data.clone()) }
-        fn metadata(&self) -> Arc<dyn MetadataProvider> { self.metadata.clone() }
+        fn key(&self) -> &str {
+            &self.key
+        }
+        fn title(&self) -> &str {
+            &self.title
+        }
+        fn description(&self) -> &str {
+            ""
+        }
+        fn media_type(&self) -> &str {
+            "application/octet-stream"
+        }
+        fn roles(&self) -> &[String] {
+            &[]
+        }
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
+            Ok(self.data.clone())
+        }
+        fn metadata(&self) -> Arc<dyn MetadataProvider> {
+            self.metadata.clone()
+        }
     }
 
     impl ImageAssetProvider for MetaAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
-        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
+            true
+        }
+        fn get_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+            _bands: Option<&[u32]>,
+        ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
             Ok((vec![0u8; 1], [1, 1, 1]))
         }
-        fn num_resolution_levels(&self) -> u32 { 1 }
-        fn num_bands(&self) -> u32 { 1 }
-        fn num_rows(&self) -> u32 { 1 }
-        fn num_columns(&self) -> u32 { 1 }
-        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
-        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
-        fn num_bits_per_pixel(&self) -> u32 { 8 }
-        fn actual_bits_per_pixel(&self) -> u32 { 8 }
-        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
-        fn pad_pixel_value(&self) -> f64 { 0.0 }
+        fn num_resolution_levels(&self) -> u32 {
+            1
+        }
+        fn num_bands(&self) -> u32 {
+            1
+        }
+        fn num_rows(&self) -> u32 {
+            1
+        }
+        fn num_columns(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_horizontal(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_vertical(&self) -> u32 {
+            1
+        }
+        fn num_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn actual_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn pixel_value_type(&self) -> crate::types::PixelType {
+            crate::types::PixelType::UInt8
+        }
+        fn pad_pixel_value(&self) -> f64 {
+            0.0
+        }
     }
 
     impl crate::traits::TextAssetProvider for MetaAssetProvider {
-        fn text(&self) -> Result<String, CodecError> { Ok(String::from_utf8_lossy(&self.data).to_string()) }
-        fn encoding(&self) -> &str { "UTF-8" }
-        fn format(&self) -> &str { "MTF" }
+        fn text(&self) -> Result<String, CodecError> {
+            Ok(String::from_utf8_lossy(&self.data).to_string())
+        }
+        fn encoding(&self) -> &str {
+            "UTF-8"
+        }
+        fn format(&self) -> &str {
+            "MTF"
+        }
     }
 
     impl crate::traits::GraphicsAssetProvider for MetaAssetProvider {}
 
     impl crate::traits::DataAssetProvider for MetaAssetProvider {
-        fn mime_type(&self) -> &str { "application/octet-stream" }
-        fn parse_as_xml(&self) -> Result<String, CodecError> { Err(CodecError::Decode("Not XML".to_string())) }
-        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> { Err(CodecError::Decode("Not JSON".to_string())) }
+        fn mime_type(&self) -> &str {
+            "application/octet-stream"
+        }
+        fn parse_as_xml(&self) -> Result<String, CodecError> {
+            Err(CodecError::Decode("Not XML".to_string()))
+        }
+        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
+            Err(CodecError::Decode("Not JSON".to_string()))
+        }
     }
 
     fn make_asset(key: &str, asset_type: AssetType, metadata: MetaProvider) -> QueuedAsset {
@@ -4569,13 +5054,16 @@ mod metadata_writing_tests {
         writer.set_metadata(Arc::new(meta)).unwrap();
 
         let mut buf = Vec::new();
-        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+        writer
+            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .unwrap();
 
         // FTITLE is at offset: 9(magic) + 2(CLEVEL) + 4(STYPE) + 10(OSTAID) + 14(FDT) = 39
         let ftitle = extract_str(&buf, 39, 80);
         assert!(
             ftitle.starts_with("Custom File Title"),
-            "FTITLE should start with metadata value, got '{}'", ftitle
+            "FTITLE should start with metadata value, got '{}'",
+            ftitle
         );
     }
 
@@ -4586,7 +5074,9 @@ mod metadata_writing_tests {
         writer.set_metadata(Arc::new(meta)).unwrap();
 
         let mut buf = Vec::new();
-        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+        writer
+            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .unwrap();
 
         // ONAME offset: 39(before FTITLE) + 80(FTITLE) + 167(security+FSCOP+FSCPYS+ENCRYP+FBKGC)
         // Security block = 1+2+11+2+20+2+8+4+1+8+43+1+40+1+8+15 = 167
@@ -4595,7 +5085,8 @@ mod metadata_writing_tests {
         let oname = extract_str(&buf, 300, 24);
         assert!(
             oname.starts_with("Test Author"),
-            "ONAME should start with metadata value, got '{}'", oname
+            "ONAME should start with metadata value, got '{}'",
+            oname
         );
     }
 
@@ -4606,13 +5097,16 @@ mod metadata_writing_tests {
         writer.set_metadata(Arc::new(meta)).unwrap();
 
         let mut buf = Vec::new();
-        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+        writer
+            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .unwrap();
 
         // OPHONE offset = 300 + 24 = 324
         let ophone = extract_str(&buf, 324, 18);
         assert!(
             ophone.starts_with("555-0100"),
-            "OPHONE should start with metadata value, got '{}'", ophone
+            "OPHONE should start with metadata value, got '{}'",
+            ophone
         );
     }
 
@@ -4623,7 +5117,9 @@ mod metadata_writing_tests {
         writer.set_metadata(Arc::new(meta)).unwrap();
 
         let mut buf = Vec::new();
-        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+        writer
+            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .unwrap();
 
         // FDT offset: 9 + 2 + 4 + 10 = 25
         let fdt = extract_str(&buf, 25, 14);
@@ -4637,13 +5133,16 @@ mod metadata_writing_tests {
         writer.set_metadata(Arc::new(meta)).unwrap();
 
         let mut buf = Vec::new();
-        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+        writer
+            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .unwrap();
 
         // OSTAID offset: 9 + 2 + 4 = 15
         let ostaid = extract_str(&buf, 15, 10);
         assert!(
             ostaid.starts_with("CUSTOM"),
-            "OSTAID should start with metadata value, got '{}'", ostaid
+            "OSTAID should start with metadata value, got '{}'",
+            ostaid
         );
     }
 
@@ -4654,7 +5153,9 @@ mod metadata_writing_tests {
         writer.set_metadata(Arc::new(meta)).unwrap();
 
         let mut buf = Vec::new();
-        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+        writer
+            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .unwrap();
 
         // CLEVEL offset: 9
         let clevel = extract_str(&buf, 9, 2);
@@ -4668,7 +5169,9 @@ mod metadata_writing_tests {
         writer.set_metadata(Arc::new(meta)).unwrap();
 
         let mut buf = Vec::new();
-        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+        writer
+            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .unwrap();
 
         // FSCLAS offset: 39 + 80 = 119
         let fsclas = extract_str(&buf, 119, 1);
@@ -4682,7 +5185,9 @@ mod metadata_writing_tests {
         writer.set_metadata(Arc::new(meta)).unwrap();
 
         let mut buf = Vec::new();
-        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+        writer
+            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .unwrap();
 
         // FBKGC offset: 119 + 167 + 5 + 5 + 1 = 297
         // security(167) + FSCOP(5) + FSCPYS(5) + ENCRYP(1) = 178
@@ -4697,7 +5202,9 @@ mod metadata_writing_tests {
         let writer = make_writer();
 
         let mut buf = Vec::new();
-        writer.write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[]).unwrap();
+        writer
+            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .unwrap();
 
         // CLEVEL defaults to "03"
         assert_eq!(extract_str(&buf, 9, 2), "03");
@@ -4726,7 +5233,11 @@ mod metadata_writing_tests {
         // TSCLAS at offset 106
         assert_eq!(extract_str(&subheader, 106, 1), "C", "TSCLAS should be 'C'");
         // TSCLSY at offset 107
-        assert_eq!(extract_str(&subheader, 107, 2), "US", "TSCLSY should be 'US'");
+        assert_eq!(
+            extract_str(&subheader, 107, 2),
+            "US",
+            "TSCLSY should be 'US'"
+        );
         // TSCODE at offset 109, 11 bytes
         assert!(
             extract_str(&subheader, 109, 11).starts_with("SECRET"),
@@ -4788,9 +5299,7 @@ mod metadata_writing_tests {
 
     #[test]
     fn graphic_subheader_honors_security_from_metadata() {
-        let meta = MetaProvider::new()
-            .set("SSCLAS", "S")
-            .set("SSREL", "NATO");
+        let meta = MetaProvider::new().set("SSCLAS", "S").set("SSREL", "NATO");
         let asset = make_asset("gfx1", AssetType::Graphics, meta);
         let writer = make_writer();
 
@@ -4828,7 +5337,11 @@ mod metadata_writing_tests {
         let subheader = writer.create_graphic_subheader(&asset);
 
         // SDLVL offset: 200 + 1(SFMT) + 13(SSTRUCT) = 214
-        assert_eq!(extract_str(&subheader, 214, 3), "005", "SDLVL should be '005'");
+        assert_eq!(
+            extract_str(&subheader, 214, 3),
+            "005",
+            "SDLVL should be '005'"
+        );
     }
 
     #[test]
@@ -4882,7 +5395,11 @@ mod metadata_writing_tests {
         // DECLAS at offset 29
         assert_eq!(extract_str(&subheader, 29, 1), "R", "DECLAS should be 'R'");
         // DESCLSY at offset 30
-        assert_eq!(extract_str(&subheader, 30, 2), "US", "DESCLSY should be 'US'");
+        assert_eq!(
+            extract_str(&subheader, 30, 2),
+            "US",
+            "DESCLSY should be 'US'"
+        );
         // DESCODE at offset 32, 11 bytes
         assert!(
             extract_str(&subheader, 32, 11).starts_with("RESTRICTED"),
@@ -4932,7 +5449,11 @@ mod metadata_writing_tests {
             .set("ISCODE", "TOPSECRET");
         let asset = make_asset("img1", AssetType::Image, meta);
         let writer = make_writer();
-        let hints = EncodingHints { nppbh: 1, nppbv: 1, ..EncodingHints::default() };
+        let hints = EncodingHints {
+            nppbh: 1,
+            nppbv: 1,
+            ..EncodingHints::default()
+        };
 
         let subheader = writer.create_image_subheader_with_tres(&asset, &[], None, &hints);
 
@@ -4940,7 +5461,11 @@ mod metadata_writing_tests {
         // ISCLAS at offset 123
         assert_eq!(extract_str(&subheader, 123, 1), "T", "ISCLAS should be 'T'");
         // ISCLSY at offset 124
-        assert_eq!(extract_str(&subheader, 124, 2), "US", "ISCLSY should be 'US'");
+        assert_eq!(
+            extract_str(&subheader, 124, 2),
+            "US",
+            "ISCLSY should be 'US'"
+        );
         // ISCODE at offset 126, 11 bytes
         assert!(
             extract_str(&subheader, 126, 11).starts_with("TOPSECRET"),
@@ -4953,7 +5478,11 @@ mod metadata_writing_tests {
         let meta = MetaProvider::new().set("ICAT", "SAR");
         let asset = make_asset("img1", AssetType::Image, meta);
         let writer = make_writer();
-        let hints = EncodingHints { nppbh: 1, nppbv: 1, ..EncodingHints::default() };
+        let hints = EncodingHints {
+            nppbh: 1,
+            nppbv: 1,
+            ..EncodingHints::default()
+        };
 
         let subheader = writer.create_image_subheader_with_tres(&asset, &[], None, &hints);
 
@@ -4963,7 +5492,8 @@ mod metadata_writing_tests {
         let icat = extract_str(&subheader, 360, 8);
         assert!(
             icat.starts_with("SAR"),
-            "ICAT should start with 'SAR', got '{}'", icat
+            "ICAT should start with 'SAR', got '{}'",
+            icat
         );
     }
 
@@ -4972,7 +5502,11 @@ mod metadata_writing_tests {
         let meta = MetaProvider::new().set("ICORDS", "G");
         let asset = make_asset("img1", AssetType::Image, meta);
         let writer = make_writer();
-        let hints = EncodingHints { nppbh: 1, nppbv: 1, ..EncodingHints::default() };
+        let hints = EncodingHints {
+            nppbh: 1,
+            nppbv: 1,
+            ..EncodingHints::default()
+        };
 
         let subheader = writer.create_image_subheader_with_tres(&asset, &[], None, &hints);
 
@@ -4986,7 +5520,11 @@ mod metadata_writing_tests {
         let meta = MetaProvider::new();
         let asset = make_asset("img1", AssetType::Image, meta);
         let writer = make_writer();
-        let hints = EncodingHints { nppbh: 1, nppbv: 1, ..EncodingHints::default() };
+        let hints = EncodingHints {
+            nppbh: 1,
+            nppbv: 1,
+            ..EncodingHints::default()
+        };
 
         let subheader = writer.create_image_subheader_with_tres(&asset, &[], None, &hints);
 
@@ -5006,7 +5544,10 @@ mod metadata_writing_tests {
     fn get_metadata_field_returns_value_from_dict() {
         let mut dict = HashMap::new();
         dict.insert("FTITLE".to_string(), serde_json::json!("My Title"));
-        assert_eq!(get_metadata_field(&dict, "FTITLE", "", 80).trim(), "My Title");
+        assert_eq!(
+            get_metadata_field(&dict, "FTITLE", "", 80).trim(),
+            "My Title"
+        );
     }
 
     #[test]
@@ -5020,7 +5561,10 @@ mod metadata_writing_tests {
     #[test]
     fn get_metadata_field_truncates_long_values() {
         let mut dict = HashMap::new();
-        dict.insert("FIELD".to_string(), serde_json::json!("This is a very long value"));
+        dict.insert(
+            "FIELD".to_string(),
+            serde_json::json!("This is a very long value"),
+        );
         let result = get_metadata_field(&dict, "FIELD", "", 10);
         assert_eq!(result.len(), 10);
         assert_eq!(result, "This is a ");
@@ -5092,45 +5636,54 @@ mod metadata_writing_tests {
         // Add a minimal text asset so the file has content
         let text_meta = MetaProvider::new().set("TSCLAS", "C");
         let text_provider = MetaAssetProvider::new("text1", AssetType::Text, text_meta);
-        writer.add_asset(
-            "text1",
-            AssetProvider::Text(Arc::new(text_provider)),
-            "Test Text",
-            "",
-            &[],
-        ).unwrap();
+        writer
+            .add_asset(
+                "text1",
+                AssetProvider::Text(Arc::new(text_provider)),
+                "Test Text",
+                "",
+                &[],
+            )
+            .unwrap();
         writer.close().unwrap();
 
         // Read back the file and verify header fields
         let data = std::fs::read(&path).unwrap();
-        assert!(data.len() > 342, "File should be large enough to contain header");
+        assert!(
+            data.len() > 342,
+            "File should be large enough to contain header"
+        );
 
         // Verify FTITLE
         let ftitle = extract_str(&data, 39, 80);
         assert!(
             ftitle.starts_with("E2E Test Title"),
-            "FTITLE should contain metadata value, got '{}'", ftitle.trim()
+            "FTITLE should contain metadata value, got '{}'",
+            ftitle.trim()
         );
 
         // Verify OSTAID
         let ostaid = extract_str(&data, 15, 10);
         assert!(
             ostaid.starts_with("E2ETEST"),
-            "OSTAID should contain metadata value, got '{}'", ostaid.trim()
+            "OSTAID should contain metadata value, got '{}'",
+            ostaid.trim()
         );
 
         // Verify ONAME
         let oname = extract_str(&data, 300, 24);
         assert!(
             oname.starts_with("E2E Author"),
-            "ONAME should contain metadata value, got '{}'", oname.trim()
+            "ONAME should contain metadata value, got '{}'",
+            oname.trim()
         );
 
         // Verify OPHONE
         let ophone = extract_str(&data, 324, 18);
         assert!(
             ophone.starts_with("555-1234"),
-            "OPHONE should contain metadata value, got '{}'", ophone.trim()
+            "OPHONE should contain metadata value, got '{}'",
+            ophone.trim()
         );
 
         // Clean up

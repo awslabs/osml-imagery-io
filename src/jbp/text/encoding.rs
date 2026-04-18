@@ -129,8 +129,7 @@ fn decode_mtf(bytes: &[u8]) -> Result<String, CodecError> {
         }
     }
 
-    String::from_utf8(bytes.to_vec())
-        .map_err(|e| CodecError::Decode(format!("Invalid MTF: {}", e)))
+    String::from_utf8(bytes.to_vec()).map_err(|e| CodecError::Decode(format!("Invalid MTF: {}", e)))
 }
 
 /// Normalize CR/LF to platform-native line endings.

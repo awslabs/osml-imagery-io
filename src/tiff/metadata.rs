@@ -72,11 +72,7 @@ impl TIFFMetadataProvider {
     /// - `byte_order`: `"LittleEndian"` or `"BigEndian"` (detected from TIFF magic bytes)
     /// - `num_directories`: total number of IFDs in the file
     /// - `num_image_segments`: count of full-resolution IFDs
-    pub fn dataset_level(
-        byte_order: &str,
-        num_directories: u16,
-        num_image_segments: u16,
-    ) -> Self {
+    pub fn dataset_level(byte_order: &str, num_directories: u16, num_image_segments: u16) -> Self {
         let mut tags = HashMap::new();
         tags.insert("ByteOrder".to_string(), Value::from(byte_order));
         tags.insert(
@@ -161,17 +157,17 @@ mod tests {
         let num_entries: u16 = 11;
         buf.extend_from_slice(&num_entries.to_le_bytes());
 
-        write_ifd_entry(&mut buf, 256, 3, 1, 1);  // ImageWidth
-        write_ifd_entry(&mut buf, 257, 3, 1, 1);  // ImageLength
-        write_ifd_entry(&mut buf, 258, 3, 1, 8);  // BitsPerSample
-        write_ifd_entry(&mut buf, 259, 3, 1, 1);  // Compression = None
-        write_ifd_entry(&mut buf, 262, 3, 1, 1);  // PhotometricInterpretation
-        write_ifd_entry(&mut buf, 277, 3, 1, 1);  // SamplesPerPixel
-        write_ifd_entry(&mut buf, 278, 3, 1, 1);  // RowsPerStrip
+        write_ifd_entry(&mut buf, 256, 3, 1, 1); // ImageWidth
+        write_ifd_entry(&mut buf, 257, 3, 1, 1); // ImageLength
+        write_ifd_entry(&mut buf, 258, 3, 1, 8); // BitsPerSample
+        write_ifd_entry(&mut buf, 259, 3, 1, 1); // Compression = None
+        write_ifd_entry(&mut buf, 262, 3, 1, 1); // PhotometricInterpretation
+        write_ifd_entry(&mut buf, 277, 3, 1, 1); // SamplesPerPixel
+        write_ifd_entry(&mut buf, 278, 3, 1, 1); // RowsPerStrip
         let pixel_data_offset = 8 + 2 + num_entries as u32 * 12 + 4;
         write_ifd_entry(&mut buf, 273, 4, 1, pixel_data_offset); // StripOffsets
         write_ifd_entry(&mut buf, 279, 4, 1, pixel_data.len() as u32); // StripByteCounts
-        // Private-use tags (must come after standard tags for sorted order)
+                                                                       // Private-use tags (must come after standard tags for sorted order)
         write_ifd_entry(&mut buf, 33000, 3, 1, 42);
         write_ifd_entry(&mut buf, 65000, 3, 1, 99);
 
@@ -201,30 +197,53 @@ mod tests {
         handle.set_field_u32(tags::IMAGE_LENGTH, 1).unwrap();
         handle.set_field_u16(tags::BITS_PER_SAMPLE, 8).unwrap();
         handle.set_field_u16(tags::SAMPLES_PER_PIXEL, 1).unwrap();
-        handle.set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT).unwrap();
-        handle.set_field_u16(tags::PHOTOMETRIC_INTERPRETATION, tags::PHOTOMETRIC_MINISBLACK).unwrap();
+        handle
+            .set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT)
+            .unwrap();
+        handle
+            .set_field_u16(
+                tags::PHOTOMETRIC_INTERPRETATION,
+                tags::PHOTOMETRIC_MINISBLACK,
+            )
+            .unwrap();
         handle.set_field_u32(tags::TILE_WIDTH, 16).unwrap();
         handle.set_field_u32(tags::TILE_LENGTH, 16).unwrap();
-        handle.set_field_u16(tags::COMPRESSION, tags::COMPRESSION_NONE).unwrap();
-        handle.set_field_u16(tags::PLANAR_CONFIGURATION, tags::PLANAR_CONFIG_CONTIG).unwrap();
+        handle
+            .set_field_u16(tags::COMPRESSION, tags::COMPRESSION_NONE)
+            .unwrap();
+        handle
+            .set_field_u16(tags::PLANAR_CONFIGURATION, tags::PLANAR_CONFIG_CONTIG)
+            .unwrap();
 
         if let Some(dir) = geokey_dir {
-            handle.set_field_u16_array(tags::GEO_KEY_DIRECTORY_TAG, dir).unwrap();
+            handle
+                .set_field_u16_array(tags::GEO_KEY_DIRECTORY_TAG, dir)
+                .unwrap();
         }
         if let Some(dp) = double_params {
-            handle.set_field_f64_array(tags::GEO_DOUBLE_PARAMS_TAG, dp).unwrap();
+            handle
+                .set_field_f64_array(tags::GEO_DOUBLE_PARAMS_TAG, dp)
+                .unwrap();
         }
         if let Some(ap) = ascii_params {
-            handle.set_field_string(tags::GEO_ASCII_PARAMS_TAG, ap).unwrap();
+            handle
+                .set_field_string(tags::GEO_ASCII_PARAMS_TAG, ap)
+                .unwrap();
         }
         if let Some(ps) = pixel_scale {
-            handle.set_field_f64_array(tags::MODEL_PIXEL_SCALE_TAG, ps).unwrap();
+            handle
+                .set_field_f64_array(tags::MODEL_PIXEL_SCALE_TAG, ps)
+                .unwrap();
         }
         if let Some(tp) = tiepoints {
-            handle.set_field_f64_array(tags::MODEL_TIEPOINT_TAG, tp).unwrap();
+            handle
+                .set_field_f64_array(tags::MODEL_TIEPOINT_TAG, tp)
+                .unwrap();
         }
         if let Some(tf) = transformation {
-            handle.set_field_f64_array(tags::MODEL_TRANSFORMATION_TAG, tf).unwrap();
+            handle
+                .set_field_f64_array(tags::MODEL_TRANSFORMATION_TAG, tf)
+                .unwrap();
         }
 
         let tile_data = vec![0u8; 16 * 16];
@@ -348,16 +367,28 @@ mod tests {
         let dict = provider.as_dict(None);
 
         assert_eq!(dict.len(), 3);
-        assert_eq!(dict.get("ByteOrder").and_then(|v| v.as_str()), Some("LittleEndian"));
-        assert_eq!(dict.get("NumberOfDirectories").and_then(|v| v.as_u64()), Some(3));
-        assert_eq!(dict.get("NumberOfImageSegments").and_then(|v| v.as_u64()), Some(2));
+        assert_eq!(
+            dict.get("ByteOrder").and_then(|v| v.as_str()),
+            Some("LittleEndian")
+        );
+        assert_eq!(
+            dict.get("NumberOfDirectories").and_then(|v| v.as_u64()),
+            Some(3)
+        );
+        assert_eq!(
+            dict.get("NumberOfImageSegments").and_then(|v| v.as_u64()),
+            Some(2)
+        );
     }
 
     #[test]
     fn test_dataset_level_big_endian() {
         let provider = TIFFMetadataProvider::dataset_level("BigEndian", 1, 1);
         let dict = provider.as_dict(None);
-        assert_eq!(dict.get("ByteOrder").and_then(|v| v.as_str()), Some("BigEndian"));
+        assert_eq!(
+            dict.get("ByteOrder").and_then(|v| v.as_str()),
+            Some("BigEndian")
+        );
     }
 
     #[test]
@@ -388,7 +419,10 @@ mod tests {
             raw_bytes: Vec::new(),
         };
         let dict = provider.as_dict(None);
-        assert!(dict.is_empty(), "Empty IFD should produce empty Tag_Dictionary");
+        assert!(
+            dict.is_empty(),
+            "Empty IFD should produce empty Tag_Dictionary"
+        );
     }
 
     // =========================================================================
@@ -402,9 +436,15 @@ mod tests {
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
         let dict = provider.as_dict(None);
 
-        assert!(dict.contains_key("33000"), "Private-use tag 33000 should be in Tag_Dictionary");
+        assert!(
+            dict.contains_key("33000"),
+            "Private-use tag 33000 should be in Tag_Dictionary"
+        );
         assert_eq!(dict.get("33000").and_then(|v| v.as_u64()), Some(42));
-        assert!(dict.contains_key("65000"), "Private-use tag 65000 should be in Tag_Dictionary");
+        assert!(
+            dict.contains_key("65000"),
+            "Private-use tag 65000 should be in Tag_Dictionary"
+        );
         assert_eq!(dict.get("65000").and_then(|v| v.as_u64()), Some(99));
     }
 
@@ -436,15 +476,26 @@ mod tests {
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
         let all = provider.as_dict(None);
 
-        assert!(all.contains_key("34735"), "GeoKeyDirectoryTag should be under '34735'");
-        assert!(all.contains_key("33550"), "ModelPixelScaleTag should be under '33550'");
-        assert!(all.contains_key("33922"), "ModelTiepointTag should be under '33922'");
+        assert!(
+            all.contains_key("34735"),
+            "GeoKeyDirectoryTag should be under '34735'"
+        );
+        assert!(
+            all.contains_key("33550"),
+            "ModelPixelScaleTag should be under '33550'"
+        );
+        assert!(
+            all.contains_key("33922"),
+            "ModelTiepointTag should be under '33922'"
+        );
 
         // No Geo-prefixed decoded entries
         assert!(
             !all.keys().any(|k| k.starts_with("Geo")),
             "No Geo-prefixed keys should exist, found: {:?}",
-            all.keys().filter(|k| k.starts_with("Geo")).collect::<Vec<_>>()
+            all.keys()
+                .filter(|k| k.starts_with("Geo"))
+                .collect::<Vec<_>>()
         );
 
         assert!(all.contains_key("256")); // ImageWidth
@@ -473,7 +524,10 @@ mod tests {
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
         let all = provider.as_dict(None);
 
-        assert!(all.contains_key("34264"), "ModelTransformationTag should be under '34264'");
+        assert!(
+            all.contains_key("34264"),
+            "ModelTransformationTag should be under '34264'"
+        );
         assert!(!all.contains_key("GeoTransformation"));
     }
 
@@ -492,7 +546,11 @@ mod tests {
 
         let filtered_34 = provider.as_dict(Some("34"));
         for key in filtered_34.keys() {
-            assert!(key.starts_with("34"), "Key '{}' should start with '34'", key);
+            assert!(
+                key.starts_with("34"),
+                "Key '{}' should start with '34'",
+                key
+            );
         }
         if provider.as_dict(None).contains_key("34735") {
             assert!(filtered_34.contains_key("34735"));

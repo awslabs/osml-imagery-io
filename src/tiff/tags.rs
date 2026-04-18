@@ -70,7 +70,6 @@ pub const JPEG_TABLES: u32 = 347;
 /// Default is [2, 2]. Only meaningful when PhotometricInterpretation = YCbCr (6).
 pub const YCBCR_SUB_SAMPLING: u32 = 530;
 
-
 // =============================================================================
 // Compression Constants
 // =============================================================================
@@ -246,4 +245,3 @@ pub const TIFF_FLOAT: u16 = 11;
 
 /// Field type 12: DOUBLE — Double precision (8-byte) IEEE floating point.
 pub const TIFF_DOUBLE: u16 = 12;
-

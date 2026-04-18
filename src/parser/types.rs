@@ -358,7 +358,9 @@ mod tests {
         let def = StructureDefinition::new("test_struct")
             .with_title("Test Structure")
             .with_endian(Endian::Little)
-            .with_field(FieldDefinition::new("field1", FieldType::String).with_size(SizeSpec::fixed(10)));
+            .with_field(
+                FieldDefinition::new("field1", FieldType::String).with_size(SizeSpec::fixed(10)),
+            );
 
         assert_eq!(def.id, "test_struct");
         assert_eq!(def.title, Some("Test Structure".to_string()));

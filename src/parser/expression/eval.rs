@@ -93,13 +93,15 @@ impl ExpressionEvaluator {
                 Literal::String(s) => EvalResult::String(s.clone()),
                 Literal::Boolean(b) => EvalResult::Boolean(*b),
             }),
-            Expression::FieldRef(path) => context
-                .fields
-                .get(path)
-                .cloned()
-                .ok_or_else(|| ExpressionError::UnknownField {
-                    field: path.clone(),
-                }),
+            Expression::FieldRef(path) => {
+                context
+                    .fields
+                    .get(path)
+                    .cloned()
+                    .ok_or_else(|| ExpressionError::UnknownField {
+                        field: path.clone(),
+                    })
+            }
             Expression::SpecialVar(var) => match var {
                 SpecialVariable::Index => context
                     .index
@@ -201,12 +203,15 @@ impl ExpressionEvaluator {
             "to_i" => match val {
                 EvalResult::Integer(n) => Ok(EvalResult::Integer(n)),
                 EvalResult::Float(f) => Ok(EvalResult::Integer(f as i64)),
-                EvalResult::String(s) => s.trim().parse::<i64>().map(EvalResult::Integer).map_err(
-                    |_| ExpressionError::TypeError {
-                        operator: "to_i".to_string(),
-                        operand_type: format!("String({})", s),
-                    },
-                ),
+                EvalResult::String(s) => {
+                    s.trim()
+                        .parse::<i64>()
+                        .map(EvalResult::Integer)
+                        .map_err(|_| ExpressionError::TypeError {
+                            operator: "to_i".to_string(),
+                            operand_type: format!("String({})", s),
+                        })
+                }
                 EvalResult::Boolean(b) => Ok(EvalResult::Integer(if b { 1 } else { 0 })),
                 v => Err(ExpressionError::TypeError {
                     operator: "to_i".to_string(),

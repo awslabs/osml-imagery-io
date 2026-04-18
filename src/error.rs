@@ -40,7 +40,6 @@ pub enum CodecError {
     // =========================================================================
     // J2K-specific error variants (Requirements 16.1, 16.2, 16.5)
     // =========================================================================
-
     /// Invalid resolution level with context about available levels.
     ///
     /// This error provides more context than `InvalidResolutionLevel` by
@@ -103,7 +102,6 @@ pub enum CodecError {
     // =========================================================================
     // Image masking error variants (Phase 6)
     // =========================================================================
-
     /// Block not found error for masked or out-of-bounds blocks.
     ///
     /// This error is returned when attempting to access a block that either:

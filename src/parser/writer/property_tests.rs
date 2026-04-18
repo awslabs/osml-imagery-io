@@ -1,7 +1,9 @@
 //! Property-based tests for the structure writer.
 
 use super::*;
-use crate::parser::types::{Encoding, Endian, FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition};
+use crate::parser::types::{
+    Encoding, Endian, FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition,
+};
 use proptest::prelude::*;
 
 /// Property 23: Streaming Mode Order Enforcement
@@ -105,7 +107,6 @@ mod prop_23_streaming_mode_order {
     }
 }
 
-
 /// Property 20: Missing Required Field Error
 /// **Validates: Requirements 8.4**
 mod prop_20_missing_required_field {
@@ -176,7 +177,6 @@ mod prop_20_missing_required_field {
         }
     }
 }
-
 
 /// Property 21: Value Too Large Error
 /// **Validates: Requirements 8.5, 10.4, 10.5**
@@ -252,7 +252,6 @@ mod prop_21_value_too_large {
         }
     }
 }
-
 
 /// Property 22: Padding Application
 /// **Validates: Requirements 8.6**
@@ -358,7 +357,6 @@ mod prop_22_padding_application {
     }
 }
 
-
 /// Property 24: Write Character Set Validation
 /// **Validates: Requirements 10.2, 10.3**
 mod prop_24_write_character_set_validation {
@@ -380,15 +378,13 @@ mod prop_24_write_character_set_validation {
                 Just(0x2Eu8),
                 Just(0x2Fu8),
             ],
-            len..=len
-        ).prop_map(|bytes| String::from_utf8(bytes).unwrap())
+            len..=len,
+        )
+        .prop_map(|bytes| String::from_utf8(bytes).unwrap())
     }
 
     fn invalid_bcs_a_byte() -> impl Strategy<Value = u8> {
-        prop_oneof![
-            0x00u8..0x20u8,
-            0x7Fu8..=0xFFu8,
-        ]
+        prop_oneof![0x00u8..0x20u8, 0x7Fu8..=0xFFu8,]
     }
 
     fn invalid_bcs_n_byte() -> impl Strategy<Value = u8> {
@@ -517,7 +513,6 @@ mod prop_24_write_character_set_validation {
     }
 }
 
-
 /// Property 2: Binary Data Round-Trip
 /// **Validates: Requirements 16.1, 16.2**
 mod prop_2_binary_data_round_trip {
@@ -530,13 +525,11 @@ mod prop_2_binary_data_round_trip {
         Arc::new(
             StructureDefinition::new("round_trip_test")
                 .with_field(
-                    FieldDefinition::new("magic", FieldType::String)
-                        .with_size(SizeSpec::fixed(4)),
+                    FieldDefinition::new("magic", FieldType::String).with_size(SizeSpec::fixed(4)),
                 )
                 .with_field(FieldDefinition::new("version", FieldType::UnsignedInt(2)))
                 .with_field(
-                    FieldDefinition::new("name", FieldType::String)
-                        .with_size(SizeSpec::fixed(10)),
+                    FieldDefinition::new("name", FieldType::String).with_size(SizeSpec::fixed(10)),
                 )
                 .with_field(FieldDefinition::new("flags", FieldType::UnsignedInt(1))),
         )
@@ -546,8 +539,7 @@ mod prop_2_binary_data_round_trip {
         Arc::new(
             StructureDefinition::new("repeated_round_trip_test")
                 .with_field(
-                    FieldDefinition::new("header", FieldType::String)
-                        .with_size(SizeSpec::fixed(4)),
+                    FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::fixed(4)),
                 )
                 .with_field(
                     FieldDefinition::new("items", FieldType::UnsignedInt(1))
@@ -571,10 +563,12 @@ mod prop_2_binary_data_round_trip {
         writer: &mut StructureWriter,
     ) -> Result<(), WriteError> {
         for path in accessor.fields() {
-            let value = accessor.get(&path).map_err(|e| WriteError::ValidationError {
-                path: path.clone(),
-                message: e.to_string(),
-            })?;
+            let value = accessor
+                .get(&path)
+                .map_err(|e| WriteError::ValidationError {
+                    path: path.clone(),
+                    message: e.to_string(),
+                })?;
 
             match value {
                 Value::String(cow) => {

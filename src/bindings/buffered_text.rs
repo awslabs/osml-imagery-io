@@ -124,8 +124,7 @@ impl PyBufferedTextAssetProvider {
         roles: Option<Vec<String>>,
         metadata: Option<&PyMetadataProvider>,
     ) -> Self {
-        let mut provider =
-            BufferedTextAssetProvider::new(key, text_content.to_string(), encoding);
+        let mut provider = BufferedTextAssetProvider::new(key, text_content.to_string(), encoding);
 
         // Apply optional properties
         if let Some(t) = title {

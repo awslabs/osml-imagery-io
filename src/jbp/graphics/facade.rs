@@ -64,9 +64,9 @@ impl<'a> GraphicSubheaderFacade<'a> {
         format: NitfFormat,
     ) -> Result<Self, CodecError> {
         let def_name = format.graphic_subheader_definition();
-        let definition = registry
-            .get(def_name)
-            .ok_or_else(|| CodecError::InvalidFormat(format!("Structure definition not found: {}", def_name)))?;
+        let definition = registry.get(def_name).ok_or_else(|| {
+            CodecError::InvalidFormat(format!("Structure definition not found: {}", def_name))
+        })?;
 
         let accessor = StructureAccessor::new(definition, data)
             .map_err(|e| CodecError::Parse(format!("Failed to create accessor: {}", e)))?;
@@ -108,7 +108,7 @@ impl<'a> GraphicSubheaderFacade<'a> {
         let encryp = self.encryp()?;
         if encryp != "0" {
             return Err(CodecError::Decode(
-                "Encrypted graphics not supported".to_string()
+                "Encrypted graphics not supported".to_string(),
             ));
         }
 
@@ -254,7 +254,7 @@ impl<'a> GraphicSubheaderFacade<'a> {
         let sxshdl = self.sxshdl()?;
         if sxshdl == 0 {
             return Err(CodecError::Parse(
-                "SXSOFL field not present when SXSHDL is 0".to_string()
+                "SXSOFL field not present when SXSHDL is 0".to_string(),
             ));
         }
         self.get_u32_field("SXSOFL")
@@ -307,24 +307,27 @@ impl<'a> GraphicSubheaderFacade<'a> {
 
     /// Get a string field from the accessor.
     fn get_str_field(&self, field: &str) -> Result<String, CodecError> {
-        let value = self.accessor
+        let value = self
+            .accessor
             .get(field)
             .map_err(|e| CodecError::Parse(format!("Failed to read field '{}': {}", field, e)))?;
-        let s = value
-            .as_str()
-            .map_err(|e| CodecError::Parse(format!("Failed to parse field '{}' as string: {}", field, e)))?;
+        let s = value.as_str().map_err(|e| {
+            CodecError::Parse(format!(
+                "Failed to parse field '{}' as string: {}",
+                field, e
+            ))
+        })?;
         Ok(s.to_string())
     }
 
     /// Get a u32 field from the accessor (parsed from string).
     fn get_u32_field(&self, field: &str) -> Result<u32, CodecError> {
         let s = self.get_str_field(field)?;
-        s.trim()
-            .parse::<u32>()
-            .map_err(|e| CodecError::Parse(format!("Failed to parse field '{}' as u32: {}", field, e)))
+        s.trim().parse::<u32>().map_err(|e| {
+            CodecError::Parse(format!("Failed to parse field '{}' as u32: {}", field, e))
+        })
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -346,7 +349,7 @@ mod tests {
         sxshdl: &str,
     ) -> Vec<u8> {
         let mut bytes = Vec::new();
-        
+
         // SY (2)
         bytes.extend_from_slice(format!("{:2}", sy).as_bytes());
         // SID (10)
@@ -354,23 +357,23 @@ mod tests {
         // SNAME (20)
         bytes.extend_from_slice(format!("{:20}", sname).as_bytes());
         // Security fields (167 bytes total)
-        bytes.extend_from_slice(b"U");                    // SSCLAS (1)
-        bytes.extend_from_slice(b"  ");                   // SSCLSY (2)
-        bytes.extend_from_slice(b"           ");          // SSCODE (11)
-        bytes.extend_from_slice(b"  ");                   // SSCTLH (2)
+        bytes.extend_from_slice(b"U"); // SSCLAS (1)
+        bytes.extend_from_slice(b"  "); // SSCLSY (2)
+        bytes.extend_from_slice(b"           "); // SSCODE (11)
+        bytes.extend_from_slice(b"  "); // SSCTLH (2)
         bytes.extend_from_slice(b"                    "); // SSREL (20)
-        bytes.extend_from_slice(b"  ");                   // SSDCTP (2)
-        bytes.extend_from_slice(b"        ");             // SSDCDT (8)
-        bytes.extend_from_slice(b"    ");                 // SSDCXM (4)
-        bytes.extend_from_slice(b" ");                    // SSDG (1)
-        bytes.extend_from_slice(b"        ");             // SSDGDT (8)
+        bytes.extend_from_slice(b"  "); // SSDCTP (2)
+        bytes.extend_from_slice(b"        "); // SSDCDT (8)
+        bytes.extend_from_slice(b"    "); // SSDCXM (4)
+        bytes.extend_from_slice(b" "); // SSDG (1)
+        bytes.extend_from_slice(b"        "); // SSDGDT (8)
         bytes.extend_from_slice(b"                                           "); // SSCLTX (43)
-        bytes.extend_from_slice(b" ");                    // SSCATP (1)
+        bytes.extend_from_slice(b" "); // SSCATP (1)
         bytes.extend_from_slice(b"                                        "); // SSCAUT (40)
-        bytes.extend_from_slice(b" ");                    // SSCRSN (1)
-        bytes.extend_from_slice(b"        ");             // SSSRDT (8)
-        bytes.extend_from_slice(b"               ");      // SSCTLN (15)
-        // ENCRYP (1)
+        bytes.extend_from_slice(b" "); // SSCRSN (1)
+        bytes.extend_from_slice(b"        "); // SSSRDT (8)
+        bytes.extend_from_slice(b"               "); // SSCTLN (15)
+                                                     // ENCRYP (1)
         bytes.extend_from_slice(format!("{:1}", encryp).as_bytes());
         // SFMT (1)
         bytes.extend_from_slice(format!("{:1}", sfmt).as_bytes());
@@ -392,7 +395,7 @@ mod tests {
         bytes.extend_from_slice(b"  ");
         // SXSHDL (5)
         bytes.extend_from_slice(format!("{:05}", sxshdl).as_bytes());
-        
+
         bytes
     }
 
@@ -419,7 +422,8 @@ mod tests {
             "00000",
         );
 
-        let facade = GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
 
         assert_eq!(facade.sy().unwrap(), "SY");
         assert_eq!(facade.sid().unwrap().trim(), "GRAPHIC001");
@@ -446,7 +450,8 @@ mod tests {
             "00000",
         );
 
-        let facade = GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
 
         assert_eq!(facade.sdlvl().unwrap(), 5);
         assert_eq!(facade.salvl().unwrap(), 1);
@@ -463,14 +468,15 @@ mod tests {
             "C",
             "001",
             "000",
-            "0010000200",  // row=100, col=200
-            "0000000000",  // row=0, col=0
+            "0010000200", // row=100, col=200
+            "0000000000", // row=0, col=0
             "C",
-            "0050000500",  // row=500, col=500
+            "0050000500", // row=500, col=500
             "00000",
         );
 
-        let facade = GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
 
         let (row, col) = facade.sloc().unwrap();
         assert_eq!(row, 100);
@@ -488,21 +494,44 @@ mod tests {
     #[test]
     fn facade_scolor() {
         let registry = create_test_registry();
-        
+
         // Test color
         let bytes_color = create_test_subheader_bytes(
-            "SY", "GRAPHIC001", "Test", "0", "C", "001", "000",
-            "0000000000", "0000000000", "C", "0000000000", "00000",
+            "SY",
+            "GRAPHIC001",
+            "Test",
+            "0",
+            "C",
+            "001",
+            "000",
+            "0000000000",
+            "0000000000",
+            "C",
+            "0000000000",
+            "00000",
         );
-        let facade = GraphicSubheaderFacade::from_bytes(&bytes_color, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            GraphicSubheaderFacade::from_bytes(&bytes_color, &registry, NitfFormat::Nitf21)
+                .unwrap();
         assert_eq!(facade.scolor().unwrap(), "C");
 
         // Test monochrome
         let bytes_mono = create_test_subheader_bytes(
-            "SY", "GRAPHIC001", "Test", "0", "C", "001", "000",
-            "0000000000", "0000000000", "M", "0000000000", "00000",
+            "SY",
+            "GRAPHIC001",
+            "Test",
+            "0",
+            "C",
+            "001",
+            "000",
+            "0000000000",
+            "0000000000",
+            "M",
+            "0000000000",
+            "00000",
         );
-        let facade = GraphicSubheaderFacade::from_bytes(&bytes_mono, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            GraphicSubheaderFacade::from_bytes(&bytes_mono, &registry, NitfFormat::Nitf21).unwrap();
         assert_eq!(facade.scolor().unwrap(), "M");
     }
 
@@ -510,13 +539,24 @@ mod tests {
     fn facade_sxshdl_zero() {
         let registry = create_test_registry();
         let bytes = create_test_subheader_bytes(
-            "SY", "GRAPHIC001", "Test", "0", "C", "001", "000",
-            "0000000000", "0000000000", "C", "0000000000", "00000",
+            "SY",
+            "GRAPHIC001",
+            "Test",
+            "0",
+            "C",
+            "001",
+            "000",
+            "0000000000",
+            "0000000000",
+            "C",
+            "0000000000",
+            "00000",
         );
 
-        let facade = GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
         assert_eq!(facade.sxshdl().unwrap(), 0);
-        
+
         // SXSOFL should error when SXSHDL is 0
         assert!(facade.sxsofl().is_err());
     }
@@ -525,9 +565,18 @@ mod tests {
     fn facade_invalid_sy_marker() {
         let registry = create_test_registry();
         let bytes = create_test_subheader_bytes(
-            "XX",  // Invalid SY marker
-            "GRAPHIC001", "Test", "0", "C", "001", "000",
-            "0000000000", "0000000000", "C", "0000000000", "00000",
+            "XX", // Invalid SY marker
+            "GRAPHIC001",
+            "Test",
+            "0",
+            "C",
+            "001",
+            "000",
+            "0000000000",
+            "0000000000",
+            "C",
+            "0000000000",
+            "00000",
         );
 
         let result = GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21);
@@ -540,10 +589,18 @@ mod tests {
     fn facade_invalid_sfmt() {
         let registry = create_test_registry();
         let bytes = create_test_subheader_bytes(
-            "SY", "GRAPHIC001", "Test", "0",
-            "X",  // Invalid SFMT (not "C")
-            "001", "000",
-            "0000000000", "0000000000", "C", "0000000000", "00000",
+            "SY",
+            "GRAPHIC001",
+            "Test",
+            "0",
+            "X", // Invalid SFMT (not "C")
+            "001",
+            "000",
+            "0000000000",
+            "0000000000",
+            "C",
+            "0000000000",
+            "00000",
         );
 
         let result = GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21);
@@ -556,10 +613,18 @@ mod tests {
     fn facade_encrypted_graphics_rejected() {
         let registry = create_test_registry();
         let bytes = create_test_subheader_bytes(
-            "SY", "GRAPHIC001", "Test",
-            "1",  // Encrypted
-            "C", "001", "000",
-            "0000000000", "0000000000", "C", "0000000000", "00000",
+            "SY",
+            "GRAPHIC001",
+            "Test",
+            "1", // Encrypted
+            "C",
+            "001",
+            "000",
+            "0000000000",
+            "0000000000",
+            "C",
+            "0000000000",
+            "00000",
         );
 
         let result = GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21);
@@ -608,7 +673,11 @@ mod tests {
     fn parse_location_invalid_length() {
         let result = GraphicSubheaderFacade::parse_location("12345", "TEST");
         assert!(result.is_err());
-        assert!(result.err().unwrap().to_string().contains("expected 10 characters"));
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("expected 10 characters"));
     }
 }
 
@@ -626,7 +695,7 @@ mod property_tests {
         sbnd2_col: i32,
     ) -> Vec<u8> {
         let mut bytes = Vec::new();
-        
+
         // SY (2)
         bytes.extend_from_slice(b"SY");
         // SID (10)
@@ -634,23 +703,23 @@ mod property_tests {
         // SNAME (20)
         bytes.extend_from_slice(b"Test Graphic        ");
         // Security fields (167 bytes total)
-        bytes.extend_from_slice(b"U");                    // SSCLAS (1)
-        bytes.extend_from_slice(b"  ");                   // SSCLSY (2)
-        bytes.extend_from_slice(b"           ");          // SSCODE (11)
-        bytes.extend_from_slice(b"  ");                   // SSCTLH (2)
+        bytes.extend_from_slice(b"U"); // SSCLAS (1)
+        bytes.extend_from_slice(b"  "); // SSCLSY (2)
+        bytes.extend_from_slice(b"           "); // SSCODE (11)
+        bytes.extend_from_slice(b"  "); // SSCTLH (2)
         bytes.extend_from_slice(b"                    "); // SSREL (20)
-        bytes.extend_from_slice(b"  ");                   // SSDCTP (2)
-        bytes.extend_from_slice(b"        ");             // SSDCDT (8)
-        bytes.extend_from_slice(b"    ");                 // SSDCXM (4)
-        bytes.extend_from_slice(b" ");                    // SSDG (1)
-        bytes.extend_from_slice(b"        ");             // SSDGDT (8)
+        bytes.extend_from_slice(b"  "); // SSDCTP (2)
+        bytes.extend_from_slice(b"        "); // SSDCDT (8)
+        bytes.extend_from_slice(b"    "); // SSDCXM (4)
+        bytes.extend_from_slice(b" "); // SSDG (1)
+        bytes.extend_from_slice(b"        "); // SSDGDT (8)
         bytes.extend_from_slice(b"                                           "); // SSCLTX (43)
-        bytes.extend_from_slice(b" ");                    // SSCATP (1)
+        bytes.extend_from_slice(b" "); // SSCATP (1)
         bytes.extend_from_slice(b"                                        "); // SSCAUT (40)
-        bytes.extend_from_slice(b" ");                    // SSCRSN (1)
-        bytes.extend_from_slice(b"        ");             // SSSRDT (8)
-        bytes.extend_from_slice(b"               ");      // SSCTLN (15)
-        // ENCRYP (1)
+        bytes.extend_from_slice(b" "); // SSCRSN (1)
+        bytes.extend_from_slice(b"        "); // SSSRDT (8)
+        bytes.extend_from_slice(b"               "); // SSCTLN (15)
+                                                     // ENCRYP (1)
         bytes.extend_from_slice(b"0");
         // SFMT (1)
         bytes.extend_from_slice(b"C");
@@ -672,7 +741,7 @@ mod property_tests {
         bytes.extend_from_slice(b"  ");
         // SXSHDL (5) - No extended subheader
         bytes.extend_from_slice(b"00000");
-        
+
         bytes
     }
 
@@ -697,7 +766,7 @@ mod property_tests {
             salvl in 0u32..=998,  // Full valid range for SALVL field
         ) {
             let registry = create_test_registry();
-            
+
             // Create subheader with the generated SALVL value
             // Note: SALVL can reference any display level (0-998), even if no segment
             // with that display level exists. The parser should not validate this.
@@ -706,13 +775,13 @@ mod property_tests {
                 0, 0,    // SBND1: row=0, col=0
                 100, 100 // SBND2: row=100, col=100
             );
-            
+
             // Parsing should succeed regardless of SALVL value
             let result = GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21);
             prop_assert!(result.is_ok(), "Parsing failed for SALVL={}: {:?}", salvl, result.err());
-            
+
             let facade = result.unwrap();
-            
+
             // Verify the SALVL value was correctly parsed
             let parsed_salvl = facade.salvl().unwrap();
             prop_assert_eq!(parsed_salvl, salvl, "SALVL mismatch: expected {}, got {}", salvl, parsed_salvl);
@@ -733,7 +802,7 @@ mod property_tests {
             sbnd2_col in 0i32..=9999,
         ) {
             let registry = create_test_registry();
-            
+
             // Create subheader with the generated bounds
             // This includes cases where SBND1 > SBND2 (inverted bounds)
             let bytes = create_test_subheader_bytes_with_bounds(
@@ -741,7 +810,7 @@ mod property_tests {
                 sbnd1_row, sbnd1_col,
                 sbnd2_row, sbnd2_col
             );
-            
+
             // Parsing should succeed regardless of whether bounds are valid
             let result = GraphicSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21);
             prop_assert!(
@@ -749,23 +818,23 @@ mod property_tests {
                 "Parsing failed for SBND1=({},{}) SBND2=({},{}): {:?}",
                 sbnd1_row, sbnd1_col, sbnd2_row, sbnd2_col, result.err()
             );
-            
+
             let facade = result.unwrap();
-            
+
             // Verify the bounds were correctly parsed
             let (parsed_row1, parsed_col1) = facade.sbnd1().unwrap();
             let (parsed_row2, parsed_col2) = facade.sbnd2().unwrap();
-            
+
             prop_assert_eq!(parsed_row1, sbnd1_row, "SBND1 row mismatch");
             prop_assert_eq!(parsed_col1, sbnd1_col, "SBND1 col mismatch");
             prop_assert_eq!(parsed_row2, sbnd2_row, "SBND2 row mismatch");
             prop_assert_eq!(parsed_col2, sbnd2_col, "SBND2 col mismatch");
-            
+
             // Explicitly test inverted bounds case (this is the key property)
             // The parser should NOT reject inverted bounds
             let is_inverted_row = sbnd1_row > sbnd2_row;
             let is_inverted_col = sbnd1_col > sbnd2_col;
-            
+
             if is_inverted_row || is_inverted_col {
                 // Even with inverted bounds, parsing succeeded (we're here)
                 // and values are accessible - this is the expected behavior

@@ -65,7 +65,12 @@ impl JPEGImageAssetProvider {
     /// For grayscale (1 band), this is a no-op identity copy.
     /// For RGB (3 bands), rearranges from [R0,G0,B0,R1,G1,B1,...] to
     /// [R0,R1,...,G0,G1,...,B0,B1,...].
-    fn interleaved_to_bsq(interleaved: &[u8], width: usize, height: usize, num_bands: usize) -> Vec<u8> {
+    fn interleaved_to_bsq(
+        interleaved: &[u8],
+        width: usize,
+        height: usize,
+        num_bands: usize,
+    ) -> Vec<u8> {
         if num_bands == 1 {
             return interleaved.to_vec();
         }

@@ -23,8 +23,8 @@
 //!
 //! NITF uses big-endian byte order for all multi-byte values.
 
-use crate::error::CodecError;
 use super::types::{PixelJustification, PixelValueType};
+use crate::error::CodecError;
 
 /// Calculate the number of bytes per pixel for a given PVTYPE and NBPP.
 ///
@@ -58,7 +58,6 @@ pub fn bytes_per_pixel(pvtype: PixelValueType, nbpp: u8) -> usize {
         }
     }
 }
-
 
 /// Decode a single unsigned integer pixel value from bytes.
 ///
@@ -134,7 +133,6 @@ fn decode_signed_int(data: &[u8], nbpp: u8) -> Result<f64, CodecError> {
     }
 }
 
-
 /// Decode a single real (floating-point) pixel value from bytes.
 ///
 /// # Arguments
@@ -157,8 +155,7 @@ fn decode_real(data: &[u8], nbpp: u8) -> Result<f64, CodecError> {
                 return Err(CodecError::Decode("Insufficient data for f64 pixel".into()));
             }
             let value = f64::from_be_bytes([
-                data[0], data[1], data[2], data[3],
-                data[4], data[5], data[6], data[7],
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
             ]);
             Ok(value)
         }
@@ -181,13 +178,14 @@ fn decode_real(data: &[u8], nbpp: u8) -> Result<f64, CodecError> {
 /// A tuple of (real, imaginary) as f64 values.
 fn decode_complex(data: &[u8]) -> Result<(f64, f64), CodecError> {
     if data.len() < 8 {
-        return Err(CodecError::Decode("Insufficient data for complex pixel".into()));
+        return Err(CodecError::Decode(
+            "Insufficient data for complex pixel".into(),
+        ));
     }
     let real = f32::from_be_bytes([data[0], data[1], data[2], data[3]]);
     let imag = f32::from_be_bytes([data[4], data[5], data[6], data[7]]);
     Ok((real as f64, imag as f64))
 }
-
 
 /// Decode a bi-level (1-bit) pixel value from a byte.
 ///
@@ -201,7 +199,11 @@ fn decode_complex(data: &[u8]) -> Result<(f64, f64), CodecError> {
 /// The decoded pixel value (0 or 1) as f64.
 fn decode_bilevel_bit(byte: u8, bit_index: u8) -> f64 {
     let mask = 0x80 >> bit_index;
-    if byte & mask != 0 { 1.0 } else { 0.0 }
+    if byte & mask != 0 {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 /// Unpack all bi-level pixels from a byte array.
@@ -225,7 +227,6 @@ fn unpack_bilevel(data: &[u8], num_pixels: usize) -> Vec<f64> {
     }
     result
 }
-
 
 /// Decode a single pixel value from raw bytes.
 ///
@@ -263,7 +264,9 @@ pub fn decode_pixel(data: &[u8], pvtype: PixelValueType, nbpp: u8) -> Result<f64
                 )));
             }
             if data.is_empty() {
-                return Err(CodecError::Decode("Insufficient data for bi-level pixel".into()));
+                return Err(CodecError::Decode(
+                    "Insufficient data for bi-level pixel".into(),
+                ));
             }
             // For single pixel decode, return the first bit
             Ok(decode_bilevel_bit(data[0], 0))
@@ -281,7 +284,6 @@ pub fn decode_pixel(data: &[u8], pvtype: PixelValueType, nbpp: u8) -> Result<f64
 pub fn decode_complex_pixel(data: &[u8]) -> Result<(f64, f64), CodecError> {
     decode_complex(data)
 }
-
 
 /// Encode an unsigned integer pixel value to bytes.
 ///
@@ -355,9 +357,7 @@ fn encode_real(value: f64, nbpp: u8) -> Result<Vec<u8>, CodecError> {
             let v = value as f32;
             Ok(v.to_be_bytes().to_vec())
         }
-        64 => {
-            Ok(value.to_be_bytes().to_vec())
-        }
+        64 => Ok(value.to_be_bytes().to_vec()),
         _ => Err(CodecError::Encode(format!(
             "Unsupported NBPP {} for real type",
             nbpp
@@ -390,7 +390,7 @@ fn encode_complex_value(real: f64, imag: f64) -> Vec<u8> {
 fn pack_bilevel(values: &[f64]) -> Vec<u8> {
     let num_bytes = values.len().div_ceil(8);
     let mut result = vec![0u8; num_bytes];
-    
+
     for (i, &value) in values.iter().enumerate() {
         if value != 0.0 {
             let byte_index = i / 8;
@@ -398,10 +398,9 @@ fn pack_bilevel(values: &[f64]) -> Vec<u8> {
             result[byte_index] |= 0x80 >> bit_index;
         }
     }
-    
+
     result
 }
-
 
 /// Encode a single pixel value to raw bytes.
 ///
@@ -455,7 +454,6 @@ pub fn encode_complex_pixel(real: f64, imag: f64) -> Vec<u8> {
     encode_complex_value(real, imag)
 }
 
-
 /// Apply bit shifting for ABPP < NBPP based on pixel justification.
 ///
 /// When actual bits per pixel (ABPP) is less than storage bits (NBPP),
@@ -473,7 +471,7 @@ fn apply_justification_decode(value: f64, abpp: u8, nbpp: u8, pjust: PixelJustif
     if abpp >= nbpp {
         return value;
     }
-    
+
     match pjust {
         PixelJustification::Right => {
             // Right-justified: significant bits are in LSB positions
@@ -504,7 +502,7 @@ fn apply_justification_encode(value: f64, abpp: u8, nbpp: u8, pjust: PixelJustif
     if abpp >= nbpp {
         return value;
     }
-    
+
     match pjust {
         PixelJustification::Right => {
             // Right-justified: significant bits go to LSB positions
@@ -552,22 +550,24 @@ pub fn decode(
         }
         return Ok(unpack_bilevel(data, num_pixels));
     }
-    
+
     let bpp = bytes_per_pixel(pvtype, nbpp);
     let mut result = Vec::with_capacity(num_pixels);
-    
+
     for i in 0..num_pixels {
         let offset = i * bpp;
         if offset + bpp > data.len() {
             return Err(CodecError::Decode(format!(
                 "Insufficient data: need {} bytes at offset {}, have {}",
-                bpp, offset, data.len()
+                bpp,
+                offset,
+                data.len()
             )));
         }
-        
+
         let pixel_data = &data[offset..offset + bpp];
         let value = decode_pixel(pixel_data, pvtype, nbpp)?;
-        
+
         // Apply justification adjustment for integer types
         let adjusted = match pvtype {
             PixelValueType::UnsignedInt | PixelValueType::SignedInt => {
@@ -575,10 +575,10 @@ pub fn decode(
             }
             _ => value,
         };
-        
+
         result.push(adjusted);
     }
-    
+
     Ok(result)
 }
 
@@ -610,10 +610,10 @@ pub fn encode(
         }
         return Ok(pack_bilevel(values));
     }
-    
+
     let bpp = bytes_per_pixel(pvtype, nbpp);
     let mut result = Vec::with_capacity(values.len() * bpp);
-    
+
     for &value in values {
         // Apply justification adjustment for integer types
         let adjusted = match pvtype {
@@ -622,11 +622,11 @@ pub fn encode(
             }
             _ => value,
         };
-        
+
         let encoded = encode_pixel(adjusted, pvtype, nbpp)?;
         result.extend_from_slice(&encoded);
     }
-    
+
     Ok(result)
 }
 
@@ -640,20 +640,22 @@ pub fn encode(
 /// A vector of (real, imaginary) tuples.
 pub fn decode_complex_array(data: &[u8], num_pixels: usize) -> Result<Vec<(f64, f64)>, CodecError> {
     let mut result = Vec::with_capacity(num_pixels);
-    
+
     for i in 0..num_pixels {
         let offset = i * 8;
         if offset + 8 > data.len() {
             return Err(CodecError::Decode(format!(
                 "Insufficient data for complex pixel {}: need {} bytes, have {}",
-                i, offset + 8, data.len()
+                i,
+                offset + 8,
+                data.len()
             )));
         }
-        
+
         let (real, imag) = decode_complex_pixel(&data[offset..offset + 8])?;
         result.push((real, imag));
     }
-    
+
     Ok(result)
 }
 
@@ -666,14 +668,13 @@ pub fn decode_complex_array(data: &[u8], num_pixels: usize) -> Result<Vec<(f64, 
 /// The encoded bytes in big-endian IEEE format.
 pub fn encode_complex(values: &[(f64, f64)]) -> Vec<u8> {
     let mut result = Vec::with_capacity(values.len() * 8);
-    
+
     for &(real, imag) in values {
         result.extend_from_slice(&encode_complex_pixel(real, imag));
     }
-    
+
     result
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -788,7 +789,7 @@ mod tests {
             let mut data = Vec::new();
             data.extend_from_slice(&real.to_be_bytes());
             data.extend_from_slice(&imag.to_be_bytes());
-            
+
             let (r, i) = decode_complex_pixel(&data).unwrap();
             assert!((r - 1.5).abs() < 0.001);
             assert!((i - 2.5).abs() < 0.001);
@@ -853,8 +854,8 @@ mod tests {
         fn encode_f64() {
             let encoded = encode_pixel(3.14159265358979, PixelValueType::Real, 64).unwrap();
             let decoded = f64::from_be_bytes([
-                encoded[0], encoded[1], encoded[2], encoded[3],
-                encoded[4], encoded[5], encoded[6], encoded[7],
+                encoded[0], encoded[1], encoded[2], encoded[3], encoded[4], encoded[5], encoded[6],
+                encoded[7],
             ]);
             assert!((decoded - 3.14159265358979).abs() < 1e-10);
         }
@@ -863,7 +864,7 @@ mod tests {
         fn encode_complex() {
             let encoded = encode_complex_pixel(1.5, 2.5);
             assert_eq!(encoded.len(), 8);
-            
+
             let real = f32::from_be_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]);
             let imag = f32::from_be_bytes([encoded[4], encoded[5], encoded[6], encoded[7]]);
             assert!((real - 1.5).abs() < 0.001);
@@ -945,33 +946,93 @@ mod tests {
         #[test]
         fn bulk_u8_round_trip() {
             let values = vec![0.0, 127.0, 255.0, 42.0];
-            let encoded = encode(&values, PixelValueType::UnsignedInt, 8, 8, PixelJustification::Right).unwrap();
-            let decoded = decode(&encoded, PixelValueType::UnsignedInt, 8, 8, PixelJustification::Right, 4).unwrap();
+            let encoded = encode(
+                &values,
+                PixelValueType::UnsignedInt,
+                8,
+                8,
+                PixelJustification::Right,
+            )
+            .unwrap();
+            let decoded = decode(
+                &encoded,
+                PixelValueType::UnsignedInt,
+                8,
+                8,
+                PixelJustification::Right,
+                4,
+            )
+            .unwrap();
             assert_eq!(decoded, values);
         }
 
         #[test]
         fn bulk_u16_round_trip() {
             let values = vec![0.0, 256.0, 65535.0, 1000.0];
-            let encoded = encode(&values, PixelValueType::UnsignedInt, 16, 16, PixelJustification::Right).unwrap();
-            let decoded = decode(&encoded, PixelValueType::UnsignedInt, 16, 16, PixelJustification::Right, 4).unwrap();
+            let encoded = encode(
+                &values,
+                PixelValueType::UnsignedInt,
+                16,
+                16,
+                PixelJustification::Right,
+            )
+            .unwrap();
+            let decoded = decode(
+                &encoded,
+                PixelValueType::UnsignedInt,
+                16,
+                16,
+                PixelJustification::Right,
+                4,
+            )
+            .unwrap();
             assert_eq!(decoded, values);
         }
 
         #[test]
         fn bulk_i16_round_trip() {
             let values = vec![-32768.0, -1.0, 0.0, 32767.0];
-            let encoded = encode(&values, PixelValueType::SignedInt, 16, 16, PixelJustification::Right).unwrap();
-            let decoded = decode(&encoded, PixelValueType::SignedInt, 16, 16, PixelJustification::Right, 4).unwrap();
+            let encoded = encode(
+                &values,
+                PixelValueType::SignedInt,
+                16,
+                16,
+                PixelJustification::Right,
+            )
+            .unwrap();
+            let decoded = decode(
+                &encoded,
+                PixelValueType::SignedInt,
+                16,
+                16,
+                PixelJustification::Right,
+                4,
+            )
+            .unwrap();
             assert_eq!(decoded, values);
         }
 
         #[test]
         fn bulk_f32_round_trip() {
             let values = vec![0.0, 1.5, -3.14, 1000.0];
-            let encoded = encode(&values, PixelValueType::Real, 32, 32, PixelJustification::Right).unwrap();
-            let decoded = decode(&encoded, PixelValueType::Real, 32, 32, PixelJustification::Right, 4).unwrap();
-            
+            let encoded = encode(
+                &values,
+                PixelValueType::Real,
+                32,
+                32,
+                PixelJustification::Right,
+            )
+            .unwrap();
+            let decoded = decode(
+                &encoded,
+                PixelValueType::Real,
+                32,
+                32,
+                PixelJustification::Right,
+                4,
+            )
+            .unwrap();
+
             for (orig, dec) in values.iter().zip(decoded.iter()) {
                 assert!((orig - dec).abs() < 0.001);
             }
@@ -982,7 +1043,7 @@ mod tests {
             let values = vec![(1.0, 2.0), (3.0, 4.0), (-1.5, 2.5)];
             let encoded = encode_complex(&values);
             let decoded = decode_complex_array(&encoded, 3).unwrap();
-            
+
             for (i, ((r1, i1), (r2, i2))) in values.iter().zip(decoded.iter()).enumerate() {
                 assert!((*r1 - *r2).abs() < 0.001, "Real mismatch at index {}", i);
                 assert!((*i1 - *i2).abs() < 0.001, "Imag mismatch at index {}", i);
@@ -992,8 +1053,23 @@ mod tests {
         #[test]
         fn bulk_bilevel_round_trip() {
             let values = vec![1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0];
-            let encoded = encode(&values, PixelValueType::BiLevel, 1, 1, PixelJustification::Right).unwrap();
-            let decoded = decode(&encoded, PixelValueType::BiLevel, 1, 1, PixelJustification::Right, values.len()).unwrap();
+            let encoded = encode(
+                &values,
+                PixelValueType::BiLevel,
+                1,
+                1,
+                PixelJustification::Right,
+            )
+            .unwrap();
+            let decoded = decode(
+                &encoded,
+                PixelValueType::BiLevel,
+                1,
+                1,
+                PixelJustification::Right,
+                values.len(),
+            )
+            .unwrap();
             assert_eq!(decoded, values);
         }
     }
@@ -1156,7 +1232,7 @@ mod tests {
                     let f64_values: Vec<f64> = values.iter().map(|&v| v as f64).collect();
                     let encoded = encode(&f64_values, PixelValueType::UnsignedInt, 8, 8, PixelJustification::Right).unwrap();
                     let decoded = decode(&encoded, PixelValueType::UnsignedInt, 8, 8, PixelJustification::Right, values.len()).unwrap();
-                    
+
                     for (orig, dec) in f64_values.iter().zip(decoded.iter()) {
                         prop_assert_eq!(*orig as u8, *dec as u8);
                     }
@@ -1170,7 +1246,7 @@ mod tests {
                     let f64_values: Vec<f64> = values.iter().map(|&v| v as f64).collect();
                     let encoded = encode(&f64_values, PixelValueType::SignedInt, 16, 16, PixelJustification::Right).unwrap();
                     let decoded = decode(&encoded, PixelValueType::SignedInt, 16, 16, PixelJustification::Right, values.len()).unwrap();
-                    
+
                     for (orig, dec) in f64_values.iter().zip(decoded.iter()) {
                         prop_assert_eq!(*orig as i16, *dec as i16);
                     }
@@ -1185,7 +1261,7 @@ mod tests {
                     let pjust = if pjust { PixelJustification::Right } else { PixelJustification::Left };
                     let abpp = 12u8;
                     let nbpp = 16u8;
-                    
+
                     let encoded = apply_justification_encode(value as f64, abpp, nbpp, pjust);
                     let decoded = apply_justification_decode(encoded, abpp, nbpp, pjust);
                     prop_assert_eq!(decoded as u16, value);

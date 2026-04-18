@@ -5,9 +5,7 @@ use crate::parser::types::{FieldDefinition, FieldType, SizeSpec, StructureDefini
 
 fn create_simple_definition() -> StructureDefinition {
     StructureDefinition::new("test_struct")
-        .with_field(
-            FieldDefinition::new("magic", FieldType::String).with_size(SizeSpec::Fixed(4)),
-        )
+        .with_field(FieldDefinition::new("magic", FieldType::String).with_size(SizeSpec::Fixed(4)))
         .with_field(
             FieldDefinition::new("version", FieldType::UnsignedInt(2))
                 .with_size(SizeSpec::Fixed(2)),
@@ -57,7 +55,6 @@ fn accessor_get_padded_string() {
     assert_eq!(value.as_str().unwrap(), "HELLO");
 }
 
-
 #[test]
 fn accessor_unknown_field_error() {
     let def = Arc::new(create_simple_definition());
@@ -66,7 +63,10 @@ fn accessor_unknown_field_error() {
 
     let result = accessor.get("nonexistent");
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), AccessError::UnknownField { .. }));
+    assert!(matches!(
+        result.unwrap_err(),
+        AccessError::UnknownField { .. }
+    ));
 }
 
 #[test]
@@ -153,7 +153,6 @@ fn accessor_field_info_offsets() {
     assert_eq!(info.offset, 6);
     assert_eq!(info.size, 10);
 }
-
 
 #[test]
 fn accessor_raw_slice_repeated_field_returns_non_contiguous() {
@@ -284,7 +283,6 @@ fn accessor_caching_works() {
     assert_eq!(info.size, 10);
 }
 
-
 #[test]
 fn accessor_variable_offset_field() {
     // Create a definition with expression-based size
@@ -413,7 +411,6 @@ fn accessor_conditional_field_not_present() {
     let trailer = accessor.get("trailer").unwrap();
     assert_eq!(trailer.as_str().unwrap(), "DONE");
 }
-
 
 #[test]
 fn accessor_conditional_field_affects_offset() {
@@ -545,7 +542,6 @@ fn accessor_repeat_expr_zero_count() {
     assert_eq!(trailer.as_str().unwrap(), "DONE");
 }
 
-
 #[test]
 fn accessor_repeat_expr_out_of_bounds() {
     let def = Arc::new(create_repeat_expr_definition());
@@ -641,7 +637,6 @@ fn accessor_repeat_fields_iterator() {
     assert!(!fields.contains(&"items_2".to_string()));
 }
 
-
 // ==================== TypeRef Size Calculation Tests ====================
 
 /// Create a definition with a simple nested type (TypeRef).
@@ -652,15 +647,14 @@ fn create_simple_typeref_definition() -> StructureDefinition {
             FieldDefinition::new("field_a", FieldType::String).with_size(SizeSpec::Fixed(4)),
         )
         .with_field(
-            FieldDefinition::new("field_b", FieldType::UnsignedInt(2)).with_size(SizeSpec::Fixed(2)),
+            FieldDefinition::new("field_b", FieldType::UnsignedInt(2))
+                .with_size(SizeSpec::Fixed(2)),
         );
 
     // Main structure with a TypeRef field followed by another field
     StructureDefinition::new("test_struct")
         .with_type("inner_type", nested_type)
-        .with_field(
-            FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)),
-        )
+        .with_field(FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)))
         .with_field(
             FieldDefinition::new("nested", FieldType::TypeRef("inner_type".to_string()))
                 .with_size(SizeSpec::Fixed(0)), // Size comes from type
@@ -718,7 +712,8 @@ fn create_conditional_typeref_definition() -> StructureDefinition {
             FieldDefinition::new("band_id", FieldType::String).with_size(SizeSpec::Fixed(2)),
         )
         .with_field(
-            FieldDefinition::new("has_lut", FieldType::UnsignedInt(1)).with_size(SizeSpec::Fixed(1)),
+            FieldDefinition::new("has_lut", FieldType::UnsignedInt(1))
+                .with_size(SizeSpec::Fixed(1)),
         )
         .with_field(
             FieldDefinition::new("lut_data", FieldType::Bytes)
@@ -728,9 +723,7 @@ fn create_conditional_typeref_definition() -> StructureDefinition {
 
     StructureDefinition::new("test_struct")
         .with_type("band_type", nested_type)
-        .with_field(
-            FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)),
-        )
+        .with_field(FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)))
         .with_field(
             FieldDefinition::new("band", FieldType::TypeRef("band_type".to_string()))
                 .with_size(SizeSpec::Fixed(0)),
@@ -775,14 +768,13 @@ fn create_fixed_nested_type_definition() -> StructureDefinition {
             FieldDefinition::new("band_id", FieldType::String).with_size(SizeSpec::Fixed(2)),
         )
         .with_field(
-            FieldDefinition::new("band_value", FieldType::UnsignedInt(1)).with_size(SizeSpec::Fixed(1)),
+            FieldDefinition::new("band_value", FieldType::UnsignedInt(1))
+                .with_size(SizeSpec::Fixed(1)),
         );
 
     StructureDefinition::new("test_struct")
         .with_type("band_type", nested_type)
-        .with_field(
-            FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)),
-        )
+        .with_field(FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)))
         .with_field(
             FieldDefinition::new("band", FieldType::TypeRef("band_type".to_string()))
                 .with_size(SizeSpec::Fixed(0)),
@@ -823,9 +815,7 @@ fn create_repeated_typeref_definition() -> StructureDefinition {
 
     // Simple nested type
     let nested_type = StructureDefinition::new("item_type")
-        .with_field(
-            FieldDefinition::new("name", FieldType::String).with_size(SizeSpec::Fixed(4)),
-        )
+        .with_field(FieldDefinition::new("name", FieldType::String).with_size(SizeSpec::Fixed(4)))
         .with_field(
             FieldDefinition::new("value", FieldType::UnsignedInt(2)).with_size(SizeSpec::Fixed(2)),
         );
@@ -899,12 +889,13 @@ fn accessor_typeref_repeated_zero_count() {
 /// Create a definition that references a non-existent type.
 fn create_unknown_typeref_definition() -> StructureDefinition {
     StructureDefinition::new("test_struct")
+        .with_field(FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)))
         .with_field(
-            FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)),
-        )
-        .with_field(
-            FieldDefinition::new("unknown", FieldType::TypeRef("nonexistent_type".to_string()))
-                .with_size(SizeSpec::Fixed(0)),
+            FieldDefinition::new(
+                "unknown",
+                FieldType::TypeRef("nonexistent_type".to_string()),
+            )
+            .with_size(SizeSpec::Fixed(0)),
         )
         .with_field(
             FieldDefinition::new("trailer", FieldType::String).with_size(SizeSpec::Fixed(4)),
@@ -920,7 +911,10 @@ fn accessor_typeref_unknown_type_error() {
     // Accessing the unknown TypeRef field should return an error
     let result = accessor.get("unknown");
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), AccessError::UnknownField { .. }));
+    assert!(matches!(
+        result.unwrap_err(),
+        AccessError::UnknownField { .. }
+    ));
 
     // Accessing trailer should also fail because offset calculation fails
     let result = accessor.get("trailer");
@@ -946,35 +940,30 @@ fn accessor_typeref_fields_iterator() {
     assert!(!fields.contains(&"items_1".to_string()));
 }
 
-
 // ==================== Integration Tests for Image Subheader Parsing ====================
 // These tests verify that fields after repeated TypeRef arrays (like band_info)
 // are accessible, specifically testing TRE field access (udidl, ixshdl, udid, ixshd).
 
 /// Helper function to create synthetic NITF image subheader test data.
 /// This creates a minimal valid image subheader with band_info followed by TRE fields.
-fn create_image_subheader_test_data(
-    nbands: u8,
-    udidl: u16,
-    ixshdl: u16,
-) -> Vec<u8> {
+fn create_image_subheader_test_data(nbands: u8, udidl: u16, ixshdl: u16) -> Vec<u8> {
     let mut data = Vec::new();
-    
+
     // IM (2) - Image segment marker
     data.extend_from_slice(b"IM");
-    
+
     // IID1 (10) - Image identifier 1
     data.extend_from_slice(b"TestImage ");
-    
+
     // IDATIM (14) - Image date and time
     data.extend_from_slice(b"20240101120000");
-    
+
     // TGTID (17) - Target identifier
     data.extend_from_slice(b"                 ");
-    
+
     // IID2 (80) - Image identifier 2
     data.extend_from_slice(&[b' '; 80]);
-    
+
     // Security fields
     // ISCLAS (1)
     data.push(b'U');
@@ -1008,46 +997,46 @@ fn create_image_subheader_test_data(
     data.extend_from_slice(b"        ");
     // ISCTLN (15)
     data.extend_from_slice(b"               ");
-    
+
     // ENCRYP (1)
     data.push(b'0');
-    
+
     // ISORCE (42)
     data.extend_from_slice(&[b' '; 42]);
-    
+
     // NROWS (8)
     data.extend_from_slice(b"00000512");
-    
+
     // NCOLS (8)
     data.extend_from_slice(b"00000512");
-    
+
     // PVTYPE (3)
     data.extend_from_slice(b"INT");
-    
+
     // IREP (8)
     data.extend_from_slice(b"MONO    ");
-    
+
     // ICAT (8)
     data.extend_from_slice(b"VIS     ");
-    
+
     // ABPP (2)
     data.extend_from_slice(b"08");
-    
+
     // PJUST (1)
     data.push(b'R');
-    
+
     // ICORDS (1) - Using blank to skip IGEOLO
     data.push(b' ');
-    
+
     // NICOM (1) - No comments
     data.push(b'0');
-    
+
     // IC (2) - No compression
     data.extend_from_slice(b"NC");
-    
+
     // NBANDS (1)
     data.push(b'0' + nbands);
-    
+
     // Band info for each band (when NBANDS > 0)
     for _ in 0..nbands {
         // IREPBAND (2)
@@ -1062,43 +1051,43 @@ fn create_image_subheader_test_data(
         data.push(b'0');
         // Note: NELUT and LUT_DATA are conditional on NLUTS > 0
     }
-    
+
     // ISYNC (1)
     data.push(b'0');
-    
+
     // IMODE (1)
     data.push(b'B');
-    
+
     // NBPR (4)
     data.extend_from_slice(b"0001");
-    
+
     // NBPC (4)
     data.extend_from_slice(b"0001");
-    
+
     // NPPBH (4)
     data.extend_from_slice(b"0512");
-    
+
     // NPPBV (4)
     data.extend_from_slice(b"0512");
-    
+
     // NBPP (2)
     data.extend_from_slice(b"08");
-    
+
     // IDLVL (3)
     data.extend_from_slice(b"001");
-    
+
     // IALVL (3)
     data.extend_from_slice(b"000");
-    
+
     // ILOC (10)
     data.extend_from_slice(b"0000000000");
-    
+
     // IMAG (4)
     data.extend_from_slice(b"1.0 ");
-    
+
     // UDIDL (5) - User defined image data length
     data.extend_from_slice(format!("{:05}", udidl).as_bytes());
-    
+
     // UDOFL (3) and UDID (udidl - 3) - conditional on udidl > 0
     if udidl > 0 {
         // UDOFL (3)
@@ -1115,10 +1104,10 @@ fn create_image_subheader_test_data(
             data.extend_from_slice(&vec![b'X'; udid_len]);
         }
     }
-    
+
     // IXSHDL (5) - Image extended subheader data length
     data.extend_from_slice(format!("{:05}", ixshdl).as_bytes());
-    
+
     // IXSOFL (3) and IXSHD (ixshdl - 3) - conditional on ixshdl > 0
     if ixshdl > 0 {
         // IXSOFL (3)
@@ -1135,18 +1124,18 @@ fn create_image_subheader_test_data(
             data.extend_from_slice(&vec![b'Y'; ixshd_len]);
         }
     }
-    
+
     data
 }
 
 #[test]
 fn integration_image_subheader_tre_fields_accessible() {
     use crate::parser::StructureRegistry;
-    
+
     // Load the image subheader definition from the registry
     let registry = StructureRegistry::new();
     let definition = registry.get("nitf_02.10_image_subheader");
-    
+
     // Skip test if definition not available (e.g., in CI without data files)
     let definition = match definition {
         Some(def) => def,
@@ -1155,19 +1144,19 @@ fn integration_image_subheader_tre_fields_accessible() {
             return;
         }
     };
-    
+
     // Create test data with 2 bands and TRE data in both UDID and IXSHD
     let test_data = create_image_subheader_test_data(2, 20, 25);
-    
+
     let accessor = StructureAccessor::new(definition, &test_data).unwrap();
-    
+
     // Verify basic fields are accessible
     let im = accessor.get("IM").unwrap();
     assert_eq!(im.as_str().unwrap(), "IM");
-    
+
     let nbands = accessor.get("NBANDS").unwrap();
     assert_eq!(nbands.as_str().unwrap(), "2");
-    
+
     // Verify band_info is accessible as array
     assert!(accessor.has("BAND_INFO"), "BAND_INFO should be accessible");
     let band_info = accessor.get("BAND_INFO").unwrap();
@@ -1176,38 +1165,56 @@ fn integration_image_subheader_tre_fields_accessible() {
     } else {
         panic!("Expected BAND_INFO to be an array");
     }
-    
+
     // CRITICAL: Verify TRE fields AFTER band_info are accessible
     // This is the main bug fix verification
-    
+
     // UDIDL should be accessible
-    assert!(accessor.has("UDIDL"), "UDIDL should be accessible after band_info");
+    assert!(
+        accessor.has("UDIDL"),
+        "UDIDL should be accessible after band_info"
+    );
     let udidl = accessor.get("UDIDL").unwrap();
     assert_eq!(udidl.as_str().unwrap(), "00020");
-    
+
     // UDOFL should be accessible (since udidl > 0)
-    assert!(accessor.has("UDOFL"), "UDOFL should be accessible when UDIDL > 0");
+    assert!(
+        accessor.has("UDOFL"),
+        "UDOFL should be accessible when UDIDL > 0"
+    );
     let udofl = accessor.get("UDOFL").unwrap();
     assert_eq!(udofl.as_str().unwrap(), "000");
-    
+
     // UDID should be accessible (since udidl > 0)
-    assert!(accessor.has("UDID"), "UDID should be accessible when UDIDL > 0");
+    assert!(
+        accessor.has("UDID"),
+        "UDID should be accessible when UDIDL > 0"
+    );
     let udid = accessor.get("UDID").unwrap();
     // UDID is raw bytes, verify it has the expected length (udidl - 3 = 17)
     assert_eq!(udid.as_bytes().len(), 17);
-    
+
     // IXSHDL should be accessible
-    assert!(accessor.has("IXSHDL"), "IXSHDL should be accessible after UDID");
+    assert!(
+        accessor.has("IXSHDL"),
+        "IXSHDL should be accessible after UDID"
+    );
     let ixshdl = accessor.get("IXSHDL").unwrap();
     assert_eq!(ixshdl.as_str().unwrap(), "00025");
-    
+
     // IXSOFL should be accessible (since ixshdl > 0)
-    assert!(accessor.has("IXSOFL"), "IXSOFL should be accessible when IXSHDL > 0");
+    assert!(
+        accessor.has("IXSOFL"),
+        "IXSOFL should be accessible when IXSHDL > 0"
+    );
     let ixsofl = accessor.get("IXSOFL").unwrap();
     assert_eq!(ixsofl.as_str().unwrap(), "000");
-    
+
     // IXSHD should be accessible (since ixshdl > 0)
-    assert!(accessor.has("IXSHD"), "IXSHD should be accessible when IXSHDL > 0");
+    assert!(
+        accessor.has("IXSHD"),
+        "IXSHD should be accessible when IXSHDL > 0"
+    );
     let ixshd = accessor.get("IXSHD").unwrap();
     // IXSHD is raw bytes, verify it has the expected length (ixshdl - 3 = 22)
     assert_eq!(ixshd.as_bytes().len(), 22);
@@ -1216,7 +1223,7 @@ fn integration_image_subheader_tre_fields_accessible() {
 #[test]
 fn integration_image_subheader_no_tre_data() {
     use crate::parser::StructureRegistry;
-    
+
     // Load the image subheader definition from the registry
     let registry = StructureRegistry::new();
     let definition = match registry.get("nitf_02.10_image_subheader") {
@@ -1226,12 +1233,12 @@ fn integration_image_subheader_no_tre_data() {
             return;
         }
     };
-    
+
     // Create test data with 1 band and NO TRE data
     let test_data = create_image_subheader_test_data(1, 0, 0);
-    
+
     let accessor = StructureAccessor::new(definition, &test_data).unwrap();
-    
+
     // Verify band_info is accessible as array with 1 element
     assert!(accessor.has("BAND_INFO"), "BAND_INFO should be accessible");
     let band_info = accessor.get("BAND_INFO").unwrap();
@@ -1240,30 +1247,42 @@ fn integration_image_subheader_no_tre_data() {
     } else {
         panic!("Expected BAND_INFO to be an array");
     }
-    
+
     // UDIDL should be accessible and be 0
     assert!(accessor.has("UDIDL"), "UDIDL should be accessible");
     let udidl = accessor.get("UDIDL").unwrap();
     assert_eq!(udidl.as_str().unwrap(), "00000");
-    
+
     // UDOFL and UDID should NOT be accessible (since udidl = 0)
-    assert!(!accessor.has("UDOFL"), "UDOFL should NOT be accessible when UDIDL = 0");
-    assert!(!accessor.has("UDID"), "UDID should NOT be accessible when UDIDL = 0");
-    
+    assert!(
+        !accessor.has("UDOFL"),
+        "UDOFL should NOT be accessible when UDIDL = 0"
+    );
+    assert!(
+        !accessor.has("UDID"),
+        "UDID should NOT be accessible when UDIDL = 0"
+    );
+
     // IXSHDL should be accessible and be 0
     assert!(accessor.has("IXSHDL"), "IXSHDL should be accessible");
     let ixshdl = accessor.get("IXSHDL").unwrap();
     assert_eq!(ixshdl.as_str().unwrap(), "00000");
-    
+
     // IXSOFL and IXSHD should NOT be accessible (since ixshdl = 0)
-    assert!(!accessor.has("IXSOFL"), "IXSOFL should NOT be accessible when IXSHDL = 0");
-    assert!(!accessor.has("IXSHD"), "IXSHD should NOT be accessible when IXSHDL = 0");
+    assert!(
+        !accessor.has("IXSOFL"),
+        "IXSOFL should NOT be accessible when IXSHDL = 0"
+    );
+    assert!(
+        !accessor.has("IXSHD"),
+        "IXSHD should NOT be accessible when IXSHDL = 0"
+    );
 }
 
 #[test]
 fn integration_image_subheader_field_iterator_completeness() {
     use crate::parser::StructureRegistry;
-    
+
     // Load the image subheader definition from the registry
     let registry = StructureRegistry::new();
     let definition = match registry.get("nitf_02.10_image_subheader") {
@@ -1273,42 +1292,84 @@ fn integration_image_subheader_field_iterator_completeness() {
             return;
         }
     };
-    
+
     // Create test data with 2 bands and TRE data
     let test_data = create_image_subheader_test_data(2, 20, 25);
-    
+
     let accessor = StructureAccessor::new(definition, &test_data).unwrap();
-    
+
     // Collect all field paths
     let fields: Vec<String> = accessor.fields().collect();
-    
+
     // Verify TRE-related fields are included in the iterator
-    assert!(fields.contains(&"UDIDL".to_string()), "fields() should include UDIDL");
-    assert!(fields.contains(&"UDOFL".to_string()), "fields() should include UDOFL (when UDIDL > 0)");
-    assert!(fields.contains(&"UDID".to_string()), "fields() should include UDID (when UDIDL > 0)");
-    assert!(fields.contains(&"IXSHDL".to_string()), "fields() should include IXSHDL");
-    assert!(fields.contains(&"IXSOFL".to_string()), "fields() should include IXSOFL (when IXSHDL > 0)");
-    assert!(fields.contains(&"IXSHD".to_string()), "fields() should include IXSHD (when IXSHDL > 0)");
-    
+    assert!(
+        fields.contains(&"UDIDL".to_string()),
+        "fields() should include UDIDL"
+    );
+    assert!(
+        fields.contains(&"UDOFL".to_string()),
+        "fields() should include UDOFL (when UDIDL > 0)"
+    );
+    assert!(
+        fields.contains(&"UDID".to_string()),
+        "fields() should include UDID (when UDIDL > 0)"
+    );
+    assert!(
+        fields.contains(&"IXSHDL".to_string()),
+        "fields() should include IXSHDL"
+    );
+    assert!(
+        fields.contains(&"IXSOFL".to_string()),
+        "fields() should include IXSOFL (when IXSHDL > 0)"
+    );
+    assert!(
+        fields.contains(&"IXSHD".to_string()),
+        "fields() should include IXSHD (when IXSHDL > 0)"
+    );
+
     // Verify band_info field is included (base name, not expanded)
-    assert!(fields.contains(&"BAND_INFO".to_string()), "fields() should include BAND_INFO");
-    assert!(!fields.contains(&"BAND_INFO_0".to_string()), "fields() should NOT include BAND_INFO_0");
-    assert!(!fields.contains(&"BAND_INFO_1".to_string()), "fields() should NOT include BAND_INFO_1");
-    
+    assert!(
+        fields.contains(&"BAND_INFO".to_string()),
+        "fields() should include BAND_INFO"
+    );
+    assert!(
+        !fields.contains(&"BAND_INFO_0".to_string()),
+        "fields() should NOT include BAND_INFO_0"
+    );
+    assert!(
+        !fields.contains(&"BAND_INFO_1".to_string()),
+        "fields() should NOT include BAND_INFO_1"
+    );
+
     // Verify fields before band_info are included
-    assert!(fields.contains(&"IM".to_string()), "fields() should include IM");
-    assert!(fields.contains(&"NBANDS".to_string()), "fields() should include NBANDS");
-    
+    assert!(
+        fields.contains(&"IM".to_string()),
+        "fields() should include IM"
+    );
+    assert!(
+        fields.contains(&"NBANDS".to_string()),
+        "fields() should include NBANDS"
+    );
+
     // Verify fields after band_info but before TRE fields are included
-    assert!(fields.contains(&"ISYNC".to_string()), "fields() should include ISYNC");
-    assert!(fields.contains(&"IMODE".to_string()), "fields() should include IMODE");
-    assert!(fields.contains(&"IMAG".to_string()), "fields() should include IMAG");
+    assert!(
+        fields.contains(&"ISYNC".to_string()),
+        "fields() should include ISYNC"
+    );
+    assert!(
+        fields.contains(&"IMODE".to_string()),
+        "fields() should include IMODE"
+    );
+    assert!(
+        fields.contains(&"IMAG".to_string()),
+        "fields() should include IMAG"
+    );
 }
 
 #[test]
 fn integration_image_subheader_field_iterator_no_tre() {
     use crate::parser::StructureRegistry;
-    
+
     // Load the image subheader definition from the registry
     let registry = StructureRegistry::new();
     let definition = match registry.get("nitf_02.10_image_subheader") {
@@ -1318,26 +1379,43 @@ fn integration_image_subheader_field_iterator_no_tre() {
             return;
         }
     };
-    
+
     // Create test data with 1 band and NO TRE data
     let test_data = create_image_subheader_test_data(1, 0, 0);
-    
+
     let accessor = StructureAccessor::new(definition, &test_data).unwrap();
-    
+
     // Collect all field paths
     let fields: Vec<String> = accessor.fields().collect();
-    
-    // Verify UDIDL and IXSHDL are included (they're always present)
-    assert!(fields.contains(&"UDIDL".to_string()), "fields() should include UDIDL");
-    assert!(fields.contains(&"IXSHDL".to_string()), "fields() should include IXSHDL");
-    
-    // Verify conditional TRE fields are NOT included when their conditions are false
-    assert!(!fields.contains(&"UDOFL".to_string()), "fields() should NOT include UDOFL when UDIDL = 0");
-    assert!(!fields.contains(&"UDID".to_string()), "fields() should NOT include UDID when UDIDL = 0");
-    assert!(!fields.contains(&"IXSOFL".to_string()), "fields() should NOT include IXSOFL when IXSHDL = 0");
-    assert!(!fields.contains(&"IXSHD".to_string()), "fields() should NOT include IXSHD when IXSHDL = 0");
-}
 
+    // Verify UDIDL and IXSHDL are included (they're always present)
+    assert!(
+        fields.contains(&"UDIDL".to_string()),
+        "fields() should include UDIDL"
+    );
+    assert!(
+        fields.contains(&"IXSHDL".to_string()),
+        "fields() should include IXSHDL"
+    );
+
+    // Verify conditional TRE fields are NOT included when their conditions are false
+    assert!(
+        !fields.contains(&"UDOFL".to_string()),
+        "fields() should NOT include UDOFL when UDIDL = 0"
+    );
+    assert!(
+        !fields.contains(&"UDID".to_string()),
+        "fields() should NOT include UDID when UDIDL = 0"
+    );
+    assert!(
+        !fields.contains(&"IXSOFL".to_string()),
+        "fields() should NOT include IXSOFL when IXSHDL = 0"
+    );
+    assert!(
+        !fields.contains(&"IXSHD".to_string()),
+        "fields() should NOT include IXSHD when IXSHDL = 0"
+    );
+}
 
 /// Create a definition with a nested type containing expression-based sizes.
 /// This tests the case where a field's size depends on a previous field's value
@@ -1371,9 +1449,7 @@ fn create_expression_size_nested_type_definition() -> StructureDefinition {
 
     StructureDefinition::new("test_struct")
         .with_type("band_type", nested_type)
-        .with_field(
-            FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)),
-        )
+        .with_field(FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)))
         .with_field(
             FieldDefinition::new("band", FieldType::TypeRef("band_type".to_string()))
                 .with_size(SizeSpec::Fixed(0)),
@@ -1386,7 +1462,7 @@ fn create_expression_size_nested_type_definition() -> StructureDefinition {
 #[test]
 fn accessor_typeref_with_expression_size_lut_present() {
     let def = Arc::new(create_expression_size_nested_type_definition());
-    
+
     // Create test data:
     // header="HEAD" (4 bytes)
     // band.band_id="AB" (2 bytes)
@@ -1395,14 +1471,14 @@ fn accessor_typeref_with_expression_size_lut_present() {
     // band.lut_data=4 bytes × 2 LUTs = 8 bytes
     // trailer="DONE" (4 bytes)
     let mut data = Vec::new();
-    data.extend_from_slice(b"HEAD");           // header
-    data.extend_from_slice(b"AB");             // band_id
-    data.push(2);                              // nluts = 2
+    data.extend_from_slice(b"HEAD"); // header
+    data.extend_from_slice(b"AB"); // band_id
+    data.push(2); // nluts = 2
     data.extend_from_slice(&4u16.to_be_bytes()); // nelut = 4
-    data.extend_from_slice(b"LUT1");           // lut_data[0] = 4 bytes
-    data.extend_from_slice(b"LUT2");           // lut_data[1] = 4 bytes
-    data.extend_from_slice(b"DONE");           // trailer
-    
+    data.extend_from_slice(b"LUT1"); // lut_data[0] = 4 bytes
+    data.extend_from_slice(b"LUT2"); // lut_data[1] = 4 bytes
+    data.extend_from_slice(b"DONE"); // trailer
+
     let accessor = StructureAccessor::new(def, &data).unwrap();
 
     // Access header
@@ -1428,7 +1504,7 @@ fn accessor_typeref_with_expression_size_lut_present() {
 #[test]
 fn accessor_typeref_with_expression_size_no_lut() {
     let def = Arc::new(create_expression_size_nested_type_definition());
-    
+
     // Create test data with nluts=0 (no LUT data):
     // header="HEAD" (4 bytes)
     // band.band_id="AB" (2 bytes)
@@ -1436,11 +1512,11 @@ fn accessor_typeref_with_expression_size_no_lut() {
     // (no nelut or lut_data since nluts=0)
     // trailer="DONE" (4 bytes)
     let mut data = Vec::new();
-    data.extend_from_slice(b"HEAD");           // header
-    data.extend_from_slice(b"AB");             // band_id
-    data.push(0);                              // nluts = 0
-    data.extend_from_slice(b"DONE");           // trailer
-    
+    data.extend_from_slice(b"HEAD"); // header
+    data.extend_from_slice(b"AB"); // band_id
+    data.push(0); // nluts = 0
+    data.extend_from_slice(b"DONE"); // trailer
+
     let accessor = StructureAccessor::new(def, &data).unwrap();
 
     // Access header

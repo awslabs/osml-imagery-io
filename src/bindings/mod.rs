@@ -48,7 +48,9 @@ pub use graphics::PyGraphicsAssetProvider;
 pub use image::PyImageAssetProvider;
 pub use io::IO;
 pub use metadata::PyMetadataProvider;
-pub use parser::{PyStructureAccessor, PyStructureDefinition, PyStructureRegistry, PyStructureWriter, PyValue};
+pub use parser::{
+    PyStructureAccessor, PyStructureDefinition, PyStructureRegistry, PyStructureWriter, PyValue,
+};
 pub use reader::PyDatasetReader;
 pub use text::PyTextAssetProvider;
 pub use writer::PyDatasetWriter;

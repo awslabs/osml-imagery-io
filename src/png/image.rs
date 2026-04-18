@@ -169,9 +169,15 @@ impl ImageAssetProvider for PNGImageAssetProvider {
 
         // If all bands requested in order, return the full buffer
         if requested_bands.len() == self.num_bands as usize
-            && requested_bands.iter().enumerate().all(|(i, &b)| b == i as u32)
+            && requested_bands
+                .iter()
+                .enumerate()
+                .all(|(i, &b)| b == i as u32)
         {
-            return Ok((self.pixels.clone(), [num_out_bands, self.height, self.width]));
+            return Ok((
+                self.pixels.clone(),
+                [num_out_bands, self.height, self.width],
+            ));
         }
 
         // Band subsetting: extract only requested bands
@@ -226,7 +232,6 @@ impl ImageAssetProvider for PNGImageAssetProvider {
         0.0
     }
 }
-
 
 // =============================================================================
 // Tests

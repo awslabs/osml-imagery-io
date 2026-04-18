@@ -109,7 +109,8 @@ impl JPEGDatasetWriter {
                     let dst_band_offset = band * band_stride;
                     for row in 0..blk_rows {
                         let src_start = src_band_offset + row * blk_cols;
-                        let dst_start = dst_band_offset + (start_row + row) * (width as usize) + start_col;
+                        let dst_start =
+                            dst_band_offset + (start_row + row) * (width as usize) + start_col;
                         bsq[dst_start..dst_start + blk_cols]
                             .copy_from_slice(&block_data[src_start..src_start + blk_cols]);
                     }
@@ -175,11 +176,9 @@ impl DatasetWriter for JPEGDatasetWriter {
         }
 
         // Validate image constraints before accepting
-        let image = provider.as_image().ok_or_else(|| {
-            CodecError::Unsupported(
-                "Asset is not an Image variant".to_string(),
-            )
-        })?;
+        let image = provider
+            .as_image()
+            .ok_or_else(|| CodecError::Unsupported("Asset is not an Image variant".to_string()))?;
 
         // JPEG only supports UInt8
         if image.pixel_value_type() != PixelType::UInt8 {
@@ -224,11 +223,10 @@ impl DatasetWriter for JPEGDatasetWriter {
             None => return Ok(()),
         };
 
-        let image = asset.provider.as_image().ok_or_else(|| {
-            CodecError::Unsupported(
-                "Asset is not an Image variant".to_string(),
-            )
-        })?;
+        let image = asset
+            .provider
+            .as_image()
+            .ok_or_else(|| CodecError::Unsupported("Asset is not an Image variant".to_string()))?;
         let image = image.as_ref();
 
         let width = image.num_columns();
@@ -324,8 +322,13 @@ mod tests {
         let mut writer = JPEGDatasetWriter::new("/tmp/test_jpeg_add_image.jpg").unwrap();
         let provider = make_image_provider(2, 2, 1, PixelType::UInt8, &[10, 20, 30, 40]);
 
-        let result =
-            writer.add_asset("image:0", AssetProvider::Image(provider), "Test", "Test image", &[]);
+        let result = writer.add_asset(
+            "image:0",
+            AssetProvider::Image(provider),
+            "Test",
+            "Test image",
+            &[],
+        );
         assert!(result.is_ok());
         assert!(writer.image_queued);
         assert_eq!(writer.assets.len(), 1);
@@ -346,8 +349,13 @@ mod tests {
             "utf-8",
         ));
 
-        let result =
-            writer.add_asset("text_0", AssetProvider::Text(text_provider), "Text", "A text asset", &[]);
+        let result = writer.add_asset(
+            "text_0",
+            AssetProvider::Text(text_provider),
+            "Text",
+            "A text asset",
+            &[],
+        );
         match result {
             Err(CodecError::Unsupported(msg)) => {
                 assert!(msg.contains("only image assets"));
@@ -367,10 +375,22 @@ mod tests {
         let provider2 = make_image_provider(2, 2, 1, PixelType::UInt8, &[5, 6, 7, 8]);
 
         writer
-            .add_asset("img0", AssetProvider::Image(provider1), "First", "First image", &[])
+            .add_asset(
+                "img0",
+                AssetProvider::Image(provider1),
+                "First",
+                "First image",
+                &[],
+            )
             .unwrap();
 
-        let result = writer.add_asset("img1", AssetProvider::Image(provider2), "Second", "Second image", &[]);
+        let result = writer.add_asset(
+            "img1",
+            AssetProvider::Image(provider2),
+            "Second",
+            "Second image",
+            &[],
+        );
         match result {
             Err(CodecError::Unsupported(msg)) => {
                 assert!(msg.contains("single image per file"));
@@ -454,7 +474,13 @@ mod tests {
 
         let mut writer = JPEGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
             .unwrap();
 
         assert!(writer.close().is_ok());
@@ -477,7 +503,13 @@ mod tests {
 
         let mut writer = JPEGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
             .unwrap();
         writer.close().unwrap();
 
@@ -485,9 +517,7 @@ mod tests {
         let data = std::fs::read(&path).unwrap();
         let reader = JPEGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("Expected Image variant");
+        let image = asset.as_image().expect("Expected Image variant");
 
         assert_eq!(image.num_bands(), 1);
         assert_eq!(image.num_rows(), 64);
@@ -520,16 +550,20 @@ mod tests {
 
         let mut writer = JPEGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
             .unwrap();
         writer.close().unwrap();
 
         let data = std::fs::read(&path).unwrap();
         let reader = JPEGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("Expected Image variant");
+        let image = asset.as_image().expect("Expected Image variant");
 
         assert_eq!(image.num_bands(), 3);
         assert_eq!(image.num_rows(), 64);
@@ -580,7 +614,13 @@ mod tests {
         let provider = Arc::new(provider);
         let mut writer = JPEGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
             .unwrap();
         writer.close().unwrap();
 
@@ -588,9 +628,7 @@ mod tests {
         let data = std::fs::read(&path).unwrap();
         let reader = JPEGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("Expected Image variant");
+        let image = asset.as_image().expect("Expected Image variant");
 
         assert_eq!(image.num_bands(), 3);
         assert_eq!(image.num_rows(), 64);

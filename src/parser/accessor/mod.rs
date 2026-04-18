@@ -46,7 +46,6 @@ pub struct FieldInfo {
     pub doc: Option<String>,
 }
 
-
 /// Accessor for reading structure fields from binary data.
 ///
 /// On first access, a single O(n) pass parses all fields into a value
@@ -159,12 +158,10 @@ impl<'a> StructureAccessor<'a> {
             if let Some(ref repeat) = field.repeat {
                 let count = match repeat {
                     RepeatSpec::Count(n) => *n,
-                    RepeatSpec::Expression(expr) => {
-                        match self.evaluator.evaluate(expr, &ctx) {
-                            Ok(EvalResult::Integer(n)) if n >= 0 => n as usize,
-                            _ => 0,
-                        }
-                    }
+                    RepeatSpec::Expression(expr) => match self.evaluator.evaluate(expr, &ctx) {
+                        Ok(EvalResult::Integer(n)) if n >= 0 => n as usize,
+                        _ => 0,
+                    },
                     RepeatSpec::Until(_) | RepeatSpec::Eos => 0,
                 };
 
@@ -256,8 +253,7 @@ impl<'a> StructureAccessor<'a> {
                             if elem_size == 0 || elem_offset + elem_size > self.data.len() {
                                 break;
                             }
-                            if let Ok(value) =
-                                self.read_field_value(field, elem_offset, elem_size)
+                            if let Ok(value) = self.read_field_value(field, elem_offset, elem_size)
                             {
                                 let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
                                 elem_offsets.push((elem_offset, elem_size));
@@ -289,7 +285,6 @@ impl<'a> StructureAccessor<'a> {
         *self.parsed.borrow_mut() = true;
         Ok(())
     }
-
 
     /// Access a field by dot-notation path.
     pub fn get(&self, path: &str) -> Result<Value<'a>, AccessError> {
@@ -367,7 +362,12 @@ impl<'a> StructureAccessor<'a> {
                 }
                 return Ok(element_value);
             } else {
-                let count = self.get_actual_repeat_count(&field.repeat.as_ref().unwrap(), &field_name, offset, field)?;
+                let count = self.get_actual_repeat_count(
+                    &field.repeat.as_ref().unwrap(),
+                    &field_name,
+                    offset,
+                    field,
+                )?;
                 let mut values = Vec::with_capacity(count.min(1000));
                 let mut current_offset = offset;
                 for i in 0..count {
@@ -382,13 +382,12 @@ impl<'a> StructureAccessor<'a> {
                         let mut ctx = self.build_eval_context()?;
                         ctx.index = Some(i);
                         self.add_value_to_context(&mut ctx, "_", &values[i])?;
-                        let result =
-                            self.evaluator
-                                .evaluate(until_expr, &ctx)
-                                .map_err(|e| AccessError::ExpressionError {
-                                    path: field_name.clone(),
-                                    message: e.to_string(),
-                                })?;
+                        let result = self.evaluator.evaluate(until_expr, &ctx).map_err(|e| {
+                            AccessError::ExpressionError {
+                                path: field_name.clone(),
+                                message: e.to_string(),
+                            }
+                        })?;
                         if let EvalResult::Boolean(true) = result {
                             break;
                         }
@@ -406,7 +405,6 @@ impl<'a> StructureAccessor<'a> {
         }
         Ok(value)
     }
-
 
     /// Check if a field exists and is accessible.
     pub fn has(&self, path: &str) -> bool {
@@ -518,7 +516,6 @@ impl<'a> StructureAccessor<'a> {
         })
     }
 
-
     /// Get the size of a single field (not including repetitions).
     fn get_field_size(&self, field: &FieldDefinition, offset: usize) -> Result<usize, AccessError> {
         match &field.size {
@@ -528,9 +525,7 @@ impl<'a> StructureAccessor<'a> {
                         FieldType::UnsignedInt(bytes) | FieldType::SignedInt(bytes) => {
                             Ok(*bytes as usize)
                         }
-                        FieldType::TypeRef(type_name) => {
-                            self.get_type_size(type_name, offset)
-                        }
+                        FieldType::TypeRef(type_name) => self.get_type_size(type_name, offset),
                         _ => Ok(0),
                     }
                 } else {
@@ -539,13 +534,12 @@ impl<'a> StructureAccessor<'a> {
             }
             SizeSpec::Expression(expr) => {
                 let ctx = self.build_eval_context()?;
-                let result =
-                    self.evaluator
-                        .evaluate(expr, &ctx)
-                        .map_err(|e| AccessError::ExpressionError {
-                            path: field.id.clone(),
-                            message: e.to_string(),
-                        })?;
+                let result = self.evaluator.evaluate(expr, &ctx).map_err(|e| {
+                    AccessError::ExpressionError {
+                        path: field.id.clone(),
+                        message: e.to_string(),
+                    }
+                })?;
 
                 match result {
                     EvalResult::Integer(n) if n >= 0 => Ok(n as usize),
@@ -568,16 +562,22 @@ impl<'a> StructureAccessor<'a> {
     }
 
     /// Get the size of a nested type.
-    pub(crate) fn get_type_size(&self, type_name: &str, offset: usize) -> Result<usize, AccessError> {
-        let nested_def = self.definition.types.get(type_name).ok_or_else(|| {
-            AccessError::UnknownField {
-                path: type_name.to_string(),
-            }
-        })?;
+    pub(crate) fn get_type_size(
+        &self,
+        type_name: &str,
+        offset: usize,
+    ) -> Result<usize, AccessError> {
+        let nested_def =
+            self.definition
+                .types
+                .get(type_name)
+                .ok_or_else(|| AccessError::UnknownField {
+                    path: type_name.to_string(),
+                })?;
 
         let mut nested_ctx = self.build_eval_context()?;
         let mut total_size = 0;
-        
+
         for field in &nested_def.fields {
             if let Some(ref condition) = field.condition {
                 let result = self.evaluator.evaluate(condition, &nested_ctx);
@@ -588,23 +588,28 @@ impl<'a> StructureAccessor<'a> {
                     _ => continue,
                 }
             }
-            
+
             let field_size = self.get_nested_field_size(field, &nested_ctx, offset + total_size)?;
-            
+
             if offset + total_size + field_size <= self.data.len() {
                 let field_data = &self.data[offset + total_size..offset + total_size + field_size];
                 if let Ok(value) = self.read_simple_nested_value(field, field_data) {
                     let _ = self.add_value_to_context(&mut nested_ctx, &field.id, &value);
                 }
             }
-            
-            let total_field_size = self.get_nested_total_field_size(field, &nested_ctx, field_size, offset + total_size)?;
+
+            let total_field_size = self.get_nested_total_field_size(
+                field,
+                &nested_ctx,
+                field_size,
+                offset + total_size,
+            )?;
             total_size += total_field_size;
         }
 
         Ok(total_size)
     }
-    
+
     fn get_nested_total_field_size(
         &self,
         field: &FieldDefinition,
@@ -640,16 +645,15 @@ impl<'a> StructureAccessor<'a> {
                     }
                     _ => Err(AccessError::ExpressionError {
                         path: field.id.clone(),
-                        message: "Repeat expression did not evaluate to positive integer".to_string(),
+                        message: "Repeat expression did not evaluate to positive integer"
+                            .to_string(),
                     }),
                 }
             }
-            Some(RepeatSpec::Until(_)) | Some(RepeatSpec::Eos) => {
-                Ok(element_size)
-            }
+            Some(RepeatSpec::Until(_)) | Some(RepeatSpec::Eos) => Ok(element_size),
         }
     }
-    
+
     fn get_nested_field_size(
         &self,
         field: &FieldDefinition,
@@ -663,9 +667,7 @@ impl<'a> StructureAccessor<'a> {
                         FieldType::UnsignedInt(bytes) | FieldType::SignedInt(bytes) => {
                             Ok(*bytes as usize)
                         }
-                        FieldType::TypeRef(type_name) => {
-                            self.get_type_size(type_name, offset)
-                        }
+                        FieldType::TypeRef(type_name) => self.get_type_size(type_name, offset),
                         _ => Ok(0),
                     }
                 } else {
@@ -690,10 +692,14 @@ impl<'a> StructureAccessor<'a> {
             }
         }
     }
-    
-    fn read_simple_nested_value<'b>(&self, field: &FieldDefinition, data: &'b [u8]) -> Result<Value<'b>, AccessError> {
+
+    fn read_simple_nested_value<'b>(
+        &self,
+        field: &FieldDefinition,
+        data: &'b [u8],
+    ) -> Result<Value<'b>, AccessError> {
         use std::borrow::Cow;
-        
+
         match &field.field_type {
             FieldType::String => {
                 let s = std::str::from_utf8(data).unwrap_or("");
@@ -714,9 +720,7 @@ impl<'a> StructureAccessor<'a> {
             FieldType::SignedInt(bytes) => {
                 let n = match bytes {
                     1 => data.first().map(|&b| b as i8 as i64 as u64).unwrap_or(0),
-                    2 if data.len() >= 2 => {
-                        i16::from_be_bytes([data[0], data[1]]) as i64 as u64
-                    }
+                    2 if data.len() >= 2 => i16::from_be_bytes([data[0], data[1]]) as i64 as u64,
                     4 if data.len() >= 4 => {
                         i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64 as u64
                     }
@@ -724,11 +728,9 @@ impl<'a> StructureAccessor<'a> {
                 };
                 Ok(Value::Unsigned(n))
             }
-            FieldType::TypeRef(_) => {
-                Err(AccessError::UnknownField {
-                    path: field.id.clone(),
-                })
-            }
+            FieldType::TypeRef(_) => Err(AccessError::UnknownField {
+                path: field.id.clone(),
+            }),
         }
     }
 
@@ -744,18 +746,18 @@ impl<'a> StructureAccessor<'a> {
             RepeatSpec::Count(n) => Ok(*n),
             RepeatSpec::Expression(expr) => {
                 let ctx = self.build_eval_context()?;
-                let result =
-                    self.evaluator
-                        .evaluate(expr, &ctx)
-                        .map_err(|e| AccessError::ExpressionError {
-                            path: field_name.to_string(),
-                            message: e.to_string(),
-                        })?;
+                let result = self.evaluator.evaluate(expr, &ctx).map_err(|e| {
+                    AccessError::ExpressionError {
+                        path: field_name.to_string(),
+                        message: e.to_string(),
+                    }
+                })?;
                 match result {
                     EvalResult::Integer(n) if n >= 0 => Ok(n as usize),
                     _ => Err(AccessError::ExpressionError {
                         path: field_name.to_string(),
-                        message: "Repeat expression did not evaluate to positive integer".to_string(),
+                        message: "Repeat expression did not evaluate to positive integer"
+                            .to_string(),
                     }),
                 }
             }
@@ -822,7 +824,10 @@ impl<'a> StructureAccessor<'a> {
         self.build_eval_context_up_to("")
     }
 
-    pub(crate) fn build_eval_context_up_to(&self, stop_at: &str) -> Result<EvalContext, AccessError> {
+    pub(crate) fn build_eval_context_up_to(
+        &self,
+        stop_at: &str,
+    ) -> Result<EvalContext, AccessError> {
         if let Some(ref ctx) = *self.parsed_context.borrow() {
             return Ok(ctx.clone());
         }
@@ -956,7 +961,6 @@ impl<'a> StructureAccessor<'a> {
         }
     }
 }
-
 
 impl<'a> std::ops::Index<&str> for StructureAccessor<'a> {
     type Output = Value<'a>;

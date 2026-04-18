@@ -409,7 +409,13 @@ impl PyBufferedImageAssetProvider {
     ///         block = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
     ///         provider.set_block(row, col, block)
     /// ```
-    fn set_block(&self, py: Python<'_>, block_row: u32, block_col: u32, data: Py<PyAny>) -> PyResult<()> {
+    fn set_block(
+        &self,
+        py: Python<'_>,
+        block_row: u32,
+        block_col: u32,
+        data: Py<PyAny>,
+    ) -> PyResult<()> {
         let bytes = extract_array_bytes(py, &data)?;
         self.inner.set_block(block_row, block_col, &bytes)?;
         Ok(())
@@ -613,9 +619,9 @@ impl PyBufferedImageAssetProvider {
         bands: Option<Vec<u32>>,
     ) -> PyResult<Py<PyAny>> {
         let bands_slice = bands.as_deref();
-        let (data, shape) = self
-            .inner
-            .get_block(block_row, block_col, resolution_level, bands_slice)?;
+        let (data, shape) =
+            self.inner
+                .get_block(block_row, block_col, resolution_level, bands_slice)?;
 
         let pixel_type = self.inner.pixel_value_type();
         let array = crate::bindings::image::create_numpy_array(py, &data, shape, pixel_type)?;

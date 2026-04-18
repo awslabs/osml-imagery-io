@@ -80,7 +80,10 @@ impl BufferedMetadataProvider {
     /// * `value` - The value to store.
     pub fn set(&self, key: &str, value: &str) {
         let mut data = self.data.write().unwrap();
-        data.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+        data.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
     }
 
     /// Set a raw `serde_json::Value` for the given key.
@@ -130,11 +133,9 @@ impl BufferedMetadataProvider {
     /// The previous value if the key existed, or None if it didn't.
     pub fn remove(&self, key: &str) -> Option<String> {
         let mut data = self.data.write().unwrap();
-        data.remove(key).map(|v| {
-            match v {
-                serde_json::Value::String(s) => s,
-                other => other.to_string(),
-            }
+        data.remove(key).map(|v| match v {
+            serde_json::Value::String(s) => s,
+            other => other.to_string(),
         })
     }
 
@@ -170,15 +171,14 @@ impl MetadataProvider for BufferedMetadataProvider {
     /// A HashMap of field names to JSON values.
     fn as_dict(&self, name: Option<&str>) -> HashMap<String, serde_json::Value> {
         let data = self.data.read().unwrap();
-        
+
         match name {
             None => data.clone(),
-            Some(prefix) => {
-                data.iter()
-                    .filter(|(key, _)| key.starts_with(prefix))
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect()
-            }
+            Some(prefix) => data
+                .iter()
+                .filter(|(key, _)| key.starts_with(prefix))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
         }
     }
 }
@@ -236,9 +236,9 @@ mod tests {
         provider.set("imode", "B");
         provider.set("ic", "NC");
         provider.set("nppbh", "256");
-        
+
         provider.clear();
-        
+
         let dict = provider.as_dict(None);
         assert!(dict.is_empty());
     }
@@ -256,9 +256,9 @@ mod tests {
         provider.set("imode", "B");
         provider.set("ic", "NC");
         provider.set("nppbh", "256");
-        
+
         let dict = provider.as_dict(None);
-        
+
         assert_eq!(dict.len(), 3);
         assert_eq!(dict.get("imode"), Some(&serde_json::json!("B")));
         assert_eq!(dict.get("ic"), Some(&serde_json::json!("NC")));
@@ -273,10 +273,10 @@ mod tests {
         provider.set("nppbh", "256");
         provider.set("nppbv", "256");
         provider.set("comrat", "01.0");
-        
+
         // Filter by "npp" prefix
         let dict = provider.as_dict(Some("npp"));
-        
+
         assert_eq!(dict.len(), 2);
         assert!(dict.contains_key("nppbh"));
         assert!(dict.contains_key("nppbv"));
@@ -290,9 +290,9 @@ mod tests {
         let provider = BufferedMetadataProvider::new();
         provider.set("imode", "B");
         provider.set("ic", "NC");
-        
+
         let dict = provider.as_dict(Some("xyz"));
-        
+
         assert!(dict.is_empty());
     }
 

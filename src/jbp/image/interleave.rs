@@ -73,8 +73,16 @@ pub fn convert(
     }
 
     // Convert via band-sequential as intermediate format
-    let band_sequential = to_band_sequential(data, from_mode, nrows, ncols, nbands, bytes_per_pixel)?;
-    from_band_sequential(&band_sequential, to_mode, nrows, ncols, nbands, bytes_per_pixel)
+    let band_sequential =
+        to_band_sequential(data, from_mode, nrows, ncols, nbands, bytes_per_pixel)?;
+    from_band_sequential(
+        &band_sequential,
+        to_mode,
+        nrows,
+        ncols,
+        nbands,
+        bytes_per_pixel,
+    )
 }
 
 /// Convert image data to band-sequential format.
@@ -110,7 +118,12 @@ pub fn to_band_sequential(
     if data.len() != expected_size {
         return Err(CodecError::Decode(format!(
             "Data size mismatch: expected {} bytes for {}x{}x{} image with {} bytes/pixel, got {}",
-            expected_size, nrows, ncols, nbands, bytes_per_pixel, data.len()
+            expected_size,
+            nrows,
+            ncols,
+            nbands,
+            bytes_per_pixel,
+            data.len()
         )));
     }
 
@@ -159,7 +172,12 @@ pub fn from_band_sequential(
     if data.len() != expected_size {
         return Err(CodecError::Decode(format!(
             "Data size mismatch: expected {} bytes for {}x{}x{} image with {} bytes/pixel, got {}",
-            expected_size, nrows, ncols, nbands, bytes_per_pixel, data.len()
+            expected_size,
+            nrows,
+            ncols,
+            nbands,
+            bytes_per_pixel,
+            data.len()
         )));
     }
 
@@ -344,7 +362,12 @@ pub fn fused_bip_to_bsq_swap(
     if src.len() != expected_src {
         return Err(CodecError::Decode(format!(
             "Data size mismatch: expected {} bytes for {}x{}x{} image with {} bytes/pixel, got {}",
-            expected_src, nrows, ncols, nbands, bytes_per_pixel, src.len()
+            expected_src,
+            nrows,
+            ncols,
+            nbands,
+            bytes_per_pixel,
+            src.len()
         )));
     }
 
@@ -390,8 +413,7 @@ pub fn fused_bip_to_bsq_swap(
                 match bands {
                     Some(subset) => {
                         for (dst_band_idx, &src_band) in subset.iter().enumerate() {
-                            let src_off =
-                                src_pixel_offset + (src_band as usize) * bytes_per_pixel;
+                            let src_off = src_pixel_offset + (src_band as usize) * bytes_per_pixel;
                             let dst_off =
                                 dst_band_idx * dst_band_size + pixel_idx * bytes_per_pixel;
                             swap_copy(src, dst, src_off, dst_off, bytes_per_pixel);
@@ -443,7 +465,12 @@ pub fn fused_bip_to_bsq_swap_parallel(
     if src.len() != expected_src {
         return Err(CodecError::Decode(format!(
             "Data size mismatch: expected {} bytes for {}x{}x{} image with {} bytes/pixel, got {}",
-            expected_src, nrows, ncols, nbands, bytes_per_pixel, src.len()
+            expected_src,
+            nrows,
+            ncols,
+            nbands,
+            bytes_per_pixel,
+            src.len()
         )));
     }
 
@@ -502,8 +529,7 @@ pub fn fused_bip_to_bsq_swap_parallel(
 
             s.spawn(move |_| {
                 // SAFETY: tile row ranges are disjoint, so each task writes to unique offsets.
-                let dst_slice =
-                    unsafe { std::slice::from_raw_parts_mut(dst_ptr.0, dst_len) };
+                let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst_ptr.0, dst_len) };
 
                 for row in tile_start..tile_end {
                     let row_pixel_base = row * ncols;
@@ -586,7 +612,12 @@ mod tests {
     use super::*;
 
     // Helper to create test data with known pattern
-    fn create_test_data(nrows: usize, ncols: usize, nbands: usize, bytes_per_pixel: usize) -> Vec<u8> {
+    fn create_test_data(
+        nrows: usize,
+        ncols: usize,
+        nbands: usize,
+        bytes_per_pixel: usize,
+    ) -> Vec<u8> {
         let total_pixels = nrows * ncols * nbands;
         let total_bytes = total_pixels * bytes_per_pixel;
         (0..total_bytes).map(|i| (i % 256) as u8).collect()
@@ -621,16 +652,16 @@ mod tests {
             // BIP: [P00_B0, P00_B1, P00_B2, P01_B0, P01_B1, P01_B2, P10_B0, P10_B1, P10_B2, P11_B0, P11_B1, P11_B2]
             // Pixel order: (0,0), (0,1), (1,0), (1,1)
             let bip_data = vec![
-                1, 2, 3,    // pixel (0,0): bands 0,1,2
-                4, 5, 6,    // pixel (0,1): bands 0,1,2
-                7, 8, 9,    // pixel (1,0): bands 0,1,2
+                1, 2, 3, // pixel (0,0): bands 0,1,2
+                4, 5, 6, // pixel (0,1): bands 0,1,2
+                7, 8, 9, // pixel (1,0): bands 0,1,2
                 10, 11, 12, // pixel (1,1): bands 0,1,2
             ];
             // BSQ: [B0_all_pixels, B1_all_pixels, B2_all_pixels]
             let expected_bsq = vec![
-                1, 4, 7, 10,  // band 0: all pixels
-                2, 5, 8, 11,  // band 1: all pixels
-                3, 6, 9, 12,  // band 2: all pixels
+                1, 4, 7, 10, // band 0: all pixels
+                2, 5, 8, 11, // band 1: all pixels
+                3, 6, 9, 12, // band 2: all pixels
             ];
             let result = to_band_sequential(&bip_data, InterleaveMode::P, 2, 2, 3, 1).unwrap();
             assert_eq!(result, expected_bsq);
@@ -641,18 +672,18 @@ mod tests {
             // BIL: [Row0_B0, Row0_B1, Row0_B2, Row1_B0, Row1_B1, Row1_B2]
             // Each row segment has ncols pixels
             let bil_data = vec![
-                1, 2,       // row 0, band 0: pixels (0,0), (0,1)
-                3, 4,       // row 0, band 1: pixels (0,0), (0,1)
-                5, 6,       // row 0, band 2: pixels (0,0), (0,1)
-                7, 8,       // row 1, band 0: pixels (1,0), (1,1)
-                9, 10,      // row 1, band 1: pixels (1,0), (1,1)
-                11, 12,     // row 1, band 2: pixels (1,0), (1,1)
+                1, 2, // row 0, band 0: pixels (0,0), (0,1)
+                3, 4, // row 0, band 1: pixels (0,0), (0,1)
+                5, 6, // row 0, band 2: pixels (0,0), (0,1)
+                7, 8, // row 1, band 0: pixels (1,0), (1,1)
+                9, 10, // row 1, band 1: pixels (1,0), (1,1)
+                11, 12, // row 1, band 2: pixels (1,0), (1,1)
             ];
             // BSQ: [B0_all_pixels, B1_all_pixels, B2_all_pixels]
             let expected_bsq = vec![
-                1, 2, 7, 8,     // band 0: row0, row1
-                3, 4, 9, 10,    // band 1: row0, row1
-                5, 6, 11, 12,   // band 2: row0, row1
+                1, 2, 7, 8, // band 0: row0, row1
+                3, 4, 9, 10, // band 1: row0, row1
+                5, 6, 11, 12, // band 2: row0, row1
             ];
             let result = to_band_sequential(&bil_data, InterleaveMode::R, 2, 2, 3, 1).unwrap();
             assert_eq!(result, expected_bsq);
@@ -670,15 +701,15 @@ mod tests {
             // 2 pixels, 2 bands, 2 bytes per pixel
             // BIP: [P0B0_hi, P0B0_lo, P0B1_hi, P0B1_lo, P1B0_hi, P1B0_lo, P1B1_hi, P1B1_lo]
             let bip_data = vec![
-                0x00, 0x01,  // pixel 0, band 0
-                0x00, 0x02,  // pixel 0, band 1
-                0x00, 0x03,  // pixel 1, band 0
-                0x00, 0x04,  // pixel 1, band 1
+                0x00, 0x01, // pixel 0, band 0
+                0x00, 0x02, // pixel 0, band 1
+                0x00, 0x03, // pixel 1, band 0
+                0x00, 0x04, // pixel 1, band 1
             ];
             // BSQ: [B0_all_pixels, B1_all_pixels]
             let expected_bsq = vec![
-                0x00, 0x01, 0x00, 0x03,  // band 0: pixel 0, pixel 1
-                0x00, 0x02, 0x00, 0x04,  // band 1: pixel 0, pixel 1
+                0x00, 0x01, 0x00, 0x03, // band 0: pixel 0, pixel 1
+                0x00, 0x02, 0x00, 0x04, // band 1: pixel 0, pixel 1
             ];
             let result = to_band_sequential(&bip_data, InterleaveMode::P, 1, 2, 2, 2).unwrap();
             assert_eq!(result, expected_bsq);
@@ -713,15 +744,15 @@ mod tests {
         fn to_bip_2x2x3() {
             // BSQ: [B0_all_pixels, B1_all_pixels, B2_all_pixels]
             let bsq_data = vec![
-                1, 4, 7, 10,  // band 0: all pixels
-                2, 5, 8, 11,  // band 1: all pixels
-                3, 6, 9, 12,  // band 2: all pixels
+                1, 4, 7, 10, // band 0: all pixels
+                2, 5, 8, 11, // band 1: all pixels
+                3, 6, 9, 12, // band 2: all pixels
             ];
             // BIP: [P00_B0, P00_B1, P00_B2, P01_B0, P01_B1, P01_B2, ...]
             let expected_bip = vec![
-                1, 2, 3,    // pixel (0,0): bands 0,1,2
-                4, 5, 6,    // pixel (0,1): bands 0,1,2
-                7, 8, 9,    // pixel (1,0): bands 0,1,2
+                1, 2, 3, // pixel (0,0): bands 0,1,2
+                4, 5, 6, // pixel (0,1): bands 0,1,2
+                7, 8, 9, // pixel (1,0): bands 0,1,2
                 10, 11, 12, // pixel (1,1): bands 0,1,2
             ];
             let result = from_band_sequential(&bsq_data, InterleaveMode::P, 2, 2, 3, 1).unwrap();
@@ -732,18 +763,18 @@ mod tests {
         fn to_bil_2x2x3() {
             // BSQ: [B0_all_pixels, B1_all_pixels, B2_all_pixels]
             let bsq_data = vec![
-                1, 2, 7, 8,     // band 0: row0, row1
-                3, 4, 9, 10,    // band 1: row0, row1
-                5, 6, 11, 12,   // band 2: row0, row1
+                1, 2, 7, 8, // band 0: row0, row1
+                3, 4, 9, 10, // band 1: row0, row1
+                5, 6, 11, 12, // band 2: row0, row1
             ];
             // BIL: [Row0_B0, Row0_B1, Row0_B2, Row1_B0, Row1_B1, Row1_B2]
             let expected_bil = vec![
-                1, 2,       // row 0, band 0
-                3, 4,       // row 0, band 1
-                5, 6,       // row 0, band 2
-                7, 8,       // row 1, band 0
-                9, 10,      // row 1, band 1
-                11, 12,     // row 1, band 2
+                1, 2, // row 0, band 0
+                3, 4, // row 0, band 1
+                5, 6, // row 0, band 2
+                7, 8, // row 1, band 0
+                9, 10, // row 1, band 1
+                11, 12, // row 1, band 2
             ];
             let result = from_band_sequential(&bsq_data, InterleaveMode::R, 2, 2, 3, 1).unwrap();
             assert_eq!(result, expected_bil);
@@ -940,18 +971,27 @@ mod tests {
         #[test]
         fn same_mode_is_noop() {
             let data = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-            for mode in [InterleaveMode::B, InterleaveMode::P, InterleaveMode::R, InterleaveMode::S] {
+            for mode in [
+                InterleaveMode::B,
+                InterleaveMode::P,
+                InterleaveMode::R,
+                InterleaveMode::S,
+            ] {
                 let result = convert(&data, mode, mode, 2, 2, 3, 1).unwrap();
-                assert_eq!(result, data, "Same mode conversion should be identity for {:?}", mode);
+                assert_eq!(
+                    result, data,
+                    "Same mode conversion should be identity for {:?}",
+                    mode
+                );
             }
         }
 
         #[test]
         fn bip_to_bsq_and_back() {
             let original = vec![
-                1, 2, 3,    // pixel 0
-                4, 5, 6,    // pixel 1
-                7, 8, 9,    // pixel 2
+                1, 2, 3, // pixel 0
+                4, 5, 6, // pixel 1
+                7, 8, 9, // pixel 2
                 10, 11, 12, // pixel 3
             ];
             let bsq = convert(&original, InterleaveMode::P, InterleaveMode::S, 2, 2, 3, 1).unwrap();
@@ -962,12 +1002,12 @@ mod tests {
         #[test]
         fn bil_to_bsq_and_back() {
             let original = vec![
-                1, 2,       // row 0, band 0
-                3, 4,       // row 0, band 1
-                5, 6,       // row 0, band 2
-                7, 8,       // row 1, band 0
-                9, 10,      // row 1, band 1
-                11, 12,     // row 1, band 2
+                1, 2, // row 0, band 0
+                3, 4, // row 0, band 1
+                5, 6, // row 0, band 2
+                7, 8, // row 1, band 0
+                9, 10, // row 1, band 1
+                11, 12, // row 1, band 2
             ];
             let bsq = convert(&original, InterleaveMode::R, InterleaveMode::S, 2, 2, 3, 1).unwrap();
             let back = convert(&bsq, InterleaveMode::S, InterleaveMode::R, 2, 2, 3, 1).unwrap();
@@ -977,9 +1017,9 @@ mod tests {
         #[test]
         fn bip_to_bil_and_back() {
             let original = vec![
-                1, 2, 3,    // pixel (0,0)
-                4, 5, 6,    // pixel (0,1)
-                7, 8, 9,    // pixel (1,0)
+                1, 2, 3, // pixel (0,0)
+                4, 5, 6, // pixel (0,1)
+                7, 8, 9, // pixel (1,0)
                 10, 11, 12, // pixel (1,1)
             ];
             let bil = convert(&original, InterleaveMode::P, InterleaveMode::R, 2, 2, 3, 1).unwrap();
@@ -991,9 +1031,14 @@ mod tests {
         fn larger_image_round_trip() {
             // 4x4 image with 4 bands, 2 bytes per pixel
             let data = create_test_data(4, 4, 4, 2);
-            
+
             // Test all mode combinations
-            let modes = [InterleaveMode::B, InterleaveMode::P, InterleaveMode::R, InterleaveMode::S];
+            let modes = [
+                InterleaveMode::B,
+                InterleaveMode::P,
+                InterleaveMode::R,
+                InterleaveMode::S,
+            ];
             for from in &modes {
                 for to in &modes {
                     let converted = convert(&data, *from, *to, 4, 4, 4, 2).unwrap();
@@ -1004,7 +1049,6 @@ mod tests {
         }
     }
 }
-
 
 /// Property-based tests for interleave conversion
 #[cfg(test)]
@@ -1025,9 +1069,9 @@ mod property_tests {
     /// Generate valid image dimensions (small for testing)
     fn image_dimensions_strategy() -> impl Strategy<Value = (u32, u32, u32, usize)> {
         (
-            1u32..=16,      // nrows
-            1u32..=16,      // ncols
-            1u32..=8,       // nbands
+            1u32..=16,                                             // nrows
+            1u32..=16,                                             // ncols
+            1u32..=8,                                              // nbands
             prop_oneof![Just(1usize), Just(2usize), Just(4usize)], // bytes_per_pixel
         )
     }

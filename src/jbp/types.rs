@@ -8,8 +8,8 @@
 //! - [`JBPReaderOptions`] - Configuration options for the reader
 
 use crate::jbp::error::JBPError;
-use crate::parser::Value;
 use crate::parser::StructureAccessor;
+use crate::parser::Value;
 use std::sync::Arc;
 
 /// Detected NITF format variant.
@@ -384,13 +384,14 @@ impl SegmentOffsets {
                         ),
                     })?;
                 let nested_accessor =
-                    StructureAccessor::new(Arc::new(nested_def.clone()), struct_val.data)
-                        .map_err(|e| JBPError::ValidationError {
+                    StructureAccessor::new(Arc::new(nested_def.clone()), struct_val.data).map_err(
+                        |e| JBPError::ValidationError {
                             message: format!(
                                 "Failed to create accessor for {}[{}]: {}",
                                 array_name, index, e
                             ),
-                        })?;
+                        },
+                    )?;
                 nested_accessor
                     .get(sub_field)
                     .map_err(|e| JBPError::ValidationError {
@@ -415,11 +416,7 @@ impl SegmentOffsets {
 
     /// Returns the total number of segments across all types.
     pub fn total_segments(&self) -> usize {
-        self.images.len()
-            + self.graphics.len()
-            + self.text.len()
-            + self.des.len()
-            + self.res.len()
+        self.images.len() + self.graphics.len() + self.text.len() + self.des.len() + self.res.len()
     }
 
     /// Get segment location by type and index.
@@ -691,7 +688,7 @@ mod property_tests {
     /// from_header() does but without needing StructureAccessor.
     fn create_offsets_from_lengths(
         hl: u64,
-        image_lengths: &[(u64, u64)],    // (subheader_len, data_len)
+        image_lengths: &[(u64, u64)], // (subheader_len, data_len)
         graphic_lengths: &[(u64, u64)],
         text_lengths: &[(u64, u64)],
         des_lengths: &[(u64, u64)],

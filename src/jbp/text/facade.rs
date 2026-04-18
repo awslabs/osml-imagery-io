@@ -65,9 +65,9 @@ impl<'a> TextSubheaderFacade<'a> {
         format: NitfFormat,
     ) -> Result<Self, CodecError> {
         let def_name = format.text_subheader_definition();
-        let definition = registry
-            .get(def_name)
-            .ok_or_else(|| CodecError::InvalidFormat(format!("Structure definition not found: {}", def_name)))?;
+        let definition = registry.get(def_name).ok_or_else(|| {
+            CodecError::InvalidFormat(format!("Structure definition not found: {}", def_name))
+        })?;
 
         let accessor = StructureAccessor::new(definition, data)
             .map_err(|e| CodecError::Parse(format!("Failed to create accessor: {}", e)))?;
@@ -202,7 +202,8 @@ impl<'a> TextSubheaderFacade<'a> {
     /// This field is only present when TXSHDL > 3.
     /// Contains TRE envelope data.
     pub fn txshd(&self) -> Result<Vec<u8>, CodecError> {
-        let value = self.accessor
+        let value = self
+            .accessor
             .get("TXSHD")
             .map_err(|e| CodecError::Parse(format!("Failed to get TXSHD: {}", e)))?;
         Ok(value.as_bytes().to_vec())
@@ -298,12 +299,13 @@ impl<'a> TextSubheaderFacade<'a> {
 
     /// Get a string field value, trimming trailing spaces.
     fn get_str_field(&self, field: &str) -> Result<String, CodecError> {
-        let value = self.accessor
+        let value = self
+            .accessor
             .get(field)
             .map_err(|e| CodecError::Parse(format!("Failed to get {}: {}", field, e)))?;
-        let s = value
-            .as_str()
-            .map_err(|e| CodecError::Parse(format!("Failed to convert {} to string: {}", field, e)))?;
+        let s = value.as_str().map_err(|e| {
+            CodecError::Parse(format!("Failed to convert {} to string: {}", field, e))
+        })?;
         Ok(s.trim_end().to_string())
     }
 
@@ -348,22 +350,22 @@ mod tests {
         bytes.extend_from_slice(format!("{:80}", txtitl).as_bytes());
 
         // Security fields (167 bytes total)
-        bytes.extend_from_slice(b"U");                    // TSCLAS (1)
-        bytes.extend_from_slice(b"  ");                   // TSCLSY (2)
-        bytes.extend_from_slice(b"           ");          // TSCODE (11)
-        bytes.extend_from_slice(b"  ");                   // TSCTLH (2)
+        bytes.extend_from_slice(b"U"); // TSCLAS (1)
+        bytes.extend_from_slice(b"  "); // TSCLSY (2)
+        bytes.extend_from_slice(b"           "); // TSCODE (11)
+        bytes.extend_from_slice(b"  "); // TSCTLH (2)
         bytes.extend_from_slice(b"                    "); // TSREL (20)
-        bytes.extend_from_slice(b"  ");                   // TSDCTP (2)
-        bytes.extend_from_slice(b"        ");             // TSDCDT (8)
-        bytes.extend_from_slice(b"    ");                 // TSDCXM (4)
-        bytes.extend_from_slice(b" ");                    // TSDG (1)
-        bytes.extend_from_slice(b"        ");             // TSDGDT (8)
+        bytes.extend_from_slice(b"  "); // TSDCTP (2)
+        bytes.extend_from_slice(b"        "); // TSDCDT (8)
+        bytes.extend_from_slice(b"    "); // TSDCXM (4)
+        bytes.extend_from_slice(b" "); // TSDG (1)
+        bytes.extend_from_slice(b"        "); // TSDGDT (8)
         bytes.extend_from_slice(b"                                           "); // TSCLTX (43)
-        bytes.extend_from_slice(b" ");                    // TSCATP (1)
+        bytes.extend_from_slice(b" "); // TSCATP (1)
         bytes.extend_from_slice(b"                                        "); // TSCAUT (40)
-        bytes.extend_from_slice(b" ");                    // TSCRSN (1)
-        bytes.extend_from_slice(b"        ");             // TSSRDT (8)
-        bytes.extend_from_slice(b"               ");      // TSCTLN (15)
+        bytes.extend_from_slice(b" "); // TSCRSN (1)
+        bytes.extend_from_slice(b"        "); // TSSRDT (8)
+        bytes.extend_from_slice(b"               "); // TSCTLN (15)
 
         // ENCRYP (1)
         bytes.extend_from_slice(format!("{:1}", encryp).as_bytes());
@@ -396,7 +398,8 @@ mod tests {
 
         assert_eq!(bytes.len(), TEXT_SUBHEADER_BASE_SIZE);
 
-        let facade = TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
 
         assert_eq!(facade.te().unwrap(), "TE");
         assert_eq!(facade.textid().unwrap(), "TEXT001");
@@ -424,7 +427,8 @@ mod tests {
                 "00000",
             );
 
-            let facade = TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+            let facade =
+                TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
             assert_eq!(facade.txtalvl().unwrap(), *expected);
         }
     }
@@ -445,7 +449,8 @@ mod tests {
                 "00000",
             );
 
-            let facade = TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+            let facade =
+                TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
             assert_eq!(facade.txtfmt().unwrap(), *txtfmt);
         }
     }
@@ -460,12 +465,13 @@ mod tests {
             "20240101120000",
             "Test",
             "0",
-            "XYZ",  // Unknown format code
+            "XYZ", // Unknown format code
             "00000",
         );
 
         // Should succeed - unknown TXTFMT values are allowed
-        let facade = TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
         assert_eq!(facade.txtfmt().unwrap(), "XYZ");
     }
 
@@ -473,7 +479,7 @@ mod tests {
     fn facade_invalid_te_marker() {
         let registry = create_test_registry();
         let bytes = create_test_subheader_bytes(
-            "XX",  // Invalid TE marker
+            "XX", // Invalid TE marker
             "TEXT001",
             "000",
             "20240101120000",
@@ -499,7 +505,7 @@ mod tests {
             "000",
             "20240101120000",
             "Test",
-            "1",  // Encrypted
+            "1", // Encrypted
             "STA",
             "00000",
         );
@@ -525,7 +531,8 @@ mod tests {
             "00000",
         );
 
-        let facade = TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
         assert_eq!(facade.txshdl().unwrap(), 0);
         // TXSOFL should not be accessible when TXSHDL is 0
         assert!(facade.txsofl().is_err());
@@ -542,12 +549,13 @@ mod tests {
             "Test",
             "0",
             "STA",
-            "00003",  // TXSHDL > 0
+            "00003", // TXSHDL > 0
         );
         // Add TXSOFL (3 bytes)
         bytes.extend_from_slice(b"000");
 
-        let facade = TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
         assert_eq!(facade.txshdl().unwrap(), 3);
         assert_eq!(facade.txsofl().unwrap(), 0);
     }
@@ -563,14 +571,15 @@ mod tests {
             "Test",
             "0",
             "STA",
-            "00008",  // TXSHDL = 8, so TXSHD = 5 bytes
+            "00008", // TXSHDL = 8, so TXSHD = 5 bytes
         );
         // Add TXSOFL (3 bytes)
         bytes.extend_from_slice(b"000");
         // Add TXSHD (5 bytes)
         bytes.extend_from_slice(b"HELLO");
 
-        let facade = TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
         assert_eq!(facade.txshdl().unwrap(), 8);
         assert_eq!(facade.txsofl().unwrap(), 0);
         assert_eq!(facade.txshd().unwrap(), b"HELLO");
@@ -590,9 +599,10 @@ mod tests {
             "00000",
         );
 
-        let facade = TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
+        let facade =
+            TextSubheaderFacade::from_bytes(&bytes, &registry, NitfFormat::Nitf21).unwrap();
         assert_eq!(facade.tsclas().unwrap(), "U");
-        assert_eq!(facade.tsclsy().unwrap(), "");  // Trimmed spaces
+        assert_eq!(facade.tsclsy().unwrap(), ""); // Trimmed spaces
         assert_eq!(facade.tscode().unwrap(), "");
         assert_eq!(facade.tsctlh().unwrap(), "");
         assert_eq!(facade.tsrel().unwrap(), "");

@@ -18,7 +18,9 @@ use crate::jbp::metadata::{JBPFileMetadataProvider, JBPSegmentMetadataProvider};
 use crate::jbp::overflow;
 use crate::jbp::text::TextSubheaderFacade;
 use crate::jbp::tre::TreEnvelope;
-use crate::jbp::types::{JBPReaderOptions, NitfFormat, SegmentLocation, SegmentOffsets, SegmentType};
+use crate::jbp::types::{
+    JBPReaderOptions, NitfFormat, SegmentLocation, SegmentOffsets, SegmentType,
+};
 use crate::parser::{StructureAccessor, StructureDefinition, StructureRegistry};
 use crate::traits::{AssetProvider, DatasetReader, MetadataProvider};
 use crate::types::AssetType;
@@ -99,30 +101,36 @@ impl JBPDatasetReader {
         options: JBPReaderOptions,
     ) -> Result<Self, CodecError> {
         let mut warnings = Vec::new();
-        
+
         // Validate magic number and detect format
         let format = validate_nitf_magic(data)?;
-        
+
         // Create structure registry for all NITF structure definitions
         // All definitions are loaded from KSY files in data/structures/
         let registry = Arc::new(StructureRegistry::new());
-        
+
         // Load file header structure definition from registry (KSY file)
-        let file_header_definition = registry
-            .get(format.file_header_definition())
-            .ok_or_else(|| CodecError::InvalidFormat(
-                format!("Structure definition not found: {}", format.file_header_definition())
-            ))?;
-        
+        let file_header_definition =
+            registry
+                .get(format.file_header_definition())
+                .ok_or_else(|| {
+                    CodecError::InvalidFormat(format!(
+                        "Structure definition not found: {}",
+                        format.file_header_definition()
+                    ))
+                })?;
+
         // Parse file header to get segment offsets
-        let accessor = StructureAccessor::new(file_header_definition.clone(), data)
-            .map_err(|e| JBPError::ValidationError {
-                message: format!("Failed to create header accessor: {}", e),
+        let accessor =
+            StructureAccessor::new(file_header_definition.clone(), data).map_err(|e| {
+                JBPError::ValidationError {
+                    message: format!("Failed to create header accessor: {}", e),
+                }
             })?;
-        
+
         // Validate CLEVEL
         Self::validate_clevel(&accessor, &mut warnings);
-        
+
         // Get header length
         let header_length = accessor
             .get("HL")
@@ -133,28 +141,28 @@ impl JBPDatasetReader {
             .map_err(|e| JBPError::ValidationError {
                 message: format!("Failed to parse HL as u64: {}", e),
             })? as usize;
-        
+
         // Calculate segment offsets
         let segment_offsets = SegmentOffsets::from_header(&accessor)?;
-        
+
         // Validate segment counts
         Self::validate_segment_counts(&accessor, &segment_offsets, &mut warnings)?;
-        
+
         // Create owned data
         let data: Arc<[u8]> = Arc::from(data);
-        
+
         // Create file metadata provider
         let raw_header_bytes: Arc<[u8]> = Arc::from(&data[..header_length]);
         let file_metadata = Arc::new(JBPFileMetadataProvider::from_definition(
             file_header_definition.clone(),
             raw_header_bytes,
         ));
-        
+
         // Validate file length if enabled
         if options.validate_file_length {
             Self::validate_file_length(&accessor, &segment_offsets, data.len(), &mut warnings);
         }
-        
+
         Ok(Self {
             data,
             format,
@@ -416,11 +424,11 @@ impl JBPDatasetReader {
         location: &SegmentLocation,
     ) -> Result<AssetProvider, CodecError> {
         let key = generate_asset_key(segment_type, index);
-        
+
         // Get subheader bytes
         let subheader_start = location.subheader_offset as usize;
         let subheader_end = subheader_start + location.subheader_length as usize;
-        
+
         if subheader_end > self.data.len() {
             return Err(JBPError::SegmentParseError {
                 offset: location.subheader_offset,
@@ -428,30 +436,33 @@ impl JBPDatasetReader {
             }
             .into());
         }
-        
+
         let subheader_bytes: Arc<[u8]> = Arc::from(&self.data[subheader_start..subheader_end]);
-        
+
         // Create appropriate definition and provider based on segment type
         match segment_type {
             SegmentType::Image => {
                 // Load the image subheader definition from the registry (KSY file)
-                let definition = self
-                    .registry
-                    .get("nitf_02.10_image_subheader")
-                    .ok_or_else(|| CodecError::InvalidFormat(
-                        "Structure definition not found: nitf_02.10_image_subheader".to_string()
-                    ))?;
-                
+                let definition =
+                    self.registry
+                        .get("nitf_02.10_image_subheader")
+                        .ok_or_else(|| {
+                            CodecError::InvalidFormat(
+                                "Structure definition not found: nitf_02.10_image_subheader"
+                                    .to_string(),
+                            )
+                        })?;
+
                 // Extract TREs from image subheader
                 let tre_envelopes = self.extract_image_tres(&subheader_bytes)?;
-                
+
                 let metadata = Arc::new(JBPSegmentMetadataProvider::with_tres(
                     definition,
                     subheader_bytes,
                     tre_envelopes,
                     self.registry.clone(),
                 ));
-                
+
                 Ok(AssetProvider::Image(Arc::new(JBPImageAssetProvider::new(
                     key,
                     format!("Image Segment {}", index),
@@ -466,42 +477,44 @@ impl JBPDatasetReader {
             }
             SegmentType::Text => {
                 // Load the text subheader definition from the registry (KSY file)
-                let definition = self
-                    .registry
-                    .get("nitf_02.10_text_subheader")
-                    .ok_or_else(|| CodecError::InvalidFormat(
-                        "Structure definition not found: nitf_02.10_text_subheader".to_string()
-                    ))?;
-                
+                let definition =
+                    self.registry
+                        .get("nitf_02.10_text_subheader")
+                        .ok_or_else(|| {
+                            CodecError::InvalidFormat(
+                                "Structure definition not found: nitf_02.10_text_subheader"
+                                    .to_string(),
+                            )
+                        })?;
+
                 // Use TextSubheaderFacade for validation and to extract TXTFMT
-                let facade = TextSubheaderFacade::from_bytes(
-                    &subheader_bytes,
-                    &self.registry,
-                    self.format,
-                )?;
-                
+                let facade =
+                    TextSubheaderFacade::from_bytes(&subheader_bytes, &self.registry, self.format)?;
+
                 // Extract TXTFMT for encoding-aware text handling
-                let txtfmt = facade.txtfmt()
+                let txtfmt = facade
+                    .txtfmt()
                     .map(|s| s.trim().to_string())
                     .unwrap_or_else(|_| "STA".to_string());
-                
+
                 // Extract title from TXTITL field, falling back to generic title
-                let title = facade.txtitl()
+                let title = facade
+                    .txtitl()
                     .ok()
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| format!("Text Segment {}", index));
-                
+
                 // Extract TREs from text subheader
                 let tre_envelopes = self.extract_text_tres(&subheader_bytes)?;
-                
+
                 let metadata = Arc::new(JBPSegmentMetadataProvider::with_tres(
                     definition,
                     subheader_bytes,
                     tre_envelopes,
                     self.registry.clone(),
                 ));
-                
+
                 Ok(AssetProvider::Text(Arc::new(JBPTextAssetProvider::new(
                     key,
                     title,
@@ -518,10 +531,13 @@ impl JBPDatasetReader {
                 let definition = self
                     .registry
                     .get("nitf_02.10_graphic_subheader")
-                    .ok_or_else(|| CodecError::InvalidFormat(
-                        "Structure definition not found: nitf_02.10_graphic_subheader".to_string()
-                    ))?;
-                
+                    .ok_or_else(|| {
+                        CodecError::InvalidFormat(
+                            "Structure definition not found: nitf_02.10_graphic_subheader"
+                                .to_string(),
+                        )
+                    })?;
+
                 // Use GraphicSubheaderFacade for validation (SY, SFMT, ENCRYP)
                 // and to extract title/description from SNAME/SID fields
                 let facade = GraphicSubheaderFacade::from_bytes(
@@ -529,7 +545,7 @@ impl JBPDatasetReader {
                     &self.registry,
                     self.format,
                 )?;
-                
+
                 // Extract title from SNAME field, falling back to generic title
                 let title = facade
                     .sname()
@@ -537,7 +553,7 @@ impl JBPDatasetReader {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| format!("Graphic Segment {}", index));
-                
+
                 // Extract description from SID field, falling back to generic description
                 let description = facade
                     .sid()
@@ -545,40 +561,45 @@ impl JBPDatasetReader {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| format!("NITF graphic segment at index {}", index));
-                
+
                 // Extract TREs from graphic subheader
                 let tre_envelopes = self.extract_graphic_tres(&subheader_bytes)?;
-                
+
                 let metadata = Arc::new(JBPSegmentMetadataProvider::with_tres(
                     definition,
                     subheader_bytes,
                     tre_envelopes,
                     self.registry.clone(),
                 ));
-                
-                Ok(AssetProvider::Graphics(Arc::new(JBPGraphicsAssetProvider::new(
-                    key,
-                    title,
-                    description,
-                    vec!["graphic".to_string()],
-                    *location,
-                    self.data.clone(),
-                    metadata,
-                ))))
+
+                Ok(AssetProvider::Graphics(Arc::new(
+                    JBPGraphicsAssetProvider::new(
+                        key,
+                        title,
+                        description,
+                        vec!["graphic".to_string()],
+                        *location,
+                        self.data.clone(),
+                        metadata,
+                    ),
+                )))
             }
             SegmentType::DataExtension => {
                 // Load the DES subheader definition from the registry (KSY file)
-                let definition = self
-                    .registry
-                    .get("nitf_02.10_des_subheader")
-                    .ok_or_else(|| CodecError::InvalidFormat(
-                        "Structure definition not found: nitf_02.10_des_subheader".to_string()
-                    ))?;
+                let definition =
+                    self.registry
+                        .get("nitf_02.10_des_subheader")
+                        .ok_or_else(|| {
+                            CodecError::InvalidFormat(
+                                "Structure definition not found: nitf_02.10_des_subheader"
+                                    .to_string(),
+                            )
+                        })?;
                 let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
                     definition,
                     subheader_bytes,
                 ));
-                
+
                 Ok(AssetProvider::Data(Arc::new(JBPDataAssetProvider::new(
                     key,
                     format!("DES Segment {}", index),
@@ -591,17 +612,20 @@ impl JBPDatasetReader {
             }
             SegmentType::ReservedExtension => {
                 // RES segments use the DES subheader definition
-                let definition = self
-                    .registry
-                    .get("nitf_02.10_des_subheader")
-                    .ok_or_else(|| CodecError::InvalidFormat(
-                        "Structure definition not found: nitf_02.10_des_subheader".to_string()
-                    ))?;
+                let definition =
+                    self.registry
+                        .get("nitf_02.10_des_subheader")
+                        .ok_or_else(|| {
+                            CodecError::InvalidFormat(
+                                "Structure definition not found: nitf_02.10_des_subheader"
+                                    .to_string(),
+                            )
+                        })?;
                 let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
                     definition,
                     subheader_bytes,
                 ));
-                
+
                 Ok(AssetProvider::Data(Arc::new(JBPDataAssetProvider::new(
                     key,
                     format!("RES Segment {}", index),
@@ -614,7 +638,7 @@ impl JBPDatasetReader {
             }
         }
     }
-    
+
     /// Extract TRE envelopes from an image subheader.
     ///
     /// Parses TREs from UDID and IXSHD fields, and resolves any overflow TREs
@@ -627,12 +651,12 @@ impl JBPDatasetReader {
     /// A vector of TRE envelopes (inline + overflow), or an error if parsing fails.
     fn extract_image_tres(&self, subheader_bytes: &[u8]) -> Result<Vec<TreEnvelope>, CodecError> {
         let mut tre_envelopes = Vec::new();
-        
+
         // The image subheader has a complex structure with variable-length fields.
         // We need to find the TRE fields (UDID, IXSHD) which are near the end.
         // For now, we use a simplified approach that works with the minimal definition.
         // A full implementation would use the complete image subheader definition.
-        
+
         // Try to parse using the full definition if available from registry
         if let Some(full_def) = self.registry.get("nitf_02.10_image_subheader") {
             if let Ok(accessor) = StructureAccessor::new(full_def, subheader_bytes) {
@@ -645,7 +669,7 @@ impl JBPDatasetReader {
                         }
                     }
                 }
-                
+
                 // Extract IXSHD TREs
                 if let Ok(ixshd_value) = accessor.get("IXSHD") {
                     let ixshd_bytes = ixshd_value.as_bytes();
@@ -655,7 +679,7 @@ impl JBPDatasetReader {
                         }
                     }
                 }
-                
+
                 // Resolve overflow TREs
                 if let Ok((udofl, ixsofl)) = overflow::get_image_overflow_indices(&accessor) {
                     // Fetch UDID overflow TREs
@@ -668,7 +692,7 @@ impl JBPDatasetReader {
                             tre_envelopes.extend(overflow_tres);
                         }
                     }
-                    
+
                     // Fetch IXSHD overflow TREs
                     if ixsofl > 0 {
                         if let Ok(overflow_tres) = overflow::fetch_overflow_tres(
@@ -682,10 +706,10 @@ impl JBPDatasetReader {
                 }
             }
         }
-        
+
         Ok(tre_envelopes)
     }
-    
+
     /// Extract TRE envelopes from a graphic subheader.
     ///
     /// Parses TREs from SXSHD field, and resolves any overflow TREs
@@ -698,7 +722,7 @@ impl JBPDatasetReader {
     /// A vector of TRE envelopes (inline + overflow), or an error if parsing fails.
     fn extract_graphic_tres(&self, subheader_bytes: &[u8]) -> Result<Vec<TreEnvelope>, CodecError> {
         let mut tre_envelopes = Vec::new();
-        
+
         // Try to parse using the full definition if available from registry
         if let Some(full_def) = self.registry.get("nitf_02.10_graphic_subheader") {
             if let Ok(accessor) = StructureAccessor::new(full_def, subheader_bytes) {
@@ -711,7 +735,7 @@ impl JBPDatasetReader {
                         }
                     }
                 }
-                
+
                 // Resolve overflow TREs
                 if let Ok(sxsofl) = overflow::get_graphic_overflow_index(&accessor) {
                     if sxsofl > 0 {
@@ -726,10 +750,10 @@ impl JBPDatasetReader {
                 }
             }
         }
-        
+
         Ok(tre_envelopes)
     }
-    
+
     /// Extract TRE envelopes from a text subheader.
     ///
     /// Parses TREs from TXSHD field, and resolves any overflow TREs
@@ -742,7 +766,7 @@ impl JBPDatasetReader {
     /// A vector of TRE envelopes (inline + overflow), or an error if parsing fails.
     fn extract_text_tres(&self, subheader_bytes: &[u8]) -> Result<Vec<TreEnvelope>, CodecError> {
         let mut tre_envelopes = Vec::new();
-        
+
         // Try to parse using the full definition if available from registry
         if let Some(full_def) = self.registry.get("nitf_02.10_text_subheader") {
             if let Ok(accessor) = StructureAccessor::new(full_def, subheader_bytes) {
@@ -755,7 +779,7 @@ impl JBPDatasetReader {
                         }
                     }
                 }
-                
+
                 // Resolve overflow TREs
                 if let Ok(txsofl) = overflow::get_text_overflow_index(&accessor) {
                     if txsofl > 0 {
@@ -770,11 +794,10 @@ impl JBPDatasetReader {
                 }
             }
         }
-        
+
         Ok(tre_envelopes)
     }
 }
-
 
 impl DatasetReader for JBPDatasetReader {
     /// Returns an AssetProvider for the specified asset key.
@@ -790,9 +813,8 @@ impl DatasetReader for JBPDatasetReader {
         }
 
         // Parse the key to get segment type and index
-        let (segment_type, index) = parse_asset_key(key).ok_or_else(|| {
-            CodecError::AssetNotFound(key.to_string())
-        })?;
+        let (segment_type, index) =
+            parse_asset_key(key).ok_or_else(|| CodecError::AssetNotFound(key.to_string()))?;
 
         // Get segment location
         let location = self
@@ -900,7 +922,6 @@ impl DatasetReader for JBPDatasetReader {
 // Ensure JBPDatasetReader is Send + Sync
 unsafe impl Send for JBPDatasetReader {}
 unsafe impl Sync for JBPDatasetReader {}
-
 
 #[cfg(test)]
 mod tests {
@@ -1165,15 +1186,15 @@ mod tests {
         // Get the image subheader size
         let image_subheader = create_minimal_image_subheader();
         let image_subheader_len = image_subheader.len();
-        
+
         // Get the graphic subheader size
         let graphic_subheader = create_minimal_graphic_subheader();
         let graphic_subheader_len = graphic_subheader.len();
-        
+
         // Get the text subheader size
         let text_subheader = create_minimal_text_subheader();
         let text_subheader_len = text_subheader.len();
-        
+
         let image_data_len = 64 * 64; // 64x64 pixels, 1 band, 8 bits = 4096 bytes
 
         // FHDR (4) + FVER (5) = "NITF02.10"
@@ -1246,7 +1267,8 @@ mod tests {
         // Image segment info - interleaved as nested type (LISH, LI) per segment
         for _ in 0..numi {
             header.extend_from_slice(format!("{:06}", image_subheader_len).as_bytes()); // LISH (6)
-            header.extend_from_slice(format!("{:010}", image_data_len).as_bytes()); // LI (10)
+            header.extend_from_slice(format!("{:010}", image_data_len).as_bytes());
+            // LI (10)
         }
 
         // NUMS (3)
@@ -1255,7 +1277,8 @@ mod tests {
         let graphic_data_len = 500usize;
         for _ in 0..nums {
             header.extend_from_slice(format!("{:04}", graphic_subheader_len).as_bytes()); // LSSH (4)
-            header.extend_from_slice(format!("{:06}", graphic_data_len).as_bytes()); // LS (6)
+            header.extend_from_slice(format!("{:06}", graphic_data_len).as_bytes());
+            // LS (6)
         }
 
         // NUMX (3) - reserved
@@ -1267,7 +1290,8 @@ mod tests {
         let text_data_len = 200usize;
         for _ in 0..numt {
             header.extend_from_slice(format!("{:04}", text_subheader_len).as_bytes()); // LTSH (4)
-            header.extend_from_slice(format!("{:05}", text_data_len).as_bytes()); // LT (5)
+            header.extend_from_slice(format!("{:05}", text_data_len).as_bytes());
+            // LT (5)
         }
 
         // NUMDES (3)
@@ -1360,7 +1384,7 @@ mod tests {
     fn reader_get_asset_keys_all() {
         let data = create_minimal_nitf_header(2, 1, 1, 1, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let keys = reader.get_asset_keys(None, None);
         assert_eq!(keys.len(), 5); // 2 images + 1 graphic + 1 text + 1 des
     }
@@ -1369,7 +1393,7 @@ mod tests {
     fn reader_get_asset_keys_images_only() {
         let data = create_minimal_nitf_header(3, 1, 1, 1, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
         assert_eq!(keys.len(), 3);
         assert!(keys.iter().all(|k| k.starts_with("image:")));
@@ -1379,7 +1403,7 @@ mod tests {
     fn reader_get_asset_keys_text_only() {
         let data = create_minimal_nitf_header(1, 0, 2, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let keys = reader.get_asset_keys(Some(AssetType::Text), None);
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().all(|k| k.starts_with("text:")));
@@ -1389,7 +1413,7 @@ mod tests {
     fn reader_get_asset_keys_graphics_only() {
         let data = create_minimal_nitf_header(1, 2, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let keys = reader.get_asset_keys(Some(AssetType::Graphics), None);
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().all(|k| k.starts_with("graphic:")));
@@ -1399,7 +1423,7 @@ mod tests {
     fn reader_get_asset_keys_data_only() {
         let data = create_minimal_nitf_header(1, 0, 0, 2, 1);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let keys = reader.get_asset_keys(Some(AssetType::Data), None);
         assert_eq!(keys.len(), 3); // 2 DES + 1 RES
     }
@@ -1408,7 +1432,7 @@ mod tests {
     fn reader_has_asset_valid_key() {
         let data = create_minimal_nitf_header(2, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         assert!(reader.has_asset("image:0"));
         assert!(reader.has_asset("image:1"));
         assert!(!reader.has_asset("image:2"));
@@ -1418,7 +1442,7 @@ mod tests {
     fn reader_has_asset_invalid_key() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         assert!(!reader.has_asset("invalid_key"));
         assert!(!reader.has_asset("text:0"));
     }
@@ -1427,7 +1451,7 @@ mod tests {
     fn reader_get_asset_image() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let asset = reader.get_asset("image:0");
         assert!(asset.is_ok());
         let asset = asset.unwrap();
@@ -1440,7 +1464,7 @@ mod tests {
     fn reader_get_asset_not_found() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let asset = reader.get_asset("image:5");
         assert!(asset.is_err());
     }
@@ -1449,12 +1473,12 @@ mod tests {
     fn reader_get_asset_caching() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         // First access
         let asset1 = reader.get_asset("image:0").unwrap();
         // Second access (should be cached)
         let asset2 = reader.get_asset("image:0").unwrap();
-        
+
         // Both should have the same inner Arc (via enum Clone)
         let img1 = asset1.as_image().unwrap();
         let img2 = asset2.as_image().unwrap();
@@ -1465,10 +1489,10 @@ mod tests {
     fn reader_metadata() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let metadata = reader.metadata();
         let dict = metadata.as_dict(None);
-        
+
         // Should have file header fields
         assert!(dict.contains_key("FHDR"));
         assert!(dict.contains_key("FVER"));
@@ -1479,13 +1503,17 @@ mod tests {
     fn reader_metadata_prefix_filter() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let metadata = reader.metadata();
         let dict = metadata.as_dict(Some("FS"));
-        
+
         // Should only have security fields
         for key in dict.keys() {
-            assert!(key.starts_with("FS"), "Key '{}' should start with 'FS'", key);
+            assert!(
+                key.starts_with("FS"),
+                "Key '{}' should start with 'FS'",
+                key
+            );
         }
     }
 
@@ -1493,10 +1521,10 @@ mod tests {
     fn reader_close() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
         let mut reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         // Access an asset to populate cache
         let _ = reader.get_asset("image:0");
-        
+
         // Close should succeed
         let result = reader.close();
         assert!(result.is_ok());
@@ -1509,19 +1537,21 @@ mod tests {
         // CLEVEL is at offset 9 (after FHDR+FVER)
         data[9] = b'9';
         data[10] = b'9';
-        
+
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         let warnings = reader.warnings();
-        
+
         // Should have a warning about invalid CLEVEL
-        assert!(warnings.iter().any(|w| w.code == ValidationCode::InvalidComplexityLevel));
+        assert!(warnings
+            .iter()
+            .any(|w| w.code == ValidationCode::InvalidComplexityLevel));
     }
 
     #[test]
     fn reader_segment_offsets() {
         let data = create_minimal_nitf_header(2, 1, 1, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let offsets = reader.segment_offsets();
         assert_eq!(offsets.images.len(), 2);
         assert_eq!(offsets.graphics.len(), 1);
@@ -1531,11 +1561,10 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod property_tests {
-    use super::*;
     use super::tests::create_minimal_nitf_header;
+    use super::*;
     use proptest::prelude::*;
 
     proptest! {
@@ -1727,32 +1756,30 @@ mod property_tests {
     }
 }
 
-
 #[cfg(test)]
 mod debug_tests {
-    use super::*;
     use super::tests::create_minimal_nitf_header;
+    use super::*;
 
     #[test]
     fn test_des_only_file() {
         // Test case with only DES segments (no images, graphics, or text)
         let data = create_minimal_nitf_header(0, 0, 0, 2, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let offsets = reader.segment_offsets();
         assert_eq!(offsets.des.len(), 2);
-        
+
         // Verify we can get both DES assets
         assert!(reader.get_asset("des:0").is_ok());
         assert!(reader.get_asset("des:1").is_ok());
     }
 }
 
-
 #[cfg(test)]
 mod validation_property_tests {
-    use super::*;
     use super::tests::create_minimal_nitf_header;
+    use super::*;
     use crate::jbp::error::ValidationCode;
     use proptest::prelude::*;
 
@@ -1948,7 +1975,6 @@ mod validation_property_tests {
     }
 }
 
-
 /// Property-based tests for TRE location extraction.
 ///
 /// These tests verify Property 6 from the design document:
@@ -1964,11 +1990,8 @@ mod tre_property_tests {
 
     /// Strategy to generate valid CETAG strings (1-6 alphanumeric characters)
     fn valid_cetag_strategy() -> impl Strategy<Value = String> {
-        prop::collection::vec(
-            prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
-            1..=6,
-        )
-        .prop_map(|chars| chars.into_iter().collect::<String>())
+        prop::collection::vec(prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), 1..=6)
+            .prop_map(|chars| chars.into_iter().collect::<String>())
     }
 
     /// Strategy to generate CEDATA bytes (0 to 100 bytes for practical testing)
@@ -1978,9 +2001,8 @@ mod tre_property_tests {
 
     /// Strategy to generate a valid TRE envelope
     fn tre_envelope_strategy() -> impl Strategy<Value = TreEnvelope> {
-        (valid_cetag_strategy(), cedata_strategy()).prop_map(|(tag, data)| {
-            TreEnvelope::new(tag, data).unwrap()
-        })
+        (valid_cetag_strategy(), cedata_strategy())
+            .prop_map(|(tag, data)| TreEnvelope::new(tag, data).unwrap())
     }
 
     /// Create a simple TRE definition for testing
@@ -2017,18 +2039,18 @@ mod tre_property_tests {
         ) {
             // Create a minimal NITF file
             let data = tests::create_minimal_nitf_header(numi, nums, numt, 0, 0);
-            
+
             // Create reader - should succeed
             let reader = JBPDatasetReader::from_bytes(&data);
             prop_assert!(reader.is_ok(), "Reader creation should succeed");
             let reader = reader.unwrap();
-            
+
             // Verify registry is initialized
             prop_assert!(
                 reader.registry.search_paths().len() >= 0,
                 "Registry should be initialized"
             );
-            
+
             // Access all image segments - TRE extraction should not error
             for i in 0..numi {
                 let key = format!("image:{}", i);
@@ -2037,19 +2059,19 @@ mod tre_property_tests {
                     asset.is_ok(),
                     "Image segment {} should be accessible", i
                 );
-                
+
                 // Verify metadata is accessible
                 let asset = asset.unwrap();
                 let metadata = asset.metadata();
                 let dict = metadata.as_dict(None);
-                
+
                 // Should have at least the IM field from subheader (uppercase per .ksy convention)
                 prop_assert!(
                     dict.contains_key("IM"),
                     "Image segment {} metadata should have IM field", i
                 );
             }
-            
+
             // Access all graphic segments - TRE extraction should not error
             for i in 0..nums {
                 let key = format!("graphic:{}", i);
@@ -2059,7 +2081,7 @@ mod tre_property_tests {
                     "Graphic segment {} should be accessible", i
                 );
             }
-            
+
             // Access all text segments - TRE extraction should not error
             for i in 0..numt {
                 let key = format!("text:{}", i);
@@ -2083,23 +2105,23 @@ mod tre_property_tests {
         ) {
             // Create a minimal NITF file
             let data = tests::create_minimal_nitf_header(numi, 0, 0, 0, 0);
-            
+
             // Create reader
             let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-            
+
             // Access image segment
             let asset = reader.get_asset("image:0").unwrap();
             let metadata = asset.metadata();
-            
+
             // Get all metadata fields
             let dict = metadata.as_dict(None);
-            
+
             // Verify subheader fields are present (uppercase per .ksy convention)
             prop_assert!(
                 dict.contains_key("IM"),
                 "Should have IM field from subheader"
             );
-            
+
             // Note: TRE fields would only appear if:
             // 1. The full image subheader definition is in the registry
             // 2. The subheader contains TRE data in UDID/IXSHD fields
@@ -2114,14 +2136,14 @@ mod tre_property_tests {
         // Create a minimal NITF file (no TREs in subheaders)
         let data = tests::create_minimal_nitf_header(1, 1, 1, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         // Access each segment type - should succeed without TRE errors
         let image = reader.get_asset("image:0");
         assert!(image.is_ok(), "Image segment should be accessible");
-        
+
         let graphic = reader.get_asset("graphic:0");
         assert!(graphic.is_ok(), "Graphic segment should be accessible");
-        
+
         let text = reader.get_asset("text:0");
         assert!(text.is_ok(), "Text segment should be accessible");
     }
@@ -2131,14 +2153,14 @@ mod tre_property_tests {
     fn metadata_provider_has_tre_support() {
         let data = tests::create_minimal_nitf_header(1, 0, 0, 0, 0);
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
-        
+
         let asset = reader.get_asset("image:0").unwrap();
         let metadata = asset.metadata();
-        
+
         // Verify we can call as_dict without errors
         let dict = metadata.as_dict(None);
         assert!(!dict.is_empty(), "Metadata should have fields");
-        
+
         // Verify prefix filtering works
         let _filtered = metadata.as_dict(Some("IM"));
         // IM field should be present (or filtered results may be empty if no match)
@@ -2168,7 +2190,7 @@ mod nitf_integration_tests {
         if !dir.exists() {
             return files;
         }
-        
+
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -2186,18 +2208,18 @@ mod nitf_integration_tests {
     }
 
     /// Integration test: TRE extraction from real NITF files.
-    /// 
+    ///
     /// This test verifies that TRE metadata is accessible via MetadataProvider
     /// for real NITF files. It discovers files dynamically and skips if none
     /// are available.
-    /// 
+    ///
     /// **Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5**
     #[test]
     fn integration_tre_extraction_from_nitf_files() {
         let integration_dir = get_integration_data_dir();
-        
+
         let nitf_files = find_nitf_files(&integration_dir);
-        
+
         if nitf_files.is_empty() {
             eprintln!(
                 "Skipping integration test: no NITF files found in {:?}",
@@ -2205,20 +2227,21 @@ mod nitf_integration_tests {
             );
             return;
         }
-        
+
         // Limit to first 20 files to keep test time reasonable
         // Skip files with "NEG" in path (negative/malformed test cases)
-        let test_files: Vec<_> = nitf_files.iter()
+        let test_files: Vec<_> = nitf_files
+            .iter()
             .filter(|p| !p.to_string_lossy().contains("NEG"))
             .take(20)
             .collect();
-        
+
         eprintln!("Testing {} NITF files for TRE extraction", test_files.len());
-        
+
         let mut files_with_tres = 0;
         let mut total_tres_found = 0;
         let mut files_tested = 0;
-        
+
         for file_path in &test_files {
             // Try to open the file
             let data = match std::fs::read(file_path) {
@@ -2235,10 +2258,10 @@ mod nitf_integration_tests {
                     continue;
                 }
             };
-            
+
             // Get all asset keys
             let keys = reader.get_asset_keys(None, None);
-            
+
             // Check each image segment for TRE metadata
             for key in keys.iter().filter(|k| k.starts_with("image:")) {
                 let asset = match reader.get_asset(key) {
@@ -2248,12 +2271,12 @@ mod nitf_integration_tests {
                         continue;
                     }
                 };
-                
+
                 files_tested += 1;
-                
+
                 let metadata = asset.metadata();
                 let dict = metadata.as_dict(None);
-                
+
                 // Check for UDIDL field (TRE length field after band_info)
                 if dict.contains_key("UDIDL") {
                     if let Some(udidl_val) = dict.get("UDIDL") {
@@ -2261,9 +2284,10 @@ mod nitf_integration_tests {
                             if let Ok(udidl) = udidl_str.trim().parse::<u32>() {
                                 if udidl > 0 {
                                     files_with_tres += 1;
-                                    
+
                                     // Count TREs by looking for CETAG-prefixed fields
-                                    let tre_fields: Vec<_> = dict.keys()
+                                    let tre_fields: Vec<_> = dict
+                                        .keys()
                                         .filter(|k| k.contains('.') && k.len() > 6)
                                         .collect();
                                     total_tres_found += tre_fields.len();
@@ -2272,7 +2296,7 @@ mod nitf_integration_tests {
                         }
                     }
                 }
-                
+
                 // Check for IXSHDL field (extended TRE length field)
                 if dict.contains_key("IXSHDL") {
                     if let Some(ixshdl_val) = dict.get("IXSHDL") {
@@ -2287,12 +2311,12 @@ mod nitf_integration_tests {
                 }
             }
         }
-        
+
         eprintln!(
             "Integration test results: {} segments tested, {} with TREs, {} TRE fields found",
             files_tested, files_with_tres, total_tres_found
         );
-        
+
         // The test passes if we can access the metadata without errors.
         assert!(
             files_tested > 0 || test_files.is_empty(),
@@ -2301,17 +2325,17 @@ mod nitf_integration_tests {
     }
 
     /// Integration test: Verify field iterator completeness on real files.
-    /// 
+    ///
     /// This test verifies that the field iterator yields all fields including
     /// those after repeated TypeRef arrays (like band_info).
-    /// 
+    ///
     /// **Validates: Requirements 3.1, 3.2, 3.3**
     #[test]
     fn integration_field_iterator_completeness() {
         let integration_dir = get_integration_data_dir();
-        
+
         let nitf_files = find_nitf_files(&integration_dir);
-        
+
         if nitf_files.is_empty() {
             eprintln!(
                 "Skipping field iterator integration test: no NITF files found in {:?}",
@@ -2319,22 +2343,23 @@ mod nitf_integration_tests {
             );
             return;
         }
-        
+
         // Test with a subset of files to keep test time reasonable
         // Skip files with "NEG" in path (negative/malformed test cases)
-        let test_files: Vec<_> = nitf_files.iter()
+        let test_files: Vec<_> = nitf_files
+            .iter()
             .filter(|p| !p.to_string_lossy().contains("NEG"))
             .take(10)
             .collect();
-        
+
         if test_files.is_empty() {
             eprintln!("No valid NITF files found for testing");
             return;
         }
-        
+
         let mut files_tested = 0;
         let mut files_with_complete_fields = 0;
-        
+
         for file_path in test_files {
             let data = match std::fs::read(file_path) {
                 Ok(d) => d,
@@ -2344,55 +2369,53 @@ mod nitf_integration_tests {
                 Ok(r) => r,
                 Err(_) => continue,
             };
-            
+
             // Get image segment keys
-            let image_keys: Vec<_> = reader.get_asset_keys(None, None)
+            let image_keys: Vec<_> = reader
+                .get_asset_keys(None, None)
                 .into_iter()
                 .filter(|k| k.starts_with("image:"))
                 .collect();
-            
+
             for key in &image_keys {
                 let asset = match reader.get_asset(key) {
                     Ok(a) => a,
                     Err(_) => continue,
                 };
-                
+
                 files_tested += 1;
-                
+
                 let metadata = asset.metadata();
                 let dict = metadata.as_dict(None);
-                
+
                 // Verify that we have fields from different parts of the subheader
                 // Early fields (before BAND_INFO) - uppercase per .ksy convention
                 let has_early_fields = dict.contains_key("IM") || dict.contains_key("IID1");
-                
+
                 // Late fields (after BAND_INFO) - these verify the TypeRef fix
                 // Note: The metadata provider uses the full .ksy definition which
                 // includes all fields with uppercase names
-                let has_late_fields = dict.contains_key("UDIDL") || 
-                                      dict.contains_key("IXSHDL") ||
-                                      dict.contains_key("ISYNC") ||
-                                      dict.contains_key("IMODE") ||
-                                      dict.contains_key("NBPR") ||
-                                      dict.contains_key("NBPC");
-                
+                let has_late_fields = dict.contains_key("UDIDL")
+                    || dict.contains_key("IXSHDL")
+                    || dict.contains_key("ISYNC")
+                    || dict.contains_key("IMODE")
+                    || dict.contains_key("NBPR")
+                    || dict.contains_key("NBPC");
+
                 if has_early_fields && has_late_fields {
                     files_with_complete_fields += 1;
                 }
             }
         }
-        
+
         eprintln!(
             "Field iterator completeness: {}/{} segments have complete fields",
             files_with_complete_fields, files_tested
         );
-        
+
         // The test passes if we can access metadata without errors.
         // We don't assert on field completeness because the metadata provider
         // may use different definitions depending on configuration.
-        assert!(
-            files_tested > 0,
-            "Should have tested at least one file"
-        );
+        assert!(files_tested > 0, "Should have tested at least one file");
     }
 }

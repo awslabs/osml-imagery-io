@@ -82,7 +82,8 @@ impl ImageAssetProvider for OverviewAssetWrapper {
         resolution_level: u32,
         bands: Option<&[u32]>,
     ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
-        self.inner.get_block(block_row, block_col, resolution_level, bands)
+        self.inner
+            .get_block(block_row, block_col, resolution_level, bands)
     }
 
     fn num_resolution_levels(&self) -> u32 {

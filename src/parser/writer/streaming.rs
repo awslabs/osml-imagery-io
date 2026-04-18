@@ -23,10 +23,7 @@ pub fn get_expected_streaming_field(
 }
 
 /// Get the last written field name for error messages.
-pub fn get_last_written_field(
-    definition: &StructureDefinition,
-    next_field_index: usize,
-) -> String {
+pub fn get_last_written_field(definition: &StructureDefinition, next_field_index: usize) -> String {
     if next_field_index == 0 {
         "start".to_string()
     } else {
@@ -65,12 +62,13 @@ pub fn get_streaming_field_size(
         }
         SizeSpec::Expression(expr) => {
             // Evaluate the expression using written values
-            let result = evaluator.evaluate(expr, ctx).map_err(|e| {
-                WriteError::ValidationError {
-                    path: field.id.clone(),
-                    message: format!("Failed to evaluate size expression: {}", e),
-                }
-            })?;
+            let result =
+                evaluator
+                    .evaluate(expr, ctx)
+                    .map_err(|e| WriteError::ValidationError {
+                        path: field.id.clone(),
+                        message: format!("Failed to evaluate size expression: {}", e),
+                    })?;
 
             match result {
                 EvalResult::Integer(n) if n >= 0 => Ok(n as usize),
@@ -93,12 +91,13 @@ pub fn get_repeat_count(
     match repeat {
         RepeatSpec::Count(n) => Ok(*n),
         RepeatSpec::Expression(expr) => {
-            let result = evaluator.evaluate(expr, ctx).map_err(|e| {
-                WriteError::ValidationError {
-                    path: field_name.to_string(),
-                    message: format!("Failed to evaluate repeat expression: {}", e),
-                }
-            })?;
+            let result =
+                evaluator
+                    .evaluate(expr, ctx)
+                    .map_err(|e| WriteError::ValidationError {
+                        path: field_name.to_string(),
+                        message: format!("Failed to evaluate repeat expression: {}", e),
+                    })?;
 
             match result {
                 EvalResult::Integer(n) if n >= 0 => Ok(n as usize),

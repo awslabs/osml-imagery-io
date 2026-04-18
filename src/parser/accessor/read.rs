@@ -15,9 +15,7 @@ pub fn read_unsigned(bytes: &[u8], size: u8, endian: Endian) -> Result<u64, Acce
         (1, _) => Ok(bytes[0] as u64),
         (2, Endian::Big) => Ok(u16::from_be_bytes([bytes[0], bytes[1]]) as u64),
         (2, Endian::Little) => Ok(u16::from_le_bytes([bytes[0], bytes[1]]) as u64),
-        (4, Endian::Big) => {
-            Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64)
-        }
+        (4, Endian::Big) => Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64),
         (4, Endian::Little) => {
             Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64)
         }
@@ -39,9 +37,7 @@ pub fn read_signed(bytes: &[u8], size: u8, endian: Endian) -> Result<i64, Access
         (1, _) => Ok(bytes[0] as i8 as i64),
         (2, Endian::Big) => Ok(i16::from_be_bytes([bytes[0], bytes[1]]) as i64),
         (2, Endian::Little) => Ok(i16::from_le_bytes([bytes[0], bytes[1]]) as i64),
-        (4, Endian::Big) => {
-            Ok(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64)
-        }
+        (4, Endian::Big) => Ok(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64),
         (4, Endian::Little) => {
             Ok(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64)
         }

@@ -7,8 +7,8 @@ use pyo3::prelude::*;
 use pyo3::IntoPyObjectExt;
 
 use crate::bindings::{
-    PyDataAssetProvider, PyGraphicsAssetProvider, PyImageAssetProvider,
-    PyMetadataProvider, PyTextAssetProvider,
+    PyDataAssetProvider, PyGraphicsAssetProvider, PyImageAssetProvider, PyMetadataProvider,
+    PyTextAssetProvider,
 };
 use crate::error::CodecError;
 use crate::traits::{AssetProvider, DatasetReader};
@@ -47,15 +47,11 @@ impl PyDatasetReader {
 
     /// Returns a reference to the inner DatasetReader, if available.
     fn get_inner(&self) -> PyResult<&dyn DatasetReader> {
-        self.inner
-            .as_ref()
-            .map(|b| b.as_ref())
-            .ok_or_else(|| CodecError::Io(std::io::Error::other(
-                "DatasetReader has been closed",
-            )).into())
+        self.inner.as_ref().map(|b| b.as_ref()).ok_or_else(|| {
+            CodecError::Io(std::io::Error::other("DatasetReader has been closed")).into()
+        })
     }
 }
-
 
 #[pymethods]
 impl PyDatasetReader {
@@ -83,18 +79,22 @@ impl PyDatasetReader {
         let asset = inner.get_asset(key)?;
 
         match asset {
-            AssetProvider::Image(img) => {
-                Ok(PyImageAssetProvider::new(img).into_pyobject(py)?.into_any().unbind())
-            }
-            AssetProvider::Text(txt) => {
-                Ok(PyTextAssetProvider::new(txt).into_pyobject(py)?.into_any().unbind())
-            }
-            AssetProvider::Data(data) => {
-                Ok(PyDataAssetProvider::new(data).into_pyobject(py)?.into_any().unbind())
-            }
-            AssetProvider::Graphics(gfx) => {
-                Ok(PyGraphicsAssetProvider::new(gfx).into_pyobject(py)?.into_any().unbind())
-            }
+            AssetProvider::Image(img) => Ok(PyImageAssetProvider::new(img)
+                .into_pyobject(py)?
+                .into_any()
+                .unbind()),
+            AssetProvider::Text(txt) => Ok(PyTextAssetProvider::new(txt)
+                .into_pyobject(py)?
+                .into_any()
+                .unbind()),
+            AssetProvider::Data(data) => Ok(PyDataAssetProvider::new(data)
+                .into_pyobject(py)?
+                .into_any()
+                .unbind()),
+            AssetProvider::Graphics(gfx) => Ok(PyGraphicsAssetProvider::new(gfx)
+                .into_pyobject(py)?
+                .into_any()
+                .unbind()),
         }
     }
 

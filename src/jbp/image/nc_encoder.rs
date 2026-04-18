@@ -73,7 +73,7 @@ impl UncompressedBlockEncoder {
         // NITF stores data in blocks with nominal sizes, so we need to allocate
         // based on block grid * nominal block size, not actual image dimensions
         let bytes_per_pixel = (nbpp as usize).div_ceil(8);
-        
+
         let total_size = match imode {
             InterleaveMode::S => {
                 // Band sequential: each band has its own set of blocks
@@ -254,7 +254,8 @@ impl UncompressedBlockEncoder {
         block_cols: u32,
     ) -> Result<(), CodecError> {
         let bpp = self.bytes_per_pixel();
-        let block_size = (self.nppbh as usize) * (self.nppbv as usize) * (self.nbands as usize) * bpp;
+        let block_size =
+            (self.nppbh as usize) * (self.nppbv as usize) * (self.nbands as usize) * bpp;
         let block_index = (block_row as usize) * (self.nbpr as usize) + (block_col as usize);
         let block_offset = block_index * block_size;
 
@@ -353,8 +354,7 @@ impl BlockEncoder for UncompressedBlockEncoder {
 
         // Validate data size matches shape
         let bpp = self.bytes_per_pixel();
-        let expected_size =
-            (shape[0] as usize) * (shape[1] as usize) * (shape[2] as usize) * bpp;
+        let expected_size = (shape[0] as usize) * (shape[1] as usize) * (shape[2] as usize) * bpp;
         if data.len() != expected_size {
             return Err(CodecError::Encode(format!(
                 "Block data size mismatch: expected {} bytes, got {}",
@@ -435,7 +435,8 @@ mod tests {
 
         #[test]
         fn encode_block_validates_coordinates() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32];
 
             // Valid coordinates - shape is [bands, rows, cols] (CHW format)
@@ -443,20 +444,27 @@ mod tests {
 
             // Invalid row
             let result = encoder.encode_block(2, 0, &data, [1, 32, 32]);
-            assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(2, 0, 0))));
+            assert!(matches!(
+                result,
+                Err(CodecError::InvalidBlockCoordinates(2, 0, 0))
+            ));
 
             // Invalid column
             let result = encoder.encode_block(0, 2, &data, [1, 32, 32]);
-            assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(0, 2, 0))));
+            assert!(matches!(
+                result,
+                Err(CodecError::InvalidBlockCoordinates(0, 2, 0))
+            ));
         }
 
         #[test]
         fn encode_block_validates_data_size() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
 
             // Wrong data size
             let data = vec![0u8; 100]; // Should be 32*32 = 1024
-            // Shape is [bands, rows, cols] (CHW format)
+                                       // Shape is [bands, rows, cols] (CHW format)
             let result = encoder.encode_block(0, 0, &data, [1, 32, 32]);
             assert!(result.is_err());
             match result {
@@ -469,7 +477,8 @@ mod tests {
 
         #[test]
         fn encode_block_validates_shape() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 3, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 3, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32 * 3];
 
             // Wrong number of bands in shape - shape is [bands, rows, cols] (CHW format)
@@ -485,7 +494,8 @@ mod tests {
 
         #[test]
         fn finalize_fails_if_blocks_missing() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32];
 
             // Only encode one block - shape is [bands, rows, cols] (CHW format)
@@ -504,7 +514,8 @@ mod tests {
 
         #[test]
         fn finalize_succeeds_when_all_blocks_encoded() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32];
 
             // Encode all 4 blocks - shape is [bands, rows, cols] (CHW format)
@@ -565,11 +576,15 @@ mod tests {
 
             // Edge block (0,1): 4x2
             let data_edge_col = vec![2u8; 4 * 2];
-            encoder.encode_block(0, 1, &data_edge_col, [1, 4, 2]).unwrap();
+            encoder
+                .encode_block(0, 1, &data_edge_col, [1, 4, 2])
+                .unwrap();
 
             // Edge block (1,0): 2x4
             let data_edge_row = vec![3u8; 2 * 4];
-            encoder.encode_block(1, 0, &data_edge_row, [1, 2, 4]).unwrap();
+            encoder
+                .encode_block(1, 0, &data_edge_row, [1, 2, 4])
+                .unwrap();
 
             // Corner block (1,1): 2x2
             let data_corner = vec![4u8; 2 * 2];
@@ -606,7 +621,8 @@ mod tests {
         /// Validates: Requirement 8.1
         #[test]
         fn invalid_coordinates_error_includes_row_and_col() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32];
 
             // Test row out of bounds (grid is 2x2, so row 5 is invalid)
@@ -627,7 +643,10 @@ mod tests {
             match result {
                 Err(CodecError::InvalidBlockCoordinates(row, col, _)) => {
                     assert_eq!(row, 0, "Error should include the row coordinate");
-                    assert_eq!(col, 10, "Error should include the invalid column coordinate");
+                    assert_eq!(
+                        col, 10,
+                        "Error should include the invalid column coordinate"
+                    );
                 }
                 _ => panic!("Expected InvalidBlockCoordinates error"),
             }
@@ -638,7 +657,10 @@ mod tests {
             match result {
                 Err(CodecError::InvalidBlockCoordinates(row, col, _)) => {
                     assert_eq!(row, 100, "Error should include the invalid row coordinate");
-                    assert_eq!(col, 200, "Error should include the invalid column coordinate");
+                    assert_eq!(
+                        col, 200,
+                        "Error should include the invalid column coordinate"
+                    );
                 }
                 _ => panic!("Expected InvalidBlockCoordinates error"),
             }
@@ -649,7 +671,8 @@ mod tests {
         #[test]
         fn invalid_coordinates_at_grid_boundary() {
             // 65x65 image with 32x32 blocks = 3x3 grid (indices 0, 1, 2 valid)
-            let mut encoder = UncompressedBlockEncoder::new(65, 65, 1, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(65, 65, 1, 8, InterleaveMode::B, 32, 32);
             let (grid_rows, grid_cols) = encoder.block_grid_size();
             assert_eq!((grid_rows, grid_cols), (3, 3));
 
@@ -675,11 +698,12 @@ mod tests {
         /// Validates: Requirement 8.2
         #[test]
         fn data_size_error_includes_expected_and_actual() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
 
             // Expected size: 32 * 32 * 1 band * 1 byte = 1024 bytes
             let wrong_data = vec![0u8; 100]; // Too small
-            // Shape is [bands, rows, cols] (CHW format)
+                                             // Shape is [bands, rows, cols] (CHW format)
             let result = encoder.encode_block(0, 0, &wrong_data, [1, 32, 32]);
 
             assert!(result.is_err());
@@ -704,11 +728,12 @@ mod tests {
         /// Validates: Requirement 8.2
         #[test]
         fn data_size_error_multiband() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 3, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 3, 8, InterleaveMode::B, 32, 32);
 
             // Expected size: 32 * 32 * 3 bands * 1 byte = 3072 bytes
             let wrong_data = vec![0u8; 1024]; // Only enough for 1 band
-            // Shape is [bands, rows, cols] (CHW format)
+                                              // Shape is [bands, rows, cols] (CHW format)
             let result = encoder.encode_block(0, 0, &wrong_data, [3, 32, 32]);
 
             assert!(result.is_err());
@@ -733,11 +758,12 @@ mod tests {
         /// Validates: Requirement 8.2
         #[test]
         fn data_size_error_16bit_pixels() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 16, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 1, 16, InterleaveMode::B, 32, 32);
 
             // Expected size: 32 * 32 * 1 band * 2 bytes = 2048 bytes
             let wrong_data = vec![0u8; 1024]; // Only half the required size
-            // Shape is [bands, rows, cols] (CHW format)
+                                              // Shape is [bands, rows, cols] (CHW format)
             let result = encoder.encode_block(0, 0, &wrong_data, [1, 32, 32]);
 
             assert!(result.is_err());
@@ -762,7 +788,8 @@ mod tests {
         /// Validates: Requirement 8.4
         #[test]
         fn incomplete_encoding_error_indicates_missing_blocks() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32];
 
             // Only encode block (0, 0), leaving (0, 1), (1, 0), (1, 1) missing
@@ -794,7 +821,8 @@ mod tests {
         /// Validates: Requirement 8.4
         #[test]
         fn incomplete_encoding_partial_blocks() {
-            let mut encoder = UncompressedBlockEncoder::new(96, 96, 1, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(96, 96, 1, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32];
 
             // Grid is 3x3, encode only first row
@@ -822,7 +850,8 @@ mod tests {
         /// Validates: Requirement 8.4 (inverse case)
         #[test]
         fn finalize_succeeds_all_blocks_encoded() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
             let data = vec![0u8; 32 * 32];
 
             // Encode all 4 blocks in 2x2 grid
@@ -833,14 +862,18 @@ mod tests {
             encoder.encode_block(1, 1, &data, [1, 32, 32]).unwrap();
 
             let result = Box::new(encoder).finalize();
-            assert!(result.is_ok(), "finalize should succeed when all blocks are encoded");
+            assert!(
+                result.is_ok(),
+                "finalize should succeed when all blocks are encoded"
+            );
         }
 
         /// Test incomplete encoding error includes grid size information
         /// Validates: Requirement 8.4
         #[test]
         fn incomplete_encoding_error_includes_grid_size() {
-            let mut encoder = UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
+            let mut encoder =
+                UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
             // Don't encode any blocks
 
             let result = Box::new(encoder).finalize();

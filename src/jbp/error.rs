@@ -126,7 +126,10 @@ impl From<JBPError> for CodecError {
                 "TRE length mismatch: CETAG='{}', CEL={}, actual={}",
                 tag, cel, actual
             )),
-            JBPError::UnexpectedEof { expected, available } => CodecError::Parse(format!(
+            JBPError::UnexpectedEof {
+                expected,
+                available,
+            } => CodecError::Parse(format!(
                 "Unexpected end of data: expected {} bytes, got {}",
                 expected, available
             )),
@@ -311,10 +314,11 @@ mod tests {
 
     #[test]
     fn validation_warning_with_builders() {
-        let warning = ValidationWarning::new(ValidationCode::FileLengthMismatch, "File length mismatch")
-            .with_field("FL")
-            .with_expected("1000")
-            .with_actual("900");
+        let warning =
+            ValidationWarning::new(ValidationCode::FileLengthMismatch, "File length mismatch")
+                .with_field("FL")
+                .with_expected("1000")
+                .with_actual("900");
 
         assert_eq!(warning.field, Some("FL".to_string()));
         assert_eq!(warning.expected, Some("1000".to_string()));
@@ -323,10 +327,8 @@ mod tests {
 
     #[test]
     fn validation_warning_display_basic() {
-        let warning = ValidationWarning::new(
-            ValidationCode::InvalidComplexityLevel,
-            "Invalid CLEVEL",
-        );
+        let warning =
+            ValidationWarning::new(ValidationCode::InvalidComplexityLevel, "Invalid CLEVEL");
         assert_eq!(
             warning.to_string(),
             "INVALID_COMPLEXITY_LEVEL: Invalid CLEVEL"
@@ -335,8 +337,8 @@ mod tests {
 
     #[test]
     fn validation_warning_display_with_field() {
-        let warning = ValidationWarning::new(ValidationCode::FileLengthMismatch, "Mismatch")
-            .with_field("FL");
+        let warning =
+            ValidationWarning::new(ValidationCode::FileLengthMismatch, "Mismatch").with_field("FL");
         assert_eq!(
             warning.to_string(),
             "FILE_LENGTH_MISMATCH: Mismatch (field: FL)"

@@ -66,8 +66,7 @@ pub fn swap_be_to_ne(data: &[u8], bytes_per_pixel: usize) -> Vec<u8> {
         8 => data
             .chunks_exact(8)
             .flat_map(|c| {
-                u64::from_be_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])
-                    .to_ne_bytes()
+                u64::from_be_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]).to_ne_bytes()
             })
             .collect(),
         _ => data.to_vec(),
@@ -215,10 +214,10 @@ pub fn create_block_decoder(
     image_data: Arc<[u8]>,
 ) -> Result<Box<dyn BlockDecoder>, CodecError> {
     use crate::jbp::image::{is_masked_ic, unmask_ic};
-    
+
     let ic = subheader.ic()?;
     let ic_trimmed = ic.trim();
-    
+
     // For masked IC codes, use the underlying compression type for decoder selection
     let effective_ic = if is_masked_ic(ic_trimmed) {
         unmask_ic(ic_trimmed)

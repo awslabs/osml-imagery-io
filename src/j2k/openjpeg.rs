@@ -115,8 +115,7 @@ impl OpenJpegCodec {
             if pos + 3 >= len {
                 break;
             }
-            let seg_len =
-                ((codestream[pos + 2] as usize) << 8) | (codestream[pos + 3] as usize);
+            let seg_len = ((codestream[pos + 2] as usize) << 8) | (codestream[pos + 3] as usize);
 
             // COD marker: 0xFF52
             if marker_type == 0x52 {
@@ -354,18 +353,16 @@ impl J2KCodec for OpenJpegCodec {
         // - YTsiz (4 bytes) - tile height
         // - XTOsiz (4 bytes) - tile X offset
         // - YTOsiz (4 bytes) - tile Y offset
-        
+
         // Find SIZ marker (0xFF51)
         let mut pos = 2; // Skip SOC
         while pos + 2 <= codestream.len() {
             if codestream[pos] == 0xFF && codestream[pos + 1] == 0x51 {
                 // Found SIZ marker
                 if pos + 41 > codestream.len() {
-                    return Err(CodecError::Decode(
-                        "SIZ marker truncated".into(),
-                    ));
+                    return Err(CodecError::Decode("SIZ marker truncated".into()));
                 }
-                
+
                 // Parse SIZ marker fields (big-endian)
                 let xsiz = u32::from_be_bytes([
                     codestream[pos + 6],
@@ -415,7 +412,7 @@ impl J2KCodec for OpenJpegCodec {
                     codestream[pos + 36],
                     codestream[pos + 37],
                 ]);
-                
+
                 // Calculate number of tiles
                 // num_tiles_x = ceil((Xsiz - XTOsiz) / XTsiz)
                 // num_tiles_y = ceil((Ysiz - YTOsiz) / YTsiz)
@@ -423,29 +420,29 @@ impl J2KCodec for OpenJpegCodec {
                 let image_height = ysiz - yosiz;
                 let tile_offset_x = xtosiz - xosiz;
                 let tile_offset_y = ytosiz - yosiz;
-                
+
                 let num_tiles_x = (image_width - tile_offset_x).div_ceil(xtsiz);
                 let num_tiles_y = (image_height - tile_offset_y).div_ceil(ytsiz);
-                
+
                 return Ok((xtsiz, ytsiz, num_tiles_x, num_tiles_y));
             }
-            
+
             // Skip to next marker
             if codestream[pos] == 0xFF {
                 if pos + 4 > codestream.len() {
                     break;
                 }
-                let marker_len = u16::from_be_bytes([
-                    codestream[pos + 2],
-                    codestream[pos + 3],
-                ]) as usize;
+                let marker_len =
+                    u16::from_be_bytes([codestream[pos + 2], codestream[pos + 3]]) as usize;
                 pos += 2 + marker_len;
             } else {
                 pos += 1;
             }
         }
-        
-        Err(CodecError::Decode("SIZ marker not found in codestream".into()))
+
+        Err(CodecError::Decode(
+            "SIZ marker not found in codestream".into(),
+        ))
     }
 
     fn decode_tile(
@@ -470,7 +467,7 @@ impl J2KCodec for OpenJpegCodec {
         // Get tile info to validate tile_index
         let (tile_width, tile_height, num_tiles_x, num_tiles_y) = self.get_tile_info(codestream)?;
         let total_tiles = num_tiles_x * num_tiles_y;
-        
+
         if tile_index >= total_tiles {
             return Err(CodecError::InvalidBlockCoordinates(
                 tile_index / num_tiles_x,
@@ -514,14 +511,14 @@ impl J2KCodec for OpenJpegCodec {
 
         // Calculate tile dimensions at this resolution level
         let scale = 1u32 << params.resolution_level;
-        
+
         // For edge tiles, the actual dimensions may be smaller
         let tile_row = tile_index / num_tiles_x;
         let tile_col = tile_index % num_tiles_x;
-        
+
         // Get full image dimensions
         let (full_width, full_height, _) = self.get_dimensions(codestream)?;
-        
+
         // Calculate actual tile dimensions (may be smaller for edge tiles)
         let tile_x0 = tile_col * tile_width;
         let tile_y0 = tile_row * tile_height;
@@ -650,12 +647,12 @@ impl OpenJpegEncodeState {
         // Configure compression
         cparams.numresolution = params.num_decomposition_levels as c_int + 1;
         cparams.tcp_numlayers = params.num_quality_layers as c_int;
-        
+
         // For small tiles, we need to reduce the code-block size and precinct size
         // OpenJPEG default code-block is 64x64, precinct is 2^15 x 2^15
         // Both must fit within tiles
         let min_tile_dim = params.tile_width.min(params.tile_height);
-        
+
         // Code-block size must be a power of 2 and <= tile size
         // Use the largest power of 2 that fits, minimum 4
         let cblock_size = if min_tile_dim >= 64 {
@@ -671,7 +668,7 @@ impl OpenJpegEncodeState {
         };
         cparams.cblockw_init = cblock_size;
         cparams.cblockh_init = cblock_size;
-        
+
         // Set precinct sizes for each resolution level
         // Precinct size must be >= code-block size and fit within tile
         // For small tiles, use the tile size as precinct size
@@ -690,7 +687,7 @@ impl OpenJpegEncodeState {
         } else {
             4
         };
-        
+
         // Set precinct sizes for all resolution levels
         cparams.res_spec = cparams.numresolution;
         for i in 0..cparams.numresolution as usize {
@@ -1091,7 +1088,10 @@ mod tests {
             }
         }
 
-        assert!(found_tlm, "TLM marker (0xFF55) not found in codestream header");
+        assert!(
+            found_tlm,
+            "TLM marker (0xFF55) not found in codestream header"
+        );
     }
 
     #[test]
@@ -1100,7 +1100,7 @@ mod tests {
         let codec = OpenJpegCodec::new();
         let width = 64u32;
         let height = 64u32;
-        
+
         // Create test image data (gradient pattern)
         let mut data = Vec::with_capacity((width * height) as usize);
         for y in 0..height {

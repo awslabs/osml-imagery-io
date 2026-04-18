@@ -55,11 +55,7 @@ pub type TIFFErrorHandler = Option<unsafe extern "C" fn(module: *const c_char, f
 
 /// Extended error/warning handler that receives a client data pointer.
 pub type TIFFErrorHandlerExt = Option<
-    unsafe extern "C" fn(
-        clientdata: *mut c_void,
-        module: *const c_char,
-        fmt: *const c_char,
-    ),
+    unsafe extern "C" fn(clientdata: *mut c_void, module: *const c_char, fmt: *const c_char),
 >;
 
 // =============================================================================
@@ -136,12 +132,7 @@ extern "C" {
     ///
     /// # Returns
     /// Number of bytes read, or -1 on error
-    pub fn TIFFReadEncodedTile(
-        tif: *mut c_void,
-        tile: u32,
-        buf: *mut c_void,
-        size: i64,
-    ) -> i64;
+    pub fn TIFFReadEncodedTile(tif: *mut c_void, tile: u32, buf: *mut c_void, size: i64) -> i64;
 
     /// Compress and write a tile of data.
     ///
@@ -153,12 +144,7 @@ extern "C" {
     ///
     /// # Returns
     /// Number of bytes written, or -1 on error
-    pub fn TIFFWriteEncodedTile(
-        tif: *mut c_void,
-        tile: u32,
-        data: *mut c_void,
-        size: i64,
-    ) -> i64;
+    pub fn TIFFWriteEncodedTile(tif: *mut c_void, tile: u32, data: *mut c_void, size: i64) -> i64;
 
     /// Read a tile of data (raw coordinates version).
     ///
@@ -172,14 +158,7 @@ extern "C" {
     ///
     /// # Returns
     /// Number of bytes read, or -1 on error
-    pub fn TIFFReadTile(
-        tif: *mut c_void,
-        buf: *mut c_void,
-        x: u32,
-        y: u32,
-        z: u32,
-        s: u16,
-    ) -> i64;
+    pub fn TIFFReadTile(tif: *mut c_void, buf: *mut c_void, x: u32, y: u32, z: u32, s: u16) -> i64;
 
     /// Write a tile of data (raw coordinates version).
     ///
@@ -193,14 +172,8 @@ extern "C" {
     ///
     /// # Returns
     /// Number of bytes written, or -1 on error
-    pub fn TIFFWriteTile(
-        tif: *mut c_void,
-        buf: *mut c_void,
-        x: u32,
-        y: u32,
-        z: u32,
-        s: u16,
-    ) -> i64;
+    pub fn TIFFWriteTile(tif: *mut c_void, buf: *mut c_void, x: u32, y: u32, z: u32, s: u16)
+        -> i64;
 
     /// Return the size in bytes of a decoded tile.
     pub fn TIFFTileSize(tif: *mut c_void) -> i64;
@@ -222,12 +195,7 @@ extern "C" {
     ///
     /// # Returns
     /// Number of bytes read, or -1 on error
-    pub fn TIFFReadEncodedStrip(
-        tif: *mut c_void,
-        strip: u32,
-        buf: *mut c_void,
-        size: i64,
-    ) -> i64;
+    pub fn TIFFReadEncodedStrip(tif: *mut c_void, strip: u32, buf: *mut c_void, size: i64) -> i64;
 
     /// Return the size in bytes of a decoded strip.
     pub fn TIFFStripSize(tif: *mut c_void) -> i64;
@@ -311,11 +279,7 @@ extern "C" {
     ///
     /// # Returns
     /// 0 on success, -1 on failure
-    pub fn TIFFMergeFieldInfo(
-        tif: *mut c_void,
-        info: *const TIFFFieldInfo,
-        n: u32,
-    ) -> c_int;
+    pub fn TIFFMergeFieldInfo(tif: *mut c_void, info: *const TIFFFieldInfo, n: u32) -> c_int;
 }
 
 // =============================================================================

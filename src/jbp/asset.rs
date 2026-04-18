@@ -27,13 +27,16 @@ use std::sync::{Arc, OnceLock};
 use crate::error::CodecError;
 use crate::jbp::image::decoder::{create_block_decoder, BlockDecoder};
 use crate::jbp::image::facade::ImageSubheaderFacade;
-use crate::jbp::image::mask::ImageDataMask;
 use crate::jbp::image::is_masked_ic;
+use crate::jbp::image::mask::ImageDataMask;
 use crate::jbp::metadata::JBPSegmentMetadataProvider;
 use crate::jbp::text::decode_and_normalize;
 use crate::jbp::types::{NitfFormat, SegmentLocation, SegmentType};
 use crate::parser::StructureRegistry;
-use crate::traits::{AssetMetadata, DataAssetProvider, GraphicsAssetProvider, ImageAssetProvider, MetadataProvider, TextAssetProvider};
+use crate::traits::{
+    AssetMetadata, DataAssetProvider, GraphicsAssetProvider, ImageAssetProvider, MetadataProvider,
+    TextAssetProvider,
+};
 use crate::types::PixelType;
 
 #[cfg(test)]
@@ -173,45 +176,42 @@ impl JBPImageAssetProvider {
         let subheader_start = location.subheader_offset as usize;
         let subheader_end = subheader_start + location.subheader_length as usize;
         let subheader_bytes = &data[subheader_start..subheader_end];
-        
+
         let facade = ImageSubheaderFacade::from_bytes(subheader_bytes, &registry, format)?;
         let ic = facade.ic()?;
         let ic_trimmed = ic.trim();
-        
+
         // Parse mask if IC indicates a masked image
         let mask = if is_masked_ic(ic_trimmed) {
             let data_start = location.data_offset as usize;
             let data_end = data_start.saturating_add(location.data_length as usize);
-            
+
             // Bounds check to prevent panic on malformed files
             if data_end > data.len() {
                 return Err(CodecError::Decode(format!(
                     "Image data extends beyond file bounds: data_end={} > file_len={}",
-                    data_end, data.len()
+                    data_end,
+                    data.len()
                 )));
             }
-            
+
             let image_data = &data[data_start..data_end];
-            
+
             // Get block grid dimensions
             let nbpr = facade.nbpr()?;
             let nbpc = facade.nbpc()?;
             let num_blocks = nbpr * nbpc;
             let num_bands = facade.band_count()? as u32;
             let imode = facade.imode()?;
-            
-            let (mask, _bytes_consumed) = ImageDataMask::parse(
-                image_data,
-                num_blocks,
-                num_bands,
-                imode,
-            )?;
-            
+
+            let (mask, _bytes_consumed) =
+                ImageDataMask::parse(image_data, num_blocks, num_bands, imode)?;
+
             Some(mask)
         } else {
             None
         };
-        
+
         Ok(Self {
             key,
             title,
@@ -247,20 +247,17 @@ impl JBPImageAssetProvider {
         if let Some(decoder) = self.decoder.get() {
             return Ok(decoder.as_ref());
         }
-        
+
         // Initialize the decoder
         let subheader_bytes = self.subheader_bytes();
-        let facade = ImageSubheaderFacade::from_bytes(
-            subheader_bytes,
-            &self.registry,
-            self.format,
-        )?;
+        let facade =
+            ImageSubheaderFacade::from_bytes(subheader_bytes, &self.registry, self.format)?;
         let image_data = self.image_data();
         let new_decoder = create_block_decoder(&facade, image_data)?;
-        
+
         // Try to set it (another thread might have set it already)
         let _ = self.decoder.set(new_decoder);
-        
+
         // Return the decoder (either ours or the one another thread set)
         Ok(self.decoder.get().unwrap().as_ref())
     }
@@ -326,7 +323,7 @@ impl ImageAssetProvider for JBPImageAssetProvider {
                 return false;
             }
         }
-        
+
         // For masked images, check the mask
         if let Some(ref mask) = self.mask {
             // Get NBPR and IMODE from subheader
@@ -342,11 +339,11 @@ impl ImageAssetProvider for JBPImageAssetProvider {
                 Ok(m) => m,
                 Err(_) => return false,
             };
-            
+
             // For masked images, check the mask (band 0 for non-IMODE=S)
             return mask.has_block(block_row, block_col, nbpr, 0, imode);
         }
-        
+
         // For non-masked images, delegate to decoder
         self.decoder()
             .map(|d| d.has_block(block_row, block_col))
@@ -367,7 +364,7 @@ impl ImageAssetProvider for JBPImageAssetProvider {
                 col: block_col,
             });
         }
-        
+
         let decoder = self.decoder()?;
         if resolution_level >= decoder.num_resolution_levels() {
             return Err(CodecError::InvalidBlockCoordinates(
@@ -376,18 +373,19 @@ impl ImageAssetProvider for JBPImageAssetProvider {
                 resolution_level,
             ));
         }
-        
+
         // For masked images, use offset-based decoding with mask offsets
         if let Some(ref mask) = self.mask {
             let subheader = self.subheader()?;
             let nbpr = subheader.nbpr()?;
             let imode = subheader.imode()?;
-            
+
             // Get the block offset from the mask table
             // The offset is relative to the start of blocked image data,
             // so we need to add image_data_offset to get the actual position
             // in the image data buffer (which includes the mask table)
-            if let Some(block_offset) = mask.get_block_offset(block_row, block_col, nbpr, 0, imode) {
+            if let Some(block_offset) = mask.get_block_offset(block_row, block_col, nbpr, 0, imode)
+            {
                 let actual_offset = (mask.image_data_offset as u64) + block_offset;
                 return decoder.decode_block_at_offset(
                     actual_offset,
@@ -400,7 +398,7 @@ impl ImageAssetProvider for JBPImageAssetProvider {
             // If no offset in mask but has_block returned true, fall through to standard decode
             // This shouldn't happen but provides a fallback
         }
-        
+
         // For non-masked images, use standard offset calculation
         decoder.decode_block(block_row, block_col, resolution_level, bands)
     }
@@ -427,11 +425,15 @@ impl ImageAssetProvider for JBPImageAssetProvider {
     }
 
     fn num_pixels_per_block_horizontal(&self) -> u32 {
-        self.subheader().and_then(|s| s.effective_nppbh()).unwrap_or(0)
+        self.subheader()
+            .and_then(|s| s.effective_nppbh())
+            .unwrap_or(0)
     }
 
     fn num_pixels_per_block_vertical(&self) -> u32 {
-        self.subheader().and_then(|s| s.effective_nppbv()).unwrap_or(0)
+        self.subheader()
+            .and_then(|s| s.effective_nppbv())
+            .unwrap_or(0)
     }
 
     fn num_bits_per_pixel(&self) -> u32 {
@@ -493,7 +495,6 @@ impl ImageAssetProvider for JBPImageAssetProvider {
         decoder.codec_configuration()
     }
 }
-
 
 /// Asset provider for NITF text segments.
 ///
@@ -858,9 +859,8 @@ impl DataAssetProvider for JBPDataAssetProvider {
 
     fn parse_as_xml(&self) -> Result<String, CodecError> {
         let raw = self.raw_asset()?;
-        let text = std::str::from_utf8(&raw).map_err(|e| {
-            CodecError::Parse(format!("DES data is not valid UTF-8: {e}"))
-        })?;
+        let text = std::str::from_utf8(&raw)
+            .map_err(|e| CodecError::Parse(format!("DES data is not valid UTF-8: {e}")))?;
         // Validate that it parses as XML by checking for an opening tag
         let trimmed = text.trim();
         if !trimmed.starts_with('<') {
@@ -873,12 +873,10 @@ impl DataAssetProvider for JBPDataAssetProvider {
 
     fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
         let raw = self.raw_asset()?;
-        serde_json::from_slice(&raw).map_err(|e| {
-            CodecError::Parse(format!("DES data is not valid JSON: {e}"))
-        })
+        serde_json::from_slice(&raw)
+            .map_err(|e| CodecError::Parse(format!("DES data is not valid JSON: {e}")))
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -913,21 +911,36 @@ mod tests {
 
     #[test]
     fn generate_asset_key_res() {
-        assert_eq!(generate_asset_key(SegmentType::ReservedExtension, 0), "res:0");
-        assert_eq!(generate_asset_key(SegmentType::ReservedExtension, 1), "res:1");
+        assert_eq!(
+            generate_asset_key(SegmentType::ReservedExtension, 0),
+            "res:0"
+        );
+        assert_eq!(
+            generate_asset_key(SegmentType::ReservedExtension, 1),
+            "res:1"
+        );
     }
 
     #[test]
     fn parse_asset_key_image() {
         assert_eq!(parse_asset_key("image:0"), Some((SegmentType::Image, 0)));
         assert_eq!(parse_asset_key("image:5"), Some((SegmentType::Image, 5)));
-        assert_eq!(parse_asset_key("image:999"), Some((SegmentType::Image, 999)));
+        assert_eq!(
+            parse_asset_key("image:999"),
+            Some((SegmentType::Image, 999))
+        );
     }
 
     #[test]
     fn parse_asset_key_graphic() {
-        assert_eq!(parse_asset_key("graphic:0"), Some((SegmentType::Graphic, 0)));
-        assert_eq!(parse_asset_key("graphic:3"), Some((SegmentType::Graphic, 3)));
+        assert_eq!(
+            parse_asset_key("graphic:0"),
+            Some((SegmentType::Graphic, 0))
+        );
+        assert_eq!(
+            parse_asset_key("graphic:3"),
+            Some((SegmentType::Graphic, 3))
+        );
     }
 
     #[test]
@@ -938,33 +951,45 @@ mod tests {
 
     #[test]
     fn parse_asset_key_des() {
-        assert_eq!(parse_asset_key("des:0"), Some((SegmentType::DataExtension, 0)));
-        assert_eq!(parse_asset_key("des:2"), Some((SegmentType::DataExtension, 2)));
+        assert_eq!(
+            parse_asset_key("des:0"),
+            Some((SegmentType::DataExtension, 0))
+        );
+        assert_eq!(
+            parse_asset_key("des:2"),
+            Some((SegmentType::DataExtension, 2))
+        );
     }
 
     #[test]
     fn parse_asset_key_res() {
-        assert_eq!(parse_asset_key("res:0"), Some((SegmentType::ReservedExtension, 0)));
-        assert_eq!(parse_asset_key("res:1"), Some((SegmentType::ReservedExtension, 1)));
+        assert_eq!(
+            parse_asset_key("res:0"),
+            Some((SegmentType::ReservedExtension, 0))
+        );
+        assert_eq!(
+            parse_asset_key("res:1"),
+            Some((SegmentType::ReservedExtension, 1))
+        );
     }
 
     #[test]
     fn parse_asset_key_invalid_format() {
         // No colon separator
         assert_eq!(parse_asset_key("image"), None);
-        
+
         // Invalid type prefix
         assert_eq!(parse_asset_key("unknown:0"), None);
         assert_eq!(parse_asset_key("img:0"), None);
-        
+
         // Invalid index
         assert_eq!(parse_asset_key("image:abc"), None);
         assert_eq!(parse_asset_key("image:-1"), None);
         assert_eq!(parse_asset_key("image:"), None);
-        
+
         // Old format no longer recognized
         assert_eq!(parse_asset_key("image_segment_0"), None);
-        
+
         // Empty string
         assert_eq!(parse_asset_key(""), None);
     }
@@ -982,8 +1007,13 @@ mod tests {
             for index in [0, 1, 5, 10, 100, 999] {
                 let key = generate_asset_key(segment_type, index);
                 let parsed = parse_asset_key(&key);
-                assert_eq!(parsed, Some((segment_type, index)),
-                    "Roundtrip failed for {:?} index {}", segment_type, index);
+                assert_eq!(
+                    parsed,
+                    Some((segment_type, index)),
+                    "Roundtrip failed for {:?} index {}",
+                    segment_type,
+                    index
+                );
             }
         }
     }
@@ -1015,9 +1045,13 @@ mod tests {
         Arc::from(data)
     }
 
-    fn create_test_metadata(definition: Arc<StructureDefinition>) -> Arc<JBPSegmentMetadataProvider> {
+    fn create_test_metadata(
+        definition: Arc<StructureDefinition>,
+    ) -> Arc<JBPSegmentMetadataProvider> {
         let raw_bytes: Arc<[u8]> = Arc::from(b"IMG_00001 Test Image Title    ".as_slice());
-        Arc::new(JBPSegmentMetadataProvider::from_definition(definition, raw_bytes))
+        Arc::new(JBPSegmentMetadataProvider::from_definition(
+            definition, raw_bytes,
+        ))
     }
 
     /// Create a test structure registry.
@@ -1051,21 +1085,21 @@ mod tests {
         subheader.extend_from_slice(&[b' '; 80]);
 
         // Security fields (167 bytes total)
-        subheader.push(b'U');           // ISCLAS (1)
-        subheader.extend_from_slice(&[b' '; 2]);  // ISCLSY (2)
+        subheader.push(b'U'); // ISCLAS (1)
+        subheader.extend_from_slice(&[b' '; 2]); // ISCLSY (2)
         subheader.extend_from_slice(&[b' '; 11]); // ISCODE (11)
-        subheader.extend_from_slice(&[b' '; 2]);  // ISCTLH (2)
+        subheader.extend_from_slice(&[b' '; 2]); // ISCTLH (2)
         subheader.extend_from_slice(&[b' '; 20]); // ISREL (20)
-        subheader.extend_from_slice(&[b' '; 2]);  // ISDCTP (2)
-        subheader.extend_from_slice(&[b' '; 8]);  // ISDCDT (8)
-        subheader.extend_from_slice(&[b' '; 4]);  // ISDCXM (4)
-        subheader.push(b' ');           // ISDG (1)
-        subheader.extend_from_slice(&[b' '; 8]);  // ISDGDT (8)
+        subheader.extend_from_slice(&[b' '; 2]); // ISDCTP (2)
+        subheader.extend_from_slice(&[b' '; 8]); // ISDCDT (8)
+        subheader.extend_from_slice(&[b' '; 4]); // ISDCXM (4)
+        subheader.push(b' '); // ISDG (1)
+        subheader.extend_from_slice(&[b' '; 8]); // ISDGDT (8)
         subheader.extend_from_slice(&[b' '; 43]); // ISCLTX (43)
-        subheader.push(b' ');           // ISCATP (1)
+        subheader.push(b' '); // ISCATP (1)
         subheader.extend_from_slice(&[b' '; 40]); // ISCAUT (40)
-        subheader.push(b' ');           // ISCRSN (1)
-        subheader.extend_from_slice(&[b' '; 8]);  // ISSRDT (8)
+        subheader.push(b' '); // ISCRSN (1)
+        subheader.extend_from_slice(&[b' '; 8]); // ISSRDT (8)
         subheader.extend_from_slice(&[b' '; 15]); // ISCTLN (15)
 
         // ENCRYP (1)
@@ -1110,9 +1144,9 @@ mod tests {
         // Band info for 1 band
         subheader.extend_from_slice(b"M "); // IREPBAND (2)
         subheader.extend_from_slice(&[b' '; 6]); // ISUBCAT (6)
-        subheader.push(b'N');        // IFC (1)
+        subheader.push(b'N'); // IFC (1)
         subheader.extend_from_slice(&[b' '; 3]); // IMFLT (3)
-        subheader.push(b'0');        // NLUTS (1) - No LUTs
+        subheader.push(b'0'); // NLUTS (1) - No LUTs
 
         // ISYNC (1)
         subheader.push(b'0');
@@ -1187,7 +1221,8 @@ mod tests {
             metadata,
             registry,
             test_format(),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(provider.key(), "image:0");
     }
@@ -1213,7 +1248,8 @@ mod tests {
             metadata,
             registry,
             test_format(),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(provider.title(), "Test Image");
     }
@@ -1239,7 +1275,8 @@ mod tests {
             metadata,
             registry,
             test_format(),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(provider.description(), "A test image segment");
     }
@@ -1265,7 +1302,8 @@ mod tests {
             metadata,
             registry,
             test_format(),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(provider.media_type(), "application/vnd.nitf.image");
     }
@@ -1291,7 +1329,8 @@ mod tests {
             metadata,
             registry,
             test_format(),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(provider.roles(), &["data", "thumbnail"]);
     }
@@ -1317,7 +1356,8 @@ mod tests {
             metadata,
             registry,
             test_format(),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1341,7 +1381,8 @@ mod tests {
             metadata,
             registry,
             test_format(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let raw = provider.raw_asset().unwrap();
         // Image data is 64x64 = 4096 bytes of zeros
@@ -1371,7 +1412,8 @@ mod tests {
             metadata,
             registry,
             test_format(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let result = provider.raw_asset();
         assert!(result.is_err());
@@ -1398,7 +1440,8 @@ mod tests {
             metadata,
             registry,
             test_format(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let meta = provider.metadata();
         let dict = meta.as_dict(None);
@@ -1916,7 +1959,6 @@ mod tests {
     }
 }
 
-
 /// Property-based tests for asset key generation.
 ///
 /// These tests verify the correctness properties for asset key generation
@@ -2376,21 +2418,21 @@ mod property_tests {
             subheader.extend_from_slice(&[b' '; 80]);
 
             // Security fields (167 bytes total)
-            subheader.push(b'U');           // ISCLAS (1)
-            subheader.extend_from_slice(&[b' '; 2]);  // ISCLSY (2)
+            subheader.push(b'U'); // ISCLAS (1)
+            subheader.extend_from_slice(&[b' '; 2]); // ISCLSY (2)
             subheader.extend_from_slice(&[b' '; 11]); // ISCODE (11)
-            subheader.extend_from_slice(&[b' '; 2]);  // ISCTLH (2)
+            subheader.extend_from_slice(&[b' '; 2]); // ISCTLH (2)
             subheader.extend_from_slice(&[b' '; 20]); // ISREL (20)
-            subheader.extend_from_slice(&[b' '; 2]);  // ISDCTP (2)
-            subheader.extend_from_slice(&[b' '; 8]);  // ISDCDT (8)
-            subheader.extend_from_slice(&[b' '; 4]);  // ISDCXM (4)
-            subheader.push(b' ');           // ISDG (1)
-            subheader.extend_from_slice(&[b' '; 8]);  // ISDGDT (8)
+            subheader.extend_from_slice(&[b' '; 2]); // ISDCTP (2)
+            subheader.extend_from_slice(&[b' '; 8]); // ISDCDT (8)
+            subheader.extend_from_slice(&[b' '; 4]); // ISDCXM (4)
+            subheader.push(b' '); // ISDG (1)
+            subheader.extend_from_slice(&[b' '; 8]); // ISDGDT (8)
             subheader.extend_from_slice(&[b' '; 43]); // ISCLTX (43)
-            subheader.push(b' ');           // ISCATP (1)
+            subheader.push(b' '); // ISCATP (1)
             subheader.extend_from_slice(&[b' '; 40]); // ISCAUT (40)
-            subheader.push(b' ');           // ISCRSN (1)
-            subheader.extend_from_slice(&[b' '; 8]);  // ISSRDT (8)
+            subheader.push(b' '); // ISCRSN (1)
+            subheader.extend_from_slice(&[b' '; 8]); // ISSRDT (8)
             subheader.extend_from_slice(&[b' '; 15]); // ISCTLN (15)
 
             // ENCRYP (1)
@@ -2409,7 +2451,11 @@ mod property_tests {
             subheader.extend_from_slice(b"INT");
 
             // IREP (8)
-            let irep = if nbands == 1 { b"MONO    " } else { b"MULTI   " };
+            let irep = if nbands == 1 {
+                b"MONO    "
+            } else {
+                b"MULTI   "
+            };
             subheader.extend_from_slice(irep);
 
             // ICAT (8)
@@ -2437,9 +2483,9 @@ mod property_tests {
             for _ in 0..nbands {
                 subheader.extend_from_slice(b"M "); // IREPBAND (2)
                 subheader.extend_from_slice(&[b' '; 6]); // ISUBCAT (6)
-                subheader.push(b'N');        // IFC (1)
+                subheader.push(b'N'); // IFC (1)
                 subheader.extend_from_slice(&[b' '; 3]); // IMFLT (3)
-                subheader.push(b'0');        // NLUTS (1) - No LUTs
+                subheader.push(b'0'); // NLUTS (1) - No LUTs
             }
 
             // ISYNC (1)
@@ -2487,7 +2533,8 @@ mod property_tests {
 
             // Calculate image data size
             let bytes_per_pixel = ((nbpp as usize) + 7) / 8;
-            let block_size = (nppbh as usize) * (nppbv as usize) * (nbands as usize) * bytes_per_pixel;
+            let block_size =
+                (nppbh as usize) * (nppbv as usize) * (nbands as usize) * bytes_per_pixel;
             let total_blocks = (nbpr as usize) * (nbpc as usize);
             let image_data_size = block_size * total_blocks;
 
@@ -2746,7 +2793,7 @@ mod property_tests {
             ) {
                 // Create file data smaller than the claimed segment data length
                 let file_data: Arc<[u8]> = Arc::from(vec![0u8; file_size]);
-                
+
                 // Create metadata with minimal subheader bytes
                 let subheader_bytes: Arc<[u8]> = Arc::from(vec![b' '; 30]);
                 let definition = create_test_definition();
@@ -2754,20 +2801,20 @@ mod property_tests {
                     definition,
                     subheader_bytes,
                 ));
-                
+
                 // Create a location where data_offset + data_length > file_size
                 // This simulates a corrupted or truncated file
                 // Use file_size directly to ensure we always exceed bounds
                 let data_offset = file_size as u64 / 2;
                 let data_length = (file_size as u64 - data_offset) + data_length_excess as u64;
-                
+
                 let location = SegmentLocation::new(
                     0,                    // subheader_offset
                     30,                   // subheader_length
                     data_offset,          // data_offset
                     data_length,          // data_length (extends beyond file)
                 );
-                
+
                 let provider = JBPGraphicsAssetProvider::new(
                     "graphic:0".to_string(),
                     "Test Graphic".to_string(),
@@ -2777,12 +2824,12 @@ mod property_tests {
                     file_data,
                     metadata,
                 );
-                
+
                 // raw_asset() should return an error
                 let result = provider.raw_asset();
                 prop_assert!(result.is_err(),
                     "Expected error when data extends beyond file bounds, got Ok");
-                
+
                 // Verify the error message mentions bounds
                 let err_msg = result.err().unwrap().to_string();
                 prop_assert!(err_msg.contains("extends beyond file"),
@@ -2800,7 +2847,7 @@ mod property_tests {
                 // Create file data with enough space for the segment data
                 let total_size = 30 + data_size + padding; // subheader + data + padding
                 let file_data: Arc<[u8]> = Arc::from(vec![0u8; total_size]);
-                
+
                 // Create metadata with minimal subheader bytes
                 let subheader_bytes: Arc<[u8]> = Arc::from(vec![b' '; 30]);
                 let definition = create_test_definition();
@@ -2808,7 +2855,7 @@ mod property_tests {
                     definition,
                     subheader_bytes,
                 ));
-                
+
                 // Create a location where data is within bounds
                 let location = SegmentLocation::new(
                     0,                    // subheader_offset
@@ -2816,7 +2863,7 @@ mod property_tests {
                     30,                   // data_offset (after subheader)
                     data_size as u64,     // data_length (within bounds)
                 );
-                
+
                 let provider = JBPGraphicsAssetProvider::new(
                     "graphic:0".to_string(),
                     "Test Graphic".to_string(),
@@ -2826,12 +2873,12 @@ mod property_tests {
                     file_data,
                     metadata,
                 );
-                
+
                 // raw_asset() should succeed
                 let result = provider.raw_asset();
                 prop_assert!(result.is_ok(),
                     "Expected Ok when data is within bounds, got Err: {:?}", result.err());
-                
+
                 // Verify the returned data has the correct length
                 let data = result.unwrap();
                 prop_assert_eq!(data.len(), data_size,

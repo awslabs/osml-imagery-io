@@ -22,9 +22,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::error::CodecError;
-use crate::jbp::image::encoder::BlockEncoder;
-use crate::j2k::{J2KCodec, J2KEncodeParams, J2KEncodeState};
 use crate::j2k::comrat::J2KEncodingHints;
+use crate::j2k::{J2KCodec, J2KEncodeParams, J2KEncodeState};
+use crate::jbp::image::encoder::BlockEncoder;
 
 #[cfg(feature = "openjpeg")]
 use crate::j2k::get_j2k_codec;
@@ -78,7 +78,6 @@ impl std::fmt::Debug for Jpeg2000BlockEncoder {
             .finish()
     }
 }
-
 
 impl Jpeg2000BlockEncoder {
     /// Create a new JPEG 2000 block encoder.
@@ -205,7 +204,6 @@ impl Jpeg2000BlockEncoder {
     }
 }
 
-
 impl BlockEncoder for Jpeg2000BlockEncoder {
     fn encode_block(
         &mut self,
@@ -216,11 +214,7 @@ impl BlockEncoder for Jpeg2000BlockEncoder {
     ) -> Result<(), CodecError> {
         // Validate block coordinates
         if block_row >= self.block_grid.0 || block_col >= self.block_grid.1 {
-            return Err(CodecError::InvalidBlockCoordinates(
-                block_row,
-                block_col,
-                0,
-            ));
+            return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
         }
 
         // Validate data size matches shape (accounting for bytes per pixel)
@@ -253,11 +247,7 @@ impl BlockEncoder for Jpeg2000BlockEncoder {
     fn skip_block(&mut self, block_row: u32, block_col: u32) -> Result<(), CodecError> {
         // Validate block coordinates
         if block_row >= self.block_grid.0 || block_col >= self.block_grid.1 {
-            return Err(CodecError::InvalidBlockCoordinates(
-                block_row,
-                block_col,
-                0,
-            ));
+            return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
         }
 
         // Mark block as handled (skipped for masked images)
@@ -297,7 +287,6 @@ impl BlockEncoder for Jpeg2000BlockEncoder {
 // The encode_state is Send, and the codec is Send + Sync
 unsafe impl Send for Jpeg2000BlockEncoder {}
 unsafe impl Sync for Jpeg2000BlockEncoder {}
-
 
 // =============================================================================
 // Tests
@@ -424,7 +413,9 @@ mod tests {
             _tile_index: u32,
             _params: &J2KDecodeParams,
         ) -> Result<J2KDecodeResult, CodecError> {
-            Err(CodecError::Unsupported("Mock codec doesn't decode tiles".into()))
+            Err(CodecError::Unsupported(
+                "Mock codec doesn't decode tiles".into(),
+            ))
         }
     }
 
@@ -432,10 +423,9 @@ mod tests {
     fn test_new_encoder_c8() {
         let codec = Arc::new(MockJ2KCodec::new());
         let hints = J2KEncodingHints::default();
-        let encoder = Jpeg2000BlockEncoder::with_codec(
-            codec, 256, 256, 3, 8, false, 128, 128, &hints,
-        )
-        .unwrap();
+        let encoder =
+            Jpeg2000BlockEncoder::with_codec(codec, 256, 256, 3, 8, false, 128, 128, &hints)
+                .unwrap();
 
         assert_eq!(encoder.compression_type(), "C8");
         assert_eq!(encoder.block_grid_size(), (2, 2));
@@ -446,10 +436,9 @@ mod tests {
     fn test_new_encoder_cd() {
         let codec = Arc::new(MockJ2KCodec::new().with_htj2k_support());
         let hints = J2KEncodingHints::htj2k(false);
-        let encoder = Jpeg2000BlockEncoder::with_codec(
-            codec, 256, 256, 3, 8, false, 128, 128, &hints,
-        )
-        .unwrap();
+        let encoder =
+            Jpeg2000BlockEncoder::with_codec(codec, 256, 256, 3, 8, false, 128, 128, &hints)
+                .unwrap();
 
         assert_eq!(encoder.compression_type(), "CD");
     }
@@ -458,9 +447,8 @@ mod tests {
     fn test_htj2k_not_supported() {
         let codec = Arc::new(MockJ2KCodec::new()); // No HTJ2K support
         let hints = J2KEncodingHints::htj2k(false);
-        let result = Jpeg2000BlockEncoder::with_codec(
-            codec, 256, 256, 3, 8, false, 128, 128, &hints,
-        );
+        let result =
+            Jpeg2000BlockEncoder::with_codec(codec, 256, 256, 3, 8, false, 128, 128, &hints);
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -471,9 +459,8 @@ mod tests {
     fn test_bit_depth_exceeds_max() {
         let codec = Arc::new(MockJ2KCodec::new().with_max_bit_depth(16));
         let hints = J2KEncodingHints::default();
-        let result = Jpeg2000BlockEncoder::with_codec(
-            codec, 256, 256, 3, 32, false, 128, 128, &hints,
-        );
+        let result =
+            Jpeg2000BlockEncoder::with_codec(codec, 256, 256, 3, 32, false, 128, 128, &hints);
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -484,10 +471,9 @@ mod tests {
     fn test_encode_block_validates_coordinates() {
         let codec = Arc::new(MockJ2KCodec::new());
         let hints = J2KEncodingHints::default();
-        let mut encoder = Jpeg2000BlockEncoder::with_codec(
-            codec, 256, 256, 3, 8, false, 128, 128, &hints,
-        )
-        .unwrap();
+        let mut encoder =
+            Jpeg2000BlockEncoder::with_codec(codec, 256, 256, 3, 8, false, 128, 128, &hints)
+                .unwrap();
 
         // Valid coordinates
         let data = vec![0u8; 128 * 128 * 3];
@@ -495,21 +481,26 @@ mod tests {
 
         // Invalid row
         let result = encoder.encode_block(5, 0, &data, [128, 128, 3]);
-        assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(5, 0, 0))));
+        assert!(matches!(
+            result,
+            Err(CodecError::InvalidBlockCoordinates(5, 0, 0))
+        ));
 
         // Invalid column
         let result = encoder.encode_block(0, 5, &data, [128, 128, 3]);
-        assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(0, 5, 0))));
+        assert!(matches!(
+            result,
+            Err(CodecError::InvalidBlockCoordinates(0, 5, 0))
+        ));
     }
 
     #[test]
     fn test_encode_block_validates_data_size() {
         let codec = Arc::new(MockJ2KCodec::new());
         let hints = J2KEncodingHints::default();
-        let mut encoder = Jpeg2000BlockEncoder::with_codec(
-            codec, 256, 256, 3, 8, false, 128, 128, &hints,
-        )
-        .unwrap();
+        let mut encoder =
+            Jpeg2000BlockEncoder::with_codec(codec, 256, 256, 3, 8, false, 128, 128, &hints)
+                .unwrap();
 
         // Wrong data size
         let data = vec![0u8; 100]; // Too small
@@ -522,10 +513,9 @@ mod tests {
     fn test_finalize_fails_if_blocks_missing() {
         let codec = Arc::new(MockJ2KCodec::new());
         let hints = J2KEncodingHints::default();
-        let mut encoder = Jpeg2000BlockEncoder::with_codec(
-            codec, 256, 256, 3, 8, false, 128, 128, &hints,
-        )
-        .unwrap();
+        let mut encoder =
+            Jpeg2000BlockEncoder::with_codec(codec, 256, 256, 3, 8, false, 128, 128, &hints)
+                .unwrap();
 
         // Only encode one block
         let data = vec![0u8; 128 * 128 * 3];
@@ -541,10 +531,9 @@ mod tests {
     fn test_finalize_succeeds_when_all_blocks_encoded() {
         let codec = Arc::new(MockJ2KCodec::new());
         let hints = J2KEncodingHints::default();
-        let mut encoder = Jpeg2000BlockEncoder::with_codec(
-            codec, 256, 256, 3, 8, false, 128, 128, &hints,
-        )
-        .unwrap();
+        let mut encoder =
+            Jpeg2000BlockEncoder::with_codec(codec, 256, 256, 3, 8, false, 128, 128, &hints)
+                .unwrap();
 
         // Encode all 4 blocks (2x2 grid)
         let data = vec![0u8; 128 * 128 * 3];
@@ -568,23 +557,37 @@ mod tests {
 
         // Exact fit: 256x256 with 128x128 tiles = 2x2 grid
         let encoder = Jpeg2000BlockEncoder::with_codec(
-            codec.clone(), 256, 256, 1, 8, false, 128, 128, &hints,
+            codec.clone(),
+            256,
+            256,
+            1,
+            8,
+            false,
+            128,
+            128,
+            &hints,
         )
         .unwrap();
         assert_eq!(encoder.block_grid_size(), (2, 2));
 
         // Non-exact fit: 300x200 with 128x128 tiles = 2x3 grid (ceil)
         let encoder = Jpeg2000BlockEncoder::with_codec(
-            codec.clone(), 200, 300, 1, 8, false, 128, 128, &hints,
+            codec.clone(),
+            200,
+            300,
+            1,
+            8,
+            false,
+            128,
+            128,
+            &hints,
         )
         .unwrap();
         assert_eq!(encoder.block_grid_size(), (2, 3));
 
         // Single tile: 64x64 with 128x128 tiles = 1x1 grid
-        let encoder = Jpeg2000BlockEncoder::with_codec(
-            codec, 64, 64, 1, 8, false, 128, 128, &hints,
-        )
-        .unwrap();
+        let encoder =
+            Jpeg2000BlockEncoder::with_codec(codec, 64, 64, 1, 8, false, 128, 128, &hints).unwrap();
         assert_eq!(encoder.block_grid_size(), (1, 1));
     }
 
@@ -592,10 +595,9 @@ mod tests {
     fn test_lossless_hints() {
         let codec = Arc::new(MockJ2KCodec::new());
         let hints = J2KEncodingHints::lossless();
-        let encoder = Jpeg2000BlockEncoder::with_codec(
-            codec, 256, 256, 3, 8, false, 256, 256, &hints,
-        )
-        .unwrap();
+        let encoder =
+            Jpeg2000BlockEncoder::with_codec(codec, 256, 256, 3, 8, false, 256, 256, &hints)
+                .unwrap();
 
         assert_eq!(encoder.compression_type(), "C8");
     }
@@ -604,10 +606,9 @@ mod tests {
     fn test_lossy_hints() {
         let codec = Arc::new(MockJ2KCodec::new());
         let hints = J2KEncodingHints::lossy(20.0);
-        let encoder = Jpeg2000BlockEncoder::with_codec(
-            codec, 256, 256, 3, 8, false, 256, 256, &hints,
-        )
-        .unwrap();
+        let encoder =
+            Jpeg2000BlockEncoder::with_codec(codec, 256, 256, 3, 8, false, 256, 256, &hints)
+                .unwrap();
 
         assert_eq!(encoder.compression_type(), "C8");
     }

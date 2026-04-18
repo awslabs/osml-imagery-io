@@ -23,13 +23,16 @@ mod traits;
 mod types;
 
 pub use bindings::{
-    PyAssetProvider, PyDataAssetProvider, PyDatasetReader, PyDatasetWriter,
-    PyGraphicsAssetProvider, PyImageAssetProvider, PyBufferedImageAssetProvider,
-    PyBufferedTextAssetProvider, PyMetadataProvider, PyBufferedMetadataProvider,
-    PyTextAssetProvider, PyStructureAccessor, PyStructureDefinition, PyStructureRegistry,
-    PyStructureWriter, PyValue, IO,
+    PyAssetProvider, PyBufferedImageAssetProvider, PyBufferedMetadataProvider,
+    PyBufferedTextAssetProvider, PyDataAssetProvider, PyDatasetReader, PyDatasetWriter,
+    PyGraphicsAssetProvider, PyImageAssetProvider, PyMetadataProvider, PyStructureAccessor,
+    PyStructureDefinition, PyStructureRegistry, PyStructureWriter, PyTextAssetProvider, PyValue,
+    IO,
 };
-pub use buffered::{BufferedImageAssetProvider, BufferedMetadataProvider, BufferedTextAssetProvider, MemoryImageConfig};
+pub use buffered::{
+    BufferedImageAssetProvider, BufferedMetadataProvider, BufferedTextAssetProvider,
+    MemoryImageConfig,
+};
 pub use composite::{CompositeDatasetReader, OverviewAssetWrapper};
 pub use traits::{
     AssetMetadata, AssetProvider, DataAssetProvider, DatasetReader, DatasetWriter,

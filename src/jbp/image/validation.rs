@@ -100,17 +100,25 @@ impl std::fmt::Display for ImageValidationCode {
             ImageValidationCode::ZeroCols => write!(f, "ZERO_COLS"),
             ImageValidationCode::RowsExceedClevel => write!(f, "ROWS_EXCEED_CLEVEL"),
             ImageValidationCode::ColsExceedClevel => write!(f, "COLS_EXCEED_CLEVEL"),
-            ImageValidationCode::BlockingInsufficientCols => write!(f, "BLOCKING_INSUFFICIENT_COLS"),
-            ImageValidationCode::BlockingInsufficientRows => write!(f, "BLOCKING_INSUFFICIENT_ROWS"),
+            ImageValidationCode::BlockingInsufficientCols => {
+                write!(f, "BLOCKING_INSUFFICIENT_COLS")
+            }
+            ImageValidationCode::BlockingInsufficientRows => {
+                write!(f, "BLOCKING_INSUFFICIENT_ROWS")
+            }
             ImageValidationCode::InvalidPvtype => write!(f, "INVALID_PVTYPE"),
             ImageValidationCode::AbppExceedsNbpp => write!(f, "ABPP_EXCEEDS_NBPP"),
             ImageValidationCode::InvalidNbppForReal => write!(f, "INVALID_NBPP_FOR_REAL"),
             ImageValidationCode::InvalidNbppForComplex => write!(f, "INVALID_NBPP_FOR_COMPLEX"),
             ImageValidationCode::InvalidNbppForBilevel => write!(f, "INVALID_NBPP_FOR_BILEVEL"),
             ImageValidationCode::RgbBandCountMismatch => write!(f, "RGB_BAND_COUNT_MISMATCH"),
-            ImageValidationCode::RgbLutBandCountMismatch => write!(f, "RGB_LUT_BAND_COUNT_MISMATCH"),
+            ImageValidationCode::RgbLutBandCountMismatch => {
+                write!(f, "RGB_LUT_BAND_COUNT_MISMATCH")
+            }
             ImageValidationCode::MonoBandCountMismatch => write!(f, "MONO_BAND_COUNT_MISMATCH"),
-            ImageValidationCode::YCbCr601BandCountMismatch => write!(f, "YCBCR601_BAND_COUNT_MISMATCH"),
+            ImageValidationCode::YCbCr601BandCountMismatch => {
+                write!(f, "YCBCR601_BAND_COUNT_MISMATCH")
+            }
             ImageValidationCode::InvalidIrepband => write!(f, "INVALID_IREPBAND"),
             ImageValidationCode::InefficientSingleBandSequential => {
                 write!(f, "INEFFICIENT_SINGLE_BAND_SEQUENTIAL")
@@ -122,7 +130,6 @@ impl std::fmt::Display for ImageValidationCode {
         }
     }
 }
-
 
 /// Result of an image validation check.
 #[derive(Debug, Clone)]
@@ -256,7 +263,6 @@ impl ImageValidator {
 
         results
     }
-
 
     /// Validate image dimensions.
     ///
@@ -429,7 +435,6 @@ impl ImageValidator {
 
         results
     }
-
 
     /// Validate pixel type parameters.
     ///
@@ -663,7 +668,7 @@ impl ImageValidator {
                 if let Ok(band_info) = subheader.band_info(i) {
                     if let Ok(irepband) = band_info.irepband() {
                         let irepband_trimmed = irepband.trim();
-                        
+
                         // For RGB and YCbCr601, check specific band values
                         match irep {
                             ImageRepresentation::Rgb | ImageRepresentation::YCbCr601 => {
@@ -727,7 +732,6 @@ impl ImageValidator {
 
         results
     }
-
 
     /// Validate LUT configuration.
     ///
@@ -840,10 +844,7 @@ impl ImageValidator {
                     results.push(
                         ImageValidationResult::error(
                             ImageValidationCode::RgbLutLutCountMismatch,
-                            format!(
-                                "Band {} NLUTS must be 3 for IREP=RGB/LUT, got {}",
-                                i, nluts
-                            ),
+                            format!("Band {} NLUTS must be 3 for IREP=RGB/LUT, got {}", i, nluts),
                         )
                         .with_field(format!("NLUTS{}", i))
                         .with_expected("3")
@@ -900,7 +901,6 @@ impl ImageValidator {
         results.iter().filter(|r| r.is_warning()).collect()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -992,8 +992,8 @@ mod tests {
 
     #[test]
     fn test_validation_result_display_with_field() {
-        let result = ImageValidationResult::error(ImageValidationCode::ZeroRows, "Test")
-            .with_field("NROWS");
+        let result =
+            ImageValidationResult::error(ImageValidationCode::ZeroRows, "Test").with_field("NROWS");
         let display = result.to_string();
         assert!(display.contains("(field: NROWS)"));
     }
@@ -1077,7 +1077,6 @@ mod tests {
         assert!(warnings.iter().all(|r| r.is_warning()));
     }
 }
-
 
 #[cfg(test)]
 mod property_tests {
@@ -1198,7 +1197,7 @@ mod property_tests {
             // If NLUTS > 0, add NELUT and LUT data
             if nluts > 0 {
                 data.extend_from_slice(format!("{:05}", nelut).as_bytes()); // NELUT (5)
-                // LUT data (NELUT bytes per LUT, repeated NLUTS times)
+                                                                            // LUT data (NELUT bytes per LUT, repeated NLUTS times)
                 for _ in 0..nluts {
                     data.extend(vec![0u8; nelut as usize]);
                 }
@@ -1307,7 +1306,6 @@ mod property_tests {
             }
         }
     }
-
 
     /// Property 11: Pixel Type Validation
     /// For any invalid PVTYPE/NBPP combination, validation SHALL return an error.
@@ -1419,7 +1417,6 @@ mod property_tests {
             );
         }
     }
-
 
     /// Property 12: Band Configuration Validation
     /// For any IREP with a required band count, validation SHALL return an error
@@ -1533,7 +1530,6 @@ mod property_tests {
         }
     }
 
-
     /// Property 13: LUT Configuration Validation
     /// For any invalid LUT configuration, validation SHALL return an error.
     /// **Validates: Requirements 16.1-16.4**
@@ -1546,7 +1542,7 @@ mod property_tests {
                 // NLUTSn > 4 (too many LUTs)
                 // Note: We can't easily test this with our test data generator
                 // since NLUTS is a single digit (0-9), but 5-9 would be invalid
-                
+
                 // RGB/LUT with wrong number of LUTs (not 3)
                 Just(("RGB/LUT", 1u8, 1u8, 256u32, ImageValidationCode::RgbLutLutCountMismatch)),
                 Just(("RGB/LUT", 1u8, 2u8, 256u32, ImageValidationCode::RgbLutLutCountMismatch)),
@@ -1605,7 +1601,7 @@ mod property_tests {
         ) {
             let min_entries = 1u32 << abpp;
             let nelut = ((min_entries as f64) * nelut_factor) as u32;
-            
+
             // Ensure NELUT < 2^ABPP and NELUT > 0
             prop_assume!(nelut > 0 && nelut < min_entries);
 

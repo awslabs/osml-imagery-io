@@ -414,11 +414,13 @@ pub struct jpeg_error_mgr {
     /// Error exit function
     pub error_exit: Option<unsafe extern "C" fn(cinfo: *mut jpeg_common_struct)>,
     /// Emit message function
-    pub emit_message: Option<unsafe extern "C" fn(cinfo: *mut jpeg_common_struct, msg_level: c_int)>,
+    pub emit_message:
+        Option<unsafe extern "C" fn(cinfo: *mut jpeg_common_struct, msg_level: c_int)>,
     /// Output message function
     pub output_message: Option<unsafe extern "C" fn(cinfo: *mut jpeg_common_struct)>,
     /// Format message function
-    pub format_message: Option<unsafe extern "C" fn(cinfo: *mut jpeg_common_struct, buffer: *mut c_char)>,
+    pub format_message:
+        Option<unsafe extern "C" fn(cinfo: *mut jpeg_common_struct, buffer: *mut c_char)>,
     /// Reset error manager function
     pub reset_error_mgr: Option<unsafe extern "C" fn(cinfo: *mut jpeg_common_struct)>,
     /// Last message code
@@ -462,7 +464,8 @@ pub struct jpeg_destination_mgr {
     /// Initialize destination
     pub init_destination: Option<unsafe extern "C" fn(cinfo: *mut jpeg_compress_struct)>,
     /// Empty output buffer
-    pub empty_output_buffer: Option<unsafe extern "C" fn(cinfo: *mut jpeg_compress_struct) -> boolean>,
+    pub empty_output_buffer:
+        Option<unsafe extern "C" fn(cinfo: *mut jpeg_compress_struct) -> boolean>,
     /// Terminate destination
     pub term_destination: Option<unsafe extern "C" fn(cinfo: *mut jpeg_compress_struct)>,
 }
@@ -477,15 +480,17 @@ pub struct jpeg_source_mgr {
     /// Initialize source
     pub init_source: Option<unsafe extern "C" fn(cinfo: *mut jpeg_decompress_struct)>,
     /// Fill input buffer
-    pub fill_input_buffer: Option<unsafe extern "C" fn(cinfo: *mut jpeg_decompress_struct) -> boolean>,
+    pub fill_input_buffer:
+        Option<unsafe extern "C" fn(cinfo: *mut jpeg_decompress_struct) -> boolean>,
     /// Skip input data
-    pub skip_input_data: Option<unsafe extern "C" fn(cinfo: *mut jpeg_decompress_struct, num_bytes: c_long)>,
+    pub skip_input_data:
+        Option<unsafe extern "C" fn(cinfo: *mut jpeg_decompress_struct, num_bytes: c_long)>,
     /// Resync to restart
-    pub resync_to_restart: Option<unsafe extern "C" fn(cinfo: *mut jpeg_decompress_struct, desired: c_int) -> boolean>,
+    pub resync_to_restart:
+        Option<unsafe extern "C" fn(cinfo: *mut jpeg_decompress_struct, desired: c_int) -> boolean>,
     /// Terminate source
     pub term_source: Option<unsafe extern "C" fn(cinfo: *mut jpeg_decompress_struct)>,
 }
-
 
 // =============================================================================
 // libjpeg Compression Structure
@@ -867,11 +872,7 @@ extern "C" {
     /// * `cinfo` - Compression info structure
     /// * `version` - JPEG library version
     /// * `structsize` - Size of jpeg_compress_struct
-    pub fn jpeg_CreateCompress(
-        cinfo: *mut jpeg_compress_struct,
-        version: c_int,
-        structsize: usize,
-    );
+    pub fn jpeg_CreateCompress(cinfo: *mut jpeg_compress_struct, version: c_int, structsize: usize);
 
     /// Destroy a compression object.
     ///
@@ -979,10 +980,7 @@ extern "C" {
     ///
     /// # Returns
     /// JPEG_HEADER_OK, JPEG_HEADER_TABLES_ONLY, or JPEG_SUSPENDED.
-    pub fn jpeg_read_header(
-        cinfo: *mut jpeg_decompress_struct,
-        require_image: boolean,
-    ) -> c_int;
+    pub fn jpeg_read_header(cinfo: *mut jpeg_decompress_struct, require_image: boolean) -> c_int;
 
     /// Start decompression.
     ///

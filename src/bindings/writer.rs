@@ -52,14 +52,9 @@ impl PyDatasetWriter {
 
     /// Returns a mutable reference to the inner DatasetWriter, if available.
     fn get_inner_mut(&mut self) -> PyResult<&mut Box<dyn DatasetWriter>> {
-        self.inner
-            .as_mut()
-            .ok_or_else(|| {
-                CodecError::Io(std::io::Error::other(
-                    "DatasetWriter has been closed",
-                ))
-                .into()
-            })
+        self.inner.as_mut().ok_or_else(|| {
+            CodecError::Io(std::io::Error::other("DatasetWriter has been closed")).into()
+        })
     }
 }
 

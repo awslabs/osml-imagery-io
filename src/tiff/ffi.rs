@@ -100,11 +100,7 @@ pub(crate) struct MemoryReadStreamData {
 /// POSIX-style read callback for libtiff.
 /// Reads up to `size` bytes from the memory stream into `buf`.
 /// Returns the number of bytes actually read, or -1 on error.
-unsafe extern "C" fn tiff_read_proc(
-    clientdata: *mut c_void,
-    buf: *mut c_void,
-    size: i64,
-) -> i64 {
+unsafe extern "C" fn tiff_read_proc(clientdata: *mut c_void, buf: *mut c_void, size: i64) -> i64 {
     if clientdata.is_null() || buf.is_null() || size < 0 {
         return -1;
     }
@@ -117,11 +113,7 @@ unsafe extern "C" fn tiff_read_proc(
         return 0;
     }
 
-    ptr::copy_nonoverlapping(
-        stream.data.add(stream.pos),
-        buf as *mut u8,
-        to_read,
-    );
+    ptr::copy_nonoverlapping(stream.data.add(stream.pos), buf as *mut u8, to_read);
     stream.pos += to_read;
 
     to_read as i64
@@ -140,11 +132,7 @@ unsafe extern "C" fn tiff_write_proc(
 /// POSIX-style seek callback for libtiff.
 /// Supports SEEK_SET (0), SEEK_CUR (1), and SEEK_END (2).
 /// Returns the new absolute position, or -1 on error.
-unsafe extern "C" fn tiff_seek_proc(
-    clientdata: *mut c_void,
-    offset: i64,
-    whence: c_int,
-) -> i64 {
+unsafe extern "C" fn tiff_seek_proc(clientdata: *mut c_void, offset: i64, whence: c_int) -> i64 {
     if clientdata.is_null() {
         return -1;
     }
@@ -152,7 +140,7 @@ unsafe extern "C" fn tiff_seek_proc(
     let stream = &mut *(clientdata as *mut MemoryReadStreamData);
 
     let new_pos: i64 = match whence {
-        0 => offset, // SEEK_SET
+        0 => offset,                     // SEEK_SET
         1 => stream.pos as i64 + offset, // SEEK_CUR
         2 => stream.len as i64 + offset, // SEEK_END
         _ => return -1,
@@ -265,8 +253,8 @@ unsafe extern "C" fn tiff_seek_proc_writable(
     let stream = &mut *(clientdata as *mut MemoryWriteStreamData);
 
     let new_pos: i64 = match whence {
-        0 => offset,                           // SEEK_SET
-        1 => stream.pos as i64 + offset,       // SEEK_CUR
+        0 => offset,                              // SEEK_SET
+        1 => stream.pos as i64 + offset,          // SEEK_CUR
         2 => stream.buffer.len() as i64 + offset, // SEEK_END
         _ => return -1,
     };
@@ -419,12 +407,10 @@ unsafe extern "C" fn geotiff_tag_extender(tif: *mut c_void) {
 fn install_geotiff_extender() {
     use std::sync::Once;
     static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        unsafe {
-            let prev = sys::TIFFSetTagExtender(Some(geotiff_tag_extender));
-            if let Ok(mut guard) = PARENT_EXTENDER.lock() {
-                *guard = prev;
-            }
+    INIT.call_once(|| unsafe {
+        let prev = sys::TIFFSetTagExtender(Some(geotiff_tag_extender));
+        if let Ok(mut guard) = PARENT_EXTENDER.lock() {
+            *guard = prev;
         }
     });
 }
@@ -546,8 +532,8 @@ impl TiffHandle {
         };
 
         if handle.is_null() {
-            let error_msg = take_last_error()
-                .unwrap_or_else(|| "Unknown error opening TIFF".to_string());
+            let error_msg =
+                take_last_error().unwrap_or_else(|| "Unknown error opening TIFF".to_string());
             return Err(CodecError::InvalidFormat(format!(
                 "Failed to open TIFF: {}",
                 error_msg
@@ -685,7 +671,9 @@ impl TiffHandle {
         };
 
         if raw.len() < 8 {
-            return Err(CodecError::Decode("TIFF data too short for header".to_string()));
+            return Err(CodecError::Decode(
+                "TIFF data too short for header".to_string(),
+            ));
         }
 
         // Determine byte order from the TIFF header (bytes 0–1).
@@ -722,7 +710,12 @@ impl TiffHandle {
                     offset
                 )));
             }
-            let bytes: [u8; 4] = [raw[offset], raw[offset + 1], raw[offset + 2], raw[offset + 3]];
+            let bytes: [u8; 4] = [
+                raw[offset],
+                raw[offset + 1],
+                raw[offset + 2],
+                raw[offset + 3],
+            ];
             Ok(if is_little_endian {
                 u32::from_le_bytes(bytes)
             } else {
@@ -809,48 +802,111 @@ impl TiffHandle {
         // Endian-aware read helpers
         let read_u16_at = |offset: usize| -> Result<u16, CodecError> {
             if offset + 2 > raw.len() {
-                return Err(CodecError::Decode(format!("u16 out of bounds at {}", offset)));
+                return Err(CodecError::Decode(format!(
+                    "u16 out of bounds at {}",
+                    offset
+                )));
             }
             let b: [u8; 2] = [raw[offset], raw[offset + 1]];
-            Ok(if is_little_endian { u16::from_le_bytes(b) } else { u16::from_be_bytes(b) })
+            Ok(if is_little_endian {
+                u16::from_le_bytes(b)
+            } else {
+                u16::from_be_bytes(b)
+            })
         };
         let read_i16_at = |offset: usize| -> Result<i16, CodecError> {
             if offset + 2 > raw.len() {
-                return Err(CodecError::Decode(format!("i16 out of bounds at {}", offset)));
+                return Err(CodecError::Decode(format!(
+                    "i16 out of bounds at {}",
+                    offset
+                )));
             }
             let b: [u8; 2] = [raw[offset], raw[offset + 1]];
-            Ok(if is_little_endian { i16::from_le_bytes(b) } else { i16::from_be_bytes(b) })
+            Ok(if is_little_endian {
+                i16::from_le_bytes(b)
+            } else {
+                i16::from_be_bytes(b)
+            })
         };
         let read_u32_at = |offset: usize| -> Result<u32, CodecError> {
             if offset + 4 > raw.len() {
-                return Err(CodecError::Decode(format!("u32 out of bounds at {}", offset)));
+                return Err(CodecError::Decode(format!(
+                    "u32 out of bounds at {}",
+                    offset
+                )));
             }
-            let b: [u8; 4] = [raw[offset], raw[offset + 1], raw[offset + 2], raw[offset + 3]];
-            Ok(if is_little_endian { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) })
+            let b: [u8; 4] = [
+                raw[offset],
+                raw[offset + 1],
+                raw[offset + 2],
+                raw[offset + 3],
+            ];
+            Ok(if is_little_endian {
+                u32::from_le_bytes(b)
+            } else {
+                u32::from_be_bytes(b)
+            })
         };
         let read_i32_at = |offset: usize| -> Result<i32, CodecError> {
             if offset + 4 > raw.len() {
-                return Err(CodecError::Decode(format!("i32 out of bounds at {}", offset)));
+                return Err(CodecError::Decode(format!(
+                    "i32 out of bounds at {}",
+                    offset
+                )));
             }
-            let b: [u8; 4] = [raw[offset], raw[offset + 1], raw[offset + 2], raw[offset + 3]];
-            Ok(if is_little_endian { i32::from_le_bytes(b) } else { i32::from_be_bytes(b) })
+            let b: [u8; 4] = [
+                raw[offset],
+                raw[offset + 1],
+                raw[offset + 2],
+                raw[offset + 3],
+            ];
+            Ok(if is_little_endian {
+                i32::from_le_bytes(b)
+            } else {
+                i32::from_be_bytes(b)
+            })
         };
         let read_f32_at = |offset: usize| -> Result<f32, CodecError> {
             if offset + 4 > raw.len() {
-                return Err(CodecError::Decode(format!("f32 out of bounds at {}", offset)));
+                return Err(CodecError::Decode(format!(
+                    "f32 out of bounds at {}",
+                    offset
+                )));
             }
-            let b: [u8; 4] = [raw[offset], raw[offset + 1], raw[offset + 2], raw[offset + 3]];
-            Ok(if is_little_endian { f32::from_le_bytes(b) } else { f32::from_be_bytes(b) })
+            let b: [u8; 4] = [
+                raw[offset],
+                raw[offset + 1],
+                raw[offset + 2],
+                raw[offset + 3],
+            ];
+            Ok(if is_little_endian {
+                f32::from_le_bytes(b)
+            } else {
+                f32::from_be_bytes(b)
+            })
         };
         let read_f64_at = |offset: usize| -> Result<f64, CodecError> {
             if offset + 8 > raw.len() {
-                return Err(CodecError::Decode(format!("f64 out of bounds at {}", offset)));
+                return Err(CodecError::Decode(format!(
+                    "f64 out of bounds at {}",
+                    offset
+                )));
             }
             let b: [u8; 8] = [
-                raw[offset], raw[offset + 1], raw[offset + 2], raw[offset + 3],
-                raw[offset + 4], raw[offset + 5], raw[offset + 6], raw[offset + 7],
+                raw[offset],
+                raw[offset + 1],
+                raw[offset + 2],
+                raw[offset + 3],
+                raw[offset + 4],
+                raw[offset + 5],
+                raw[offset + 6],
+                raw[offset + 7],
             ];
-            Ok(if is_little_endian { f64::from_le_bytes(b) } else { f64::from_be_bytes(b) })
+            Ok(if is_little_endian {
+                f64::from_le_bytes(b)
+            } else {
+                f64::from_be_bytes(b)
+            })
         };
 
         // TIFF field type sizes in bytes
@@ -901,9 +957,8 @@ impl TiffHandle {
                 break;
             }
         }
-        let entry_offset = entry_file_offset.ok_or_else(|| {
-            CodecError::Decode(format!("Tag {} not found in IFD", entry.tag))
-        })?;
+        let entry_offset = entry_file_offset
+            .ok_or_else(|| CodecError::Decode(format!("Tag {} not found in IFD", entry.tag)))?;
 
         // The value/offset field is at bytes 8–11 of the 12-byte entry.
         // If total_bytes <= 4, the value is stored inline in those 4 bytes.
@@ -918,7 +973,10 @@ impl TiffHandle {
         if data_offset + total_bytes > raw.len() {
             return Err(CodecError::Decode(format!(
                 "Tag {} data at offset {} extends beyond file (need {} bytes, file is {} bytes)",
-                entry.tag, data_offset, total_bytes, raw.len()
+                entry.tag,
+                data_offset,
+                total_bytes,
+                raw.len()
             )));
         }
 
@@ -1092,8 +1150,8 @@ impl TiffHandle {
         };
 
         if bytes_read < 0 {
-            let error_msg = take_last_error()
-                .unwrap_or_else(|| format!("Failed to read tile {}", tile_index));
+            let error_msg =
+                take_last_error().unwrap_or_else(|| format!("Failed to read tile {}", tile_index));
             return Err(CodecError::Decode(error_msg));
         }
 
@@ -1220,8 +1278,9 @@ impl TiffHandle {
         if ret == 1 {
             Ok(())
         } else {
-            let error_msg = take_last_error()
-                .unwrap_or_else(|| format!("Failed to set TIFF tag {} to u16 value {}", tag, value));
+            let error_msg = take_last_error().unwrap_or_else(|| {
+                format!("Failed to set TIFF tag {} to u16 value {}", tag, value)
+            });
             Err(CodecError::Encode(error_msg))
         }
     }
@@ -1232,8 +1291,9 @@ impl TiffHandle {
         if ret == 1 {
             Ok(())
         } else {
-            let error_msg = take_last_error()
-                .unwrap_or_else(|| format!("Failed to set TIFF tag {} to u32 value {}", tag, value));
+            let error_msg = take_last_error().unwrap_or_else(|| {
+                format!("Failed to set TIFF tag {} to u32 value {}", tag, value)
+            });
             Err(CodecError::Encode(error_msg))
         }
     }
@@ -1244,8 +1304,9 @@ impl TiffHandle {
         if ret == 1 {
             Ok(())
         } else {
-            let error_msg = take_last_error()
-                .unwrap_or_else(|| format!("Failed to set TIFF tag {} to i32 value {}", tag, value));
+            let error_msg = take_last_error().unwrap_or_else(|| {
+                format!("Failed to set TIFF tag {} to i32 value {}", tag, value)
+            });
             Err(CodecError::Encode(error_msg))
         }
     }
@@ -1257,8 +1318,9 @@ impl TiffHandle {
         if ret == 1 {
             Ok(())
         } else {
-            let error_msg = take_last_error()
-                .unwrap_or_else(|| format!("Failed to set TIFF tag {} to f32 value {}", tag, value));
+            let error_msg = take_last_error().unwrap_or_else(|| {
+                format!("Failed to set TIFF tag {} to f32 value {}", tag, value)
+            });
             Err(CodecError::Encode(error_msg))
         }
     }
@@ -1269,8 +1331,9 @@ impl TiffHandle {
         if ret == 1 {
             Ok(())
         } else {
-            let error_msg = take_last_error()
-                .unwrap_or_else(|| format!("Failed to set TIFF tag {} to f64 value {}", tag, value));
+            let error_msg = take_last_error().unwrap_or_else(|| {
+                format!("Failed to set TIFF tag {} to f64 value {}", tag, value)
+            });
             Err(CodecError::Encode(error_msg))
         }
     }
@@ -1279,14 +1342,8 @@ impl TiffHandle {
     ///
     /// Uses count+pointer semantics for variable-length byte data.
     pub fn set_field_u8_array(&self, tag: u32, data: &[u8]) -> Result<(), CodecError> {
-        let ret = unsafe {
-            sys::TIFFSetField(
-                self.handle,
-                tag,
-                data.len() as c_int,
-                data.as_ptr(),
-            )
-        };
+        let ret =
+            unsafe { sys::TIFFSetField(self.handle, tag, data.len() as c_int, data.as_ptr()) };
         if ret == 1 {
             Ok(())
         } else {
@@ -1298,14 +1355,8 @@ impl TiffHandle {
 
     /// Write an `f32` (FLOAT) array tag to the current IFD.
     pub fn set_field_f32_array(&self, tag: u32, data: &[f32]) -> Result<(), CodecError> {
-        let ret = unsafe {
-            sys::TIFFSetField(
-                self.handle,
-                tag,
-                data.len() as c_int,
-                data.as_ptr(),
-            )
-        };
+        let ret =
+            unsafe { sys::TIFFSetField(self.handle, tag, data.len() as c_int, data.as_ptr()) };
         if ret == 1 {
             Ok(())
         } else {
@@ -1317,14 +1368,8 @@ impl TiffHandle {
 
     /// Write an `i16` (SSHORT) array tag to the current IFD.
     pub fn set_field_i16_array(&self, tag: u32, data: &[i16]) -> Result<(), CodecError> {
-        let ret = unsafe {
-            sys::TIFFSetField(
-                self.handle,
-                tag,
-                data.len() as c_int,
-                data.as_ptr(),
-            )
-        };
+        let ret =
+            unsafe { sys::TIFFSetField(self.handle, tag, data.len() as c_int, data.as_ptr()) };
         if ret == 1 {
             Ok(())
         } else {
@@ -1336,14 +1381,8 @@ impl TiffHandle {
 
     /// Write an `i32` (SLONG) array tag to the current IFD.
     pub fn set_field_i32_array(&self, tag: u32, data: &[i32]) -> Result<(), CodecError> {
-        let ret = unsafe {
-            sys::TIFFSetField(
-                self.handle,
-                tag,
-                data.len() as c_int,
-                data.as_ptr(),
-            )
-        };
+        let ret =
+            unsafe { sys::TIFFSetField(self.handle, tag, data.len() as c_int, data.as_ptr()) };
         if ret == 1 {
             Ok(())
         } else {
@@ -1367,9 +1406,7 @@ impl TiffHandle {
     /// `TIFFNumberOfStrips()`.
     pub fn get_field_u64_ptr(&self, tag: u32, count: u32) -> Result<Vec<u64>, CodecError> {
         let mut ptr: *const u64 = ptr::null();
-        let ret = unsafe {
-            sys::TIFFGetField(self.handle, tag, &mut ptr as *mut *const u64)
-        };
+        let ret = unsafe { sys::TIFFGetField(self.handle, tag, &mut ptr as *mut *const u64) };
         if ret == 1 && !ptr.is_null() {
             let slice = unsafe { std::slice::from_raw_parts(ptr, count as usize) };
             Ok(slice.to_vec())
@@ -1469,20 +1506,13 @@ impl TiffHandle {
     ///
     /// Uses `TIFFSetField(tif, tag, count, ptr)` with count+pointer semantics.
     pub fn set_field_u16_array(&self, tag: u32, data: &[u16]) -> Result<(), CodecError> {
-        let ret = unsafe {
-            sys::TIFFSetField(
-                self.handle,
-                tag,
-                data.len() as c_int,
-                data.as_ptr(),
-            )
-        };
+        let ret =
+            unsafe { sys::TIFFSetField(self.handle, tag, data.len() as c_int, data.as_ptr()) };
         if ret == 1 {
             Ok(())
         } else {
-            let error_msg = take_last_error().unwrap_or_else(|| {
-                format!("Failed to set TIFF tag {} as u16 array", tag)
-            });
+            let error_msg = take_last_error()
+                .unwrap_or_else(|| format!("Failed to set TIFF tag {} as u16 array", tag));
             Err(CodecError::Encode(error_msg))
         }
     }
@@ -1491,20 +1521,13 @@ impl TiffHandle {
     ///
     /// Uses `TIFFSetField(tif, tag, count, ptr)` with count+pointer semantics.
     pub fn set_field_f64_array(&self, tag: u32, data: &[f64]) -> Result<(), CodecError> {
-        let ret = unsafe {
-            sys::TIFFSetField(
-                self.handle,
-                tag,
-                data.len() as c_int,
-                data.as_ptr(),
-            )
-        };
+        let ret =
+            unsafe { sys::TIFFSetField(self.handle, tag, data.len() as c_int, data.as_ptr()) };
         if ret == 1 {
             Ok(())
         } else {
-            let error_msg = take_last_error().unwrap_or_else(|| {
-                format!("Failed to set TIFF tag {} as f64 array", tag)
-            });
+            let error_msg = take_last_error()
+                .unwrap_or_else(|| format!("Failed to set TIFF tag {} as f64 array", tag));
             Err(CodecError::Encode(error_msg))
         }
     }
@@ -1515,18 +1538,14 @@ impl TiffHandle {
     /// GeoAsciiParamsTag (34737).
     pub fn set_field_string(&self, tag: u32, value: &str) -> Result<(), CodecError> {
         let cstr = CString::new(value).map_err(|e| {
-            CodecError::Encode(format!(
-                "Invalid string for TIFF tag {}: {}",
-                tag, e
-            ))
+            CodecError::Encode(format!("Invalid string for TIFF tag {}: {}", tag, e))
         })?;
         let ret = unsafe { sys::TIFFSetField(self.handle, tag, cstr.as_ptr()) };
         if ret == 1 {
             Ok(())
         } else {
-            let error_msg = take_last_error().unwrap_or_else(|| {
-                format!("Failed to set TIFF tag {} as string", tag)
-            });
+            let error_msg = take_last_error()
+                .unwrap_or_else(|| format!("Failed to set TIFF tag {} as string", tag));
             Err(CodecError::Encode(error_msg))
         }
     }
@@ -1545,11 +1564,9 @@ impl TiffHandle {
         };
 
         if bytes_written < 0 {
-            let error_msg = take_last_error()
-                .unwrap_or_else(|| format!("Failed to write tile {}", tile_index));
-            return Err(CodecError::Io(std::io::Error::other(
-                error_msg,
-            )));
+            let error_msg =
+                take_last_error().unwrap_or_else(|| format!("Failed to write tile {}", tile_index));
+            return Err(CodecError::Io(std::io::Error::other(error_msg)));
         }
 
         Ok(())
@@ -1571,7 +1588,12 @@ impl TiffHandle {
     /// This distinction matters for DOUBLE and FLOAT custom tags: libtiff
     /// segfaults if a scalar value is passed to a tag registered as an array
     /// (pass_count=1) because it interprets the scalar bits as a pointer.
-    pub fn register_custom_tag(&self, tag: u32, field_type: u16, scalar: bool) -> Result<(), CodecError> {
+    pub fn register_custom_tag(
+        &self,
+        tag: u32,
+        field_type: u16,
+        scalar: bool,
+    ) -> Result<(), CodecError> {
         // Map TIFF field type to libtiff data type constant
         let data_type: u32 = match field_type {
             1 => sys::TIFF_BYTE,
@@ -1602,9 +1624,9 @@ impl TiffHandle {
         // - Array types (BYTE, UNDEFINED, SHORT, SSHORT, array DOUBLE, etc.):
         //   pass_count=1, count=-1 (count+pointer TIFFSetField)
         let (rw_count, pass_count): (i16, u8) = match field_type {
-            2 => (-1, 0),       // ASCII
-            _ if scalar => (1, 0),  // any scalar type
-            _ => (-1, 1),       // arrays: BYTE, SHORT, SSHORT, DOUBLE, UNDEFINED, etc.
+            2 => (-1, 0),          // ASCII
+            _ if scalar => (1, 0), // any scalar type
+            _ => (-1, 1),          // arrays: BYTE, SHORT, SSHORT, DOUBLE, UNDEFINED, etc.
         };
 
         // Leak a CString for the tag name — libtiff requires the name pointer
@@ -1627,9 +1649,7 @@ impl TiffHandle {
         }]);
         let info_ptr = Box::into_raw(info_array) as *const sys::TIFFFieldInfo;
 
-        let ret = unsafe {
-            sys::TIFFMergeFieldInfo(self.handle, info_ptr, 1)
-        };
+        let ret = unsafe { sys::TIFFMergeFieldInfo(self.handle, info_ptr, 1) };
 
         if ret != 0 {
             return Err(CodecError::Encode(format!(
@@ -1649,8 +1669,8 @@ impl TiffHandle {
         if ret == 1 {
             Ok(())
         } else {
-            let error_msg = take_last_error()
-                .unwrap_or_else(|| "Failed to write TIFF directory".to_string());
+            let error_msg =
+                take_last_error().unwrap_or_else(|| "Failed to write TIFF directory".to_string());
             Err(CodecError::Encode(error_msg))
         }
     }
@@ -1672,9 +1692,7 @@ impl TiffHandle {
 
         // Extract the buffer from the write stream data
         match self._stream_data {
-            StreamData::Write(ref mut write_data) => {
-                Ok(std::mem::take(&mut write_data.buffer))
-            }
+            StreamData::Write(ref mut write_data) => Ok(std::mem::take(&mut write_data.buffer)),
             StreamData::Read(_) => Err(CodecError::Encode(
                 "into_bytes() called on a read-mode TiffHandle".to_string(),
             )),
@@ -1798,7 +1816,10 @@ mod tests {
     fn test_from_bytes_valid_tiff() {
         let data = make_minimal_tiff();
         let handle = TiffHandle::from_bytes(&data);
-        assert!(handle.is_ok(), "from_bytes should succeed for valid TIFF data");
+        assert!(
+            handle.is_ok(),
+            "from_bytes should succeed for valid TIFF data"
+        );
         let handle = handle.unwrap();
         assert_eq!(handle.number_of_directories(), 1);
         assert_eq!(handle.current_directory(), 0);
@@ -1871,7 +1892,9 @@ mod tests {
         assert_eq!(compression, tags::COMPRESSION_NONE);
 
         // PhotometricInterpretation = 1 (MinIsBlack)
-        let photo = handle.get_field_u16(tags::PHOTOMETRIC_INTERPRETATION).unwrap();
+        let photo = handle
+            .get_field_u16(tags::PHOTOMETRIC_INTERPRETATION)
+            .unwrap();
         assert_eq!(photo, tags::PHOTOMETRIC_MINISBLACK);
     }
 
@@ -1925,13 +1948,20 @@ mod tests {
         handle.set_field_u32(tags::IMAGE_LENGTH, 1).unwrap();
         handle.set_field_u16(tags::BITS_PER_SAMPLE, 8).unwrap();
         handle.set_field_u16(tags::SAMPLES_PER_PIXEL, 1).unwrap();
-        handle.set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT).unwrap();
         handle
-            .set_field_u16(tags::PHOTOMETRIC_INTERPRETATION, tags::PHOTOMETRIC_MINISBLACK)
+            .set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT)
+            .unwrap();
+        handle
+            .set_field_u16(
+                tags::PHOTOMETRIC_INTERPRETATION,
+                tags::PHOTOMETRIC_MINISBLACK,
+            )
             .unwrap();
         handle.set_field_u32(tags::TILE_WIDTH, 16).unwrap();
         handle.set_field_u32(tags::TILE_LENGTH, 16).unwrap();
-        handle.set_field_u16(tags::COMPRESSION, tags::COMPRESSION_NONE).unwrap();
+        handle
+            .set_field_u16(tags::COMPRESSION, tags::COMPRESSION_NONE)
+            .unwrap();
         handle
             .set_field_u16(tags::PLANAR_CONFIGURATION, tags::PLANAR_CONFIG_CONTIG)
             .unwrap();
@@ -1959,14 +1989,13 @@ mod tests {
     fn test_u16_array_write_read_roundtrip() {
         // Use GeoKeyDirectoryTag (34735) — a real GeoTIFF SHORT array tag
         let input: Vec<u16> = vec![1, 1, 0, 2, 1024, 0, 1, 1, 3072, 0, 1, 32618];
-        let bytes = make_tiff_with_array_tags(
-            Some((tags::GEO_KEY_DIRECTORY_TAG, &input)),
-            None,
-            None,
-        );
+        let bytes =
+            make_tiff_with_array_tags(Some((tags::GEO_KEY_DIRECTORY_TAG, &input)), None, None);
 
         let reader = TiffHandle::from_bytes(&bytes).unwrap();
-        let result = reader.get_field_u16_array(tags::GEO_KEY_DIRECTORY_TAG, 0).unwrap();
+        let result = reader
+            .get_field_u16_array(tags::GEO_KEY_DIRECTORY_TAG, 0)
+            .unwrap();
         assert_eq!(result, input);
     }
 
@@ -1974,14 +2003,13 @@ mod tests {
     fn test_f64_array_write_read_roundtrip() {
         // Use ModelPixelScaleTag (33550) — a real GeoTIFF DOUBLE array tag
         let input: Vec<f64> = vec![0.5, 0.5, 0.0];
-        let bytes = make_tiff_with_array_tags(
-            None,
-            Some((tags::MODEL_PIXEL_SCALE_TAG, &input)),
-            None,
-        );
+        let bytes =
+            make_tiff_with_array_tags(None, Some((tags::MODEL_PIXEL_SCALE_TAG, &input)), None);
 
         let reader = TiffHandle::from_bytes(&bytes).unwrap();
-        let result = reader.get_field_f64_array(tags::MODEL_PIXEL_SCALE_TAG, 0).unwrap();
+        let result = reader
+            .get_field_f64_array(tags::MODEL_PIXEL_SCALE_TAG, 0)
+            .unwrap();
         assert_eq!(result, input);
     }
 
@@ -1989,11 +2017,8 @@ mod tests {
     fn test_string_tag_write_read_roundtrip() {
         // Use GeoAsciiParamsTag (34737) — a real GeoTIFF ASCII tag
         let input = "WGS 84|";
-        let bytes = make_tiff_with_array_tags(
-            None,
-            None,
-            Some((tags::GEO_ASCII_PARAMS_TAG, input)),
-        );
+        let bytes =
+            make_tiff_with_array_tags(None, None, Some((tags::GEO_ASCII_PARAMS_TAG, input)));
 
         let reader = TiffHandle::from_bytes(&bytes).unwrap();
         let result = reader.get_field_string(tags::GEO_ASCII_PARAMS_TAG).unwrap();
@@ -2172,16 +2197,66 @@ mod tests {
         };
 
         let mut all_tags = vec![
-            TagDef { tag: 256, typ: short_type, count: 1, value: width },
-            TagDef { tag: 257, typ: short_type, count: 1, value: height },
-            TagDef { tag: 258, typ: short_type, count: 1, value: 8 },
-            TagDef { tag: 259, typ: short_type, count: 1, value: 1 },
-            TagDef { tag: 262, typ: short_type, count: 1, value: 1 },
-            TagDef { tag: 273, typ: long_type, count: 1, value: pixel_data_offset },
-            TagDef { tag: 277, typ: short_type, count: 1, value: 1 },
-            TagDef { tag: 278, typ: short_type, count: 1, value: height },
-            TagDef { tag: 279, typ: long_type, count: 1, value: strip_bytes },
-            TagDef { tag: custom_tag, typ: field_type, count, value: custom_value },
+            TagDef {
+                tag: 256,
+                typ: short_type,
+                count: 1,
+                value: width,
+            },
+            TagDef {
+                tag: 257,
+                typ: short_type,
+                count: 1,
+                value: height,
+            },
+            TagDef {
+                tag: 258,
+                typ: short_type,
+                count: 1,
+                value: 8,
+            },
+            TagDef {
+                tag: 259,
+                typ: short_type,
+                count: 1,
+                value: 1,
+            },
+            TagDef {
+                tag: 262,
+                typ: short_type,
+                count: 1,
+                value: 1,
+            },
+            TagDef {
+                tag: 273,
+                typ: long_type,
+                count: 1,
+                value: pixel_data_offset,
+            },
+            TagDef {
+                tag: 277,
+                typ: short_type,
+                count: 1,
+                value: 1,
+            },
+            TagDef {
+                tag: 278,
+                typ: short_type,
+                count: 1,
+                value: height,
+            },
+            TagDef {
+                tag: 279,
+                typ: long_type,
+                count: 1,
+                value: strip_bytes,
+            },
+            TagDef {
+                tag: custom_tag,
+                typ: field_type,
+                count,
+                value: custom_value,
+            },
         ];
         all_tags.sort_by_key(|t| t.tag);
 
@@ -2511,17 +2586,22 @@ mod tests {
     fn test_roundtrip_u16_array_via_libtiff() {
         // Write SHORT array via libtiff, read back via enumerate + read_tag_value
         let input: Vec<u16> = vec![1, 1, 0, 2, 1024, 0, 1, 1, 3072, 0, 1, 32618];
-        let bytes = make_tiff_with_array_tags(
-            Some((tags::GEO_KEY_DIRECTORY_TAG, &input)),
-            None,
-            None,
-        );
+        let bytes =
+            make_tiff_with_array_tags(Some((tags::GEO_KEY_DIRECTORY_TAG, &input)), None, None);
         let handle = TiffHandle::from_bytes(&bytes).unwrap();
         let entries = handle.enumerate_ifd_tags().unwrap();
-        let entry = entries.iter().find(|e| e.tag == tags::GEO_KEY_DIRECTORY_TAG).unwrap();
+        let entry = entries
+            .iter()
+            .find(|e| e.tag == tags::GEO_KEY_DIRECTORY_TAG)
+            .unwrap();
         assert_eq!(entry.field_type, 3); // SHORT
         let val = handle.read_tag_value(entry).unwrap();
-        let arr: Vec<u64> = val.as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();
+        let arr: Vec<u64> = val
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap())
+            .collect();
         let expected: Vec<u64> = input.iter().map(|&v| v as u64).collect();
         assert_eq!(arr, expected);
     }
@@ -2530,17 +2610,22 @@ mod tests {
     fn test_roundtrip_f64_array_via_libtiff() {
         // Write DOUBLE array via libtiff, read back via enumerate + read_tag_value
         let input: Vec<f64> = vec![0.5, 0.5, 0.0];
-        let bytes = make_tiff_with_array_tags(
-            None,
-            Some((tags::MODEL_PIXEL_SCALE_TAG, &input)),
-            None,
-        );
+        let bytes =
+            make_tiff_with_array_tags(None, Some((tags::MODEL_PIXEL_SCALE_TAG, &input)), None);
         let handle = TiffHandle::from_bytes(&bytes).unwrap();
         let entries = handle.enumerate_ifd_tags().unwrap();
-        let entry = entries.iter().find(|e| e.tag == tags::MODEL_PIXEL_SCALE_TAG).unwrap();
+        let entry = entries
+            .iter()
+            .find(|e| e.tag == tags::MODEL_PIXEL_SCALE_TAG)
+            .unwrap();
         assert_eq!(entry.field_type, 12); // DOUBLE
         let val = handle.read_tag_value(entry).unwrap();
-        let arr: Vec<f64> = val.as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        let arr: Vec<f64> = val
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect();
         assert_eq!(arr, input);
     }
 
@@ -2548,14 +2633,14 @@ mod tests {
     fn test_roundtrip_string_via_libtiff() {
         // Write ASCII string via libtiff, read back via enumerate + read_tag_value
         let input = "WGS 84|";
-        let bytes = make_tiff_with_array_tags(
-            None,
-            None,
-            Some((tags::GEO_ASCII_PARAMS_TAG, input)),
-        );
+        let bytes =
+            make_tiff_with_array_tags(None, None, Some((tags::GEO_ASCII_PARAMS_TAG, input)));
         let handle = TiffHandle::from_bytes(&bytes).unwrap();
         let entries = handle.enumerate_ifd_tags().unwrap();
-        let entry = entries.iter().find(|e| e.tag == tags::GEO_ASCII_PARAMS_TAG).unwrap();
+        let entry = entries
+            .iter()
+            .find(|e| e.tag == tags::GEO_ASCII_PARAMS_TAG)
+            .unwrap();
         assert_eq!(entry.field_type, 2); // ASCII
         let val = handle.read_tag_value(entry).unwrap();
         assert_eq!(val.as_str().unwrap(), input);
@@ -2575,7 +2660,9 @@ mod tests {
         handle.set_field_u32(tags::IMAGE_LENGTH, 16).unwrap();
         handle.set_field_u16(tags::BITS_PER_SAMPLE, 8).unwrap();
         handle.set_field_u16(tags::SAMPLES_PER_PIXEL, 3).unwrap();
-        handle.set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT).unwrap();
+        handle
+            .set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT)
+            .unwrap();
         handle
             .set_field_u16(tags::PHOTOMETRIC_INTERPRETATION, tags::PHOTOMETRIC_YCBCR)
             .unwrap();
@@ -2612,7 +2699,11 @@ mod tests {
 
         let reader = TiffHandle::from_bytes(&bytes).unwrap();
         let result = reader.get_field_u8_array(tags::JPEG_TABLES);
-        assert!(result.is_ok(), "get_field_u8_array should succeed for JPEGTables: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "get_field_u8_array should succeed for JPEGTables: {:?}",
+            result.err()
+        );
 
         let tables = result.unwrap();
         // libtiff generates its own JPEGTables during JPEG encoding, so the
@@ -2623,7 +2714,11 @@ mod tests {
         assert_eq!(tables[1], 0xD8, "JPEGTables should start with SOI marker");
         let len = tables.len();
         assert_eq!(tables[len - 2], 0xFF, "JPEGTables should end with 0xFF");
-        assert_eq!(tables[len - 1], 0xD9, "JPEGTables should end with EOI marker");
+        assert_eq!(
+            tables[len - 1],
+            0xD9,
+            "JPEGTables should end with EOI marker"
+        );
     }
 
     #[test]
@@ -2633,7 +2728,10 @@ mod tests {
         let handle = TiffHandle::from_bytes(&data).unwrap();
 
         let result = handle.get_field_u8_array(tags::JPEG_TABLES);
-        assert!(result.is_err(), "get_field_u8_array should fail for absent tag");
+        assert!(
+            result.is_err(),
+            "get_field_u8_array should fail for absent tag"
+        );
         match result.unwrap_err() {
             CodecError::Decode(msg) => {
                 assert!(
@@ -2645,5 +2743,4 @@ mod tests {
             other => panic!("Expected CodecError::Decode, got: {:?}", other),
         }
     }
-
 }

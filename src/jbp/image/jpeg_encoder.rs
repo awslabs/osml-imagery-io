@@ -27,8 +27,8 @@ use crate::error::CodecError;
 use crate::jbp::image::encoder::BlockEncoder;
 use crate::jbp::image::types::InterleaveMode;
 
-use crate::jpeg::JpegCodec;
 use crate::jbp::image::jpeg_decoder::JpegColorSpace;
+use crate::jpeg::JpegCodec;
 
 #[cfg(feature = "libjpeg-turbo")]
 use crate::jpeg::JpegComrat;
@@ -366,7 +366,6 @@ impl JpegBlockEncoder {
     }
 }
 
-
 // =============================================================================
 // JpegNitfBlockEncoder - JPEG DCT encoder for NITF (IC=C3, M3, I1)
 // =============================================================================
@@ -549,11 +548,7 @@ impl BlockEncoder for JpegNitfBlockEncoder {
     ) -> Result<(), CodecError> {
         // Validate block coordinates
         if block_row >= self.nbpc || block_col >= self.nbpr {
-            return Err(CodecError::InvalidBlockCoordinates(
-                block_row,
-                block_col,
-                0,
-            ));
+            return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
         }
 
         // Validate data size matches shape
@@ -711,15 +706,8 @@ mod tests {
 
     #[test]
     fn test_new_8bit_rgb() {
-        let encoder = JpegBlockEncoder::new(
-            8,
-            3,
-            64,
-            64,
-            InterleaveMode::P,
-            JpegColorSpace::Rgb,
-            90,
-        );
+        let encoder =
+            JpegBlockEncoder::new(8, 3, 64, 64, InterleaveMode::P, JpegColorSpace::Rgb, 90);
         assert!(encoder.is_ok());
         let encoder = encoder.unwrap();
         assert_eq!(encoder.num_bands(), 3);
@@ -876,16 +864,8 @@ mod tests {
 
     #[test]
     fn test_band_sequential_to_pixel() {
-        let encoder = JpegBlockEncoder::new(
-            8,
-            3,
-            2,
-            2,
-            InterleaveMode::P,
-            JpegColorSpace::Rgb,
-            75,
-        )
-        .unwrap();
+        let encoder =
+            JpegBlockEncoder::new(8, 3, 2, 2, InterleaveMode::P, JpegColorSpace::Rgb, 75).unwrap();
 
         // Input: RRR...GGG...BBB... (band sequential)
         let input = vec![
@@ -1057,16 +1037,9 @@ mod tests {
 
         #[test]
         fn test_encode_wrong_buffer_size() {
-            let encoder = JpegBlockEncoder::new(
-                8,
-                1,
-                8,
-                8,
-                InterleaveMode::B,
-                JpegColorSpace::Grayscale,
-                75,
-            )
-            .unwrap();
+            let encoder =
+                JpegBlockEncoder::new(8, 1, 8, 8, InterleaveMode::B, JpegColorSpace::Grayscale, 75)
+                    .unwrap();
 
             // Wrong size - should be 64 bytes
             let src = vec![0u8; 32];
@@ -1162,7 +1135,10 @@ mod tests {
                 ]) as usize;
                 offset += 4;
 
-                assert!(offset + length <= multiband_data.len(), "Truncated JPEG stream");
+                assert!(
+                    offset + length <= multiband_data.len(),
+                    "Truncated JPEG stream"
+                );
                 // Verify JPEG magic bytes (SOI marker)
                 assert_eq!(multiband_data[offset], 0xFF);
                 assert_eq!(multiband_data[offset + 1], 0xD8);

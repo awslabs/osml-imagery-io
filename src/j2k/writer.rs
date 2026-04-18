@@ -126,7 +126,13 @@ impl J2KDatasetWriter {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        (lossless, compression_ratio, decomposition_levels, quality_layers, htj2k)
+        (
+            lossless,
+            compression_ratio,
+            decomposition_levels,
+            quality_layers,
+            htj2k,
+        )
     }
 
     /// Derive `(bits_per_component, is_signed)` from a `PixelType`.
@@ -204,11 +210,10 @@ impl DatasetWriter for J2KDatasetWriter {
             None => return Ok(()),
         };
 
-        let image = asset.provider.as_image().ok_or_else(|| {
-            CodecError::Unsupported(
-                "Asset is not an Image variant".to_string(),
-            )
-        })?;
+        let image = asset
+            .provider
+            .as_image()
+            .ok_or_else(|| CodecError::Unsupported("Asset is not an Image variant".to_string()))?;
         let image = image.as_ref();
 
         let width = image.num_columns();
@@ -369,10 +374,22 @@ mod tests {
         let provider2 = make_image_provider(2, 2, 1, PixelType::UInt8, &[5, 6, 7, 8]);
 
         writer
-            .add_asset("img0", AssetProvider::Image(provider1), "First", "First image", &[])
+            .add_asset(
+                "img0",
+                AssetProvider::Image(provider1),
+                "First",
+                "First image",
+                &[],
+            )
             .unwrap();
 
-        let result = writer.add_asset("img1", AssetProvider::Image(provider2), "Second", "Second image", &[]);
+        let result = writer.add_asset(
+            "img1",
+            AssetProvider::Image(provider2),
+            "Second",
+            "Second image",
+            &[],
+        );
         match result {
             Err(CodecError::Unsupported(msg)) => {
                 assert!(msg.contains("single image per file"));
@@ -423,7 +440,13 @@ mod tests {
         let provider = make_image_provider(64, 64, 3, PixelType::UInt8, &pixels);
         let mut writer = J2KDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
             .unwrap();
 
         // First close should succeed
@@ -449,7 +472,13 @@ mod tests {
 
         let mut writer = J2KDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
             .unwrap();
         writer.close().unwrap();
 
@@ -457,9 +486,7 @@ mod tests {
         let data = std::fs::read(&path).unwrap();
         let reader = J2KDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("Expected Image variant");
+        let image = asset.as_image().expect("Expected Image variant");
 
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [1, 64, 64]);
@@ -487,16 +514,20 @@ mod tests {
 
         let mut writer = J2KDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
             .unwrap();
         writer.close().unwrap();
 
         let data = std::fs::read(&path).unwrap();
         let reader = J2KDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("Expected Image variant");
+        let image = asset.as_image().expect("Expected Image variant");
 
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [3, 64, 64]);
@@ -520,16 +551,20 @@ mod tests {
 
         let mut writer = J2KDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
             .unwrap();
         writer.close().unwrap();
 
         let data = std::fs::read(&path).unwrap();
         let reader = J2KDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("Expected Image variant");
+        let image = asset.as_image().expect("Expected Image variant");
 
         assert_eq!(image.pixel_value_type(), PixelType::UInt16);
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();

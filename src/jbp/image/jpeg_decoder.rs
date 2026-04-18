@@ -207,12 +207,8 @@ impl JpegBlockDecoder {
 
             // Decompress using turbojpeg
             // Note: turbojpeg automatically handles YCbCr to RGB conversion
-            let decoded = ffi::decompress_8bit(
-                jpeg_data,
-                self.block_width,
-                self.block_height,
-                output_bands,
-            )?;
+            let decoded =
+                ffi::decompress_8bit(jpeg_data, self.block_width, self.block_height, output_bands)?;
 
             // For RGB/YCbCr, the data comes out as pixel-interleaved (RGBRGBRGB...)
             // We need to convert to band-sequential format (RRR...GGG...BBB...)
@@ -511,8 +507,8 @@ impl JpegNitfBlockDecoder {
 
         // Determine if blocks contain multiple length-prefixed JPEG streams
         // (multiband with IMODE=B or S, excluding 3-band RGB/YCbCr with IMODE=P)
-        let is_multiband_separate = self.nbands > 1
-            && !(self.nbands == 3 && self.imode == InterleaveMode::P);
+        let is_multiband_separate =
+            self.nbands > 1 && !(self.nbands == 3 && self.imode == InterleaveMode::P);
 
         // Scan through the data to find JPEG stream boundaries
         let mut current_offset = 0;
@@ -568,7 +564,8 @@ impl JpegNitfBlockDecoder {
 
     /// Get block offsets, computing them lazily if needed.
     fn get_block_offsets(&self) -> &[(usize, usize)] {
-        self.block_offsets.get_or_init(|| self.compute_block_offsets())
+        self.block_offsets
+            .get_or_init(|| self.compute_block_offsets())
     }
 
     /// Apply band selection to decoded data.
@@ -599,7 +596,10 @@ impl JpegNitfBlockDecoder {
             if band_end > data.len() {
                 return Err(CodecError::Decode(format!(
                     "Band data out of bounds: band {} offset {} + {} > {}",
-                    band_idx, band_offset, band_size, data.len()
+                    band_idx,
+                    band_offset,
+                    band_size,
+                    data.len()
                 )));
             }
 
@@ -642,7 +642,8 @@ impl BlockDecoder for JpegNitfBlockDecoder {
         if block_index >= block_offsets.len() {
             return Err(CodecError::Decode(format!(
                 "Block index {} out of range (have {} blocks)",
-                block_index, block_offsets.len()
+                block_index,
+                block_offsets.len()
             )));
         }
 
@@ -651,7 +652,9 @@ impl BlockDecoder for JpegNitfBlockDecoder {
         if start_offset >= end_offset || end_offset > self.image_data.len() {
             return Err(CodecError::Decode(format!(
                 "Invalid block offsets: start={}, end={}, data_len={}",
-                start_offset, end_offset, self.image_data.len()
+                start_offset,
+                end_offset,
+                self.image_data.len()
             )));
         }
 
@@ -660,9 +663,7 @@ impl BlockDecoder for JpegNitfBlockDecoder {
         // Decode the JPEG data
         // For single-band or RGB/YCbCr with IMODE=P, use decode_block
         // For multiband with IMODE=B or S, use decode_multiband_block
-        let decoded = if self.nbands == 1
-            || (self.nbands == 3 && self.imode == InterleaveMode::P)
-        {
+        let decoded = if self.nbands == 1 || (self.nbands == 3 && self.imode == InterleaveMode::P) {
             self.jpeg_decoder.decode_block(block_jpeg_data)?
         } else {
             self.jpeg_decoder.decode_multiband_block(block_jpeg_data)?
@@ -748,7 +749,8 @@ impl BlockDecoder for JpegNitfBlockDecoder {
         if offset_usize >= self.image_data.len() {
             return Err(CodecError::Decode(format!(
                 "Block offset {} exceeds image data length {}",
-                offset, self.image_data.len()
+                offset,
+                self.image_data.len()
             )));
         }
 
@@ -761,9 +763,7 @@ impl BlockDecoder for JpegNitfBlockDecoder {
         let block_jpeg = &jpeg_data[..jpeg_end];
 
         // Decode the JPEG data
-        let decoded = if self.nbands == 1
-            || (self.nbands == 3 && self.imode == InterleaveMode::P)
-        {
+        let decoded = if self.nbands == 1 || (self.nbands == 3 && self.imode == InterleaveMode::P) {
             self.jpeg_decoder.decode_block(block_jpeg)?
         } else {
             self.jpeg_decoder.decode_multiband_block(block_jpeg)?
@@ -822,7 +822,10 @@ impl BlockDecoder for JpegNitfBlockDecoder {
         config.insert("bits_per_pixel".to_string(), vec![self.nbpp]);
         config.insert("num_bands".to_string(), self.nbands.to_le_bytes().to_vec());
         config.insert("block_width".to_string(), self.nppbh.to_le_bytes().to_vec());
-        config.insert("block_height".to_string(), self.nppbv.to_le_bytes().to_vec());
+        config.insert(
+            "block_height".to_string(),
+            self.nppbv.to_le_bytes().to_vec(),
+        );
         config.insert("imode".to_string(), vec![self.imode.to_char() as u8]);
         let cs_byte = match self.jpeg_decoder.color_space() {
             JpegColorSpace::Grayscale => 0u8,
@@ -867,14 +870,8 @@ mod tests {
 
     #[test]
     fn test_new_8bit_grayscale() {
-        let decoder = JpegBlockDecoder::new(
-            8,
-            1,
-            64,
-            64,
-            InterleaveMode::B,
-            JpegColorSpace::Grayscale,
-        );
+        let decoder =
+            JpegBlockDecoder::new(8, 1, 64, 64, InterleaveMode::B, JpegColorSpace::Grayscale);
         assert!(decoder.is_ok());
         let decoder = decoder.unwrap();
         assert_eq!(decoder.bits_per_pixel(), 8);
@@ -884,14 +881,7 @@ mod tests {
 
     #[test]
     fn test_new_8bit_rgb() {
-        let decoder = JpegBlockDecoder::new(
-            8,
-            3,
-            64,
-            64,
-            InterleaveMode::P,
-            JpegColorSpace::Rgb,
-        );
+        let decoder = JpegBlockDecoder::new(8, 3, 64, 64, InterleaveMode::P, JpegColorSpace::Rgb);
         assert!(decoder.is_ok());
         let decoder = decoder.unwrap();
         assert_eq!(decoder.num_bands(), 3);
@@ -900,14 +890,8 @@ mod tests {
 
     #[test]
     fn test_new_8bit_ycbcr() {
-        let decoder = JpegBlockDecoder::new(
-            8,
-            3,
-            64,
-            64,
-            InterleaveMode::P,
-            JpegColorSpace::YCbCr601,
-        );
+        let decoder =
+            JpegBlockDecoder::new(8, 3, 64, 64, InterleaveMode::P, JpegColorSpace::YCbCr601);
         assert!(decoder.is_ok());
         let decoder = decoder.unwrap();
         assert_eq!(decoder.color_space(), JpegColorSpace::YCbCr601);
@@ -915,14 +899,8 @@ mod tests {
 
     #[test]
     fn test_new_12bit_grayscale() {
-        let decoder = JpegBlockDecoder::new(
-            12,
-            1,
-            64,
-            64,
-            InterleaveMode::B,
-            JpegColorSpace::Grayscale,
-        );
+        let decoder =
+            JpegBlockDecoder::new(12, 1, 64, 64, InterleaveMode::B, JpegColorSpace::Grayscale);
         assert!(decoder.is_ok());
         let decoder = decoder.unwrap();
         assert_eq!(decoder.bits_per_pixel(), 12);
@@ -933,21 +911,15 @@ mod tests {
     fn test_12bit_decode_returns_unsupported_error() {
         // 12-bit JPEG decoding requires a specially compiled libjpeg12 library
         // which is not commonly available. Verify we get a clear error message.
-        let decoder = JpegBlockDecoder::new(
-            12,
-            1,
-            8,
-            8,
-            InterleaveMode::B,
-            JpegColorSpace::Grayscale,
-        )
-        .unwrap();
+        let decoder =
+            JpegBlockDecoder::new(12, 1, 8, 8, InterleaveMode::B, JpegColorSpace::Grayscale)
+                .unwrap();
 
         // Any JPEG data will fail because 12-bit is not supported
         let fake_jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0]; // JPEG SOI marker
         let result = decoder.decode_block(&fake_jpeg);
         assert!(result.is_err());
-        
+
         // Verify the error mentions the library requirement
         if let Err(CodecError::Unsupported(msg)) = result {
             assert!(
@@ -960,14 +932,8 @@ mod tests {
 
     #[test]
     fn test_new_multiband() {
-        let decoder = JpegBlockDecoder::new(
-            8,
-            4,
-            64,
-            64,
-            InterleaveMode::B,
-            JpegColorSpace::Grayscale,
-        );
+        let decoder =
+            JpegBlockDecoder::new(8, 4, 64, 64, InterleaveMode::B, JpegColorSpace::Grayscale);
         assert!(decoder.is_ok());
         let decoder = decoder.unwrap();
         assert_eq!(decoder.num_bands(), 4);
@@ -1079,15 +1045,8 @@ mod tests {
 
     #[test]
     fn test_pixel_to_band_sequential() {
-        let decoder = JpegBlockDecoder::new(
-            8,
-            3,
-            2,
-            2,
-            InterleaveMode::P,
-            JpegColorSpace::Rgb,
-        )
-        .unwrap();
+        let decoder =
+            JpegBlockDecoder::new(8, 3, 2, 2, InterleaveMode::P, JpegColorSpace::Rgb).unwrap();
 
         // Input: RGBRGBRGBRGB (4 pixels, pixel interleaved)
         let input = vec![
@@ -1172,15 +1131,9 @@ mod tests {
             let jpeg_data = compress_8bit(&src, width, height, 3, 90).unwrap();
 
             // Create decoder and decode
-            let decoder = JpegBlockDecoder::new(
-                8,
-                3,
-                width,
-                height,
-                InterleaveMode::P,
-                JpegColorSpace::Rgb,
-            )
-            .unwrap();
+            let decoder =
+                JpegBlockDecoder::new(8, 3, width, height, InterleaveMode::P, JpegColorSpace::Rgb)
+                    .unwrap();
 
             let decoded = decoder.decode_block(&jpeg_data).unwrap();
 
@@ -1233,15 +1186,9 @@ mod tests {
 
             let jpeg_data = compress_8bit(&src, width, height, 3, 90).unwrap();
 
-            let decoder = JpegBlockDecoder::new(
-                8,
-                3,
-                width,
-                height,
-                InterleaveMode::P,
-                JpegColorSpace::Rgb,
-            )
-            .unwrap();
+            let decoder =
+                JpegBlockDecoder::new(8, 3, width, height, InterleaveMode::P, JpegColorSpace::Rgb)
+                    .unwrap();
 
             let decoded = decoder.decode_multiband_block(&jpeg_data).unwrap();
             assert_eq!(decoded.len(), width * height * 3);
@@ -1320,21 +1267,20 @@ mod tests {
             let avg_band0: f64 = band0.iter().map(|&x| x as f64).sum::<f64>() / band0.len() as f64;
             let avg_band1: f64 = band1.iter().map(|&x| x as f64).sum::<f64>() / band1.len() as f64;
 
-            assert!(avg_band0 < avg_band1, "Band 0 avg {} should be less than band 1 avg {}", avg_band0, avg_band1);
+            assert!(
+                avg_band0 < avg_band1,
+                "Band 0 avg {} should be less than band 1 avg {}",
+                avg_band0,
+                avg_band1
+            );
         }
 
         #[test]
         fn test_decode_multiband_truncated_length_prefix() {
             // Test error handling for truncated length prefix
-            let decoder = JpegBlockDecoder::new(
-                8,
-                2,
-                8,
-                8,
-                InterleaveMode::B,
-                JpegColorSpace::Grayscale,
-            )
-            .unwrap();
+            let decoder =
+                JpegBlockDecoder::new(8, 2, 8, 8, InterleaveMode::B, JpegColorSpace::Grayscale)
+                    .unwrap();
 
             // Only 2 bytes - not enough for 4-byte length prefix
             let truncated_data = vec![0x00, 0x00];
@@ -1345,15 +1291,9 @@ mod tests {
         #[test]
         fn test_decode_multiband_truncated_stream() {
             // Test error handling for truncated JPEG stream
-            let decoder = JpegBlockDecoder::new(
-                8,
-                2,
-                8,
-                8,
-                InterleaveMode::B,
-                JpegColorSpace::Grayscale,
-            )
-            .unwrap();
+            let decoder =
+                JpegBlockDecoder::new(8, 2, 8, 8, InterleaveMode::B, JpegColorSpace::Grayscale)
+                    .unwrap();
 
             // Length prefix says 1000 bytes, but only 10 bytes follow
             let mut truncated_data = Vec::new();

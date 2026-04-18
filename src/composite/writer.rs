@@ -11,7 +11,6 @@ use std::sync::Arc;
 use crate::error::CodecError;
 use crate::traits::{AssetProvider, DatasetWriter, MetadataProvider};
 
-
 /// Parse an overview key like `image:N:overview:M` into `(parent_key, level)`.
 ///
 /// Uses plain string parsing with `rsplit_once(":overview:")` — no regex needed.
@@ -211,20 +210,48 @@ mod tests {
     }
 
     impl ImageAssetProvider for MockAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool { true }
-        fn get_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32, _bands: Option<&[u32]>) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
+        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
+            true
+        }
+        fn get_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+            _bands: Option<&[u32]>,
+        ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
             Ok((vec![0u8; 1], [1, 1, 1]))
         }
-        fn num_resolution_levels(&self) -> u32 { 1 }
-        fn num_bands(&self) -> u32 { 1 }
-        fn num_rows(&self) -> u32 { 1 }
-        fn num_columns(&self) -> u32 { 1 }
-        fn num_pixels_per_block_horizontal(&self) -> u32 { 1 }
-        fn num_pixels_per_block_vertical(&self) -> u32 { 1 }
-        fn num_bits_per_pixel(&self) -> u32 { 8 }
-        fn actual_bits_per_pixel(&self) -> u32 { 8 }
-        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
-        fn pad_pixel_value(&self) -> f64 { 0.0 }
+        fn num_resolution_levels(&self) -> u32 {
+            1
+        }
+        fn num_bands(&self) -> u32 {
+            1
+        }
+        fn num_rows(&self) -> u32 {
+            1
+        }
+        fn num_columns(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_horizontal(&self) -> u32 {
+            1
+        }
+        fn num_pixels_per_block_vertical(&self) -> u32 {
+            1
+        }
+        fn num_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn actual_bits_per_pixel(&self) -> u32 {
+            8
+        }
+        fn pixel_value_type(&self) -> crate::types::PixelType {
+            crate::types::PixelType::UInt8
+        }
+        fn pad_pixel_value(&self) -> f64 {
+            0.0
+        }
     }
 
     /// A mock DatasetWriter that records all operations to a shared log.
@@ -417,7 +444,11 @@ mod tests {
         writer.set_metadata(metadata).unwrap();
 
         let entries = log.lock().unwrap();
-        assert_eq!(entries.len(), 3, "Expected 3 set_metadata calls (base + 2 rset)");
+        assert_eq!(
+            entries.len(),
+            3,
+            "Expected 3 set_metadata calls (base + 2 rset)"
+        );
         assert_eq!(entries[0], "base:set_metadata");
         // rset writers are sorted by ascending level, so rset_1 then rset_2
         assert!(entries.contains(&"rset_1:set_metadata".to_string()));

@@ -168,9 +168,10 @@ impl UncompressedBlockDecoder {
         &self,
         required: usize,
     ) -> Result<std::sync::MutexGuard<'_, Vec<u8>>, CodecError> {
-        let mut buf = self.scratch.lock().map_err(|_| {
-            CodecError::Decode("Failed to acquire scratch buffer lock".into())
-        })?;
+        let mut buf = self
+            .scratch
+            .lock()
+            .map_err(|_| CodecError::Decode("Failed to acquire scratch buffer lock".into()))?;
         if buf.len() < required {
             let additional = required - buf.len();
             buf.try_reserve(additional).map_err(|e| {
@@ -198,9 +199,8 @@ impl UncompressedBlockDecoder {
                 // Band sequential: blocks are organized by band first
                 // For a single block access, we need to read from multiple locations
                 // But for offset calculation, we return the start of the first band's block
-                let single_band_block_size = (self.nppbh as u64)
-                    * (self.nppbv as u64)
-                    * (self.bytes_per_pixel() as u64);
+                let single_band_block_size =
+                    (self.nppbh as u64) * (self.nppbv as u64) * (self.bytes_per_pixel() as u64);
                 // Return offset to first band's block
                 block_index * single_band_block_size
             }
@@ -312,7 +312,9 @@ impl UncompressedBlockDecoder {
                     self.image_data.len()
                 )));
             }
-            return Ok(Cow::Borrowed(&self.image_data[offset..offset + nominal_block_size]));
+            return Ok(Cow::Borrowed(
+                &self.image_data[offset..offset + nominal_block_size],
+            ));
         }
 
         // For edge blocks, we need to extract only the valid pixels
@@ -326,8 +328,7 @@ impl UncompressedBlockDecoder {
                 for band in 0..self.nbands {
                     let band_offset = offset + (band as usize) * pixels_per_band * bpp;
                     for row in 0..actual_rows {
-                        let row_offset =
-                            band_offset + (row as usize) * (self.nppbh as usize) * bpp;
+                        let row_offset = band_offset + (row as usize) * (self.nppbh as usize) * bpp;
                         let row_bytes = (actual_cols as usize) * bpp;
                         if row_offset + row_bytes > self.image_data.len() {
                             return Err(CodecError::Decode(format!(
@@ -338,7 +339,9 @@ impl UncompressedBlockDecoder {
                                 self.image_data.len()
                             )));
                         }
-                        output.extend_from_slice(&self.image_data[row_offset..row_offset + row_bytes]);
+                        output.extend_from_slice(
+                            &self.image_data[row_offset..row_offset + row_bytes],
+                        );
                     }
                 }
             }
@@ -348,7 +351,8 @@ impl UncompressedBlockDecoder {
                 for row in 0..actual_rows {
                     for col in 0..actual_cols {
                         let pixel_offset = offset
-                            + ((row as usize) * (self.nppbh as usize) + (col as usize)) * pixel_size;
+                            + ((row as usize) * (self.nppbh as usize) + (col as usize))
+                                * pixel_size;
                         if pixel_offset + pixel_size > self.image_data.len() {
                             return Err(CodecError::Decode(format!(
                                 "Pixel data out of bounds at ({}, {}): offset {} + {} > {}",
@@ -371,7 +375,8 @@ impl UncompressedBlockDecoder {
                 for row in 0..actual_rows {
                     for band in 0..self.nbands {
                         let row_offset = offset
-                            + ((row as usize) * (self.nbands as usize) + (band as usize)) * row_size;
+                            + ((row as usize) * (self.nbands as usize) + (band as usize))
+                                * row_size;
                         let actual_row_bytes = (actual_cols as usize) * bpp;
                         if row_offset + actual_row_bytes > self.image_data.len() {
                             return Err(CodecError::Decode(format!(
@@ -476,7 +481,8 @@ impl BlockDecoder for UncompressedBlockDecoder {
         match self.imode {
             // ── IMODE=P: fused BIP→BSQ + endian swap (+ optional band selection) ──
             InterleaveMode::P => {
-                let raw_data = self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?;
+                let raw_data =
+                    self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?;
 
                 let out_bands = match bands {
                     Some(b) if !b.is_empty() => b.len(),
@@ -524,10 +530,15 @@ impl BlockDecoder for UncompressedBlockDecoder {
             // ── IMODE=S/B: already BSQ → swap into scratch, then band-select ──
             InterleaveMode::S | InterleaveMode::B => {
                 let raw_data: Cow<'_, [u8]> = match self.imode {
-                    InterleaveMode::S => {
-                        Cow::Owned(self.read_block_mode_s(block_row, block_col, actual_rows, actual_cols)?)
+                    InterleaveMode::S => Cow::Owned(self.read_block_mode_s(
+                        block_row,
+                        block_col,
+                        actual_rows,
+                        actual_cols,
+                    )?),
+                    _ => {
+                        self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?
                     }
-                    _ => self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?,
                 };
 
                 // Swap big-endian → native-endian into scratch
@@ -547,7 +558,8 @@ impl BlockDecoder for UncompressedBlockDecoder {
 
             // ── IMODE=R: existing path (not on hot path) ──
             InterleaveMode::R => {
-                let raw_data = self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?;
+                let raw_data =
+                    self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?;
 
                 let bsq_data = to_band_sequential(
                     &raw_data,
@@ -560,9 +572,12 @@ impl BlockDecoder for UncompressedBlockDecoder {
 
                 let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
                 let selected_data = match bands {
-                    Some(band_indices) if !band_indices.is_empty() => {
-                        self.apply_band_selection(&bsq_data, actual_rows, actual_cols, band_indices)?
-                    }
+                    Some(band_indices) if !band_indices.is_empty() => self.apply_band_selection(
+                        &bsq_data,
+                        actual_rows,
+                        actual_cols,
+                        band_indices,
+                    )?,
                     _ => bsq_data,
                 };
 
@@ -620,7 +635,9 @@ impl BlockDecoder for UncompressedBlockDecoder {
         if offset_usize + block_size > self.image_data.len() {
             return Err(CodecError::Decode(format!(
                 "Block offset {} + size {} exceeds image data length {}",
-                offset, block_size, self.image_data.len()
+                offset,
+                block_size,
+                self.image_data.len()
             )));
         }
 
@@ -702,9 +719,12 @@ impl BlockDecoder for UncompressedBlockDecoder {
 
                 let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
                 let selected_data = match bands {
-                    Some(band_indices) if !band_indices.is_empty() => {
-                        self.apply_band_selection(&bsq_data, actual_rows, actual_cols, band_indices)?
-                    }
+                    Some(band_indices) if !band_indices.is_empty() => self.apply_band_selection(
+                        &bsq_data,
+                        actual_rows,
+                        actual_cols,
+                        band_indices,
+                    )?,
                     _ => bsq_data,
                 };
 
@@ -730,7 +750,10 @@ impl BlockDecoder for UncompressedBlockDecoder {
         let mut config = std::collections::HashMap::new();
         config.insert("nbpp".to_string(), vec![self.nbpp]);
         config.insert("abpp".to_string(), vec![self.abpp]);
-        config.insert("pvtype".to_string(), self.pvtype.to_str().trim().as_bytes().to_vec());
+        config.insert(
+            "pvtype".to_string(),
+            self.pvtype.to_str().trim().as_bytes().to_vec(),
+        );
         config.insert("imode".to_string(), vec![self.imode.to_char() as u8]);
         config.insert("nbands".to_string(), self.nbands.to_le_bytes().to_vec());
         config.insert("pjust".to_string(), vec![self.pjust.to_char() as u8]);
@@ -741,7 +764,6 @@ impl BlockDecoder for UncompressedBlockDecoder {
 // Expose internal types for testing
 #[cfg(test)]
 pub(crate) use self::UncompressedBlockDecoder as TestUncompressedBlockDecoder;
-
 
 #[cfg(test)]
 mod tests {
@@ -835,11 +857,14 @@ mod tests {
         #[test]
         fn valid_block_coordinates() {
             let decoder = create_test_decoder(
-                64, 64,  // nrows, ncols
-                2, 2,    // nbpr, nbpc (2x2 block grid)
-                32, 32,  // nppbh, nppbv
-                1,       // nbands
-                8,       // nbpp
+                64,
+                64, // nrows, ncols
+                2,
+                2, // nbpr, nbpc (2x2 block grid)
+                32,
+                32, // nppbh, nppbv
+                1,  // nbands
+                8,  // nbpp
                 InterleaveMode::B,
                 vec![0u8; 64 * 64],
             );
@@ -853,9 +878,12 @@ mod tests {
         #[test]
         fn invalid_block_coordinates() {
             let decoder = create_test_decoder(
-                64, 64,
-                2, 2,
-                32, 32,
+                64,
+                64,
+                2,
+                2,
+                32,
+                32,
                 1,
                 8,
                 InterleaveMode::B,
@@ -877,11 +905,14 @@ mod tests {
             // 4x4 image, single block, single band
             let data: Vec<u8> = (0..16).collect();
             let decoder = create_test_decoder(
-                4, 4,    // nrows, ncols
-                1, 1,    // nbpr, nbpc
-                4, 4,    // nppbh, nppbv
-                1,       // nbands
-                8,       // nbpp
+                4,
+                4, // nrows, ncols
+                1,
+                1, // nbpr, nbpc
+                4,
+                4, // nppbh, nppbv
+                1, // nbands
+                8, // nbpp
                 InterleaveMode::B,
                 data.clone(),
             );
@@ -894,36 +925,27 @@ mod tests {
 
         #[test]
         fn decode_block_invalid_coordinates() {
-            let decoder = create_test_decoder(
-                4, 4,
-                1, 1,
-                4, 4,
-                1,
-                8,
-                InterleaveMode::B,
-                vec![0u8; 16],
-            );
+            let decoder =
+                create_test_decoder(4, 4, 1, 1, 4, 4, 1, 8, InterleaveMode::B, vec![0u8; 16]);
 
             let result = decoder.decode_block(1, 0, 0, None);
-            assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(1, 0, 0))));
+            assert!(matches!(
+                result,
+                Err(CodecError::InvalidBlockCoordinates(1, 0, 0))
+            ));
 
             let result = decoder.decode_block(0, 1, 0, None);
-            assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(0, 1, 0))));
+            assert!(matches!(
+                result,
+                Err(CodecError::InvalidBlockCoordinates(0, 1, 0))
+            ));
         }
 
         #[test]
         fn decode_block_with_band_selection() {
             // 4x4 image, 3 bands, BSQ format
             let data = create_test_image_data_bsq(4, 4, 3, 1);
-            let decoder = create_test_decoder(
-                4, 4,
-                1, 1,
-                4, 4,
-                3,
-                8,
-                InterleaveMode::B,
-                data,
-            );
+            let decoder = create_test_decoder(4, 4, 1, 1, 4, 4, 3, 8, InterleaveMode::B, data);
 
             // Select only band 1
             let (block_data, shape) = decoder.decode_block(0, 0, 0, Some(&[1])).unwrap();
@@ -946,11 +968,11 @@ mod tests {
             //   Block(0,1): rows 0-3, cols 4-5 (edge - only 2 cols)
             //   Block(1,0): rows 4-5, cols 0-3 (edge - only 2 rows)
             //   Block(1,1): rows 4-5, cols 4-5 (corner - 2x2)
-            
+
             // Create data organized by blocks for IMODE B
             // Each block contains all its pixels sequentially
             let mut data = Vec::new();
-            
+
             // Block (0,0): 4x4 = 16 pixels
             for row in 0..4u8 {
                 for col in 0..4u8 {
@@ -988,11 +1010,14 @@ mod tests {
                     }
                 }
             }
-            
+
             let decoder = create_test_decoder(
-                6, 6,
-                2, 2,    // 2x2 block grid
-                4, 4,    // 4x4 block size
+                6,
+                6,
+                2,
+                2, // 2x2 block grid
+                4,
+                4, // 4x4 block size
                 1,
                 8,
                 InterleaveMode::B,
@@ -1030,11 +1055,14 @@ mod tests {
             // 4x4 image, single block, single band
             let data: Vec<u8> = (0..16).collect();
             let decoder = create_test_decoder(
-                4, 4,    // nrows, ncols
-                1, 1,    // nbpr, nbpc
-                4, 4,    // nppbh, nppbv
-                1,       // nbands
-                8,       // nbpp
+                4,
+                4, // nrows, ncols
+                1,
+                1, // nbpr, nbpc
+                4,
+                4, // nppbh, nppbv
+                1, // nbands
+                8, // nbpp
                 InterleaveMode::B,
                 data.clone(),
             );
@@ -1049,15 +1077,8 @@ mod tests {
         fn decode_block_at_offset_multi_band() {
             // 4x4 image, single block, 3 bands
             let data = create_test_image_data_bsq(4, 4, 3, 1);
-            let decoder = create_test_decoder(
-                4, 4,
-                1, 1,
-                4, 4,
-                3,
-                8,
-                InterleaveMode::B,
-                data.clone(),
-            );
+            let decoder =
+                create_test_decoder(4, 4, 1, 1, 4, 4, 3, 8, InterleaveMode::B, data.clone());
 
             // Decode at offset 0
             let (block_data, shape) = decoder.decode_block_at_offset(0, 0, 0, 0, None).unwrap();
@@ -1069,42 +1090,33 @@ mod tests {
         fn decode_block_at_offset_with_band_selection() {
             // 4x4 image, single block, 3 bands
             let data = create_test_image_data_bsq(4, 4, 3, 1);
-            let decoder = create_test_decoder(
-                4, 4,
-                1, 1,
-                4, 4,
-                3,
-                8,
-                InterleaveMode::B,
-                data,
-            );
+            let decoder = create_test_decoder(4, 4, 1, 1, 4, 4, 3, 8, InterleaveMode::B, data);
 
             // Select only band 1
-            let (block_data, shape) = decoder.decode_block_at_offset(0, 0, 0, 0, Some(&[1])).unwrap();
+            let (block_data, shape) = decoder
+                .decode_block_at_offset(0, 0, 0, 0, Some(&[1]))
+                .unwrap();
             assert_eq!(shape, [1, 4, 4]);
             assert_eq!(block_data.len(), 16);
         }
 
         #[test]
         fn decode_block_at_offset_invalid_resolution() {
-            let decoder = create_test_decoder(
-                4, 4, 1, 1, 4, 4, 1, 8,
-                InterleaveMode::B,
-                vec![0u8; 16],
-            );
+            let decoder =
+                create_test_decoder(4, 4, 1, 1, 4, 4, 1, 8, InterleaveMode::B, vec![0u8; 16]);
 
             // Uncompressed images only support resolution level 0
             let result = decoder.decode_block_at_offset(0, 0, 0, 1, None);
-            assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(0, 0, 1))));
+            assert!(matches!(
+                result,
+                Err(CodecError::InvalidBlockCoordinates(0, 0, 1))
+            ));
         }
 
         #[test]
         fn decode_block_at_offset_out_of_bounds() {
-            let decoder = create_test_decoder(
-                4, 4, 1, 1, 4, 4, 1, 8,
-                InterleaveMode::B,
-                vec![0u8; 16],
-            );
+            let decoder =
+                create_test_decoder(4, 4, 1, 1, 4, 4, 1, 8, InterleaveMode::B, vec![0u8; 16]);
 
             // Offset beyond data length
             let result = decoder.decode_block_at_offset(100, 0, 0, 0, None);
@@ -1116,14 +1128,17 @@ mod tests {
             // Create data with two blocks worth of data
             // First block: all zeros, Second block: all ones
             let mut data = vec![0u8; 16]; // First block
-            data.extend(vec![1u8; 16]);   // Second block
-            
+            data.extend(vec![1u8; 16]); // Second block
+
             let decoder = create_test_decoder(
-                4, 8,    // 4 rows, 8 cols
-                2, 1,    // 2 blocks per row, 1 block per col
-                4, 4,    // 4x4 block size
-                1,       // 1 band
-                8,       // 8 bits per pixel
+                4,
+                8, // 4 rows, 8 cols
+                2,
+                1, // 2 blocks per row, 1 block per col
+                4,
+                4, // 4x4 block size
+                1, // 1 band
+                8, // 8 bits per pixel
                 InterleaveMode::B,
                 data,
             );
@@ -1142,21 +1157,15 @@ mod tests {
 
         #[test]
         fn compression_type_nc() {
-            let decoder = create_test_decoder(
-                4, 4, 1, 1, 4, 4, 1, 8,
-                InterleaveMode::B,
-                vec![0u8; 16],
-            );
+            let decoder =
+                create_test_decoder(4, 4, 1, 1, 4, 4, 1, 8, InterleaveMode::B, vec![0u8; 16]);
             assert_eq!(decoder.compression_type(), "NC");
         }
 
         #[test]
         fn num_resolution_levels() {
-            let decoder = create_test_decoder(
-                4, 4, 1, 1, 4, 4, 1, 8,
-                InterleaveMode::B,
-                vec![0u8; 16],
-            );
+            let decoder =
+                create_test_decoder(4, 4, 1, 1, 4, 4, 1, 8, InterleaveMode::B, vec![0u8; 16]);
             assert_eq!(decoder.num_resolution_levels(), 1);
         }
     }
@@ -1180,11 +1189,11 @@ mod property_tests {
     /// Generate valid image dimensions for testing (small for speed)
     fn image_params_strategy() -> impl Strategy<Value = (u32, u32, u32, u32, u32)> {
         (
-            1u32..=4,   // nppbh (block width)
-            1u32..=4,   // nppbv (block height)
-            1u32..=3,   // nbpr (blocks per row)
-            1u32..=3,   // nbpc (blocks per column)
-            1u32..=4,   // nbands
+            1u32..=4, // nppbh (block width)
+            1u32..=4, // nppbv (block height)
+            1u32..=3, // nbpr (blocks per row)
+            1u32..=3, // nbpc (blocks per column)
+            1u32..=4, // nbands
         )
     }
 
@@ -1199,11 +1208,11 @@ mod property_tests {
     ) -> (UncompressedBlockDecoder, Vec<Vec<Vec<Vec<u8>>>>) {
         let nrows = nbpc * nppbv;
         let ncols = nbpr * nppbh;
-        
+
         // Create expected values organized as [block_row][block_col][band][pixel_in_block]
         // This makes verification easier
         let mut expected: Vec<Vec<Vec<Vec<u8>>>> = Vec::new();
-        
+
         // Create data in the appropriate format based on IMODE
         let data = match imode {
             InterleaveMode::S => {
@@ -1214,14 +1223,19 @@ mod property_tests {
                         for block_col in 0..nbpr {
                             for row in 0..nppbv {
                                 for col in 0..nppbh {
-                                    let val = ((band * 100 + block_row * 40 + block_col * 10 + row * 4 + col) % 256) as u8;
+                                    let val = ((band * 100
+                                        + block_row * 40
+                                        + block_col * 10
+                                        + row * 4
+                                        + col)
+                                        % 256) as u8;
                                     d.push(val);
                                 }
                             }
                         }
                     }
                 }
-                
+
                 // Build expected values
                 for block_row in 0..nbpc {
                     let mut br = Vec::new();
@@ -1231,7 +1245,12 @@ mod property_tests {
                             let mut bb = Vec::new();
                             for row in 0..nppbv {
                                 for col in 0..nppbh {
-                                    let val = ((band * 100 + block_row * 40 + block_col * 10 + row * 4 + col) % 256) as u8;
+                                    let val = ((band * 100
+                                        + block_row * 40
+                                        + block_col * 10
+                                        + row * 4
+                                        + col)
+                                        % 256) as u8;
                                     bb.push(val);
                                 }
                             }
@@ -1241,7 +1260,7 @@ mod property_tests {
                     }
                     expected.push(br);
                 }
-                
+
                 d
             }
             InterleaveMode::B => {
@@ -1255,7 +1274,12 @@ mod property_tests {
                             let mut bb = Vec::new();
                             for row in 0..nppbv {
                                 for col in 0..nppbh {
-                                    let val = ((band * 100 + block_row * 40 + block_col * 10 + row * 4 + col) % 256) as u8;
+                                    let val = ((band * 100
+                                        + block_row * 40
+                                        + block_col * 10
+                                        + row * 4
+                                        + col)
+                                        % 256) as u8;
                                     d.push(val);
                                     bb.push(val);
                                 }
@@ -1278,7 +1302,12 @@ mod property_tests {
                         for row in 0..nppbv {
                             for col in 0..nppbh {
                                 for band in 0..nbands {
-                                    let val = ((band * 100 + block_row * 40 + block_col * 10 + row * 4 + col) % 256) as u8;
+                                    let val = ((band * 100
+                                        + block_row * 40
+                                        + block_col * 10
+                                        + row * 4
+                                        + col)
+                                        % 256) as u8;
                                     d.push(val);
                                     bc[band as usize].push(val);
                                 }
@@ -1300,7 +1329,12 @@ mod property_tests {
                         for row in 0..nppbv {
                             for band in 0..nbands {
                                 for col in 0..nppbh {
-                                    let val = ((band * 100 + block_row * 40 + block_col * 10 + row * 4 + col) % 256) as u8;
+                                    let val = ((band * 100
+                                        + block_row * 40
+                                        + block_col * 10
+                                        + row * 4
+                                        + col)
+                                        % 256) as u8;
                                     d.push(val);
                                     bc[band as usize].push(val);
                                 }
@@ -1362,12 +1396,12 @@ mod property_tests {
             prop_assert!(result.is_ok(), "decode_block should succeed for valid coordinates");
 
             let (block_data, shape) = result.unwrap();
-            
+
             // Verify shape is correct - shape is [bands, rows, cols] (CHW format)
             prop_assert_eq!(shape[0], nbands, "Band count should match");
             prop_assert_eq!(shape[1], nppbv, "Block rows should match nppbv");
             prop_assert_eq!(shape[2], nppbh, "Block cols should match nppbh");
-            
+
             // Verify data size matches shape
             let expected_size = (shape[0] * shape[1] * shape[2]) as usize;
             prop_assert_eq!(
@@ -1378,15 +1412,15 @@ mod property_tests {
 
             // Verify pixel values are correct (output is in BSQ format)
             let expected_block = &expected[block_row as usize][block_col as usize];
-            
+
             for band in 0..nbands {
                 let band_offset = (band * nppbv * nppbh) as usize;
                 let expected_band = &expected_block[band as usize];
-                
+
                 for i in 0..expected_band.len() {
                     let actual = block_data[band_offset + i];
                     let expected_val = expected_band[i];
-                    
+
                     prop_assert_eq!(
                         actual, expected_val,
                         "Pixel mismatch at band={}, pixel={} for block ({}, {}), imode={:?}",
@@ -1459,7 +1493,7 @@ mod property_tests {
                     prop_assert!(result.is_ok(), "decode_block should succeed");
 
                     let (block_data, shape) = result.unwrap();
-                    
+
                     // Verify shape - shape is [bands, rows, cols] (CHW format)
                     prop_assert_eq!(shape[0], nbands, "Band count should match");
                     prop_assert_eq!(shape[1], nppbv, "Block rows should match");
@@ -1467,11 +1501,11 @@ mod property_tests {
 
                     // Verify data matches expected (output is always BSQ)
                     let expected_block = &expected[block_row as usize][block_col as usize];
-                    
+
                     for band in 0..nbands {
                         let band_offset = (band * nppbv * nppbh) as usize;
                         let expected_band = &expected_block[band as usize];
-                        
+
                         for i in 0..expected_band.len() {
                             prop_assert_eq!(
                                 block_data[band_offset + i],

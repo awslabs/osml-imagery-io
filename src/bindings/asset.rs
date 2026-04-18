@@ -230,7 +230,6 @@ impl PyAssetProvider {
     }
 }
 
-
 // =============================================================================
 // Empty metadata provider shared by all Bytes*AssetProvider adapters
 // =============================================================================
@@ -297,9 +296,8 @@ impl AssetMetadata for BytesTextAssetProvider {
 
 impl TextAssetProvider for BytesTextAssetProvider {
     fn text(&self) -> Result<String, CodecError> {
-        String::from_utf8(self.data.clone()).map_err(|e| {
-            CodecError::Decode(format!("Invalid UTF-8 in text asset: {}", e))
-        })
+        String::from_utf8(self.data.clone())
+            .map_err(|e| CodecError::Decode(format!("Invalid UTF-8 in text asset: {}", e)))
     }
 
     fn encoding(&self) -> &str {
@@ -361,15 +359,13 @@ impl DataAssetProvider for BytesDataAssetProvider {
     }
 
     fn parse_as_xml(&self) -> Result<String, CodecError> {
-        String::from_utf8(self.data.clone()).map_err(|e| {
-            CodecError::Parse(format!("Invalid UTF-8 in data asset XML: {}", e))
-        })
+        String::from_utf8(self.data.clone())
+            .map_err(|e| CodecError::Parse(format!("Invalid UTF-8 in data asset XML: {}", e)))
     }
 
     fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
-        serde_json::from_slice(&self.data).map_err(|e| {
-            CodecError::Parse(format!("Invalid JSON in data asset: {}", e))
-        })
+        serde_json::from_slice(&self.data)
+            .map_err(|e| CodecError::Parse(format!("Invalid JSON in data asset: {}", e)))
     }
 }
 

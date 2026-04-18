@@ -71,7 +71,6 @@ impl JBPFileMetadataProvider {
     }
 }
 
-
 impl MetadataProvider for JBPFileMetadataProvider {
     /// Returns the raw file header bytes.
     fn raw(&self) -> &[u8] {
@@ -111,9 +110,7 @@ impl MetadataProvider for JBPFileMetadataProvider {
                 // Get the field value: repeated fields return Value::Array,
                 // scalar fields return their scalar Value variant
                 if let Ok(value) = accessor.get(field_id) {
-                    if let Some(json_value) =
-                        value_to_json(&value, None, Some(&self.definition))
-                    {
+                    if let Some(json_value) = value_to_json(&value, None, Some(&self.definition)) {
                         result.insert(field_id.clone(), json_value);
                     }
                 }
@@ -331,9 +328,13 @@ impl MetadataProvider for JBPSegmentMetadataProvider {
                         // Unknown TRE (no definition in registry) or accessor creation
                         // failed — produce raw representation
                         let mut raw_dict = serde_json::Map::new();
-                        let hex: String = envelope.data.iter().map(|b| format!("{:02x}", b)).collect();
+                        let hex: String =
+                            envelope.data.iter().map(|b| format!("{:02x}", b)).collect();
                         raw_dict.insert("_raw".to_string(), serde_json::Value::String(hex));
-                        raw_dict.insert("_length".to_string(), serde_json::Value::Number(envelope.data.len().into()));
+                        raw_dict.insert(
+                            "_length".to_string(),
+                            serde_json::Value::Number(envelope.data.len().into()),
+                        );
                         result.insert(tag.to_string(), serde_json::Value::Object(raw_dict));
                     }
                 }
@@ -347,7 +348,6 @@ impl MetadataProvider for JBPSegmentMetadataProvider {
 // Ensure JBPSegmentMetadataProvider is Send + Sync
 unsafe impl Send for JBPSegmentMetadataProvider {}
 unsafe impl Sync for JBPSegmentMetadataProvider {}
-
 
 /// Convert a parsed Value to a serde_json::Value.
 ///
@@ -380,7 +380,9 @@ fn value_to_json(
         Value::Bytes(bytes) => {
             // Try to interpret as UTF-8 string first
             match std::str::from_utf8(bytes) {
-                Ok(s) => Some(serde_json::Value::String(s.trim_end_matches(' ').to_string())),
+                Ok(s) => Some(serde_json::Value::String(
+                    s.trim_end_matches(' ').to_string(),
+                )),
                 Err(_) => {
                     // Fall back to hex encoding for binary data
                     let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
@@ -403,9 +405,7 @@ fn value_to_json(
             let resolved_def: Option<Arc<StructureDefinition>> = definition
                 .and_then(|def| def.types.get(&struct_val.type_name))
                 .map(|local_def| Arc::new(local_def.clone()))
-                .or_else(|| {
-                    registry.and_then(|reg| reg.get(&struct_val.type_name))
-                });
+                .or_else(|| registry.and_then(|reg| reg.get(&struct_val.type_name)));
 
             if let Some(def) = resolved_def {
                 if let Ok(accessor) = StructureAccessor::new(Arc::clone(&def), &struct_val.data) {
@@ -618,7 +618,7 @@ mod tests {
     fn value_to_json_struct() {
         let value = Value::from_struct(b"data", "TestType");
         let json = value_to_json(&value, None, None).unwrap();
-        
+
         let obj = json.as_object().unwrap();
         assert_eq!(obj.get("_type"), Some(&serde_json::json!("TestType")));
         assert_eq!(obj.get("_data"), Some(&serde_json::json!("64617461")));
@@ -631,16 +631,16 @@ mod tests {
         // the parent definition's `types` map.
         let inner_def = StructureDefinition::new("my_inner_type")
             .with_field(
-                FieldDefinition::new("ALPHA", FieldType::String)
-                    .with_size(SizeSpec::Fixed(3)),
+                FieldDefinition::new("ALPHA", FieldType::String).with_size(SizeSpec::Fixed(3)),
             )
             .with_field(
-                FieldDefinition::new("BETA", FieldType::String)
-                    .with_size(SizeSpec::Fixed(4)),
+                FieldDefinition::new("BETA", FieldType::String).with_size(SizeSpec::Fixed(4)),
             );
 
         let mut parent_def = StructureDefinition::new("ParentHeader");
-        parent_def.types.insert("my_inner_type".to_string(), inner_def);
+        parent_def
+            .types
+            .insert("my_inner_type".to_string(), inner_def);
 
         // Build raw bytes for the inner struct: ALPHA(3) + BETA(4) = 7 bytes
         let raw = b"ABCDEFG";
@@ -661,16 +661,16 @@ mod tests {
         // Simulate repeated struct fields (like IMAGE_INFO array in file header)
         let inner_def = StructureDefinition::new("segment_info")
             .with_field(
-                FieldDefinition::new("SUBHDR_LEN", FieldType::String)
-                    .with_size(SizeSpec::Fixed(6)),
+                FieldDefinition::new("SUBHDR_LEN", FieldType::String).with_size(SizeSpec::Fixed(6)),
             )
             .with_field(
-                FieldDefinition::new("DATA_LEN", FieldType::String)
-                    .with_size(SizeSpec::Fixed(10)),
+                FieldDefinition::new("DATA_LEN", FieldType::String).with_size(SizeSpec::Fixed(10)),
             );
 
         let mut parent_def = StructureDefinition::new("FileHeader");
-        parent_def.types.insert("segment_info".to_string(), inner_def);
+        parent_def
+            .types
+            .insert("segment_info".to_string(), inner_def);
 
         // Build an array of 2 struct values, each 16 bytes
         let arr = Value::from_array(vec![
@@ -843,11 +843,9 @@ mod tests {
         };
 
         // Create a second TRE definition
-        let tre2_def = StructureDefinition::new("tre_test")
-            .with_field(
-                FieldDefinition::new("value", FieldType::String)
-                    .with_size(SizeSpec::Fixed(5)),
-            );
+        let tre2_def = StructureDefinition::new("tre_test").with_field(
+            FieldDefinition::new("value", FieldType::String).with_size(SizeSpec::Fixed(5)),
+        );
 
         let tre2 = TreEnvelope {
             tag: "TEST  ".to_string(),
@@ -878,7 +876,6 @@ mod tests {
         assert_eq!(test_tre.get("value"), Some(&serde_json::json!("HELLO")));
     }
 }
-
 
 /// Property-based tests for metadata providers.
 ///
@@ -1355,15 +1352,16 @@ mod property_tests {
 
         /// Strategy to generate valid BCS-A field values (alphanumeric, fixed size)
         fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {
-            prop::collection::vec(
-                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
-                size,
-            )
-            .prop_map(|chars| chars.into_iter().collect::<String>())
+            prop::collection::vec(prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), size)
+                .prop_map(|chars| chars.into_iter().collect::<String>())
         }
 
         /// Create a simple TRE definition with two fixed-size string fields
-        fn create_tre_definition(name: &str, field1_size: usize, field2_size: usize) -> StructureDefinition {
+        fn create_tre_definition(
+            name: &str,
+            field1_size: usize,
+            field2_size: usize,
+        ) -> StructureDefinition {
             StructureDefinition::new(name)
                 .with_field(
                     FieldDefinition::new("field1", FieldType::String)
@@ -1379,13 +1377,9 @@ mod property_tests {
 
         /// Create a simple subheader definition
         fn create_subheader_definition() -> Arc<StructureDefinition> {
-            Arc::new(
-                StructureDefinition::new("TestSubheader")
-                    .with_field(
-                        FieldDefinition::new("HEADER", FieldType::String)
-                            .with_size(SizeSpec::Fixed(10)),
-                    )
-            )
+            Arc::new(StructureDefinition::new("TestSubheader").with_field(
+                FieldDefinition::new("HEADER", FieldType::String).with_size(SizeSpec::Fixed(10)),
+            ))
         }
 
         proptest! {
@@ -1684,29 +1678,20 @@ mod property_tests {
 
         /// Strategy to generate a unique uppercase CETAG (3-6 chars, letters only)
         fn cetag_strategy() -> impl Strategy<Value = String> {
-            prop::collection::vec(
-                prop::char::ranges(vec!['A'..='Z'].into()),
-                3..=6,
-            )
-            .prop_map(|chars| chars.into_iter().collect::<String>())
+            prop::collection::vec(prop::char::ranges(vec!['A'..='Z'].into()), 3..=6)
+                .prop_map(|chars| chars.into_iter().collect::<String>())
         }
 
         /// Strategy to generate a lowercase field name (3-8 chars)
         fn field_name_strategy() -> impl Strategy<Value = String> {
-            prop::collection::vec(
-                prop::char::ranges(vec!['a'..='z'].into()),
-                3..=8,
-            )
-            .prop_map(|chars| chars.into_iter().collect::<String>())
+            prop::collection::vec(prop::char::ranges(vec!['a'..='z'].into()), 3..=8)
+                .prop_map(|chars| chars.into_iter().collect::<String>())
         }
 
         /// Strategy to generate a BCS-A field value of a given size
         fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {
-            prop::collection::vec(
-                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
-                size,
-            )
-            .prop_map(|chars| chars.into_iter().collect::<String>())
+            prop::collection::vec(prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), size)
+                .prop_map(|chars| chars.into_iter().collect::<String>())
         }
 
         /// Represents a single TRE with its definition and data for testing
@@ -1733,10 +1718,8 @@ mod property_tests {
                         .map(|(i, n)| format!("{}_{}", n, i))
                         .collect();
                     let num_fields = field_names.len();
-                    let values = prop::collection::vec(
-                        field_value_strategy(field_size),
-                        num_fields,
-                    );
+                    let values =
+                        prop::collection::vec(field_value_strategy(field_size), num_fields);
                     (Just(cetag), Just(field_names), values)
                 })
                 .prop_map(move |(cetag, field_names, field_values)| TestTre {
@@ -1763,10 +1746,7 @@ mod property_tests {
 
         /// Build a StructureDefinition for a TestTre
         fn build_tre_definition(tre: &TestTre) -> StructureDefinition {
-            let mut def = StructureDefinition::new(format!(
-                "tre_{}",
-                tre.cetag.to_lowercase()
-            ));
+            let mut def = StructureDefinition::new(format!("tre_{}", tre.cetag.to_lowercase()));
             for name in &tre.field_names {
                 def = def.with_field(
                     FieldDefinition::new(name.clone(), FieldType::String)
@@ -1790,13 +1770,9 @@ mod property_tests {
 
         /// Create a minimal subheader definition and data
         fn create_subheader() -> (Arc<StructureDefinition>, Arc<[u8]>) {
-            let def = Arc::new(
-                StructureDefinition::new("TestSubheader")
-                    .with_field(
-                        FieldDefinition::new("HEADER", FieldType::String)
-                            .with_size(SizeSpec::Fixed(10)),
-                    ),
-            );
+            let def = Arc::new(StructureDefinition::new("TestSubheader").with_field(
+                FieldDefinition::new("HEADER", FieldType::String).with_size(SizeSpec::Fixed(10)),
+            ));
             let data: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
             (def, data)
         }
@@ -1931,13 +1907,9 @@ mod property_tests {
 
         /// Create a minimal subheader definition and data
         fn create_subheader() -> (Arc<StructureDefinition>, Arc<[u8]>) {
-            let def = Arc::new(
-                StructureDefinition::new("TestSubheader")
-                    .with_field(
-                        FieldDefinition::new("HEADER", FieldType::String)
-                            .with_size(SizeSpec::Fixed(10)),
-                    ),
-            );
+            let def = Arc::new(StructureDefinition::new("TestSubheader").with_field(
+                FieldDefinition::new("HEADER", FieldType::String).with_size(SizeSpec::Fixed(10)),
+            ));
             let data: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
             (def, data)
         }
@@ -2046,11 +2018,8 @@ mod property_tests {
 
         /// Strategy to generate BCS-A field values of a given size (uppercase + digits)
         fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {
-            prop::collection::vec(
-                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
-                size,
-            )
-            .prop_map(|chars| chars.into_iter().collect::<String>())
+            prop::collection::vec(prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), size)
+                .prop_map(|chars| chars.into_iter().collect::<String>())
         }
 
         /// Build a subheader definition with a count field and a repeated field.
@@ -2406,11 +2375,8 @@ mod property_tests {
 
         /// Strategy to generate a BCS-A field value of a given size
         fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {
-            prop::collection::vec(
-                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
-                size,
-            )
-            .prop_map(|chars| chars.into_iter().collect::<String>())
+            prop::collection::vec(prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), size)
+                .prop_map(|chars| chars.into_iter().collect::<String>())
         }
 
         /// Create a simple TRE definition with two fixed-size string fields
@@ -2732,11 +2698,8 @@ mod property_tests {
 
         /// Strategy to generate a BCS-A field value of a given size (uppercase + digits)
         fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {
-            prop::collection::vec(
-                prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
-                size,
-            )
-            .prop_map(|chars| chars.into_iter().collect::<String>())
+            prop::collection::vec(prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), size)
+                .prop_map(|chars| chars.into_iter().collect::<String>())
         }
 
         /// Build raw bytes for a flat struct with N string fields of given size.

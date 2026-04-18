@@ -28,8 +28,10 @@ use crate::jbp::image::decoder::BlockDecoder;
 use crate::jbp::image::facade::ImageSubheaderFacade;
 use crate::jbp::image::types::{InterleaveMode, PixelValueType};
 
+use crate::j2k::markers::{
+    build_minimal_codestream, parse_main_header, scan_sot_markers, TilePartOffsetTable,
+};
 use crate::j2k::{J2KCodec, J2KDecodeParams};
-use crate::j2k::markers::{TilePartOffsetTable, parse_main_header, scan_sot_markers, build_minimal_codestream};
 
 // =============================================================================
 // Jpeg2000BlockDecoder
@@ -123,7 +125,7 @@ impl Jpeg2000BlockDecoder {
 
         // Check if this is a masked image (IC=M8 or MD)
         let is_masked = ic == "M8" || ic == "MD";
-        
+
         // Get the effective IC for codec capability checks (unmask M8->C8, MD->CD)
         let effective_ic = match ic.as_str() {
             "M8" => "C8",
@@ -162,7 +164,8 @@ impl Jpeg2000BlockDecoder {
         if effective_ic == "CD" && !codec.capabilities().htj2k_decode {
             return Err(CodecError::Unsupported(format!(
                 "Codec '{}' does not support HTJ2K (IC={}) decoding",
-                codec.capabilities().name, ic
+                codec.capabilities().name,
+                ic
             )));
         }
 
@@ -234,14 +237,14 @@ impl Jpeg2000BlockDecoder {
     }
 
     /// Get or compute the number of resolution levels.
-    /// 
+    ///
     /// For masked images, returns 1 since each block has its own codestream
     /// and we can't determine the resolution levels without parsing each block.
     fn resolution_levels(&self) -> Result<u32, CodecError> {
         if let Some(&levels) = self.num_resolution_levels.get() {
             return Ok(levels);
         }
-        
+
         // For masked images, we can't determine resolution levels from the
         // raw codestream since it starts with the mask table. Return 1 as
         // a safe default - each block's codestream may have different levels.
@@ -249,7 +252,7 @@ impl Jpeg2000BlockDecoder {
             let _ = self.num_resolution_levels.set(1);
             return Ok(1);
         }
-        
+
         let levels = self.codec.get_resolution_levels(&self.codestream)?;
         // Ignore the result of set() - if another thread set it first, that's fine
         let _ = self.num_resolution_levels.set(levels);
@@ -258,14 +261,14 @@ impl Jpeg2000BlockDecoder {
 
     /// Get or compute the tile grid information.
     /// Returns (tile_width, tile_height, num_tiles_x, num_tiles_y).
-    /// 
+    ///
     /// For masked images, returns the image dimensions as a single tile
     /// since each block is encoded as a separate single-tile codestream.
     fn tile_grid_info(&self) -> Result<(u32, u32, u32, u32), CodecError> {
         if let Some(&info) = self.tile_info.get() {
             return Ok(info);
         }
-        
+
         // For masked images, we can't parse tile info from the raw codestream
         // since it starts with the mask table. Return image dimensions as
         // a single tile - the actual tile info is per-block.
@@ -274,7 +277,7 @@ impl Jpeg2000BlockDecoder {
             let _ = self.tile_info.set(info);
             return Ok(info);
         }
-        
+
         let info = self.codec.get_tile_info(&self.codestream)?;
         // Ignore the result of set() - if another thread set it first, that's fine
         let _ = self.tile_info.set(info);
@@ -389,7 +392,7 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
     ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
         // Get tile grid info
         let (tile_width, tile_height, num_tiles_x, num_tiles_y) = self.tile_grid_info()?;
-        
+
         // Validate block coordinates against tile grid
         if block_row >= num_tiles_y || block_col >= num_tiles_x {
             return Err(CodecError::InvalidBlockCoordinates(
@@ -416,7 +419,7 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
             resolution_level,
             region: None,
         };
-        
+
         // Decode the specific tile
         let result = if self.decode_header.is_some() {
             // Non-masked path: construct minimal single-tile codestream
@@ -434,16 +437,18 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
                 ));
             }
             let decode_header = self.decode_header.as_ref().unwrap();
-            let minimal_codestream = build_minimal_codestream(decode_header, &tile_parts, &self.codestream);
+            let minimal_codestream =
+                build_minimal_codestream(decode_header, &tile_parts, &self.codestream);
             self.codec.decode_tile(&minimal_codestream, 0, &params)?
         } else {
             // Masked path: fall through to existing full-codestream path
-            self.codec.decode_tile(&self.codestream, tile_index, &params)?
+            self.codec
+                .decode_tile(&self.codestream, tile_index, &params)?
         };
 
         // Calculate expected tile dimensions at this resolution level
         let scale = 1u32 << resolution_level;
-        
+
         // For edge tiles, dimensions may be smaller than the nominal tile size
         let tile_x0 = block_col * tile_width;
         let tile_y0 = block_row * tile_height;
@@ -475,8 +480,12 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         // Apply band selection if specified
         let (data, num_bands) = match bands {
             Some(band_indices) if !band_indices.is_empty() => {
-                let selected =
-                    self.select_bands(&result.data, band_indices, pixels_per_band, bytes_per_pixel)?;
+                let selected = self.select_bands(
+                    &result.data,
+                    band_indices,
+                    pixels_per_band,
+                    bytes_per_pixel,
+                )?;
                 (selected, band_indices.len() as u32)
             }
             _ => (result.data, result.num_components),
@@ -573,7 +582,8 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         if offset_usize >= self.codestream.len() {
             return Err(CodecError::Decode(format!(
                 "Block offset {} exceeds codestream length {}",
-                offset, self.codestream.len()
+                offset,
+                self.codestream.len()
             )));
         }
 
@@ -648,8 +658,12 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         // Apply band selection if specified
         let (data, num_bands) = match bands {
             Some(band_indices) if !band_indices.is_empty() => {
-                let selected =
-                    self.select_bands(&result.data, band_indices, pixels_per_band, bytes_per_pixel)?;
+                let selected = self.select_bands(
+                    &result.data,
+                    band_indices,
+                    pixels_per_band,
+                    bytes_per_pixel,
+                )?;
                 (selected, band_indices.len() as u32)
             }
             _ => (result.data, result.num_components),
@@ -666,7 +680,8 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         let table = self.ensure_tile_part_table().ok()?;
         let (_, _, num_tiles_x, _) = self.tile_grid_info().ok()?;
 
-        let mut ranges: std::collections::HashMap<(u32, u32), Vec<(u64, u64)>> = std::collections::HashMap::new();
+        let mut ranges: std::collections::HashMap<(u32, u32), Vec<(u64, u64)>> =
+            std::collections::HashMap::new();
         for entry in table {
             let row = entry.tile_index as u32 / num_tiles_x;
             let col = entry.tile_index as u32 % num_tiles_x;
@@ -734,8 +749,7 @@ mod tests {
             bits_per_component: u8,
         ) -> Self {
             let bytes_per_pixel = ((bits_per_component as usize) + 7) / 8;
-            let data_size =
-                (width * height * num_components) as usize * bytes_per_pixel;
+            let data_size = (width * height * num_components) as usize * bytes_per_pixel;
             self.decode_result = Some(crate::j2k::J2KDecodeResult {
                 data: vec![0u8; data_size],
                 width,
@@ -750,7 +764,13 @@ mod tests {
             self
         }
 
-        fn with_tile_grid(mut self, tile_width: u32, tile_height: u32, num_tiles_x: u32, num_tiles_y: u32) -> Self {
+        fn with_tile_grid(
+            mut self,
+            tile_width: u32,
+            tile_height: u32,
+            num_tiles_x: u32,
+            num_tiles_y: u32,
+        ) -> Self {
             self.tile_info = (tile_width, tile_height, num_tiles_x, num_tiles_y);
             self
         }
@@ -780,7 +800,9 @@ mod tests {
             &self,
             _params: &crate::j2k::J2KEncodeParams,
         ) -> Result<Box<dyn crate::j2k::J2KEncodeState>, CodecError> {
-            Err(CodecError::Unsupported("Mock encode not implemented".into()))
+            Err(CodecError::Unsupported(
+                "Mock encode not implemented".into(),
+            ))
         }
 
         fn get_resolution_levels(&self, _codestream: &[u8]) -> Result<u32, CodecError> {
@@ -807,7 +829,7 @@ mod tests {
         ) -> Result<crate::j2k::J2KDecodeResult, CodecError> {
             let (tile_width, tile_height, num_tiles_x, num_tiles_y) = self.tile_info;
             let total_tiles = num_tiles_x * num_tiles_y;
-            
+
             if tile_index >= total_tiles {
                 return Err(CodecError::InvalidBlockCoordinates(
                     tile_index / num_tiles_x,
@@ -815,11 +837,12 @@ mod tests {
                     0,
                 ));
             }
-            
+
             // Return a result sized for the tile
             if let Some(ref result) = self.decode_result {
                 let bytes_per_pixel = ((result.bits_per_component as usize) + 7) / 8;
-                let data_size = (tile_width * tile_height * result.num_components) as usize * bytes_per_pixel;
+                let data_size =
+                    (tile_width * tile_height * result.num_components) as usize * bytes_per_pixel;
                 Ok(crate::j2k::J2KDecodeResult {
                     data: vec![0u8; data_size],
                     width: tile_width,
@@ -871,7 +894,7 @@ mod tests {
     fn test_invalid_codestream_too_short() {
         // Test that codestream validation catches short data
         let short_data: Arc<[u8]> = Arc::from(vec![0xFF]);
-        
+
         // We can't easily create a mock subheader, so we test the validation
         // logic directly by checking the error message
         assert!(short_data.len() < 2);
@@ -881,7 +904,7 @@ mod tests {
     fn test_invalid_codestream_bad_magic() {
         // Test that codestream validation catches bad magic bytes
         let bad_magic: Arc<[u8]> = Arc::from(vec![0x00, 0x00, 0x00, 0x00]);
-        
+
         // Verify the magic bytes are wrong
         assert!(bad_magic[0] != 0xFF || bad_magic[1] != 0x4F);
     }
@@ -890,7 +913,7 @@ mod tests {
     fn test_valid_codestream_magic() {
         // Test that valid SOC marker is recognized
         let valid: Arc<[u8]> = create_mock_codestream();
-        
+
         // Verify the magic bytes are correct
         assert_eq!(valid[0], 0xFF);
         assert_eq!(valid[1], 0x4F);
@@ -903,7 +926,7 @@ mod tests {
     #[test]
     fn test_select_bands_single() {
         let codec = Arc::new(MockJ2KCodec::new().with_decode_result(4, 4, 3, 8));
-        
+
         // Create mock decoder state for testing select_bands
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
@@ -943,7 +966,7 @@ mod tests {
     #[test]
     fn test_select_bands_multiple() {
         let codec = Arc::new(MockJ2KCodec::new().with_decode_result(4, 4, 3, 8));
-        
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 4,
@@ -982,7 +1005,7 @@ mod tests {
     #[test]
     fn test_select_bands_out_of_range() {
         let codec = Arc::new(MockJ2KCodec::new().with_decode_result(4, 4, 3, 8));
-        
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 4,
@@ -1019,10 +1042,12 @@ mod tests {
 
     #[test]
     fn test_has_block_valid() {
-        let codec = Arc::new(MockJ2KCodec::new()
-            .with_decode_result(64, 64, 1, 8)
-            .with_tile_grid(32, 32, 2, 2)); // 2x2 tile grid
-        
+        let codec = Arc::new(
+            MockJ2KCodec::new()
+                .with_decode_result(64, 64, 1, 8)
+                .with_tile_grid(32, 32, 2, 2),
+        ); // 2x2 tile grid
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 64,
@@ -1056,9 +1081,8 @@ mod tests {
 
     #[test]
     fn test_has_block_single_tile() {
-        let codec = Arc::new(MockJ2KCodec::new()
-            .with_decode_result(64, 64, 1, 8)); // Default single tile
-        
+        let codec = Arc::new(MockJ2KCodec::new().with_decode_result(64, 64, 1, 8)); // Default single tile
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 64,
@@ -1089,7 +1113,7 @@ mod tests {
     #[test]
     fn test_compression_type_c8() {
         let codec = Arc::new(MockJ2KCodec::new());
-        
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 64,
@@ -1116,7 +1140,7 @@ mod tests {
     #[test]
     fn test_compression_type_cd() {
         let codec = Arc::new(MockJ2KCodec::new().with_htj2k_support());
-        
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 64,
@@ -1143,7 +1167,7 @@ mod tests {
     #[test]
     fn test_num_resolution_levels() {
         let codec = Arc::new(MockJ2KCodec::new());
-        
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 64,
@@ -1170,9 +1194,8 @@ mod tests {
 
     #[test]
     fn test_decode_block_invalid_coordinates() {
-        let codec = Arc::new(MockJ2KCodec::new()
-            .with_decode_result(64, 64, 1, 8)); // Single tile
-        
+        let codec = Arc::new(MockJ2KCodec::new().with_decode_result(64, 64, 1, 8)); // Single tile
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 64,
@@ -1195,17 +1218,22 @@ mod tests {
 
         // Invalid block coordinates should return error (single tile image)
         let result = decoder.decode_block(1, 0, 0, None);
-        assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(1, 0, 0))));
+        assert!(matches!(
+            result,
+            Err(CodecError::InvalidBlockCoordinates(1, 0, 0))
+        ));
 
         let result = decoder.decode_block(0, 1, 0, None);
-        assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(0, 1, 0))));
+        assert!(matches!(
+            result,
+            Err(CodecError::InvalidBlockCoordinates(0, 1, 0))
+        ));
     }
 
     #[test]
     fn test_decode_block_success() {
-        let codec = Arc::new(MockJ2KCodec::new()
-            .with_decode_result(64, 64, 3, 8)); // Single tile
-        
+        let codec = Arc::new(MockJ2KCodec::new().with_decode_result(64, 64, 3, 8)); // Single tile
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 64,
@@ -1238,10 +1266,12 @@ mod tests {
     #[test]
     fn test_decode_block_multi_tile() {
         // Test decoding from a multi-tile image
-        let codec = Arc::new(MockJ2KCodec::new()
-            .with_decode_result(128, 128, 3, 8)
-            .with_tile_grid(64, 64, 2, 2)); // 2x2 tile grid
-        
+        let codec = Arc::new(
+            MockJ2KCodec::new()
+                .with_decode_result(128, 128, 3, 8)
+                .with_tile_grid(64, 64, 2, 2),
+        ); // 2x2 tile grid
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 128,
@@ -1273,17 +1303,19 @@ mod tests {
                 assert_eq!(data.len(), 64 * 64 * 3);
             }
         }
-        
+
         // Out of range should fail
         let result = decoder.decode_block(2, 0, 0, None);
-        assert!(matches!(result, Err(CodecError::InvalidBlockCoordinates(2, 0, 0))));
+        assert!(matches!(
+            result,
+            Err(CodecError::InvalidBlockCoordinates(2, 0, 0))
+        ));
     }
 
     #[test]
     fn test_decode_block_with_band_selection() {
-        let codec = Arc::new(MockJ2KCodec::new()
-            .with_decode_result(64, 64, 3, 8));
-        
+        let codec = Arc::new(MockJ2KCodec::new().with_decode_result(64, 64, 3, 8));
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 64,
@@ -1316,9 +1348,8 @@ mod tests {
 
     #[test]
     fn test_decode_block_at_offset_success() {
-        let codec = Arc::new(MockJ2KCodec::new()
-            .with_decode_result(64, 64, 3, 8));
-        
+        let codec = Arc::new(MockJ2KCodec::new().with_decode_result(64, 64, 3, 8));
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 64,
@@ -1350,9 +1381,8 @@ mod tests {
 
     #[test]
     fn test_decode_block_at_offset_invalid_offset() {
-        let codec = Arc::new(MockJ2KCodec::new()
-            .with_decode_result(64, 64, 1, 8));
-        
+        let codec = Arc::new(MockJ2KCodec::new().with_decode_result(64, 64, 1, 8));
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 64,
@@ -1380,9 +1410,8 @@ mod tests {
 
     #[test]
     fn test_decode_block_at_offset_with_band_selection() {
-        let codec = Arc::new(MockJ2KCodec::new()
-            .with_decode_result(64, 64, 3, 8));
-        
+        let codec = Arc::new(MockJ2KCodec::new().with_decode_result(64, 64, 3, 8));
+
         let decoder = Jpeg2000BlockDecoder {
             codestream: create_mock_codestream(),
             nrows: 64,

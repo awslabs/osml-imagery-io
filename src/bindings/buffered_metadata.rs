@@ -146,10 +146,10 @@ impl PyBufferedMetadataProvider {
             None => BufferedMetadataProvider::new(),
         };
         let inner = Arc::new(simple);
-        
+
         // Create the base class with the same Arc (as dyn MetadataProvider)
         let base = PyMetadataProvider::new(inner.clone() as Arc<dyn MetadataProvider>);
-        
+
         (Self { inner }, base)
     }
 

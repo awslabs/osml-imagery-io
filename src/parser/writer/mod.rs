@@ -344,7 +344,6 @@ impl StructureWriter {
     }
 }
 
-
 #[cfg(test)]
 mod tests;
 

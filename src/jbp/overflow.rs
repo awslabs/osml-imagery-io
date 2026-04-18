@@ -319,10 +319,10 @@ pub fn create_overflow_des(
 pub fn get_image_overflow_indices(accessor: &StructureAccessor) -> Result<(u16, u16), JBPError> {
     // UDOFL field - User Defined Overflow (3 digits)
     let udofl = get_overflow_field(accessor, "udofl")?;
-    
+
     // IXSOFL field - Image Extended Subheader Overflow (3 digits)
     let ixsofl = get_overflow_field(accessor, "ixsofl")?;
-    
+
     Ok((udofl, ixsofl))
 }
 
@@ -401,10 +401,10 @@ pub fn get_file_header_overflow_indices(
 ) -> Result<(u16, u16), JBPError> {
     // UDHOFL field - User Defined Header Overflow (3 digits)
     let udhofl = get_overflow_field(accessor, "udhofl")?;
-    
+
     // XHDLOFL field - Extended Header Data Overflow (3 digits)
     let xhdlofl = get_overflow_field(accessor, "xhdlofl")?;
-    
+
     Ok((udhofl, xhdlofl))
 }
 
@@ -442,10 +442,10 @@ pub fn fetch_overflow_tres(
     if des_index == 0 {
         return Ok(Vec::new());
     }
-    
+
     // Convert 1-based index to 0-based
     let zero_based_index = (des_index - 1) as usize;
-    
+
     // Validate index is within bounds
     if zero_based_index >= des_locations.len() {
         return Err(JBPError::InvalidOverflowIndex {
@@ -453,14 +453,14 @@ pub fn fetch_overflow_tres(
             des_count: des_locations.len(),
         });
     }
-    
+
     // Get the DES location
     let des_loc = &des_locations[zero_based_index];
-    
+
     // Extract the DES data section
     let data_start = des_loc.data_offset as usize;
     let data_end = data_start + des_loc.data_length as usize;
-    
+
     // Validate we have enough data
     if data_end > file_data.len() {
         return Err(JBPError::UnexpectedEof {
@@ -468,9 +468,9 @@ pub fn fetch_overflow_tres(
             available: file_data.len(),
         });
     }
-    
+
     let des_data = &file_data[data_start..data_end];
-    
+
     // Parse TRE envelopes from the DES data
     TreEnvelope::parse_all(des_data)
 }
@@ -485,24 +485,26 @@ fn get_overflow_field(accessor: &StructureAccessor, field_name: &str) -> Result<
         Ok(v) => v,
         Err(_) => return Ok(0), // Field not present means no overflow
     };
-    
+
     // Parse the string value as a number
     let str_value = value.as_str().map_err(|e| JBPError::ValidationError {
         message: format!("Failed to read overflow field '{}': {}", field_name, e),
     })?;
-    
+
     // Parse as u16, treating empty or whitespace-only as 0
     let trimmed = str_value.trim();
     if trimmed.is_empty() {
         return Ok(0);
     }
-    
-    trimmed.parse::<u16>().map_err(|_| JBPError::ValidationError {
-        message: format!(
-            "Invalid overflow field '{}': '{}' is not a valid number",
-            field_name, str_value
-        ),
-    })
+
+    trimmed
+        .parse::<u16>()
+        .map_err(|_| JBPError::ValidationError {
+            message: format!(
+                "Invalid overflow field '{}': '{}' is not a valid number",
+                field_name, str_value
+            ),
+        })
 }
 
 #[cfg(test)]
@@ -513,7 +515,7 @@ mod tests {
     fn fetch_overflow_tres_returns_empty_for_zero_index() {
         let des_locations = vec![SegmentLocation::new(0, 100, 100, 50)];
         let file_data = vec![0u8; 200];
-        
+
         let result = fetch_overflow_tres(0, &des_locations, &file_data).unwrap();
         assert!(result.is_empty());
     }
@@ -522,11 +524,11 @@ mod tests {
     fn fetch_overflow_tres_returns_error_for_invalid_index() {
         let des_locations = vec![SegmentLocation::new(0, 100, 100, 50)];
         let file_data = vec![0u8; 200];
-        
+
         // Index 2 is out of bounds (only 1 DES segment)
         let result = fetch_overflow_tres(2, &des_locations, &file_data);
         assert!(result.is_err());
-        
+
         match result {
             Err(JBPError::InvalidOverflowIndex { index, des_count }) => {
                 assert_eq!(index, 2);
@@ -540,11 +542,11 @@ mod tests {
     fn fetch_overflow_tres_returns_error_for_empty_des_list() {
         let des_locations: Vec<SegmentLocation> = vec![];
         let file_data = vec![0u8; 200];
-        
+
         // Any non-zero index is invalid with empty DES list
         let result = fetch_overflow_tres(1, &des_locations, &file_data);
         assert!(result.is_err());
-        
+
         match result {
             Err(JBPError::InvalidOverflowIndex { index, des_count }) => {
                 assert_eq!(index, 1);
@@ -559,16 +561,16 @@ mod tests {
         // Create a DES with a single TRE envelope
         // TRE: CETAG="GEOLOB", CEL="00003", CEDATA=[0x01, 0x02, 0x03]
         let tre_data = b"GEOLOB00003\x01\x02\x03";
-        
+
         // DES location: subheader at 0-99, data at 100-113
         let des_locations = vec![SegmentLocation::new(0, 100, 100, tre_data.len() as u64)];
-        
+
         // Build file data with TRE at offset 100
         let mut file_data = vec![0u8; 100];
         file_data.extend_from_slice(tre_data);
-        
+
         let result = fetch_overflow_tres(1, &des_locations, &file_data).unwrap();
-        
+
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].tag, "GEOLOB");
         assert_eq!(result[0].data, vec![0x01, 0x02, 0x03]);
@@ -580,14 +582,14 @@ mod tests {
         let mut tre_data = Vec::new();
         tre_data.extend_from_slice(b"GEOLOB00003\x01\x02\x03");
         tre_data.extend_from_slice(b"TEST  00002\xAA\xBB");
-        
+
         let des_locations = vec![SegmentLocation::new(0, 50, 50, tre_data.len() as u64)];
-        
+
         let mut file_data = vec![0u8; 50];
         file_data.extend_from_slice(&tre_data);
-        
+
         let result = fetch_overflow_tres(1, &des_locations, &file_data).unwrap();
-        
+
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].tag, "GEOLOB");
         assert_eq!(result[0].data, vec![0x01, 0x02, 0x03]);
@@ -600,7 +602,7 @@ mod tests {
         // Create two DES segments, fetch from the second one
         let tre_data_1 = b"FIRST 00001\x01";
         let tre_data_2 = b"SECOND00002\x02\x03";
-        
+
         let des_locations = vec![
             SegmentLocation::new(0, 50, 50, tre_data_1.len() as u64),
             SegmentLocation::new(
@@ -610,15 +612,15 @@ mod tests {
                 tre_data_2.len() as u64,
             ),
         ];
-        
+
         let mut file_data = vec![0u8; 50];
         file_data.extend_from_slice(tre_data_1);
         file_data.extend(vec![0u8; 50]); // Second subheader
         file_data.extend_from_slice(tre_data_2);
-        
+
         // Fetch from DES index 2 (1-based)
         let result = fetch_overflow_tres(2, &des_locations, &file_data).unwrap();
-        
+
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].tag, "SECOND");
         assert_eq!(result[0].data, vec![0x02, 0x03]);
@@ -629,12 +631,15 @@ mod tests {
         // DES location claims more data than available
         let des_locations = vec![SegmentLocation::new(0, 50, 50, 1000)];
         let file_data = vec![0u8; 100]; // Only 100 bytes, but DES claims 1000
-        
+
         let result = fetch_overflow_tres(1, &des_locations, &file_data);
         assert!(result.is_err());
-        
+
         match result {
-            Err(JBPError::UnexpectedEof { expected, available }) => {
+            Err(JBPError::UnexpectedEof {
+                expected,
+                available,
+            }) => {
                 assert_eq!(expected, 1050); // 50 + 1000
                 assert_eq!(available, 100);
             }
@@ -647,7 +652,7 @@ mod tests {
         // DES with zero-length data section
         let des_locations = vec![SegmentLocation::new(0, 50, 50, 0)];
         let file_data = vec![0u8; 50];
-        
+
         let result = fetch_overflow_tres(1, &des_locations, &file_data).unwrap();
         assert!(result.is_empty());
     }
@@ -788,9 +793,13 @@ mod tests {
             // DESOFLW is at offset 196 (after all security fields)
             // DE(2) + DESID(25) + DESVER(2) + security fields(167) = 196
             let desoflw_offset = 196;
-            let desoflw = std::str::from_utf8(&subheader[desoflw_offset..desoflw_offset + 6])
-                .unwrap();
-            assert_eq!(desoflw, expected_desoflw, "DESOFLW mismatch for {:?}", source);
+            let desoflw =
+                std::str::from_utf8(&subheader[desoflw_offset..desoflw_offset + 6]).unwrap();
+            assert_eq!(
+                desoflw, expected_desoflw,
+                "DESOFLW mismatch for {:?}",
+                source
+            );
         }
     }
 
@@ -883,7 +892,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod property_tests {
     use super::*;
@@ -891,11 +899,8 @@ mod property_tests {
 
     /// Strategy to generate valid CETAG strings (1-6 alphanumeric characters)
     fn valid_cetag_strategy() -> impl Strategy<Value = String> {
-        prop::collection::vec(
-            prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
-            1..=6,
-        )
-        .prop_map(|chars| chars.into_iter().collect::<String>())
+        prop::collection::vec(prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), 1..=6)
+            .prop_map(|chars| chars.into_iter().collect::<String>())
     }
 
     /// Strategy to generate CEDATA bytes (0 to 100 bytes for practical testing)
@@ -905,9 +910,8 @@ mod property_tests {
 
     /// Strategy to generate a valid TRE envelope
     fn tre_envelope_strategy() -> impl Strategy<Value = TreEnvelope> {
-        (valid_cetag_strategy(), cedata_strategy()).prop_map(|(tag, data)| {
-            TreEnvelope::new(tag, data).unwrap()
-        })
+        (valid_cetag_strategy(), cedata_strategy())
+            .prop_map(|(tag, data)| TreEnvelope::new(tag, data).unwrap())
     }
 
     /// Strategy to generate a list of TRE envelopes

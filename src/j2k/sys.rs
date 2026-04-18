@@ -174,7 +174,6 @@ pub struct opj_image_cmptparm_t {
     pub sgnd: u32,
 }
 
-
 /// Decompression parameters
 #[repr(C)]
 #[derive(Debug)]
@@ -394,18 +393,27 @@ pub struct opj_poc_t {
     pub ty0_t: u32,
 }
 
-
 // =============================================================================
 // Callback Types
 // =============================================================================
 
 /// Stream read callback function type
-pub type opj_stream_read_fn =
-    Option<unsafe extern "C" fn(p_buffer: *mut c_void, p_nb_bytes: usize, p_user_data: *mut c_void) -> usize>;
+pub type opj_stream_read_fn = Option<
+    unsafe extern "C" fn(
+        p_buffer: *mut c_void,
+        p_nb_bytes: usize,
+        p_user_data: *mut c_void,
+    ) -> usize,
+>;
 
 /// Stream write callback function type
-pub type opj_stream_write_fn =
-    Option<unsafe extern "C" fn(p_buffer: *mut c_void, p_nb_bytes: usize, p_user_data: *mut c_void) -> usize>;
+pub type opj_stream_write_fn = Option<
+    unsafe extern "C" fn(
+        p_buffer: *mut c_void,
+        p_nb_bytes: usize,
+        p_user_data: *mut c_void,
+    ) -> usize,
+>;
 
 /// Stream skip callback function type
 pub type opj_stream_skip_fn =
@@ -416,8 +424,7 @@ pub type opj_stream_seek_fn =
     Option<unsafe extern "C" fn(p_nb_bytes: i64, p_user_data: *mut c_void) -> c_int>;
 
 /// Stream free user data callback function type
-pub type opj_stream_free_user_data_fn =
-    Option<unsafe extern "C" fn(p_user_data: *mut c_void)>;
+pub type opj_stream_free_user_data_fn = Option<unsafe extern "C" fn(p_user_data: *mut c_void)>;
 
 /// Message handler callback function type
 pub type opj_msg_callback =
@@ -628,10 +635,7 @@ extern "C" {
     ///
     /// # Returns
     /// OPJ_TRUE on success, OPJ_FALSE on failure
-    pub fn opj_set_decoded_resolution_factor(
-        p_codec: *mut opj_codec_t,
-        res_factor: u32,
-    ) -> c_int;
+    pub fn opj_set_decoded_resolution_factor(p_codec: *mut opj_codec_t, res_factor: u32) -> c_int;
 
     // -------------------------------------------------------------------------
     // Tile Decoding Functions

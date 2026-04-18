@@ -5,9 +5,7 @@
 
 use crate::parser::error::AccessError;
 use crate::parser::expression::{EvalContext, EvalResult, ExpressionEvaluator};
-use crate::parser::types::{
-    FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition,
-};
+use crate::parser::types::{FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition};
 use crate::parser::value::Value;
 
 /// Calculate the size of a nested type instance.
@@ -45,11 +43,12 @@ fn get_nested_type_size(
     data: &[u8],
     offset: usize,
 ) -> Result<usize, AccessError> {
-    let nested_def = definition.types.get(type_name).ok_or_else(|| {
-        AccessError::UnknownField {
+    let nested_def = definition
+        .types
+        .get(type_name)
+        .ok_or_else(|| AccessError::UnknownField {
             path: format!("type:{}", type_name),
-        }
-    })?;
+        })?;
 
     // Build a local context for the nested type
     let mut nested_ctx = ctx.clone();
@@ -115,9 +114,12 @@ fn get_nested_type_size(
 }
 
 /// Read a simple value from field data for context building.
-fn read_simple_value<'a>(field: &FieldDefinition, data: &'a [u8]) -> Result<Value<'a>, AccessError> {
+fn read_simple_value<'a>(
+    field: &FieldDefinition,
+    data: &'a [u8],
+) -> Result<Value<'a>, AccessError> {
     use std::borrow::Cow;
-    
+
     match &field.field_type {
         FieldType::String => {
             let s = std::str::from_utf8(data).unwrap_or("");
@@ -128,9 +130,7 @@ fn read_simple_value<'a>(field: &FieldDefinition, data: &'a [u8]) -> Result<Valu
             let n = match bytes {
                 1 => data.first().map(|&b| b as u64).unwrap_or(0),
                 2 if data.len() >= 2 => u16::from_be_bytes([data[0], data[1]]) as u64,
-                3 if data.len() >= 3 => {
-                    u32::from_be_bytes([0, data[0], data[1], data[2]]) as u64
-                }
+                3 if data.len() >= 3 => u32::from_be_bytes([0, data[0], data[1], data[2]]) as u64,
                 4 if data.len() >= 4 => {
                     u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as u64
                 }
@@ -141,9 +141,7 @@ fn read_simple_value<'a>(field: &FieldDefinition, data: &'a [u8]) -> Result<Valu
         FieldType::SignedInt(bytes) => {
             let n = match bytes {
                 1 => data.first().map(|&b| b as i8 as i64 as u64).unwrap_or(0),
-                2 if data.len() >= 2 => {
-                    i16::from_be_bytes([data[0], data[1]]) as i64 as u64
-                }
+                2 if data.len() >= 2 => i16::from_be_bytes([data[0], data[1]]) as i64 as u64,
                 4 if data.len() >= 4 => {
                     i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64 as u64
                 }
@@ -204,7 +202,14 @@ pub fn get_simple_field_size(
                     }
                     FieldType::TypeRef(type_name) => {
                         // Get size from nested type
-                        get_nested_type_size(type_name, definition, ctx, evaluator, data, base_offset)
+                        get_nested_type_size(
+                            type_name,
+                            definition,
+                            ctx,
+                            evaluator,
+                            data,
+                            base_offset,
+                        )
                     }
                     _ => Ok(0),
                 }
@@ -213,12 +218,13 @@ pub fn get_simple_field_size(
             }
         }
         SizeSpec::Expression(expr) => {
-            let result = evaluator
-                .evaluate(expr, ctx)
-                .map_err(|e| AccessError::ExpressionError {
-                    path: field.id.clone(),
-                    message: e.to_string(),
-                })?;
+            let result =
+                evaluator
+                    .evaluate(expr, ctx)
+                    .map_err(|e| AccessError::ExpressionError {
+                        path: field.id.clone(),
+                        message: e.to_string(),
+                    })?;
 
             match result {
                 EvalResult::Integer(n) if n >= 0 => Ok(n as usize),
@@ -273,12 +279,13 @@ pub fn get_simple_total_field_size(
         None => Ok(element_size),
         Some(RepeatSpec::Count(n)) => Ok(element_size * n),
         Some(RepeatSpec::Expression(expr)) => {
-            let result = evaluator
-                .evaluate(expr, ctx)
-                .map_err(|e| AccessError::ExpressionError {
-                    path: field.id.clone(),
-                    message: e.to_string(),
-                })?;
+            let result =
+                evaluator
+                    .evaluate(expr, ctx)
+                    .map_err(|e| AccessError::ExpressionError {
+                        path: field.id.clone(),
+                        message: e.to_string(),
+                    })?;
 
             match result {
                 EvalResult::Integer(n) if n >= 0 => {
@@ -366,10 +373,11 @@ where
 
         // Get field size - use simple size calculation to avoid recursion
         // Pass definition, data, and current_offset for TypeRef resolution
-        let size = match get_simple_field_size(field, &ctx, evaluator, definition, data, current_offset) {
-            Ok(s) => s,
-            Err(_) => continue, // Skip fields we can't size
-        };
+        let size =
+            match get_simple_field_size(field, &ctx, evaluator, definition, data, current_offset) {
+                Ok(s) => s,
+                Err(_) => continue, // Skip fields we can't size
+            };
 
         // Read and add to context if within bounds
         if current_offset + size <= data.len() {
@@ -380,7 +388,8 @@ where
 
         // Move past this field - use simple calculation with TypeRef support
         let total_size =
-            get_simple_total_field_size(field, &ctx, evaluator, definition, data, current_offset).unwrap_or(size);
+            get_simple_total_field_size(field, &ctx, evaluator, definition, data, current_offset)
+                .unwrap_or(size);
         current_offset += total_size;
     }
 

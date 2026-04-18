@@ -294,9 +294,17 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
         guard.set_directory(self.ifd_index).ok()?;
 
         let (offset_tag, count_tag, num_entries) = if self.is_tiled {
-            (tags::TILE_OFFSETS, tags::TILE_BYTE_COUNTS, guard.number_of_tiles())
+            (
+                tags::TILE_OFFSETS,
+                tags::TILE_BYTE_COUNTS,
+                guard.number_of_tiles(),
+            )
         } else {
-            (tags::STRIP_OFFSETS, tags::STRIP_BYTE_COUNTS, guard.number_of_strips())
+            (
+                tags::STRIP_OFFSETS,
+                tags::STRIP_BYTE_COUNTS,
+                guard.number_of_strips(),
+            )
         };
 
         if num_entries == 0 {
@@ -347,9 +355,7 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
                     Err(_) => return None,
                 };
 
-                let predictor = guard
-                    .get_field_u16(tags::PREDICTOR)
-                    .unwrap_or(1);
+                let predictor = guard.get_field_u16(tags::PREDICTOR).unwrap_or(1);
                 let sample_format = guard
                     .get_field_u16(tags::SAMPLE_FORMAT)
                     .unwrap_or(tags::SAMPLE_FORMAT_UINT);
@@ -357,15 +363,39 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
                 drop(guard);
 
                 let mut config = std::collections::HashMap::new();
-                config.insert("compression".to_string(), self.compression.to_le_bytes().to_vec());
-                config.insert("bits_per_sample".to_string(), (self.bits_per_sample as u16).to_le_bytes().to_vec());
-                config.insert("samples_per_pixel".to_string(), (self.bands as u16).to_le_bytes().to_vec());
-                config.insert("photometric".to_string(), self.photometric.to_le_bytes().to_vec());
-                config.insert("planar_config".to_string(), self.planar_config.to_le_bytes().to_vec());
+                config.insert(
+                    "compression".to_string(),
+                    self.compression.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "bits_per_sample".to_string(),
+                    (self.bits_per_sample as u16).to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "samples_per_pixel".to_string(),
+                    (self.bands as u16).to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "photometric".to_string(),
+                    self.photometric.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "planar_config".to_string(),
+                    self.planar_config.to_le_bytes().to_vec(),
+                );
                 config.insert("predictor".to_string(), predictor.to_le_bytes().to_vec());
-                config.insert("tile_width".to_string(), self.block_width.to_le_bytes().to_vec());
-                config.insert("tile_height".to_string(), self.block_height.to_le_bytes().to_vec());
-                config.insert("sample_format".to_string(), sample_format.to_le_bytes().to_vec());
+                config.insert(
+                    "tile_width".to_string(),
+                    self.block_width.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "tile_height".to_string(),
+                    self.block_height.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "sample_format".to_string(),
+                    sample_format.to_le_bytes().to_vec(),
+                );
                 config.insert("jpeg_tables".to_string(), jpeg_tables);
                 Some(config)
             }
@@ -375,9 +405,7 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
                 let guard = self.handle.lock().ok()?;
                 guard.set_directory(self.ifd_index).ok()?;
 
-                let predictor = guard
-                    .get_field_u16(tags::PREDICTOR)
-                    .unwrap_or(1);
+                let predictor = guard.get_field_u16(tags::PREDICTOR).unwrap_or(1);
                 let sample_format = guard
                     .get_field_u16(tags::SAMPLE_FORMAT)
                     .unwrap_or(tags::SAMPLE_FORMAT_UINT);
@@ -385,15 +413,39 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
                 drop(guard);
 
                 let mut config = std::collections::HashMap::new();
-                config.insert("compression".to_string(), self.compression.to_le_bytes().to_vec());
-                config.insert("bits_per_sample".to_string(), (self.bits_per_sample as u16).to_le_bytes().to_vec());
-                config.insert("samples_per_pixel".to_string(), (self.bands as u16).to_le_bytes().to_vec());
-                config.insert("photometric".to_string(), self.photometric.to_le_bytes().to_vec());
-                config.insert("planar_config".to_string(), self.planar_config.to_le_bytes().to_vec());
+                config.insert(
+                    "compression".to_string(),
+                    self.compression.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "bits_per_sample".to_string(),
+                    (self.bits_per_sample as u16).to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "samples_per_pixel".to_string(),
+                    (self.bands as u16).to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "photometric".to_string(),
+                    self.photometric.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "planar_config".to_string(),
+                    self.planar_config.to_le_bytes().to_vec(),
+                );
                 config.insert("predictor".to_string(), predictor.to_le_bytes().to_vec());
-                config.insert("tile_width".to_string(), self.block_width.to_le_bytes().to_vec());
-                config.insert("tile_height".to_string(), self.block_height.to_le_bytes().to_vec());
-                config.insert("sample_format".to_string(), sample_format.to_le_bytes().to_vec());
+                config.insert(
+                    "tile_width".to_string(),
+                    self.block_width.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "tile_height".to_string(),
+                    self.block_height.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "sample_format".to_string(),
+                    sample_format.to_le_bytes().to_vec(),
+                );
                 Some(config)
             }
 
@@ -409,14 +461,38 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
                 drop(guard);
 
                 let mut config = std::collections::HashMap::new();
-                config.insert("compression".to_string(), self.compression.to_le_bytes().to_vec());
-                config.insert("bits_per_sample".to_string(), (self.bits_per_sample as u16).to_le_bytes().to_vec());
-                config.insert("samples_per_pixel".to_string(), (self.bands as u16).to_le_bytes().to_vec());
-                config.insert("photometric".to_string(), self.photometric.to_le_bytes().to_vec());
-                config.insert("planar_config".to_string(), self.planar_config.to_le_bytes().to_vec());
-                config.insert("tile_width".to_string(), self.block_width.to_le_bytes().to_vec());
-                config.insert("tile_height".to_string(), self.block_height.to_le_bytes().to_vec());
-                config.insert("sample_format".to_string(), sample_format.to_le_bytes().to_vec());
+                config.insert(
+                    "compression".to_string(),
+                    self.compression.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "bits_per_sample".to_string(),
+                    (self.bits_per_sample as u16).to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "samples_per_pixel".to_string(),
+                    (self.bands as u16).to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "photometric".to_string(),
+                    self.photometric.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "planar_config".to_string(),
+                    self.planar_config.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "tile_width".to_string(),
+                    self.block_width.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "tile_height".to_string(),
+                    self.block_height.to_le_bytes().to_vec(),
+                );
+                config.insert(
+                    "sample_format".to_string(),
+                    sample_format.to_le_bytes().to_vec(),
+                );
                 Some(config)
             }
 
@@ -484,8 +560,7 @@ impl TIFFImageAssetProvider {
             )
         } else {
             // Planar: separate tile per band
-            let tiles_per_band = tiles_across
-                * self.height.div_ceil(self.block_height);
+            let tiles_per_band = tiles_across * self.height.div_ceil(self.block_height);
             let base_tile = block_row * tiles_across + block_col;
 
             let mut bsq = Vec::with_capacity(
@@ -561,8 +636,7 @@ impl TIFFImageAssetProvider {
             )
         } else {
             // Planar: separate strip per band
-            let strips_per_band =
-                self.height.div_ceil(self.block_height);
+            let strips_per_band = self.height.div_ceil(self.block_height);
 
             let mut bsq = Vec::with_capacity(
                 num_out_bands as usize * actual_rows as usize * actual_cols as usize * bps,
@@ -803,13 +877,13 @@ mod tests {
 
         let result = deinterleave_chunky_to_bsq(
             &raw,
-            2,                // block_width
-            2,                // block_height
-            2,                // actual_cols
-            2,                // actual_rows
-            3,                // total_bands
-            1,                // bytes_per_sample
-            &[0, 1, 2],      // all bands
+            2,          // block_width
+            2,          // block_height
+            2,          // actual_cols
+            2,          // actual_rows
+            3,          // total_bands
+            1,          // bytes_per_sample
+            &[0, 1, 2], // all bands
         );
 
         // Expected BSQ: R0 R1 R2 R3 | G0 G1 G2 G3 | B0 B1 B2 B3
@@ -819,16 +893,9 @@ mod tests {
     #[test]
     fn test_deinterleave_chunky_to_bsq_band_subset() {
         // 2x2 image, 3 bands, request only band 0 and 2
-        let raw = vec![
-            1, 2, 3,
-            4, 5, 6,
-            7, 8, 9,
-            10, 11, 12,
-        ];
+        let raw = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
-        let result = deinterleave_chunky_to_bsq(
-            &raw, 2, 2, 2, 2, 3, 1, &[0, 2],
-        );
+        let result = deinterleave_chunky_to_bsq(&raw, 2, 2, 2, 2, 3, 1, &[0, 2]);
 
         // Expected: R0 R1 R2 R3 | B0 B1 B2 B3
         assert_eq!(result, vec![1, 4, 7, 10, 3, 6, 9, 12]);
@@ -839,9 +906,7 @@ mod tests {
         // 2x2 image, 1 band — no deinterleaving needed
         let raw = vec![10, 20, 30, 40];
 
-        let result = deinterleave_chunky_to_bsq(
-            &raw, 2, 2, 2, 2, 1, 1, &[0],
-        );
+        let result = deinterleave_chunky_to_bsq(&raw, 2, 2, 2, 2, 1, 1, &[0]);
 
         assert_eq!(result, vec![10, 20, 30, 40]);
     }
@@ -856,15 +921,10 @@ mod tests {
             0x05, 0x06, 0x07, 0x08, // pixel (0,1)
         ];
 
-        let result = deinterleave_chunky_to_bsq(
-            &raw, 2, 1, 2, 1, 2, 2, &[0, 1],
-        );
+        let result = deinterleave_chunky_to_bsq(&raw, 2, 1, 2, 1, 2, 2, &[0, 1]);
 
         // Expected BSQ: band0_px0 band0_px1 | band1_px0 band1_px1
-        assert_eq!(
-            result,
-            vec![0x01, 0x02, 0x05, 0x06, 0x03, 0x04, 0x07, 0x08]
-        );
+        assert_eq!(result, vec![0x01, 0x02, 0x05, 0x06, 0x03, 0x04, 0x07, 0x08]);
     }
 
     // =========================================================================
@@ -900,17 +960,17 @@ mod tests {
         let pixel_data_offset = strip_byte_counts_offset + 8;
 
         // Tag entries (must be in ascending tag order)
-        write_ifd_entry(&mut buf, 256, short_type, 1, width);       // ImageWidth
-        write_ifd_entry(&mut buf, 257, short_type, 1, height);      // ImageLength
-        write_ifd_entry(&mut buf, 258, short_type, 1, 8);           // BitsPerSample
-        write_ifd_entry(&mut buf, 259, short_type, 1, 1);           // Compression=None
-        write_ifd_entry(&mut buf, 262, short_type, 1, 1);           // PhotometricInterpretation
+        write_ifd_entry(&mut buf, 256, short_type, 1, width); // ImageWidth
+        write_ifd_entry(&mut buf, 257, short_type, 1, height); // ImageLength
+        write_ifd_entry(&mut buf, 258, short_type, 1, 8); // BitsPerSample
+        write_ifd_entry(&mut buf, 259, short_type, 1, 1); // Compression=None
+        write_ifd_entry(&mut buf, 262, short_type, 1, 1); // PhotometricInterpretation
         write_ifd_entry(&mut buf, 273, long_type, 2, strip_offsets_offset); // StripOffsets
-        write_ifd_entry(&mut buf, 277, short_type, 1, 1);           // SamplesPerPixel
+        write_ifd_entry(&mut buf, 277, short_type, 1, 1); // SamplesPerPixel
         write_ifd_entry(&mut buf, 278, short_type, 1, rows_per_strip); // RowsPerStrip
         write_ifd_entry(&mut buf, 279, long_type, 2, strip_byte_counts_offset); // StripByteCounts
-        write_ifd_entry(&mut buf, 284, short_type, 1, 1);           // PlanarConfiguration=Contig
-        write_ifd_entry(&mut buf, 339, short_type, 1, 1);           // SampleFormat=UInt
+        write_ifd_entry(&mut buf, 284, short_type, 1, 1); // PlanarConfiguration=Contig
+        write_ifd_entry(&mut buf, 339, short_type, 1, 1); // SampleFormat=UInt
 
         // Next IFD offset = 0
         buf.extend_from_slice(&0u32.to_le_bytes());
@@ -943,13 +1003,17 @@ mod tests {
     fn test_stripped_provider_dimensions() {
         let data = make_stripped_tiff();
         let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
-        let metadata = Arc::new(
-            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
-        );
+        let metadata =
+            Arc::new(TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap());
 
-        let provider =
-            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
-                .unwrap();
+        let provider = TIFFImageAssetProvider::new(
+            "image:0".to_string(),
+            0,
+            handle,
+            metadata,
+            vec!["data".to_string()],
+        )
+        .unwrap();
 
         assert_eq!(provider.num_columns(), 4);
         assert_eq!(provider.num_rows(), 4);
@@ -965,13 +1029,17 @@ mod tests {
     fn test_stripped_provider_has_block() {
         let data = make_stripped_tiff();
         let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
-        let metadata = Arc::new(
-            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
-        );
+        let metadata =
+            Arc::new(TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap());
 
-        let provider =
-            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
-                .unwrap();
+        let provider = TIFFImageAssetProvider::new(
+            "image:0".to_string(),
+            0,
+            handle,
+            metadata,
+            vec!["data".to_string()],
+        )
+        .unwrap();
 
         // Valid blocks
         assert!(provider.has_block(0, 0, 0));
@@ -989,13 +1057,17 @@ mod tests {
     fn test_stripped_provider_get_block_valid() {
         let data = make_stripped_tiff();
         let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
-        let metadata = Arc::new(
-            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
-        );
+        let metadata =
+            Arc::new(TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap());
 
-        let provider =
-            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
-                .unwrap();
+        let provider = TIFFImageAssetProvider::new(
+            "image:0".to_string(),
+            0,
+            handle,
+            metadata,
+            vec!["data".to_string()],
+        )
+        .unwrap();
 
         // Read strip 0 (rows 0-1)
         let (block_data, shape) = provider.get_block(0, 0, 0, None).unwrap();
@@ -1012,13 +1084,17 @@ mod tests {
     fn test_stripped_provider_get_block_out_of_bounds() {
         let data = make_stripped_tiff();
         let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
-        let metadata = Arc::new(
-            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
-        );
+        let metadata =
+            Arc::new(TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap());
 
-        let provider =
-            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
-                .unwrap();
+        let provider = TIFFImageAssetProvider::new(
+            "image:0".to_string(),
+            0,
+            handle,
+            metadata,
+            vec!["data".to_string()],
+        )
+        .unwrap();
 
         let result = provider.get_block(2, 0, 0, None);
         assert!(result.is_err());
@@ -1036,13 +1112,17 @@ mod tests {
     fn test_stripped_provider_get_block_invalid_resolution() {
         let data = make_stripped_tiff();
         let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
-        let metadata = Arc::new(
-            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
-        );
+        let metadata =
+            Arc::new(TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap());
 
-        let provider =
-            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
-                .unwrap();
+        let provider = TIFFImageAssetProvider::new(
+            "image:0".to_string(),
+            0,
+            handle,
+            metadata,
+            vec!["data".to_string()],
+        )
+        .unwrap();
 
         let result = provider.get_block(0, 0, 1, None);
         assert!(result.is_err());
@@ -1060,16 +1140,23 @@ mod tests {
     fn test_stripped_tile_byte_ranges() {
         let data = make_stripped_tiff();
         let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
-        let metadata = Arc::new(
-            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
-        );
+        let metadata =
+            Arc::new(TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap());
 
-        let provider =
-            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
-                .unwrap();
+        let provider = TIFFImageAssetProvider::new(
+            "image:0".to_string(),
+            0,
+            handle,
+            metadata,
+            vec!["data".to_string()],
+        )
+        .unwrap();
 
         let ranges = provider.tile_byte_ranges();
-        assert!(ranges.is_some(), "tile_byte_ranges() should return Some for stripped TIFF");
+        assert!(
+            ranges.is_some(),
+            "tile_byte_ranges() should return Some for stripped TIFF"
+        );
 
         let ranges = ranges.unwrap();
         // 2 strips → (0,0) and (1,0)
@@ -1123,18 +1210,18 @@ mod tests {
         let pixel_data_offset = tile_byte_counts_offset + 16;
 
         // Tag entries (must be in ascending tag order)
-        write_ifd_entry(&mut buf, 256, short_type, 1, width);       // ImageWidth
-        write_ifd_entry(&mut buf, 257, short_type, 1, height);      // ImageLength
-        write_ifd_entry(&mut buf, 258, short_type, 1, 8);           // BitsPerSample
-        write_ifd_entry(&mut buf, 259, short_type, 1, 1);           // Compression=None
-        write_ifd_entry(&mut buf, 262, short_type, 1, 1);           // PhotometricInterpretation
-        write_ifd_entry(&mut buf, 277, short_type, 1, 1);           // SamplesPerPixel
-        write_ifd_entry(&mut buf, 284, short_type, 1, 1);           // PlanarConfiguration=Contig
-        write_ifd_entry(&mut buf, 322, short_type, 1, tile_width);  // TileWidth
+        write_ifd_entry(&mut buf, 256, short_type, 1, width); // ImageWidth
+        write_ifd_entry(&mut buf, 257, short_type, 1, height); // ImageLength
+        write_ifd_entry(&mut buf, 258, short_type, 1, 8); // BitsPerSample
+        write_ifd_entry(&mut buf, 259, short_type, 1, 1); // Compression=None
+        write_ifd_entry(&mut buf, 262, short_type, 1, 1); // PhotometricInterpretation
+        write_ifd_entry(&mut buf, 277, short_type, 1, 1); // SamplesPerPixel
+        write_ifd_entry(&mut buf, 284, short_type, 1, 1); // PlanarConfiguration=Contig
+        write_ifd_entry(&mut buf, 322, short_type, 1, tile_width); // TileWidth
         write_ifd_entry(&mut buf, 323, short_type, 1, tile_height); // TileLength
         write_ifd_entry(&mut buf, 324, long_type, 4, tile_offsets_offset); // TileOffsets
         write_ifd_entry(&mut buf, 325, long_type, 4, tile_byte_counts_offset); // TileByteCounts
-        write_ifd_entry(&mut buf, 339, short_type, 1, 1);           // SampleFormat=UInt
+        write_ifd_entry(&mut buf, 339, short_type, 1, 1); // SampleFormat=UInt
 
         // Next IFD offset = 0
         buf.extend_from_slice(&0u32.to_le_bytes());
@@ -1166,19 +1253,26 @@ mod tests {
     fn test_tiled_tile_byte_ranges() {
         let data = make_tiled_tiff();
         let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
-        let metadata = Arc::new(
-            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
-        );
+        let metadata =
+            Arc::new(TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap());
 
-        let provider =
-            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
-                .unwrap();
+        let provider = TIFFImageAssetProvider::new(
+            "image:0".to_string(),
+            0,
+            handle,
+            metadata,
+            vec!["data".to_string()],
+        )
+        .unwrap();
 
         assert!(provider.is_tiled);
         assert_eq!(provider.block_grid_size(), (2, 2));
 
         let ranges = provider.tile_byte_ranges();
-        assert!(ranges.is_some(), "tile_byte_ranges() should return Some for tiled TIFF");
+        assert!(
+            ranges.is_some(),
+            "tile_byte_ranges() should return Some for tiled TIFF"
+        );
 
         let ranges = ranges.unwrap();
         // 2x2 grid = 4 tiles
@@ -1208,13 +1302,17 @@ mod tests {
     fn test_tiled_codec_configuration_uncompressed() {
         let data = make_tiled_tiff();
         let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
-        let metadata = Arc::new(
-            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
-        );
+        let metadata =
+            Arc::new(TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap());
 
-        let provider =
-            TIFFImageAssetProvider::new("image:0".to_string(), 0, handle, metadata, vec!["data".to_string()])
-                .unwrap();
+        let provider = TIFFImageAssetProvider::new(
+            "image:0".to_string(),
+            0,
+            handle,
+            metadata,
+            vec!["data".to_string()],
+        )
+        .unwrap();
 
         // Uncompressed TIFF should return None for codec_configuration
         assert!(provider.codec_configuration().is_none());
@@ -1257,21 +1355,21 @@ mod tests {
         let pixel_data_offset = tile_byte_counts_offset + 4;
 
         // Tag entries (must be in ascending tag order)
-        write_ifd_entry(&mut buf, 256, short_type, 1, width);       // ImageWidth
-        write_ifd_entry(&mut buf, 257, short_type, 1, height);      // ImageLength
-        write_ifd_entry(&mut buf, 258, short_type, 1, 8);           // BitsPerSample
+        write_ifd_entry(&mut buf, 256, short_type, 1, width); // ImageWidth
+        write_ifd_entry(&mut buf, 257, short_type, 1, height); // ImageLength
+        write_ifd_entry(&mut buf, 258, short_type, 1, 8); // BitsPerSample
         write_ifd_entry(&mut buf, 259, short_type, 1, compression as u32); // Compression
-        write_ifd_entry(&mut buf, 262, short_type, 1, 1);           // PhotometricInterpretation=MinIsBlack
-        write_ifd_entry(&mut buf, 277, short_type, 1, 1);           // SamplesPerPixel
-        write_ifd_entry(&mut buf, 284, short_type, 1, 1);           // PlanarConfiguration=Contig
+        write_ifd_entry(&mut buf, 262, short_type, 1, 1); // PhotometricInterpretation=MinIsBlack
+        write_ifd_entry(&mut buf, 277, short_type, 1, 1); // SamplesPerPixel
+        write_ifd_entry(&mut buf, 284, short_type, 1, 1); // PlanarConfiguration=Contig
         if let Some(pred) = predictor {
             write_ifd_entry(&mut buf, 317, short_type, 1, pred as u32); // Predictor
         }
-        write_ifd_entry(&mut buf, 322, short_type, 1, tile_width);  // TileWidth
+        write_ifd_entry(&mut buf, 322, short_type, 1, tile_width); // TileWidth
         write_ifd_entry(&mut buf, 323, short_type, 1, tile_height); // TileLength
         write_ifd_entry(&mut buf, 324, long_type, 1, pixel_data_offset); // TileOffsets (inline)
-        write_ifd_entry(&mut buf, 325, long_type, 1, tile_bytes);   // TileByteCounts (inline)
-        write_ifd_entry(&mut buf, 339, short_type, 1, 1);           // SampleFormat=UInt
+        write_ifd_entry(&mut buf, 325, long_type, 1, tile_bytes); // TileByteCounts (inline)
+        write_ifd_entry(&mut buf, 339, short_type, 1, 1); // SampleFormat=UInt
 
         // Next IFD offset = 0
         buf.extend_from_slice(&0u32.to_le_bytes());
@@ -1291,9 +1389,8 @@ mod tests {
     /// Helper: create a provider from raw TIFF bytes.
     fn provider_from_bytes(data: &[u8]) -> TIFFImageAssetProvider {
         let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(data).unwrap()));
-        let metadata = Arc::new(
-            TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap(),
-        );
+        let metadata =
+            Arc::new(TIFFMetadataProvider::from_handle(&handle.lock().unwrap(), 0).unwrap());
         TIFFImageAssetProvider::new(
             "image:0".to_string(),
             0,
@@ -1320,12 +1417,20 @@ mod tests {
         handle.set_field_u32(tags::IMAGE_LENGTH, 256).unwrap();
         handle.set_field_u16(tags::BITS_PER_SAMPLE, 8).unwrap();
         handle.set_field_u16(tags::SAMPLES_PER_PIXEL, 3).unwrap();
-        handle.set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT).unwrap();
-        handle.set_field_u16(tags::PHOTOMETRIC_INTERPRETATION, tags::PHOTOMETRIC_YCBCR).unwrap();
+        handle
+            .set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT)
+            .unwrap();
+        handle
+            .set_field_u16(tags::PHOTOMETRIC_INTERPRETATION, tags::PHOTOMETRIC_YCBCR)
+            .unwrap();
         handle.set_field_u32(tags::TILE_WIDTH, 256).unwrap();
         handle.set_field_u32(tags::TILE_LENGTH, 256).unwrap();
-        handle.set_field_u16(tags::COMPRESSION, tags::COMPRESSION_JPEG).unwrap();
-        handle.set_field_u16(tags::PLANAR_CONFIGURATION, tags::PLANAR_CONFIG_CONTIG).unwrap();
+        handle
+            .set_field_u16(tags::COMPRESSION, tags::COMPRESSION_JPEG)
+            .unwrap();
+        handle
+            .set_field_u16(tags::PLANAR_CONFIGURATION, tags::PLANAR_CONFIG_CONTIG)
+            .unwrap();
 
         let tile_data = vec![128u8; 256 * 256 * 3];
         handle.write_encoded_tile(0, &tile_data).unwrap();

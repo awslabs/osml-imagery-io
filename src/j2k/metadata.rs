@@ -61,7 +61,6 @@ impl MetadataProvider for J2KMetadataProvider {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,10 +94,7 @@ mod tests {
             dict.get("bits_per_component").and_then(|v| v.as_u64()),
             Some(8)
         );
-        assert_eq!(
-            dict.get("is_signed").and_then(|v| v.as_bool()),
-            Some(false)
-        );
+        assert_eq!(dict.get("is_signed").and_then(|v| v.as_bool()), Some(false));
         assert_eq!(
             dict.get("compression_type").and_then(|v| v.as_str()),
             Some("j2k")

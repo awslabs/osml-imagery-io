@@ -352,8 +352,6 @@ impl Default for StructureRegistry {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,11 +465,10 @@ seq:
     #[test]
     fn reload_clears_file_cache() {
         let mut registry = StructureRegistry::new();
-        registry
-            .file_cache
-            .get_mut()
-            .unwrap()
-            .insert("TEST".to_string(), Arc::new(StructureDefinition::new("test")));
+        registry.file_cache.get_mut().unwrap().insert(
+            "TEST".to_string(),
+            Arc::new(StructureDefinition::new("test")),
+        );
         assert!(!registry.file_cache.get_mut().unwrap().is_empty());
 
         registry.reload().unwrap();
@@ -489,11 +486,10 @@ seq:
     #[test]
     fn clear_cache_clears_file_cache() {
         let mut registry = StructureRegistry::new();
-        registry
-            .file_cache
-            .get_mut()
-            .unwrap()
-            .insert("TEST".to_string(), Arc::new(StructureDefinition::new("test")));
+        registry.file_cache.get_mut().unwrap().insert(
+            "TEST".to_string(),
+            Arc::new(StructureDefinition::new("test")),
+        );
         registry.clear_cache();
         assert!(registry.file_cache.get_mut().unwrap().is_empty());
     }
@@ -662,7 +658,11 @@ seq:
         // First call loads and caches
         let def1 = registry.get_mut("tre_geolob");
         assert!(def1.is_some());
-        assert!(registry.file_cache.get_mut().unwrap().contains_key("tre_geolob"));
+        assert!(registry
+            .file_cache
+            .get_mut()
+            .unwrap()
+            .contains_key("tre_geolob"));
 
         // Second call uses cache
         let def2 = registry.get_mut("tre_geolob");
@@ -739,7 +739,7 @@ seq:
     #[test]
     fn list_get_consistency_all_types() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Create directories for all types
         let nitf_dir = temp_dir.path().join("nitf");
         let tre_dir = temp_dir.path().join("tre");
@@ -752,21 +752,20 @@ seq:
         fs::write(
             nitf_dir.join("nitf_02.10_file_header.ksy"),
             create_test_ksy("nitf_file_header"),
-        ).unwrap();
-        fs::write(
-            tre_dir.join("tre_geolob.ksy"),
-            create_test_ksy("geolob"),
-        ).unwrap();
+        )
+        .unwrap();
+        fs::write(tre_dir.join("tre_geolob.ksy"), create_test_ksy("geolob")).unwrap();
         fs::write(
             des_dir.join("des_tre_overflow.ksy"),
             create_test_ksy("tre_overflow"),
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut registry = StructureRegistry::new();
         registry.add_search_path(temp_dir.path());
 
         let names = registry.list();
-        
+
         // Verify expected names are present
         assert!(names.contains(&"nitf_02.10_file_header".to_string()));
         assert!(names.contains(&"tre_geolob".to_string()));
@@ -783,7 +782,6 @@ seq:
         }
     }
 }
-
 
 /// Integration tests that validate all shipped .ksy files parse successfully.
 ///
@@ -936,11 +934,7 @@ mod ksy_integration_tests {
 
             match registry.get(name) {
                 Some(def) => {
-                    assert!(
-                        !def.id.is_empty(),
-                        "Definition '{}' has empty id",
-                        name
-                    );
+                    assert!(!def.id.is_empty(), "Definition '{}' has empty id", name);
                 }
                 None => {
                     failures.push((name.clone(), "get() returned None".to_string()));

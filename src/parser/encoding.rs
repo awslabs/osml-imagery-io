@@ -513,7 +513,6 @@ mod tests {
     }
 }
 
-
 /// Property-based tests for character set validation.
 /// These tests verify universal properties across many random inputs.
 #[cfg(test)]
@@ -619,31 +618,31 @@ mod proptests {
         /// Generate a valid BCS-N byte (digit, space, plus, minus, decimal, slash)
         fn valid_bcs_n_byte() -> impl Strategy<Value = u8> {
             prop_oneof![
-                Just(0x20u8),           // space
-                Just(0x2Bu8),           // '+'
-                Just(0x2Du8),           // '-'
-                Just(0x2Eu8),           // '.'
-                Just(0x2Fu8),           // '/'
-                0x30u8..=0x39u8,        // digits '0'-'9'
+                Just(0x20u8),    // space
+                Just(0x2Bu8),    // '+'
+                Just(0x2Du8),    // '-'
+                Just(0x2Eu8),    // '.'
+                Just(0x2Fu8),    // '/'
+                0x30u8..=0x39u8, // digits '0'-'9'
             ]
         }
 
         /// Generate an invalid BCS-N byte
         fn invalid_bcs_n_byte() -> impl Strategy<Value = u8> {
             prop_oneof![
-                0x00u8..0x20u8,         // control chars (below space)
-                Just(0x21u8),           // '!'
-                Just(0x22u8),           // '"'
-                Just(0x23u8),           // '#'
-                Just(0x24u8),           // '$'
-                Just(0x25u8),           // '%'
-                Just(0x26u8),           // '&'
-                Just(0x27u8),           // '\''
-                Just(0x28u8),           // '('
-                Just(0x29u8),           // ')'
-                Just(0x2Au8),           // '*'
-                Just(0x2Cu8),           // ','
-                0x3Au8..=0xFFu8,        // everything after '9'
+                0x00u8..0x20u8,  // control chars (below space)
+                Just(0x21u8),    // '!'
+                Just(0x22u8),    // '"'
+                Just(0x23u8),    // '#'
+                Just(0x24u8),    // '$'
+                Just(0x25u8),    // '%'
+                Just(0x26u8),    // '&'
+                Just(0x27u8),    // '\''
+                Just(0x28u8),    // '('
+                Just(0x29u8),    // ')'
+                Just(0x2Au8),    // '*'
+                Just(0x2Cu8),    // ','
+                0x3Au8..=0xFFu8, // everything after '9'
             ]
         }
 

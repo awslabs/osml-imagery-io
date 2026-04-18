@@ -57,7 +57,6 @@ impl MetadataProvider for PNGMetadataProvider {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,10 +76,7 @@ mod tests {
         // Ancillary chunks
         entries.insert("tIME".to_string(), json!("2025-01-15T12:30:00Z"));
         entries.insert("gAMA".to_string(), json!(2.2));
-        entries.insert(
-            "pHYs".to_string(),
-            json!({"x": 3780, "y": 3780, "unit": 1}),
-        );
+        entries.insert("pHYs".to_string(), json!({"x": 3780, "y": 3780, "unit": 1}));
         entries.insert(
             "PLTE".to_string(),
             json!([[255, 0, 0], [0, 255, 0], [0, 0, 255]]),
@@ -100,10 +96,7 @@ mod tests {
         assert_eq!(dict.get("width").and_then(|v| v.as_u64()), Some(256));
         assert_eq!(dict.get("height").and_then(|v| v.as_u64()), Some(128));
         assert_eq!(dict.get("bit_depth").and_then(|v| v.as_u64()), Some(8));
-        assert_eq!(
-            dict.get("color_type").and_then(|v| v.as_str()),
-            Some("RGB")
-        );
+        assert_eq!(dict.get("color_type").and_then(|v| v.as_str()), Some("RGB"));
         assert_eq!(
             dict.get("Author").and_then(|v| v.as_str()),
             Some("Test User")
@@ -256,9 +249,6 @@ mod tests {
         entries.insert("Author".to_string(), json!("Second"));
         let provider = PNGMetadataProvider::new(entries);
         let dict = provider.as_dict(None);
-        assert_eq!(
-            dict.get("Author").and_then(|v| v.as_str()),
-            Some("Second")
-        );
+        assert_eq!(dict.get("Author").and_then(|v| v.as_str()), Some("Second"));
     }
 }

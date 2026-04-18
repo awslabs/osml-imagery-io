@@ -102,8 +102,10 @@ impl PNGDatasetWriter {
                         4 => png::BitDepth::Four,
                         _ => png::BitDepth::Eight,
                     };
-                    if matches!(bd, png::BitDepth::One | png::BitDepth::Two | png::BitDepth::Four)
-                    {
+                    if matches!(
+                        bd,
+                        png::BitDepth::One | png::BitDepth::Two | png::BitDepth::Four
+                    ) {
                         return Ok((png::ColorType::Grayscale, bd));
                     }
                 }
@@ -171,11 +173,9 @@ impl PNGDatasetWriter {
             for row in 0..height as usize {
                 for col in 0..width as usize {
                     let linear_idx = row * width as usize + col;
-                    let dst_offset =
-                        (row * width as usize + col) * num_bands as usize;
+                    let dst_offset = (row * width as usize + col) * num_bands as usize;
                     for band in 0..num_bands as usize {
-                        interleaved[dst_offset + band] =
-                            bsq[band * num_pixels + linear_idx];
+                        interleaved[dst_offset + band] = bsq[band * num_pixels + linear_idx];
                     }
                 }
             }
@@ -184,12 +184,10 @@ impl PNGDatasetWriter {
             for row in 0..height as usize {
                 for col in 0..width as usize {
                     let linear_idx = row * width as usize + col;
-                    let dst_offset =
-                        (row * width as usize + col) * num_bands as usize * 2;
+                    let dst_offset = (row * width as usize + col) * num_bands as usize * 2;
                     for band in 0..num_bands as usize {
                         let src = band * band_size_bytes + linear_idx * 2;
-                        let ne_val =
-                            u16::from_ne_bytes([bsq[src], bsq[src + 1]]);
+                        let ne_val = u16::from_ne_bytes([bsq[src], bsq[src + 1]]);
                         let be_bytes = ne_val.to_be_bytes();
                         let dst = dst_offset + band * 2;
                         interleaved[dst] = be_bytes[0];
@@ -217,12 +215,7 @@ impl PNGDatasetWriter {
     /// Pack UInt8 pixel values into sub-byte samples for 1/2/4-bit grayscale.
     ///
     /// Each row is packed independently and padded to byte boundaries.
-    fn pack_sub_byte(
-        data: &[u8],
-        width: u32,
-        height: u32,
-        bit_depth: u8,
-    ) -> Vec<u8> {
+    fn pack_sub_byte(data: &[u8], width: u32, height: u32, bit_depth: u8) -> Vec<u8> {
         let samples_per_byte = 8 / bit_depth as usize;
         let row_bytes = (width as usize).div_ceil(samples_per_byte);
         let mut packed = vec![0u8; row_bytes * height as usize];
@@ -302,11 +295,10 @@ impl DatasetWriter for PNGDatasetWriter {
             None => return Ok(()),
         };
 
-        let image = asset.provider.as_image().ok_or_else(|| {
-            CodecError::Unsupported(
-                "Asset is not an Image variant".to_string(),
-            )
-        })?;
+        let image = asset
+            .provider
+            .as_image()
+            .ok_or_else(|| CodecError::Unsupported("Asset is not an Image variant".to_string()))?;
         let image = image.as_ref();
 
         let width = image.num_columns();
@@ -350,8 +342,7 @@ impl DatasetWriter for PNGDatasetWriter {
         };
 
         // Create the output file and encoder
-        let file = File::create(&self.path)
-            .map_err(CodecError::Io)?;
+        let file = File::create(&self.path).map_err(CodecError::Io)?;
         let buf_writer = BufWriter::new(file);
 
         let mut encoder = png::Encoder::new(buf_writer, width, height);
@@ -390,9 +381,7 @@ impl DatasetWriter for PNGDatasetWriter {
                 if let Some(text) = value.as_str() {
                     encoder
                         .add_text_chunk(key.clone(), text.to_string())
-                        .map_err(|e| {
-                            CodecError::Encode(format!("PNG tEXt chunk error: {}", e))
-                        })?;
+                        .map_err(|e| CodecError::Encode(format!("PNG tEXt chunk error: {}", e)))?;
                 }
             }
         }
@@ -418,8 +407,8 @@ mod tests {
     use super::*;
     use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
     use crate::png::reader::PNGDatasetReader;
-    use crate::traits::reader::DatasetReader;
     use crate::traits::image::ImageAssetProvider;
+    use crate::traits::reader::DatasetReader;
     use std::sync::Arc;
 
     /// Helper: create a BufferedImageAssetProvider with the given config and BSQ data.
@@ -515,10 +504,22 @@ mod tests {
         let provider2 = make_image_provider(2, 2, 1, PixelType::UInt8, &[5, 6, 7, 8]);
 
         writer
-            .add_asset("img0", AssetProvider::Image(provider1), "First", "First image", &[])
+            .add_asset(
+                "img0",
+                AssetProvider::Image(provider1),
+                "First",
+                "First image",
+                &[],
+            )
             .unwrap();
 
-        let result = writer.add_asset("img1", AssetProvider::Image(provider2), "Second", "Second image", &[]);
+        let result = writer.add_asset(
+            "img1",
+            AssetProvider::Image(provider2),
+            "Second",
+            "Second image",
+            &[],
+        );
         match result {
             Err(CodecError::Unsupported(msg)) => {
                 assert!(msg.contains("single image per file"));
@@ -537,13 +538,25 @@ mod tests {
         let path = dir.path().join("idempotent.png");
 
         let mut writer = PNGDatasetWriter::new(&path).unwrap();
-        let provider = make_image_provider(2, 2, 3, PixelType::UInt8, &[
-            1, 2, 3, 4, // R
-            5, 6, 7, 8, // G
-            9, 10, 11, 12, // B
-        ]);
+        let provider = make_image_provider(
+            2,
+            2,
+            3,
+            PixelType::UInt8,
+            &[
+                1, 2, 3, 4, // R
+                5, 6, 7, 8, // G
+                9, 10, 11, 12, // B
+            ],
+        );
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
             .unwrap();
 
         // First close should succeed
@@ -568,7 +581,13 @@ mod tests {
 
         let mut writer = PNGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
             .unwrap();
         writer.close().unwrap();
 
@@ -576,9 +595,7 @@ mod tests {
         let data = std::fs::read(&path).unwrap();
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("Expected Image variant");
+        let image = asset.as_image().expect("Expected Image variant");
 
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [1, 2, 2]);
@@ -600,16 +617,20 @@ mod tests {
 
         let mut writer = PNGDatasetWriter::new(&path).unwrap();
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Test", "Test", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
             .unwrap();
         writer.close().unwrap();
 
         let data = std::fs::read(&path).unwrap();
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("Expected Image variant");
+        let image = asset.as_image().expect("Expected Image variant");
 
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [3, 2, 2]);

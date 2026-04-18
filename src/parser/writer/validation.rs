@@ -28,9 +28,6 @@ pub fn validate_encoding(bytes: &[u8], encoding: Encoding, path: &str) -> Result
 /// Get the padding character for a field.
 pub fn get_pad_char(field: &FieldDefinition) -> u8 {
     field.pad.unwrap_or_else(|| {
-        field
-            .encoding
-            .map(|e| e.default_pad())
-            .unwrap_or(0x20) // Default to space
+        field.encoding.map(|e| e.default_pad()).unwrap_or(0x20) // Default to space
     })
 }

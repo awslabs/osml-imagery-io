@@ -190,7 +190,7 @@ fn try_pkg_config() -> bool {
             if let Ok(output) = output {
                 if output.status.success() {
                     let flags = String::from_utf8_lossy(&output.stdout);
-                    
+
                     // Parse the flags and emit cargo directives
                     for flag in flags.split_whitespace() {
                         if let Some(lib) = flag.strip_prefix("-l") {
@@ -199,12 +199,12 @@ fn try_pkg_config() -> bool {
                             println!("cargo:rustc-link-search=native={}", path);
                         }
                     }
-                    
+
                     // Also get include path for documentation
                     let _ = std::process::Command::new("pkg-config")
                         .args(["--cflags", "libopenjp2"])
                         .output();
-                    
+
                     return true;
                 }
             }
@@ -239,8 +239,8 @@ fn try_system_library() -> bool {
         "/usr/lib",
         "/usr/lib/x86_64-linux-gnu",
         "/usr/lib/aarch64-linux-gnu",
-        "/opt/homebrew/lib",  // Apple Silicon Homebrew
-        "/usr/local/opt/openjpeg/lib",  // Intel Homebrew
+        "/opt/homebrew/lib",           // Apple Silicon Homebrew
+        "/usr/local/opt/openjpeg/lib", // Intel Homebrew
     ];
 
     for path in &search_paths {

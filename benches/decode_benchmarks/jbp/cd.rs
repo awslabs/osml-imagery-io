@@ -58,9 +58,7 @@ pub fn bench_jbp_cd(c: &mut Criterion) {
     let file_data = std::fs::read(tmp.path()).expect("failed to read NITF file");
     let reader = JBPDatasetReader::from_bytes(&file_data).expect("reader creation failed");
     let asset_keys = reader.get_asset_keys(Some(_io::AssetType::Image), None);
-    let asset = reader
-        .get_asset(&asset_keys[0])
-        .expect("get_asset failed");
+    let asset = reader.get_asset(&asset_keys[0]).expect("get_asset failed");
     let image_provider = asset
         .as_any()
         .downcast_ref::<JBPImageAssetProvider>()

@@ -155,14 +155,13 @@ fn resolve_inline_key(key_id: u16, value: u16) -> (String, Value) {
                 tags::RASTER_PIXEL_IS_POINT => "PixelIsPoint",
                 _ => return (format!("GeoKey_{}", key_id), Value::from(value)),
             };
-            ("GeoRasterType".to_string(), Value::String(label.to_string()))
+            (
+                "GeoRasterType".to_string(),
+                Value::String(label.to_string()),
+            )
         }
-        tags::PROJECTED_CS_TYPE_GEO_KEY => {
-            ("GeoProjectedCRS".to_string(), Value::from(value))
-        }
-        tags::GEOGRAPHIC_TYPE_GEO_KEY => {
-            ("GeoGeographicCRS".to_string(), Value::from(value))
-        }
+        tags::PROJECTED_CS_TYPE_GEO_KEY => ("GeoProjectedCRS".to_string(), Value::from(value)),
+        tags::GEOGRAPHIC_TYPE_GEO_KEY => ("GeoGeographicCRS".to_string(), Value::from(value)),
         _ => (format!("GeoKey_{}", key_id), Value::from(value)),
     }
 }
@@ -182,7 +181,10 @@ fn resolve_double_key(key_id: u16, value: f64) -> (String, Value) {
 /// Resolve an ASCII-referenced GeoKey value.
 #[cfg(test)]
 fn resolve_ascii_key(key_id: u16, value: &str) -> (String, Value) {
-    (format!("GeoKey_{}", key_id), Value::String(value.to_string()))
+    (
+        format!("GeoKey_{}", key_id),
+        Value::String(value.to_string()),
+    )
 }
 
 /// Build a GeoKey directory and associated parameter arrays from numeric metadata keys.
@@ -272,7 +274,6 @@ fn value_to_u16(val: &Value) -> Result<u16, ()> {
     }
 }
 
-
 /// Extract transformation tag values from numeric metadata keys.
 ///
 /// Reads `"33550"` (ModelPixelScaleTag), `"33922"` (ModelTiepointTag),
@@ -284,7 +285,11 @@ pub fn extract_transformation_tags(
 ) -> Result<(Option<Vec<f64>>, Option<Vec<f64>>, Option<Vec<f64>>), CodecError> {
     // ModelPixelScaleTag (33550) — exactly 3 DOUBLEs
     let pixel_scale = if let Some(val) = metadata.get("33550") {
-        Some(extract_f64_array(val, "ModelPixelScaleTag (33550)", Some(3))?)
+        Some(extract_f64_array(
+            val,
+            "ModelPixelScaleTag (33550)",
+            Some(3),
+        )?)
     } else {
         None
     };
@@ -353,7 +358,6 @@ fn extract_f64_array(
         .collect()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,10 +378,7 @@ mod tests {
     #[test]
     fn test_parse_geokeys_inline_short_only() {
         // GTModelTypeGeoKey=1 (Projected), GTRasterTypeGeoKey=1 (PixelIsArea)
-        let dir = make_directory(&[
-            [1024, 0, 1, 1],
-            [1025, 0, 1, 1],
-        ]);
+        let dir = make_directory(&[[1024, 0, 1, 1], [1025, 0, 1, 1]]);
         let result = parse_geokeys(&dir, None, None).unwrap();
         assert_eq!(result.get("GeoModelType").unwrap(), "Projected");
         assert_eq!(result.get("GeoRasterType").unwrap(), "PixelIsArea");
@@ -386,10 +387,10 @@ mod tests {
     #[test]
     fn test_parse_geokeys_double_and_ascii_params() {
         let dir = make_directory(&[
-            [1024, 0, 1, 1],                    // inline: Projected
-            [2048, 0, 1, 4326],                  // inline: GeographicCRS
-            [4097, 34736, 1, 0],                 // double param at offset 0
-            [4099, 34737, 7, 0],                 // ASCII param at offset 0, 7 chars
+            [1024, 0, 1, 1],     // inline: Projected
+            [2048, 0, 1, 4326],  // inline: GeographicCRS
+            [4097, 34736, 1, 0], // double param at offset 0
+            [4099, 34737, 7, 0], // ASCII param at offset 0, 7 chars
         ]);
         let doubles = [6378137.0];
         let ascii = "WGS 84|";

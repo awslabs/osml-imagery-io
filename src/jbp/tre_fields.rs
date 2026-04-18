@@ -28,9 +28,12 @@
 
 use std::sync::Arc;
 
-use crate::parser::{AccessError, FieldType, StructureAccessor, StructureDefinition, StructureRegistry, StructureWriter, WriteError};
-use crate::parser::writer::WriteValue;
 use super::tre::{TreEnvelope, TreFieldGroup};
+use crate::parser::writer::WriteValue;
+use crate::parser::{
+    AccessError, FieldType, StructureAccessor, StructureDefinition, StructureRegistry,
+    StructureWriter, WriteError,
+};
 
 /// Look up a TRE definition from the registry by CETAG.
 ///
@@ -76,7 +79,7 @@ pub fn create_accessor<'a>(
         Some(def) => def,
         None => return Ok(None),
     };
-    
+
     let accessor = StructureAccessor::new(Arc::clone(&definition), cedata)?;
     Ok(Some(accessor))
 }
@@ -142,13 +145,13 @@ pub fn serialize_tre_fields(
         Some(def) => def,
         None => return Ok(None),
     };
-    
+
     let mut writer = StructureWriter::new(Arc::clone(&definition));
-    
+
     // Write fields in definition order by iterating the definition's fields
     // and looking up values from the group
     write_fields_to_writer(&mut writer, &definition, &group.fields)?;
-    
+
     // Finish and return the serialized bytes
     let cedata = writer.finish()?;
     Ok(Some(cedata))
@@ -169,9 +172,11 @@ fn json_to_write_value(value: &serde_json::Value) -> Option<WriteValue> {
                 None
             }
         }
-        serde_json::Value::Bool(b) => {
-            Some(WriteValue::String(if *b { "1".to_string() } else { "0".to_string() }))
-        }
+        serde_json::Value::Bool(b) => Some(WriteValue::String(if *b {
+            "1".to_string()
+        } else {
+            "0".to_string()
+        })),
         _ => None,
     }
 }
@@ -186,7 +191,7 @@ fn write_fields_to_writer(
 ) -> Result<(), WriteError> {
     for field_def in &definition.fields {
         let field_id_lower = field_def.id.to_lowercase();
-        
+
         // Find the matching value in the group (case-insensitive)
         let value = fields.iter().find_map(|(name, val)| {
             if name.to_lowercase() == field_id_lower {
@@ -195,7 +200,7 @@ fn write_fields_to_writer(
                 None
             }
         });
-        
+
         if let Some(value) = value {
             match value {
                 serde_json::Value::String(_)
@@ -210,25 +215,27 @@ fn write_fields_to_writer(
                         FieldType::TypeRef(type_name) => {
                             // Array of nested objects: serialize each element
                             // using a sub-writer for the nested type definition
-                            let nested_def = definition.types.get(type_name)
-                                .ok_or_else(|| WriteError::ValidationError {
+                            let nested_def = definition.types.get(type_name).ok_or_else(|| {
+                                WriteError::ValidationError {
                                     path: field_def.id.clone(),
-                                    message: format!("Nested type '{}' not found in definition", type_name),
-                                })?;
+                                    message: format!(
+                                        "Nested type '{}' not found in definition",
+                                        type_name
+                                    ),
+                                }
+                            })?;
                             let mut bytes_array = Vec::with_capacity(arr.len());
                             for (i, elem) in arr.iter().enumerate() {
-                                let elem_bytes = serialize_nested_value(
-                                    elem, nested_def, &field_def.id, i,
-                                )?;
+                                let elem_bytes =
+                                    serialize_nested_value(elem, nested_def, &field_def.id, i)?;
                                 bytes_array.push(WriteValue::Bytes(elem_bytes));
                             }
                             writer.set(&field_def.id, WriteValue::Array(bytes_array))?;
                         }
                         _ => {
                             // Array of scalars: convert each element to WriteValue
-                            let write_values: Vec<WriteValue> = arr.iter()
-                                .filter_map(json_to_write_value)
-                                .collect();
+                            let write_values: Vec<WriteValue> =
+                                arr.iter().filter_map(json_to_write_value).collect();
                             writer.set(&field_def.id, WriteValue::Array(write_values))?;
                         }
                     }
@@ -236,16 +243,19 @@ fn write_fields_to_writer(
                 serde_json::Value::Object(obj) => {
                     // Single nested object (non-repeated TypeRef field)
                     if let FieldType::TypeRef(type_name) = &field_def.field_type {
-                        let nested_def = definition.types.get(type_name)
-                            .ok_or_else(|| WriteError::ValidationError {
+                        let nested_def = definition.types.get(type_name).ok_or_else(|| {
+                            WriteError::ValidationError {
                                 path: field_def.id.clone(),
-                                message: format!("Nested type '{}' not found in definition", type_name),
-                            })?;
+                                message: format!(
+                                    "Nested type '{}' not found in definition",
+                                    type_name
+                                ),
+                            }
+                        })?;
                         let nested_fields: std::collections::HashMap<String, serde_json::Value> =
                             obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                        let nested_bytes = serialize_nested_fields(
-                            nested_def, &nested_fields, &field_def.id,
-                        )?;
+                        let nested_bytes =
+                            serialize_nested_fields(nested_def, &nested_fields, &field_def.id)?;
                         writer.set(&field_def.id, WriteValue::Bytes(nested_bytes))?;
                     }
                 }
@@ -287,12 +297,14 @@ fn serialize_nested_fields(
     parent_path: &str,
 ) -> Result<Vec<u8>, WriteError> {
     let mut sub_writer = StructureWriter::new(Arc::new(definition.clone()));
-    write_fields_to_writer(&mut sub_writer, definition, fields)
-        .map_err(|e| WriteError::ValidationError {
+    write_fields_to_writer(&mut sub_writer, definition, fields).map_err(|e| {
+        WriteError::ValidationError {
             path: parent_path.to_string(),
             message: format!("Failed to serialize nested structure: {}", e),
-        })?;
-    sub_writer.finish()
+        }
+    })?;
+    sub_writer
+        .finish()
         .map_err(|e| WriteError::ValidationError {
             path: parent_path.to_string(),
             message: format!("Failed to finalize nested structure: {}", e),
@@ -334,14 +346,14 @@ pub fn serialize_tre_to_envelope(
         Some(data) => data,
         None => return Ok(None),
     };
-    
+
     // Create the envelope
-    let envelope = TreEnvelope::new(&group.tag, cedata)
-        .map_err(|e| SerializeTreError::InvalidTag { 
+    let envelope =
+        TreEnvelope::new(&group.tag, cedata).map_err(|e| SerializeTreError::InvalidTag {
             tag: group.tag.clone(),
             source: e,
         })?;
-    
+
     Ok(Some(envelope))
 }
 
@@ -371,13 +383,13 @@ pub fn serialize_tre_groups_to_envelopes(
     groups: &std::collections::HashMap<String, TreFieldGroup>,
 ) -> Result<Vec<TreEnvelope>, SerializeTreError> {
     let mut envelopes = Vec::new();
-    
+
     for group in groups.values() {
         if let Some(envelope) = serialize_tre_to_envelope(registry, group)? {
             envelopes.push(envelope);
         }
     }
-    
+
     Ok(envelopes)
 }
 
@@ -387,7 +399,7 @@ pub enum SerializeTreError {
     /// Error writing TRE fields
     #[error("Failed to serialize TRE fields: {0}")]
     WriteError(#[from] WriteError),
-    
+
     /// Invalid CETAG format
     #[error("Invalid CETAG '{tag}': {source}")]
     InvalidTag {
@@ -436,14 +448,14 @@ mod tests {
     fn has_definition_returns_true_for_known_tre() {
         let mut registry = StructureRegistry::new();
         registry.register("tre_geolob", create_test_geolob_definition());
-        
+
         assert!(has_definition(&registry, "GEOLOB"));
     }
 
     #[test]
     fn has_definition_returns_false_for_unknown_tre() {
         let registry = StructureRegistry::new();
-        
+
         assert!(!has_definition(&registry, "UNKNOWN"));
     }
 
@@ -451,7 +463,7 @@ mod tests {
     fn has_definition_handles_whitespace_in_tag() {
         let mut registry = StructureRegistry::new();
         registry.register("tre_geolob", create_test_geolob_definition());
-        
+
         // Tag with trailing spaces (common in NITF)
         assert!(has_definition(&registry, "GEOLOB"));
         assert!(has_definition(&registry, "GEOLOB "));
@@ -463,7 +475,7 @@ mod tests {
     fn has_definition_is_case_insensitive() {
         let mut registry = StructureRegistry::new();
         registry.register("tre_geolob", create_test_geolob_definition());
-        
+
         assert!(has_definition(&registry, "GEOLOB"));
         assert!(has_definition(&registry, "geolob"));
         assert!(has_definition(&registry, "GeoLob"));
@@ -473,7 +485,7 @@ mod tests {
     fn create_accessor_returns_none_for_unknown_tre() {
         let registry = StructureRegistry::new();
         let cedata = b"test data";
-        
+
         let result = create_accessor(&registry, "UNKNOWN", cedata).unwrap();
         assert!(result.is_none());
     }
@@ -482,13 +494,13 @@ mod tests {
     fn create_accessor_returns_accessor_for_known_tre() {
         let mut registry = StructureRegistry::new();
         registry.register("tre_geolob", create_test_geolob_definition());
-        
+
         // Create CEDATA matching the GEOLOB structure (9 + 9 + 15 + 15 = 48 bytes)
         let cedata = b"000360000000360000+000.000000000+00.0000000000";
-        
+
         let result = create_accessor(&registry, "GEOLOB", cedata).unwrap();
         assert!(result.is_some());
-        
+
         let accessor = result.unwrap();
         assert_eq!(accessor.definition().id, "tre_geolob");
     }
@@ -497,9 +509,9 @@ mod tests {
     fn create_accessor_handles_whitespace_in_tag() {
         let mut registry = StructureRegistry::new();
         registry.register("tre_geolob", create_test_geolob_definition());
-        
+
         let cedata = b"000360000000360000+000.000000000+00.0000000000";
-        
+
         // Tag with trailing spaces
         let result = create_accessor(&registry, "GEOLOB ", cedata).unwrap();
         assert!(result.is_some());
@@ -509,9 +521,9 @@ mod tests {
     fn create_accessor_is_case_insensitive() {
         let mut registry = StructureRegistry::new();
         registry.register("tre_geolob", create_test_geolob_definition());
-        
+
         let cedata = b"000360000000360000+000.000000000+00.0000000000";
-        
+
         // Lowercase tag
         let result = create_accessor(&registry, "geolob", cedata).unwrap();
         assert!(result.is_some());
@@ -521,22 +533,22 @@ mod tests {
     fn create_accessor_can_read_fields() {
         let mut registry = StructureRegistry::new();
         registry.register("tre_geolob", create_test_geolob_definition());
-        
+
         // Create CEDATA with known values
         // ARV: "000360000" (9 bytes)
         // BRV: "000360000" (9 bytes)
         // LSO: "+000.000000000" (15 bytes)
         // PSO: "+00.0000000000" (15 bytes)
         let cedata = b"000360000000360000+000.000000000+00.0000000000";
-        
+
         let accessor = create_accessor(&registry, "GEOLOB", cedata)
             .unwrap()
             .unwrap();
-        
+
         // Read the ARV field
         let arv = accessor.get("ARV").unwrap();
         assert_eq!(arv.as_str().unwrap(), "000360000");
-        
+
         // Read the BRV field
         let brv = accessor.get("BRV").unwrap();
         assert_eq!(brv.as_str().unwrap(), "000360000");
@@ -650,10 +662,13 @@ mod tests {
         // Build a TreFieldGroup with nested objects
         let mut group = TreFieldGroup::new("J2KTEST");
         group.insert("NLAYERS", serde_json::json!("002"));
-        group.insert("LAYERS", serde_json::json!([
-            {"LAYER_ID": "001", "BITRATE": "RATE00001"},
-            {"LAYER_ID": "002", "BITRATE": "RATE00002"}
-        ]));
+        group.insert(
+            "LAYERS",
+            serde_json::json!([
+                {"LAYER_ID": "001", "BITRATE": "RATE00001"},
+                {"LAYER_ID": "002", "BITRATE": "RATE00002"}
+            ]),
+        );
 
         // Serialize
         let result = serialize_tre_fields(&registry, &group).unwrap();
@@ -668,12 +683,11 @@ mod tests {
     fn create_test_deeply_nested_definition() -> StructureDefinition {
         use crate::parser::{Expression, RepeatSpec};
 
-        let ipcom_type = StructureDefinition::new("ipcom_entry")
-            .with_field(
-                FieldDefinition::new("COMMENT", FieldType::String)
-                    .with_size(SizeSpec::Fixed(10))
-                    .with_encoding(Encoding::BcsA),
-            );
+        let ipcom_type = StructureDefinition::new("ipcom_entry").with_field(
+            FieldDefinition::new("COMMENT", FieldType::String)
+                .with_size(SizeSpec::Fixed(10))
+                .with_encoding(Encoding::BcsA),
+        );
 
         let event_type = StructureDefinition::new("processing_event")
             .with_field(
@@ -733,16 +747,19 @@ COMMENT002";
         // Build a TreFieldGroup with deeply nested objects
         let mut group = TreFieldGroup::new("HISTTEST");
         group.insert("NEVENTS", serde_json::json!("01"));
-        group.insert("EVENTS", serde_json::json!([
-            {
-                "PDATE": "20240101",
-                "NIPCOM": "02",
-                "IPCOMS": [
-                    {"COMMENT": "COMMENT001"},
-                    {"COMMENT": "COMMENT002"}
-                ]
-            }
-        ]));
+        group.insert(
+            "EVENTS",
+            serde_json::json!([
+                {
+                    "PDATE": "20240101",
+                    "NIPCOM": "02",
+                    "IPCOMS": [
+                        {"COMMENT": "COMMENT001"},
+                        {"COMMENT": "COMMENT002"}
+                    ]
+                }
+            ]),
+        );
 
         // Serialize
         let result = serialize_tre_fields(&registry, &group).unwrap();
@@ -765,13 +782,11 @@ COMMENT002";
     }
 }
 
-
 #[cfg(test)]
 mod property_tests {
     use super::*;
     use crate::parser::{
-        Encoding, Expression, FieldDefinition, FieldType, RepeatSpec, SizeSpec,
-        StructureDefinition,
+        Encoding, Expression, FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition,
     };
     use proptest::prelude::*;
 
@@ -779,11 +794,8 @@ mod property_tests {
     /// (since BCS-A strings are right-trimmed when parsed)
     fn bcsa_string_no_trailing_space(len: usize) -> impl Strategy<Value = String> {
         // Generate alphanumeric characters (no spaces to avoid trimming issues)
-        prop::collection::vec(
-            prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()),
-            len,
-        )
-        .prop_map(|chars| chars.into_iter().collect::<String>())
+        prop::collection::vec(prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), len)
+            .prop_map(|chars| chars.into_iter().collect::<String>())
     }
 
     /// Create a simple TRE definition with fixed-size string fields for testing

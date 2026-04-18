@@ -115,7 +115,6 @@ struct EmptyMetadataProvider {
     empty_bytes: Vec<u8>,
 }
 
-
 impl MetadataProvider for EmptyMetadataProvider {
     fn as_dict(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
         HashMap::new()
@@ -341,7 +340,12 @@ impl BufferedImageAssetProvider {
     }
 
     /// Extract a block from the full BSQ image data, returning BSQ block data.
-    fn extract_block_bsq(&self, bsq_data: &[u8], block_row: u32, block_col: u32) -> Result<Vec<u8>, CodecError> {
+    fn extract_block_bsq(
+        &self,
+        bsq_data: &[u8],
+        block_row: u32,
+        block_col: u32,
+    ) -> Result<Vec<u8>, CodecError> {
         let bytes_per_pixel = self.config.pixel_type.bytes_per_pixel();
         let num_bands = self.config.num_bands as usize;
         let num_rows = self.config.num_rows as usize;
@@ -367,12 +371,14 @@ impl BufferedImageAssetProvider {
             let dst_band_start = band * block_band_size;
 
             for (local_row, row) in (start_row..end_row).enumerate() {
-                let src_row_start = src_band_start + row * num_cols * bytes_per_pixel + start_col * bytes_per_pixel;
+                let src_row_start =
+                    src_band_start + row * num_cols * bytes_per_pixel + start_col * bytes_per_pixel;
                 let src_row_end = src_row_start + (end_col - start_col) * bytes_per_pixel;
                 let dst_row_start = dst_band_start + local_row * block_cols * bytes_per_pixel;
                 let dst_row_end = dst_row_start + (end_col - start_col) * bytes_per_pixel;
 
-                block_data[dst_row_start..dst_row_end].copy_from_slice(&bsq_data[src_row_start..src_row_end]);
+                block_data[dst_row_start..dst_row_end]
+                    .copy_from_slice(&bsq_data[src_row_start..src_row_end]);
             }
         }
 
@@ -390,9 +396,10 @@ impl BufferedImageAssetProvider {
 
         let mut bsq_data = vec![0u8; total_size];
 
-        let blocks = self.blocks.read().map_err(|_| {
-            CodecError::Decode("Failed to acquire read lock on blocks".to_string())
-        })?;
+        let blocks = self
+            .blocks
+            .read()
+            .map_err(|_| CodecError::Decode("Failed to acquire read lock on blocks".to_string()))?;
 
         let num_blocks_h = self.config.num_blocks_horizontal();
         let num_blocks_v = self.config.num_blocks_vertical();
@@ -416,13 +423,17 @@ impl BufferedImageAssetProvider {
                         let dst_band_start = band * band_size;
 
                         for (local_row, row) in (start_row..end_row).enumerate() {
-                            let src_row_start = src_band_start + local_row * block_cols * bytes_per_pixel;
+                            let src_row_start =
+                                src_band_start + local_row * block_cols * bytes_per_pixel;
                             let src_row_end = src_row_start + block_cols * bytes_per_pixel;
-                            let dst_row_start = dst_band_start + row * num_cols * bytes_per_pixel + start_col * bytes_per_pixel;
+                            let dst_row_start = dst_band_start
+                                + row * num_cols * bytes_per_pixel
+                                + start_col * bytes_per_pixel;
                             let dst_row_end = dst_row_start + block_cols * bytes_per_pixel;
 
                             if src_row_end <= block_data.len() && dst_row_end <= bsq_data.len() {
-                                bsq_data[dst_row_start..dst_row_end].copy_from_slice(&block_data[src_row_start..src_row_end]);
+                                bsq_data[dst_row_start..dst_row_end]
+                                    .copy_from_slice(&block_data[src_row_start..src_row_end]);
                             }
                         }
                     }
@@ -503,14 +514,22 @@ impl ImageAssetProvider for BufferedImageAssetProvider {
         bands: Option<&[u32]>,
     ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
         if resolution_level != 0 {
-            return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, resolution_level));
+            return Err(CodecError::InvalidBlockCoordinates(
+                block_row,
+                block_col,
+                resolution_level,
+            ));
         }
 
         let num_blocks_h = self.config.num_blocks_horizontal();
         let num_blocks_v = self.config.num_blocks_vertical();
 
         if block_row >= num_blocks_v || block_col >= num_blocks_h {
-            return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, resolution_level));
+            return Err(CodecError::InvalidBlockCoordinates(
+                block_row,
+                block_col,
+                resolution_level,
+            ));
         }
 
         // Check local overrides first
@@ -567,7 +586,10 @@ impl ImageAssetProvider for BufferedImageAssetProvider {
             // Delegate to source provider
             source.get_block(block_row, block_col, resolution_level, bands)
         } else {
-            Err(CodecError::Decode(format!("Block ({}, {}) not found", block_row, block_col)))
+            Err(CodecError::Decode(format!(
+                "Block ({}, {}) not found",
+                block_row, block_col
+            )))
         }
     }
 
@@ -651,8 +673,7 @@ mod tests {
 
     #[test]
     fn test_block_count() {
-        let config = MemoryImageConfig::new(500, 300)
-            .with_block_size(256, 256);
+        let config = MemoryImageConfig::new(500, 300).with_block_size(256, 256);
 
         assert_eq!(config.num_blocks_horizontal(), 2);
         assert_eq!(config.num_blocks_vertical(), 2);
@@ -671,8 +692,7 @@ mod tests {
 
     #[test]
     fn test_set_and_get_block() {
-        let config = MemoryImageConfig::new(256, 256)
-            .with_block_size(256, 256);
+        let config = MemoryImageConfig::new(256, 256).with_block_size(256, 256);
         let provider = BufferedImageAssetProvider::new("test", config);
 
         // Create test data (1 band, 256x256 pixels, 1 byte per pixel) in BSQ format
@@ -680,7 +700,7 @@ mod tests {
         provider.set_block(0, 0, &block_data).unwrap();
 
         assert!(provider.has_block(0, 0, 0));
-        
+
         let (data, shape) = provider.get_block(0, 0, 0, None).unwrap();
         // Shape is now [bands, rows, cols] (CHW format)
         assert_eq!(shape, [1, 256, 256]);
@@ -697,8 +717,8 @@ mod tests {
         metadata.set("nppbh", "256");
 
         let config = MemoryImageConfig::new(512, 512);
-        let provider = BufferedImageAssetProvider::new("test_image", config)
-            .with_metadata(Arc::new(metadata));
+        let provider =
+            BufferedImageAssetProvider::new("test_image", config).with_metadata(Arc::new(metadata));
 
         // Verify metadata is accessible
         let meta = provider.metadata();
@@ -740,12 +760,12 @@ mod property_tests {
 
     proptest! {
         /// Property 5: BufferedImageAssetProvider Metadata Round-Trip
-        /// 
-        /// For any BufferedMetadataProvider M with key-value pairs, if a 
-        /// BufferedImageAssetProvider is created with M, then calling 
-        /// metadata().as_dict(None) on the provider SHALL return the same 
+        ///
+        /// For any BufferedMetadataProvider M with key-value pairs, if a
+        /// BufferedImageAssetProvider is created with M, then calling
+        /// metadata().as_dict(None) on the provider SHALL return the same
         /// key-value pairs as M.as_dict(None).
-        /// 
+        ///
         /// **Validates: Requirements 2.2**
         #[test]
         fn property_metadata_round_trip(
@@ -789,7 +809,7 @@ mod property_tests {
         }
 
         /// Property 5b: Multiple metadata providers are independent
-        /// 
+        ///
         /// Creating multiple BufferedImageAssetProviders with different metadata
         /// should not affect each other's metadata.
         #[test]

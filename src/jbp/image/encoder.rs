@@ -65,8 +65,7 @@ pub fn swap_ne_to_be(data: &[u8], bytes_per_pixel: usize) -> Vec<u8> {
         8 => data
             .chunks_exact(8)
             .flat_map(|c| {
-                u64::from_ne_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])
-                    .to_be_bytes()
+                u64::from_ne_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]).to_be_bytes()
             })
             .collect(),
         _ => data.to_vec(),
@@ -232,9 +231,7 @@ pub fn create_block_encoder(
         ))),
         #[cfg(feature = "openjpeg")]
         "C8" => {
-            let hints = j2k_hints
-                .cloned()
-                .unwrap_or_default();
+            let hints = j2k_hints.cloned().unwrap_or_default();
             let encoder = Jpeg2000BlockEncoder::new(
                 nrows, ncols, nbands, nbpp, is_signed, nppbh, nppbv, &hints,
             )?;
@@ -367,7 +364,9 @@ impl<'a> TileAssembler<'a> {
     ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
         let (grid_rows, grid_cols) = self.output_grid_size();
         if output_row >= grid_rows || output_col >= grid_cols {
-            return Err(CodecError::InvalidBlockCoordinates(output_row, output_col, 0));
+            return Err(CodecError::InvalidBlockCoordinates(
+                output_row, output_col, 0,
+            ));
         }
 
         // Calculate pixel region for this output tile
@@ -480,10 +479,12 @@ impl<'a> TileAssembler<'a> {
                 let src_row_idx = (src_offset_y + row) as usize;
                 let out_row_idx = (out_offset_y + row) as usize;
 
-                let src_row_offset =
-                    src_band_offset + src_row_idx * (src_cols as usize) * bpp + (src_offset_x as usize) * bpp;
-                let out_row_offset =
-                    out_band_offset + out_row_idx * (out_width as usize) * bpp + (out_offset_x as usize) * bpp;
+                let src_row_offset = src_band_offset
+                    + src_row_idx * (src_cols as usize) * bpp
+                    + (src_offset_x as usize) * bpp;
+                let out_row_offset = out_band_offset
+                    + out_row_idx * (out_width as usize) * bpp
+                    + (out_offset_x as usize) * bpp;
 
                 let copy_bytes = (overlap_width as usize) * bpp;
 
@@ -493,8 +494,6 @@ impl<'a> TileAssembler<'a> {
         }
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -865,9 +864,9 @@ mod property_tests {
     /// Generate valid image dimensions for testing (small for speed)
     fn image_dimensions_strategy() -> impl Strategy<Value = (u32, u32, u32, u8)> {
         (
-            1u32..=32,  // nrows
-            1u32..=32,  // ncols
-            1u32..=4,   // nbands
+            1u32..=32,                          // nrows
+            1u32..=32,                          // ncols
+            1u32..=4,                           // nbands
             prop_oneof![Just(8u8), Just(16u8)], // nbpp
         )
     }
@@ -1010,9 +1009,13 @@ mod property_tests {
         ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
             // Test decoder only supports resolution level 0
             if resolution_level != 0 {
-                return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, resolution_level));
+                return Err(CodecError::InvalidBlockCoordinates(
+                    block_row,
+                    block_col,
+                    resolution_level,
+                ));
             }
-            
+
             if block_row >= self.nbpc || block_col >= self.nbpr {
                 return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
             }
@@ -1075,7 +1078,9 @@ mod property_tests {
                     if row_offset + row_bytes > self.image_data.len() {
                         return Err(CodecError::Decode(format!(
                             "Block data out of bounds: offset {} + {} > {}",
-                            row_offset, row_bytes, self.image_data.len()
+                            row_offset,
+                            row_bytes,
+                            self.image_data.len()
                         )));
                     }
 
@@ -1094,7 +1099,8 @@ mod property_tests {
             actual_cols: u32,
         ) -> Result<Vec<u8>, CodecError> {
             let bpp = self.bytes_per_pixel();
-            let block_size = (self.nppbh as usize) * (self.nppbv as usize) * (self.nbands as usize) * bpp;
+            let block_size =
+                (self.nppbh as usize) * (self.nppbv as usize) * (self.nbands as usize) * bpp;
             let block_index = (block_row as usize) * (self.nbpr as usize) + (block_col as usize);
             let offset = block_index * block_size;
 
@@ -1107,9 +1113,12 @@ mod property_tests {
                     for band in 0..self.nbands {
                         let band_offset = offset + (band as usize) * pixels_per_band * bpp;
                         for row in 0..actual_rows {
-                            let row_offset = band_offset + (row as usize) * (self.nppbh as usize) * bpp;
+                            let row_offset =
+                                band_offset + (row as usize) * (self.nppbh as usize) * bpp;
                             let row_bytes = (actual_cols as usize) * bpp;
-                            output.extend_from_slice(&self.image_data[row_offset..row_offset + row_bytes]);
+                            output.extend_from_slice(
+                                &self.image_data[row_offset..row_offset + row_bytes],
+                            );
                         }
                     }
                 }
@@ -1118,8 +1127,11 @@ mod property_tests {
                     for row in 0..actual_rows {
                         for col in 0..actual_cols {
                             let pixel_offset = offset
-                                + ((row as usize) * (self.nppbh as usize) + (col as usize)) * pixel_size;
-                            output.extend_from_slice(&self.image_data[pixel_offset..pixel_offset + pixel_size]);
+                                + ((row as usize) * (self.nppbh as usize) + (col as usize))
+                                    * pixel_size;
+                            output.extend_from_slice(
+                                &self.image_data[pixel_offset..pixel_offset + pixel_size],
+                            );
                         }
                     }
                 }
@@ -1128,9 +1140,12 @@ mod property_tests {
                     for row in 0..actual_rows {
                         for band in 0..self.nbands {
                             let row_offset = offset
-                                + ((row as usize) * (self.nbands as usize) + (band as usize)) * row_size;
+                                + ((row as usize) * (self.nbands as usize) + (band as usize))
+                                    * row_size;
                             let actual_row_bytes = (actual_cols as usize) * bpp;
-                            output.extend_from_slice(&self.image_data[row_offset..row_offset + actual_row_bytes]);
+                            output.extend_from_slice(
+                                &self.image_data[row_offset..row_offset + actual_row_bytes],
+                            );
                         }
                     }
                 }
@@ -1186,12 +1201,24 @@ mod property_tests {
     }
 
     impl crate::traits::AssetMetadata for MockBsqImageProvider {
-        fn key(&self) -> &str { "mock" }
-        fn title(&self) -> &str { "Mock Image" }
-        fn description(&self) -> &str { "Mock image for testing" }
-        fn media_type(&self) -> &str { "application/octet-stream" }
-        fn roles(&self) -> &[String] { &[] }
-        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> { Ok(self.image_data.clone()) }
+        fn key(&self) -> &str {
+            "mock"
+        }
+        fn title(&self) -> &str {
+            "Mock Image"
+        }
+        fn description(&self) -> &str {
+            "Mock image for testing"
+        }
+        fn media_type(&self) -> &str {
+            "application/octet-stream"
+        }
+        fn roles(&self) -> &[String] {
+            &[]
+        }
+        fn raw_asset(&self) -> Result<Vec<u8>, CodecError> {
+            Ok(self.image_data.clone())
+        }
         fn metadata(&self) -> Arc<dyn crate::traits::MetadataProvider> {
             Arc::new(EmptyMetadataProvider)
         }
@@ -1199,10 +1226,15 @@ mod property_tests {
 
     struct EmptyMetadataProvider;
     impl crate::traits::MetadataProvider for EmptyMetadataProvider {
-        fn as_dict(&self, _prefix: Option<&str>) -> std::collections::HashMap<String, serde_json::Value> {
+        fn as_dict(
+            &self,
+            _prefix: Option<&str>,
+        ) -> std::collections::HashMap<String, serde_json::Value> {
             std::collections::HashMap::new()
         }
-        fn raw(&self) -> &[u8] { &[] }
+        fn raw(&self) -> &[u8] {
+            &[]
+        }
     }
 
     impl ImageAssetProvider for MockBsqImageProvider {
@@ -1222,12 +1254,20 @@ mod property_tests {
             _bands: Option<&[u32]>,
         ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
             if resolution_level != 0 {
-                return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, resolution_level));
+                return Err(CodecError::InvalidBlockCoordinates(
+                    block_row,
+                    block_col,
+                    resolution_level,
+                ));
             }
 
             let (grid_rows, grid_cols) = self.block_grid_size();
             if block_row >= grid_rows || block_col >= grid_cols {
-                return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, resolution_level));
+                return Err(CodecError::InvalidBlockCoordinates(
+                    block_row,
+                    block_col,
+                    resolution_level,
+                ));
             }
 
             // Calculate block bounds
@@ -1241,12 +1281,14 @@ mod property_tests {
             // Extract block data in BSQ format
             let pixels_per_band_full = (self.nrows as usize) * (self.ncols as usize);
             let block_pixels = (actual_width as usize) * (actual_height as usize);
-            let mut block_data = Vec::with_capacity(block_pixels * (self.nbands as usize) * self.bytes_per_pixel);
+            let mut block_data =
+                Vec::with_capacity(block_pixels * (self.nbands as usize) * self.bytes_per_pixel);
 
             for band in 0..self.nbands {
                 let band_offset = (band as usize) * pixels_per_band_full * self.bytes_per_pixel;
                 for row in start_y..end_y {
-                    let row_offset = band_offset + (row as usize) * (self.ncols as usize) * self.bytes_per_pixel;
+                    let row_offset =
+                        band_offset + (row as usize) * (self.ncols as usize) * self.bytes_per_pixel;
                     let start_offset = row_offset + (start_x as usize) * self.bytes_per_pixel;
                     let end_offset = start_offset + (actual_width as usize) * self.bytes_per_pixel;
                     block_data.extend_from_slice(&self.image_data[start_offset..end_offset]);
@@ -1256,38 +1298,58 @@ mod property_tests {
             Ok((block_data, [self.nbands, actual_height, actual_width]))
         }
 
-        fn num_resolution_levels(&self) -> u32 { 1 }
-        fn num_bands(&self) -> u32 { self.nbands }
-        fn num_rows(&self) -> u32 { self.nrows }
-        fn num_columns(&self) -> u32 { self.ncols }
-        fn num_pixels_per_block_horizontal(&self) -> u32 { self.block_width }
-        fn num_pixels_per_block_vertical(&self) -> u32 { self.block_height }
-        fn num_bits_per_pixel(&self) -> u32 { (self.bytes_per_pixel * 8) as u32 }
-        fn actual_bits_per_pixel(&self) -> u32 { (self.bytes_per_pixel * 8) as u32 }
-        fn pixel_value_type(&self) -> crate::types::PixelType { crate::types::PixelType::UInt8 }
-        fn pad_pixel_value(&self) -> f64 { 0.0 }
+        fn num_resolution_levels(&self) -> u32 {
+            1
+        }
+        fn num_bands(&self) -> u32 {
+            self.nbands
+        }
+        fn num_rows(&self) -> u32 {
+            self.nrows
+        }
+        fn num_columns(&self) -> u32 {
+            self.ncols
+        }
+        fn num_pixels_per_block_horizontal(&self) -> u32 {
+            self.block_width
+        }
+        fn num_pixels_per_block_vertical(&self) -> u32 {
+            self.block_height
+        }
+        fn num_bits_per_pixel(&self) -> u32 {
+            (self.bytes_per_pixel * 8) as u32
+        }
+        fn actual_bits_per_pixel(&self) -> u32 {
+            (self.bytes_per_pixel * 8) as u32
+        }
+        fn pixel_value_type(&self) -> crate::types::PixelType {
+            crate::types::PixelType::UInt8
+        }
+        fn pad_pixel_value(&self) -> f64 {
+            0.0
+        }
     }
 
     /// Strategy for generating tile size combinations
     fn tile_size_strategy() -> impl Strategy<Value = (u32, u32, u32, u32)> {
         (
-            2u32..=16,  // source tile width
-            2u32..=16,  // source tile height
-            2u32..=16,  // output tile width
-            2u32..=16,  // output tile height
+            2u32..=16, // source tile width
+            2u32..=16, // source tile height
+            2u32..=16, // output tile width
+            2u32..=16, // output tile height
         )
     }
 
     /// Strategy for generating image dimensions that work with tile sizes
     fn image_with_tiles_strategy() -> impl Strategy<Value = (u32, u32, u32, u32, u32, u32, u32)> {
         (
-            4u32..=32,  // image width
-            4u32..=32,  // image height
-            1u32..=3,   // nbands
-            2u32..=8,   // source tile width
-            2u32..=8,   // source tile height
-            2u32..=8,   // output tile width
-            2u32..=8,   // output tile height
+            4u32..=32, // image width
+            4u32..=32, // image height
+            1u32..=3,  // nbands
+            2u32..=8,  // source tile width
+            2u32..=8,  // source tile height
+            2u32..=8,  // output tile width
+            2u32..=8,  // output tile height
         )
     }
 
@@ -1379,9 +1441,11 @@ mod property_tests {
 #[cfg(test)]
 mod round_trip_property_tests {
     use super::*;
-    use crate::buffered::{BufferedImageAssetProvider, BufferedMetadataProvider, MemoryImageConfig};
-    use crate::jbp::types::NitfFormat;
+    use crate::buffered::{
+        BufferedImageAssetProvider, BufferedMetadataProvider, MemoryImageConfig,
+    };
     use crate::jbp::reader::JBPDatasetReader;
+    use crate::jbp::types::NitfFormat;
     use crate::jbp::writer::JBPDatasetWriter;
     use crate::traits::{AssetProvider, DatasetReader, DatasetWriter, ImageAssetProvider};
     use crate::types::AssetType;
@@ -1393,17 +1457,17 @@ mod round_trip_property_tests {
     /// Uses small dimensions for fast test execution.
     fn round_trip_dimensions_strategy() -> impl Strategy<Value = (u32, u32, u32)> {
         (
-            4u32..=32,  // nrows
-            4u32..=32,  // ncols
-            1u32..=4,   // nbands
+            4u32..=32, // nrows
+            4u32..=32, // ncols
+            1u32..=4,  // nbands
         )
     }
 
     /// Strategy for generating block sizes that are valid for given dimensions.
     fn block_size_strategy() -> impl Strategy<Value = (u32, u32)> {
         (
-            2u32..=16,  // block_width
-            2u32..=16,  // block_height
+            2u32..=16, // block_width
+            2u32..=16, // block_height
         )
     }
 
@@ -1492,18 +1556,18 @@ mod round_trip_property_tests {
 
                     // Block data is in BSQ format (band-sequential)
                     let tile_pixels_per_band = (tile_width as usize) * (tile_height as usize);
-                    
+
                     for band in 0..tile_bands {
                         let src_band_offset = (band as usize) * tile_pixels_per_band;
                         let dst_band_offset = (band as usize) * pixels_per_band;
                         for row in 0..tile_height {
                             for col in 0..tile_width {
                                 let src_offset = src_band_offset + (row as usize) * (tile_width as usize) + (col as usize);
-                                
+
                                 let dst_row = start_y + row;
                                 let dst_col = start_x + col;
                                 let dst_offset = dst_band_offset + (dst_row as usize) * (ncols as usize) + (dst_col as usize);
-                                
+
                                 if src_offset < block_data.len() && dst_offset < reassembled.len() {
                                     reassembled[dst_offset] = block_data[src_offset];
                                 }
@@ -1618,7 +1682,7 @@ mod round_trip_property_tests {
             if ncols % block_width != 0 {
                 let edge_col = expected_grid_cols - 1;
                 let expected_edge_width = ncols - (edge_col * block_width);
-                
+
                 let (block_data, shape) = image_provider.get_block(0, edge_col, 0, None).unwrap();
                 prop_assert_eq!(
                     shape[2], expected_edge_width,
@@ -1631,7 +1695,7 @@ mod round_trip_property_tests {
             if nrows % block_height != 0 {
                 let edge_row = expected_grid_rows - 1;
                 let expected_edge_height = nrows - (edge_row * block_height);
-                
+
                 let (block_data, shape) = image_provider.get_block(edge_row, 0, 0, None).unwrap();
                 prop_assert_eq!(
                     shape[1], expected_edge_height,
@@ -1663,11 +1727,11 @@ mod round_trip_property_tests {
                         for row in 0..tile_height {
                             for col in 0..tile_width {
                                 let src_offset = src_band_offset + (row as usize) * (tile_width as usize) + (col as usize);
-                                
+
                                 let dst_row = start_y + row;
                                 let dst_col = start_x + col;
                                 let dst_offset = dst_band_offset + (dst_row as usize) * (ncols as usize) + (dst_col as usize);
-                                
+
                                 if src_offset < block_data.len() && dst_offset < reassembled.len() {
                                     reassembled[dst_offset] = block_data[src_offset];
                                 }
@@ -1717,7 +1781,7 @@ mod round_trip_property_tests {
             metadata.set("nppbh", &out_block_w.to_string());
             metadata.set("nppbv", &out_block_h.to_string());
 
-            let provider_with_meta = BufferedImageAssetProvider::new("test_image", 
+            let provider_with_meta = BufferedImageAssetProvider::new("test_image",
                 MemoryImageConfig::new(ncols, nrows)
                     .with_bands(nbands)
                     .with_block_size(src_block_w, src_block_h)
@@ -1777,11 +1841,11 @@ mod round_trip_property_tests {
                         for row in 0..tile_height {
                             for col in 0..tile_width {
                                 let src_offset = src_band_offset + (row as usize) * (tile_width as usize) + (col as usize);
-                                
+
                                 let dst_row = start_y + row;
                                 let dst_col = start_x + col;
                                 let dst_offset = dst_band_offset + (dst_row as usize) * (ncols as usize) + (dst_col as usize);
-                                
+
                                 if src_offset < block_data.len() && dst_offset < reassembled.len() {
                                     reassembled[dst_offset] = block_data[src_offset];
                                 }

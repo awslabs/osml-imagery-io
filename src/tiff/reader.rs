@@ -153,10 +153,7 @@ impl TIFFDatasetReader {
                 (key, roles)
             } else {
                 // Overview IFD
-                let key = format!(
-                    "image:{}:overview:{}",
-                    current_parent_index, overview_index
-                );
+                let key = format!("image:{}:overview:{}", current_parent_index, overview_index);
                 let roles = vec!["overview".to_string()];
                 overview_index += 1;
                 (key, roles)
@@ -165,13 +162,9 @@ impl TIFFDatasetReader {
             // Build metadata and create the provider
             {
                 let guard = handle.lock().map_err(|e| {
-                    CodecError::Decode(format!(
-                        "Failed to acquire TIFF handle lock: {}",
-                        e
-                    ))
+                    CodecError::Decode(format!("Failed to acquire TIFF handle lock: {}", e))
                 })?;
-                let mut metadata =
-                    TIFFMetadataProvider::from_handle(&guard, ifd_index)?;
+                let mut metadata = TIFFMetadataProvider::from_handle(&guard, ifd_index)?;
 
                 // JPEG YCbCr fixup: libtiff's default JPEGCOLORMODE_RGB converts
                 // YCbCr→RGB on decode, so the pixels we return are RGB. Update
@@ -404,7 +397,9 @@ mod tests {
     fn test_get_asset_keys_text_empty() {
         let data = make_single_ifd_tiff();
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
-        assert!(reader.get_asset_keys(Some(AssetType::Text), None).is_empty());
+        assert!(reader
+            .get_asset_keys(Some(AssetType::Text), None)
+            .is_empty());
     }
 
     #[test]
@@ -420,7 +415,9 @@ mod tests {
     fn test_get_asset_keys_data_empty() {
         let data = make_single_ifd_tiff();
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
-        assert!(reader.get_asset_keys(Some(AssetType::Data), None).is_empty());
+        assert!(reader
+            .get_asset_keys(Some(AssetType::Data), None)
+            .is_empty());
     }
 
     #[test]
@@ -447,9 +444,18 @@ mod tests {
         let meta = reader.metadata();
         let dict = meta.as_dict(None);
 
-        assert_eq!(dict.get("ByteOrder").and_then(|v| v.as_str()), Some("LittleEndian"));
-        assert_eq!(dict.get("NumberOfDirectories").and_then(|v| v.as_u64()), Some(1));
-        assert_eq!(dict.get("NumberOfImageSegments").and_then(|v| v.as_u64()), Some(1));
+        assert_eq!(
+            dict.get("ByteOrder").and_then(|v| v.as_str()),
+            Some("LittleEndian")
+        );
+        assert_eq!(
+            dict.get("NumberOfDirectories").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            dict.get("NumberOfImageSegments").and_then(|v| v.as_u64()),
+            Some(1)
+        );
     }
 
     #[test]
@@ -470,9 +476,7 @@ mod tests {
         let asset = reader.get_asset("image:0").unwrap();
 
         // Use typed accessor to get the ImageAssetProvider
-        let image = asset
-            .as_image()
-            .expect("Asset should be an Image variant");
+        let image = asset.as_image().expect("Asset should be an Image variant");
 
         assert_eq!(image.num_columns(), 4);
         assert_eq!(image.num_rows(), 4);
@@ -649,20 +653,15 @@ mod tests {
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
 
         // Filter by "overview" role → only overview keys
-        let overview_keys = reader.get_asset_keys(
-            Some(AssetType::Image),
-            Some(&["overview".to_string()]),
-        );
+        let overview_keys =
+            reader.get_asset_keys(Some(AssetType::Image), Some(&["overview".to_string()]));
         assert_eq!(
             overview_keys,
             vec!["image:0:overview:1", "image:0:overview:2"]
         );
 
         // Filter by "data" role → only full-res key
-        let data_keys = reader.get_asset_keys(
-            Some(AssetType::Image),
-            Some(&["data".to_string()]),
-        );
+        let data_keys = reader.get_asset_keys(Some(AssetType::Image), Some(&["data".to_string()]));
         assert_eq!(data_keys, vec!["image:0"]);
 
         // No role filter → all keys

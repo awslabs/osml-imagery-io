@@ -12,11 +12,11 @@ use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use crate::parser::writer::WriteValue;
 use crate::parser::{
     AccessError, ConversionError, LoadError, StructureAccessor, StructureDefinition,
     StructureRegistry, StructureWriter, Value, WriteError,
 };
-use crate::parser::writer::WriteValue;
 
 // ==================== Error Conversion ====================
 
@@ -48,18 +48,21 @@ impl From<WriteError> for PyErr {
             WriteError::MissingRequired { path } => {
                 PyValueError::new_err(format!("Missing required field: {}", path))
             }
-            WriteError::ValueTooLarge { path, max_size, actual_size } => {
-                PyValueError::new_err(format!(
-                    "Value too large for '{}': max {} bytes, got {}",
-                    path, max_size, actual_size
-                ))
-            }
-            WriteError::OutOfOrder { path, expected_after } => {
-                PyValueError::new_err(format!(
-                    "Field '{}' written out of order (expected after '{}')",
-                    path, expected_after
-                ))
-            }
+            WriteError::ValueTooLarge {
+                path,
+                max_size,
+                actual_size,
+            } => PyValueError::new_err(format!(
+                "Value too large for '{}': max {} bytes, got {}",
+                path, max_size, actual_size
+            )),
+            WriteError::OutOfOrder {
+                path,
+                expected_after,
+            } => PyValueError::new_err(format!(
+                "Field '{}' written out of order (expected after '{}')",
+                path, expected_after
+            )),
             _ => PyRuntimeError::new_err(err.to_string()),
         }
     }
@@ -135,8 +138,8 @@ impl PyValue {
         match &self.inner {
             OwnedValue::String(s) => Ok(s.trim_end_matches(' ').to_string()),
             OwnedValue::Bytes(bytes) => {
-                let s = std::str::from_utf8(bytes)
-                    .map_err(|e| PyTypeError::new_err(e.to_string()))?;
+                let s =
+                    std::str::from_utf8(bytes).map_err(|e| PyTypeError::new_err(e.to_string()))?;
                 Ok(s.trim_end_matches(' ').to_string())
             }
             OwnedValue::Unsigned(n) => Ok(n.to_string()),
@@ -158,17 +161,19 @@ impl PyValue {
                 if trimmed.is_empty() {
                     return Ok(0);
                 }
-                trimmed.parse::<i64>()
-                    .map_err(|e| PyTypeError::new_err(format!("Cannot parse '{}' as int: {}", s, e)))
+                trimmed.parse::<i64>().map_err(|e| {
+                    PyTypeError::new_err(format!("Cannot parse '{}' as int: {}", s, e))
+                })
             }
             OwnedValue::Bytes(bytes) => {
-                let s = std::str::from_utf8(bytes)
-                    .map_err(|e| PyTypeError::new_err(e.to_string()))?;
+                let s =
+                    std::str::from_utf8(bytes).map_err(|e| PyTypeError::new_err(e.to_string()))?;
                 let trimmed = s.trim();
                 if trimmed.is_empty() {
                     return Ok(0);
                 }
-                trimmed.parse::<i64>()
+                trimmed
+                    .parse::<i64>()
                     .map_err(|e| PyTypeError::new_err(format!("Cannot parse as int: {}", e)))
             }
             OwnedValue::Unsigned(n) => {
@@ -196,17 +201,19 @@ impl PyValue {
                 if trimmed.is_empty() {
                     return Ok(0.0);
                 }
-                trimmed.parse::<f64>()
-                    .map_err(|e| PyTypeError::new_err(format!("Cannot parse '{}' as float: {}", s, e)))
+                trimmed.parse::<f64>().map_err(|e| {
+                    PyTypeError::new_err(format!("Cannot parse '{}' as float: {}", s, e))
+                })
             }
             OwnedValue::Bytes(bytes) => {
-                let s = std::str::from_utf8(bytes)
-                    .map_err(|e| PyTypeError::new_err(e.to_string()))?;
+                let s =
+                    std::str::from_utf8(bytes).map_err(|e| PyTypeError::new_err(e.to_string()))?;
                 let trimmed = s.trim();
                 if trimmed.is_empty() {
                     return Ok(0.0);
                 }
-                trimmed.parse::<f64>()
+                trimmed
+                    .parse::<f64>()
                     .map_err(|e| PyTypeError::new_err(format!("Cannot parse as float: {}", e)))
             }
             OwnedValue::Unsigned(n) => Ok(*n as f64),
@@ -250,7 +257,6 @@ impl PyValue {
         }
     }
 }
-
 
 // ==================== PyStructureRegistry ====================
 
@@ -327,7 +333,9 @@ impl PyStructureRegistry {
     ///
     /// :raises RuntimeError: If a search path cannot be read.
     fn reload(&mut self) -> PyResult<()> {
-        self.inner.reload().map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        self.inner
+            .reload()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Register a definition at runtime with highest priority.
@@ -425,7 +433,6 @@ impl PyStructureDefinition {
         )
     }
 }
-
 
 // ==================== PyStructureAccessor ====================
 
@@ -601,7 +608,6 @@ impl PyStructureAccessor {
     }
 }
 
-
 // ==================== PyStructureWriter ====================
 
 /// Encodes values into binary data according to a :class:`StructureDefinition`.
@@ -735,10 +741,7 @@ impl PyStructureWriter {
 
     fn __repr__(&self) -> String {
         match &self.inner {
-            Some(writer) => format!(
-                "StructureWriter(buffer_len={})",
-                writer.buffer().len()
-            ),
+            Some(writer) => format!("StructureWriter(buffer_len={})", writer.buffer().len()),
             None => "StructureWriter(<finalized>)".to_string(),
         }
     }

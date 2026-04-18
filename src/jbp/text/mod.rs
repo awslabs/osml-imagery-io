@@ -67,22 +67,22 @@ mod tests {
         bytes.extend_from_slice(format!("{:80}", txtitl).as_bytes());
 
         // Security fields (167 bytes total)
-        bytes.extend_from_slice(b"U");                    // TSCLAS (1)
-        bytes.extend_from_slice(b"  ");                   // TSCLSY (2)
-        bytes.extend_from_slice(b"           ");          // TSCODE (11)
-        bytes.extend_from_slice(b"  ");                   // TSCTLH (2)
+        bytes.extend_from_slice(b"U"); // TSCLAS (1)
+        bytes.extend_from_slice(b"  "); // TSCLSY (2)
+        bytes.extend_from_slice(b"           "); // TSCODE (11)
+        bytes.extend_from_slice(b"  "); // TSCTLH (2)
         bytes.extend_from_slice(b"                    "); // TSREL (20)
-        bytes.extend_from_slice(b"  ");                   // TSDCTP (2)
-        bytes.extend_from_slice(b"        ");             // TSDCDT (8)
-        bytes.extend_from_slice(b"    ");                 // TSDCXM (4)
-        bytes.extend_from_slice(b" ");                    // TSDG (1)
-        bytes.extend_from_slice(b"        ");             // TSDGDT (8)
+        bytes.extend_from_slice(b"  "); // TSDCTP (2)
+        bytes.extend_from_slice(b"        "); // TSDCDT (8)
+        bytes.extend_from_slice(b"    "); // TSDCXM (4)
+        bytes.extend_from_slice(b" "); // TSDG (1)
+        bytes.extend_from_slice(b"        "); // TSDGDT (8)
         bytes.extend_from_slice(b"                                           "); // TSCLTX (43)
-        bytes.extend_from_slice(b" ");                    // TSCATP (1)
+        bytes.extend_from_slice(b" "); // TSCATP (1)
         bytes.extend_from_slice(b"                                        "); // TSCAUT (40)
-        bytes.extend_from_slice(b" ");                    // TSCRSN (1)
-        bytes.extend_from_slice(b"        ");             // TSSRDT (8)
-        bytes.extend_from_slice(b"               ");      // TSCTLN (15)
+        bytes.extend_from_slice(b" "); // TSCRSN (1)
+        bytes.extend_from_slice(b"        "); // TSSRDT (8)
+        bytes.extend_from_slice(b"               "); // TSCTLN (15)
 
         // ENCRYP (1)
         bytes.extend_from_slice(format!("{:1}", encryp).as_bytes());
@@ -122,7 +122,10 @@ mod tests {
         assert_eq!(accessor.get("TE").unwrap().as_str().unwrap(), "TE");
         assert_eq!(accessor.get("TEXTID").unwrap().as_str().unwrap(), "TEXT001");
         assert_eq!(accessor.get("TXTALVL").unwrap().as_str().unwrap(), "000");
-        assert_eq!(accessor.get("TXTDT").unwrap().as_str().unwrap(), "20240101120000");
+        assert_eq!(
+            accessor.get("TXTDT").unwrap().as_str().unwrap(),
+            "20240101120000"
+        );
         assert_eq!(accessor.get("TXTFMT").unwrap().as_str().unwrap(), "STA");
         assert_eq!(accessor.get("TXSHDL").unwrap().as_str().unwrap(), "00000");
     }
@@ -159,7 +162,7 @@ mod tests {
             "20240101120000",
             "Test",
             "0",
-            "XYZ",  // Unknown format code
+            "XYZ", // Unknown format code
             "00000",
         );
 
@@ -180,7 +183,7 @@ mod tests {
             "Test",
             "0",
             "STA",
-            "00003",  // TXSHDL > 0, so TXSOFL should be present
+            "00003", // TXSHDL > 0, so TXSOFL should be present
         );
         // Add TXSOFL (3 bytes)
         bytes.extend_from_slice(b"000");
@@ -201,7 +204,7 @@ mod tests {
             "Test",
             "0",
             "STA",
-            "00008",  // TXSHDL = 8, so TXSHD should be 5 bytes
+            "00008", // TXSHDL = 8, so TXSHD should be 5 bytes
         );
         // Add TXSOFL (3 bytes)
         bytes.extend_from_slice(b"000");
@@ -225,7 +228,7 @@ mod tests {
             "Test",
             "0",
             "STA",
-            "00000",  // TXSHDL = 0, so TXSOFL should be absent
+            "00000", // TXSHDL = 0, so TXSOFL should be absent
         );
 
         let definition = registry.get("nitf_02.10_text_subheader").unwrap();

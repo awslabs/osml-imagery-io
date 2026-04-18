@@ -67,7 +67,7 @@ impl ImageSubheaderBuilder {
     /// Create a new image subheader builder with default values.
     pub fn new() -> Self {
         let mut fields = HashMap::new();
-        
+
         // Set required defaults (uppercase to match .ksy field IDs)
         fields.insert("IM".to_string(), FieldValue::String("IM".to_string()));
         fields.insert("ENCRYP".to_string(), FieldValue::String("0".to_string()));
@@ -78,9 +78,12 @@ impl ImageSubheaderBuilder {
         fields.insert("IC".to_string(), FieldValue::String("NC".to_string()));
         fields.insert("IDLVL".to_string(), FieldValue::U32(1));
         fields.insert("IALVL".to_string(), FieldValue::U32(0));
-        fields.insert("ILOC".to_string(), FieldValue::String("0000000000".to_string()));
+        fields.insert(
+            "ILOC".to_string(),
+            FieldValue::String("0000000000".to_string()),
+        );
         fields.insert("IMAG".to_string(), FieldValue::String("1.0 ".to_string()));
-        
+
         Self {
             fields,
             bands: Vec::new(),
@@ -93,7 +96,8 @@ impl ImageSubheaderBuilder {
     ///
     /// This is a 10-character identifier for the image.
     pub fn iid1(mut self, value: &str) -> Self {
-        self.fields.insert("IID1".to_string(), FieldValue::String(value.to_string()));
+        self.fields
+            .insert("IID1".to_string(), FieldValue::String(value.to_string()));
         self
     }
 
@@ -101,7 +105,8 @@ impl ImageSubheaderBuilder {
     ///
     /// This is an 80-character free-text identifier for the image.
     pub fn iid2(mut self, value: &str) -> Self {
-        self.fields.insert("IID2".to_string(), FieldValue::String(value.to_string()));
+        self.fields
+            .insert("IID2".to_string(), FieldValue::String(value.to_string()));
         self
     }
 
@@ -109,7 +114,8 @@ impl ImageSubheaderBuilder {
     ///
     /// This should be a 14-character date/time string in CCYYMMDDhhmmss format.
     pub fn idatim(mut self, value: &str) -> Self {
-        self.fields.insert("IDATIM".to_string(), FieldValue::String(value.to_string()));
+        self.fields
+            .insert("IDATIM".to_string(), FieldValue::String(value.to_string()));
         self
     }
 
@@ -117,7 +123,8 @@ impl ImageSubheaderBuilder {
     ///
     /// This is a 17-character target identifier.
     pub fn tgtid(mut self, value: &str) -> Self {
-        self.fields.insert("TGTID".to_string(), FieldValue::String(value.to_string()));
+        self.fields
+            .insert("TGTID".to_string(), FieldValue::String(value.to_string()));
         self
     }
 
@@ -125,7 +132,8 @@ impl ImageSubheaderBuilder {
     ///
     /// This is a 42-character description of the image source.
     pub fn isorce(mut self, value: &str) -> Self {
-        self.fields.insert("ISORCE".to_string(), FieldValue::String(value.to_string()));
+        self.fields
+            .insert("ISORCE".to_string(), FieldValue::String(value.to_string()));
         self
     }
 
@@ -133,13 +141,15 @@ impl ImageSubheaderBuilder {
 
     /// Set the number of significant rows in the image (NROWS).
     pub fn nrows(mut self, value: u32) -> Self {
-        self.fields.insert("NROWS".to_string(), FieldValue::U32(value));
+        self.fields
+            .insert("NROWS".to_string(), FieldValue::U32(value));
         self
     }
 
     /// Set the number of significant columns in the image (NCOLS).
     pub fn ncols(mut self, value: u32) -> Self {
-        self.fields.insert("NCOLS".to_string(), FieldValue::U32(value));
+        self.fields
+            .insert("NCOLS".to_string(), FieldValue::U32(value));
         self
     }
 
@@ -147,13 +157,19 @@ impl ImageSubheaderBuilder {
 
     /// Set the pixel value type (PVTYPE).
     pub fn pvtype(mut self, value: PixelValueType) -> Self {
-        self.fields.insert("PVTYPE".to_string(), FieldValue::String(value.to_str().to_string()));
+        self.fields.insert(
+            "PVTYPE".to_string(),
+            FieldValue::String(value.to_str().to_string()),
+        );
         self
     }
 
     /// Set the image representation (IREP).
     pub fn irep(mut self, value: ImageRepresentation) -> Self {
-        self.fields.insert("IREP".to_string(), FieldValue::String(value.to_str().to_string()));
+        self.fields.insert(
+            "IREP".to_string(),
+            FieldValue::String(value.to_str().to_string()),
+        );
         self
     }
 
@@ -161,7 +177,8 @@ impl ImageSubheaderBuilder {
     ///
     /// This is an 8-character image category code.
     pub fn icat(mut self, value: &str) -> Self {
-        self.fields.insert("ICAT".to_string(), FieldValue::String(value.to_string()));
+        self.fields
+            .insert("ICAT".to_string(), FieldValue::String(value.to_string()));
         self
     }
 
@@ -169,7 +186,8 @@ impl ImageSubheaderBuilder {
     ///
     /// This is the number of significant bits in each pixel value.
     pub fn abpp(mut self, value: u8) -> Self {
-        self.fields.insert("ABPP".to_string(), FieldValue::U8(value));
+        self.fields
+            .insert("ABPP".to_string(), FieldValue::U8(value));
         self
     }
 
@@ -177,13 +195,15 @@ impl ImageSubheaderBuilder {
     ///
     /// This is the storage size for each pixel value.
     pub fn nbpp(mut self, value: u8) -> Self {
-        self.fields.insert("NBPP".to_string(), FieldValue::U8(value));
+        self.fields
+            .insert("NBPP".to_string(), FieldValue::U8(value));
         self
     }
 
     /// Set the pixel justification (PJUST).
     pub fn pjust(mut self, value: PixelJustification) -> Self {
-        self.fields.insert("PJUST".to_string(), FieldValue::Char(value.to_char()));
+        self.fields
+            .insert("PJUST".to_string(), FieldValue::Char(value.to_char()));
         self
     }
 
@@ -193,14 +213,17 @@ impl ImageSubheaderBuilder {
     ///
     /// NBPR and NBPC will be calculated automatically based on image dimensions.
     pub fn block_size(mut self, width: u32, height: u32) -> Self {
-        self.fields.insert("NPPBH".to_string(), FieldValue::U32(width));
-        self.fields.insert("NPPBV".to_string(), FieldValue::U32(height));
+        self.fields
+            .insert("NPPBH".to_string(), FieldValue::U32(width));
+        self.fields
+            .insert("NPPBV".to_string(), FieldValue::U32(height));
         self
     }
 
     /// Set the interleave mode (IMODE).
     pub fn imode(mut self, value: InterleaveMode) -> Self {
-        self.fields.insert("IMODE".to_string(), FieldValue::Char(value.to_char()));
+        self.fields
+            .insert("IMODE".to_string(), FieldValue::Char(value.to_char()));
         self
     }
 
@@ -211,13 +234,15 @@ impl ImageSubheaderBuilder {
     /// Common values: "NC" (no compression), "NM" (no compression with mask),
     /// "C8" (JPEG 2000), "M8" (JPEG 2000 with mask).
     pub fn ic(mut self, value: &str) -> Self {
-        self.fields.insert("IC".to_string(), FieldValue::String(value.to_string()));
+        self.fields
+            .insert("IC".to_string(), FieldValue::String(value.to_string()));
         self
     }
 
     /// Set the compression rate code (COMRAT).
     pub fn comrat(mut self, value: &str) -> Self {
-        self.fields.insert("COMRAT".to_string(), FieldValue::String(value.to_string()));
+        self.fields
+            .insert("COMRAT".to_string(), FieldValue::String(value.to_string()));
         self
     }
 
@@ -225,7 +250,8 @@ impl ImageSubheaderBuilder {
 
     /// Set the security classification (ISCLAS).
     pub fn isclas(mut self, value: &str) -> Self {
-        self.fields.insert("ISCLAS".to_string(), FieldValue::String(value.to_string()));
+        self.fields
+            .insert("ISCLAS".to_string(), FieldValue::String(value.to_string()));
         self
     }
 
@@ -233,25 +259,29 @@ impl ImageSubheaderBuilder {
 
     /// Set the image display level (IDLVL).
     pub fn idlvl(mut self, value: u32) -> Self {
-        self.fields.insert("IDLVL".to_string(), FieldValue::U32(value));
+        self.fields
+            .insert("IDLVL".to_string(), FieldValue::U32(value));
         self
     }
 
     /// Set the image attachment level (IALVL).
     pub fn ialvl(mut self, value: u32) -> Self {
-        self.fields.insert("IALVL".to_string(), FieldValue::U32(value));
+        self.fields
+            .insert("IALVL".to_string(), FieldValue::U32(value));
         self
     }
 
     /// Set the image location (ILOC).
     pub fn iloc(mut self, value: &str) -> Self {
-        self.fields.insert("ILOC".to_string(), FieldValue::String(value.to_string()));
+        self.fields
+            .insert("ILOC".to_string(), FieldValue::String(value.to_string()));
         self
     }
 
     /// Set the image magnification (IMAG).
     pub fn imag(mut self, value: &str) -> Self {
-        self.fields.insert("IMAG".to_string(), FieldValue::String(value.to_string()));
+        self.fields
+            .insert("IMAG".to_string(), FieldValue::String(value.to_string()));
         self
     }
 
@@ -284,9 +314,9 @@ impl ImageSubheaderBuilder {
     ) -> Result<Vec<u8>, CodecError> {
         // Get the structure definition
         let def_name = format.image_subheader_definition();
-        let definition = registry
-            .get(def_name)
-            .ok_or_else(|| CodecError::InvalidFormat(format!("Structure definition not found: {}", def_name)))?;
+        let definition = registry.get(def_name).ok_or_else(|| {
+            CodecError::InvalidFormat(format!("Structure definition not found: {}", def_name))
+        })?;
 
         // Create a streaming writer (since we have variable-length band info)
         let mut writer = StructureWriter::new_streaming(Arc::clone(&definition));
@@ -295,18 +325,24 @@ impl ImageSubheaderBuilder {
         self.write_fields(&mut writer)?;
 
         // Finish and return bytes
-        writer.finish().map_err(|e| CodecError::Encode(format!("Failed to write image subheader: {}", e)))
+        writer
+            .finish()
+            .map_err(|e| CodecError::Encode(format!("Failed to write image subheader: {}", e)))
     }
 
     /// Calculate blocking parameters from image dimensions and block size.
     fn calculate_blocking(&self) -> Result<(u32, u32), CodecError> {
-        let ncols = self.get_u32("NCOLS")
+        let ncols = self
+            .get_u32("NCOLS")
             .ok_or_else(|| CodecError::Encode("NCOLS is required".to_string()))?;
-        let nrows = self.get_u32("NROWS")
+        let nrows = self
+            .get_u32("NROWS")
             .ok_or_else(|| CodecError::Encode("NROWS is required".to_string()))?;
-        let nppbh = self.get_u32("NPPBH")
+        let nppbh = self
+            .get_u32("NPPBH")
             .ok_or_else(|| CodecError::Encode("NPPBH (block width) is required".to_string()))?;
-        let nppbv = self.get_u32("NPPBV")
+        let nppbv = self
+            .get_u32("NPPBV")
             .ok_or_else(|| CodecError::Encode("NPPBV (block height) is required".to_string()))?;
 
         // Calculate NBPR and NBPC to cover image dimensions
@@ -368,7 +404,9 @@ impl ImageSubheaderBuilder {
         self.write_str_field(writer, "ICORDS", "", 1)?;
 
         // NICOM - no comments
-        writer.set("NICOM", "0").map_err(|e| CodecError::Encode(format!("Failed to write NICOM: {}", e)))?;
+        writer
+            .set("NICOM", "0")
+            .map_err(|e| CodecError::Encode(format!("Failed to write NICOM: {}", e)))?;
 
         // IC
         self.write_str_field(writer, "IC", "NC", 2)?;
@@ -376,18 +414,23 @@ impl ImageSubheaderBuilder {
         // NBANDS / XBANDS
         let band_count = self.bands.len();
         if band_count == 0 {
-            return Err(CodecError::Encode("At least one band is required".to_string()));
+            return Err(CodecError::Encode(
+                "At least one band is required".to_string(),
+            ));
         }
 
         if band_count <= 9 {
             // Use NBANDS
-            writer.set("NBANDS", format!("{}", band_count))
+            writer
+                .set("NBANDS", format!("{}", band_count))
                 .map_err(|e| CodecError::Encode(format!("Failed to write NBANDS: {}", e)))?;
         } else {
             // Use XBANDS
-            writer.set("NBANDS", "0")
+            writer
+                .set("NBANDS", "0")
                 .map_err(|e| CodecError::Encode(format!("Failed to write NBANDS: {}", e)))?;
-            writer.set("XBANDS", format!("{:05}", band_count))
+            writer
+                .set("XBANDS", format!("{:05}", band_count))
                 .map_err(|e| CodecError::Encode(format!("Failed to write XBANDS: {}", e)))?;
         }
 
@@ -404,9 +447,11 @@ impl ImageSubheaderBuilder {
 
         // Calculate and write blocking parameters
         let (nbpr, nbpc) = self.calculate_blocking()?;
-        writer.set("NBPR", format!("{:04}", nbpr))
+        writer
+            .set("NBPR", format!("{:04}", nbpr))
             .map_err(|e| CodecError::Encode(format!("Failed to write NBPR: {}", e)))?;
-        writer.set("NBPC", format!("{:04}", nbpc))
+        writer
+            .set("NBPC", format!("{:04}", nbpc))
             .map_err(|e| CodecError::Encode(format!("Failed to write NBPC: {}", e)))?;
 
         // NPPBH and NPPBV
@@ -423,11 +468,13 @@ impl ImageSubheaderBuilder {
         self.write_str_field(writer, "IMAG", "1.0 ", 4)?;
 
         // UDIDL - no user defined data
-        writer.set("UDIDL", "00000")
+        writer
+            .set("UDIDL", "00000")
             .map_err(|e| CodecError::Encode(format!("Failed to write UDIDL: {}", e)))?;
 
         // IXSHDL - no extended subheader data
-        writer.set("IXSHDL", "00000")
+        writer
+            .set("IXSHDL", "00000")
             .map_err(|e| CodecError::Encode(format!("Failed to write IXSHDL: {}", e)))?;
 
         Ok(())
@@ -441,8 +488,11 @@ impl ImageSubheaderBuilder {
         default: &str,
         _size: usize,
     ) -> Result<(), CodecError> {
-        let value = self.get_string(field).unwrap_or_else(|| default.to_string());
-        writer.set(field, value)
+        let value = self
+            .get_string(field)
+            .unwrap_or_else(|| default.to_string());
+        writer
+            .set(field, value)
             .map_err(|e| CodecError::Encode(format!("Failed to write {}: {}", field, e)))
     }
 
@@ -458,7 +508,8 @@ impl ImageSubheaderBuilder {
             Some(FieldValue::U8(n)) => format!("{:0width$}", n, width = width),
             _ => format!("{:0width$}", 0, width = width),
         };
-        writer.set(field, value)
+        writer
+            .set(field, value)
             .map_err(|e| CodecError::Encode(format!("Failed to write {}: {}", field, e)))
     }
 
@@ -470,7 +521,8 @@ impl ImageSubheaderBuilder {
         default: char,
     ) -> Result<(), CodecError> {
         let value = self.get_char(field).unwrap_or(default);
-        writer.set(field, value.to_string())
+        writer
+            .set(field, value.to_string())
             .map_err(|e| CodecError::Encode(format!("Failed to write {}: {}", field, e)))
     }
 
@@ -498,7 +550,6 @@ impl ImageSubheaderBuilder {
         }
     }
 }
-
 
 /// Builder for band information.
 ///
@@ -593,49 +644,57 @@ impl BandInfoBuilder {
         // IREPBAND (2 characters)
         let irepband = self.irepband.as_deref().unwrap_or("  ");
         let irepband_padded = format!("{:<2}", irepband);
-        writer.set(&format!("{}.IREPBAND", prefix), &irepband_padded[..2])
+        writer
+            .set(&format!("{}.IREPBAND", prefix), &irepband_padded[..2])
             .map_err(|e| CodecError::Encode(format!("Failed to write IREPBAND: {}", e)))?;
 
         // ISUBCAT (6 characters)
         let isubcat = self.isubcat.as_deref().unwrap_or("");
         let isubcat_padded = format!("{:<6}", isubcat);
-        writer.set(&format!("{}.ISUBCAT", prefix), &isubcat_padded[..6])
+        writer
+            .set(&format!("{}.ISUBCAT", prefix), &isubcat_padded[..6])
             .map_err(|e| CodecError::Encode(format!("Failed to write ISUBCAT: {}", e)))?;
 
         // IFC (1 character)
         let ifc = self.ifc.unwrap_or('N');
-        writer.set(&format!("{}.IFC", prefix), ifc.to_string())
+        writer
+            .set(&format!("{}.IFC", prefix), ifc.to_string())
             .map_err(|e| CodecError::Encode(format!("Failed to write IFC: {}", e)))?;
 
         // IMFLT (3 characters)
         let imflt = self.imflt.as_deref().unwrap_or("");
         let imflt_padded = format!("{:<3}", imflt);
-        writer.set(&format!("{}.IMFLT", prefix), &imflt_padded[..3])
+        writer
+            .set(&format!("{}.IMFLT", prefix), &imflt_padded[..3])
             .map_err(|e| CodecError::Encode(format!("Failed to write IMFLT: {}", e)))?;
 
         // NLUTS (1 character)
         let nluts = self.luts.len();
-        writer.set(&format!("{}.NLUTS", prefix), format!("{}", nluts))
+        writer
+            .set(&format!("{}.NLUTS", prefix), format!("{}", nluts))
             .map_err(|e| CodecError::Encode(format!("Failed to write NLUTS: {}", e)))?;
 
         // If we have LUTs, write NELUT and LUT data
         if nluts > 0 {
             // All LUTs must have the same size
             let nelut = self.luts[0].len();
-            writer.set(&format!("{}.NELUT", prefix), format!("{:05}", nelut))
+            writer
+                .set(&format!("{}.NELUT", prefix), format!("{:05}", nelut))
                 .map_err(|e| CodecError::Encode(format!("Failed to write NELUT: {}", e)))?;
 
             // Write LUT data for each LUT
             for (lut_idx, lut) in self.luts.iter().enumerate() {
-                writer.set(&format!("{}.LUT_DATA_{}", prefix, lut_idx), lut.as_bytes())
-                    .map_err(|e| CodecError::Encode(format!("Failed to write LUT_DATA_{}: {}", lut_idx, e)))?;
+                writer
+                    .set(&format!("{}.LUT_DATA_{}", prefix, lut_idx), lut.as_bytes())
+                    .map_err(|e| {
+                        CodecError::Encode(format!("Failed to write LUT_DATA_{}: {}", lut_idx, e))
+                    })?;
             }
         }
 
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -644,7 +703,7 @@ mod tests {
     #[test]
     fn test_builder_new_has_defaults() {
         let builder = ImageSubheaderBuilder::new();
-        
+
         // Check defaults are set (uppercase keys to match .ksy field IDs)
         assert_eq!(builder.get_string("IM"), Some("IM".to_string()));
         assert_eq!(builder.get_string("ENCRYP"), Some("0".to_string()));
@@ -695,7 +754,7 @@ mod tests {
             .block_size(512, 512);
 
         let (nbpr, nbpc) = builder.calculate_blocking().unwrap();
-        
+
         // NBPR × NPPBH ≥ NCOLS: 3 × 512 = 1536 ≥ 1500
         assert_eq!(nbpr, 3);
         // NBPC × NPPBV ≥ NROWS: 2 × 512 = 1024 ≥ 1000
@@ -710,7 +769,7 @@ mod tests {
             .block_size(512, 512);
 
         let (nbpr, nbpc) = builder.calculate_blocking().unwrap();
-        
+
         assert_eq!(nbpr, 1);
         assert_eq!(nbpc, 1);
     }
@@ -723,7 +782,7 @@ mod tests {
             .block_size(32, 32);
 
         let (nbpr, nbpc) = builder.calculate_blocking().unwrap();
-        
+
         // NBPR × NPPBH ≥ NCOLS: 4 × 32 = 128 ≥ 100
         assert_eq!(nbpr, 4);
         // NBPC × NPPBV ≥ NROWS: 4 × 32 = 128 ≥ 100
@@ -733,7 +792,7 @@ mod tests {
     #[test]
     fn test_band_info_builder_defaults() {
         let band = BandInfoBuilder::new();
-        
+
         assert_eq!(band.ifc, Some('N'));
         assert_eq!(band.lut_count(), 0);
     }
@@ -756,10 +815,8 @@ mod tests {
     fn test_band_info_builder_add_lut() {
         let lut1 = LookUpTable::from_bytes(&[0, 1, 2, 3]);
         let lut2 = LookUpTable::from_bytes(&[4, 5, 6, 7]);
-        
-        let band = BandInfoBuilder::new()
-            .add_lut(lut1)
-            .add_lut(lut2);
+
+        let band = BandInfoBuilder::new().add_lut(lut1).add_lut(lut2);
 
         assert_eq!(band.lut_count(), 2);
     }
@@ -777,7 +834,6 @@ mod tests {
         assert_eq!(band.lut_count(), 4);
     }
 }
-
 
 #[cfg(test)]
 mod property_tests {
@@ -863,7 +919,7 @@ mod property_tests {
             block_size in 1u32..4096,
         ) {
             let image_size = block_size + 1;
-            
+
             let builder = ImageSubheaderBuilder::new()
                 .nrows(image_size)
                 .ncols(image_size)

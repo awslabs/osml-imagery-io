@@ -9,10 +9,10 @@ use std::sync::Arc;
 use criterion::{BenchmarkId, Criterion, Throughput};
 
 use _io::jbp::image::decoder::BlockDecoder;
-use _io::jbp::image::nc_decoder::UncompressedBlockDecoder;
 use _io::jbp::image::interleave::{
     fused_bip_to_bsq_swap, fused_bip_to_bsq_swap_parallel, to_band_sequential,
 };
+use _io::jbp::image::nc_decoder::UncompressedBlockDecoder;
 use _io::jbp::image::swap_be_to_ne;
 use _io::jbp::image::types::{InterleaveMode, PixelJustification, PixelValueType};
 
@@ -94,35 +94,28 @@ pub fn bench_bip_to_bsq(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(DATA_SIZE as u64));
     group.sample_size(20);
 
-    group.bench_function(
-        BenchmarkId::new("bip_to_bsq", "1024x1024x15_u16"),
-        |b| {
-            b.iter(|| {
-                to_band_sequential(&data, InterleaveMode::P, NROWS, NCOLS, NBANDS, BPP)
-                    .expect("to_band_sequential failed")
-            });
-        },
-    );
+    group.bench_function(BenchmarkId::new("bip_to_bsq", "1024x1024x15_u16"), |b| {
+        b.iter(|| {
+            to_band_sequential(&data, InterleaveMode::P, NROWS, NCOLS, NBANDS, BPP)
+                .expect("to_band_sequential failed")
+        });
+    });
 
     group.finish();
 }
 
 pub fn bench_swap_be_to_ne(c: &mut Criterion) {
     let bip_data = generate_bip_data();
-    let bsq_data =
-        to_band_sequential(&bip_data, InterleaveMode::P, NROWS, NCOLS, NBANDS, BPP)
-            .expect("to_band_sequential failed");
+    let bsq_data = to_band_sequential(&bip_data, InterleaveMode::P, NROWS, NCOLS, NBANDS, BPP)
+        .expect("to_band_sequential failed");
 
     let mut group = c.benchmark_group("nc_decode");
     group.throughput(Throughput::Bytes(DATA_SIZE as u64));
     group.sample_size(20);
 
-    group.bench_function(
-        BenchmarkId::new("swap_be_to_ne", "1024x1024x15_u16"),
-        |b| {
-            b.iter(|| swap_be_to_ne(&bsq_data, BPP));
-        },
-    );
+    group.bench_function(BenchmarkId::new("swap_be_to_ne", "1024x1024x15_u16"), |b| {
+        b.iter(|| swap_be_to_ne(&bsq_data, BPP));
+    });
 
     group.finish();
 }
@@ -164,25 +157,22 @@ pub fn bench_fused_parallel_vs_serial(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(DATA_SIZE as u64));
     group.sample_size(20);
 
-    group.bench_function(
-        BenchmarkId::new("fused_serial", "1024x1024x15_u16"),
-        |b| {
-            let mut dst = vec![0u8; DATA_SIZE];
-            b.iter(|| {
-                fused_bip_to_bsq_swap(
-                    &bip_data,
-                    &mut dst,
-                    NROWS as usize,
-                    NCOLS as usize,
-                    NBANDS as usize,
-                    BPP,
-                    None,
-                    64,
-                )
-                .expect("fused serial failed")
-            });
-        },
-    );
+    group.bench_function(BenchmarkId::new("fused_serial", "1024x1024x15_u16"), |b| {
+        let mut dst = vec![0u8; DATA_SIZE];
+        b.iter(|| {
+            fused_bip_to_bsq_swap(
+                &bip_data,
+                &mut dst,
+                NROWS as usize,
+                NCOLS as usize,
+                NBANDS as usize,
+                BPP,
+                None,
+                64,
+            )
+            .expect("fused serial failed")
+        });
+    });
 
     group.bench_function(
         BenchmarkId::new("fused_parallel", "1024x1024x15_u16"),

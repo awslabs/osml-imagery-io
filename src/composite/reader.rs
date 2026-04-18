@@ -51,7 +51,10 @@ impl CompositeDatasetReader {
 
         // Sort keys by overview level for deterministic ordering
         overview_keys.sort_by_key(|k| {
-            k.rsplit(':').next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(0)
+            k.rsplit(':')
+                .next()
+                .and_then(|n| n.parse::<u32>().ok())
+                .unwrap_or(0)
         });
 
         Self {

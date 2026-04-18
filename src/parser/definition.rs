@@ -208,10 +208,7 @@ impl DefinitionLoader {
     }
 
     /// Parse field type from type string.
-    fn parse_field_type(
-        type_str: Option<&str>,
-        context: &str,
-    ) -> Result<FieldType, LoadError> {
+    fn parse_field_type(type_str: Option<&str>, context: &str) -> Result<FieldType, LoadError> {
         match type_str {
             None | Some("str") | Some("strz") => Ok(FieldType::String),
             Some("bytes") => Ok(FieldType::Bytes),
@@ -230,7 +227,11 @@ impl DefinitionLoader {
             }
             Some(type_name) => {
                 // Check if it's a type reference (starts with lowercase or contains underscore)
-                if type_name.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
+                if type_name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_lowercase())
+                    .unwrap_or(false)
                     || type_name.contains('_')
                 {
                     Ok(FieldType::TypeRef(type_name.to_string()))
@@ -320,9 +321,9 @@ impl DefinitionLoader {
                 // Default padding based on encoding
                 if let Some(enc) = raw.encoding.as_deref() {
                     match enc {
-                        "BCS-N" | "bcs-n" | "BCS_N" | "bcs_n"
-                        | "BCS-NPI" | "bcs-npi" | "BCS_NPI" | "bcs_npi" => Ok(Some(0x30)), // '0'
-                        _ => Ok(Some(0x20)),                                      // space
+                        "BCS-N" | "bcs-n" | "BCS_N" | "bcs_n" | "BCS-NPI" | "bcs-npi"
+                        | "BCS_NPI" | "bcs_npi" => Ok(Some(0x30)), // '0'
+                        _ => Ok(Some(0x20)), // space
                     }
                 } else {
                     Ok(None)
@@ -340,10 +341,13 @@ impl DefinitionLoader {
             None => Ok(None),
             Some("eos") => Ok(Some(RepeatSpec::Eos)),
             Some("expr") => {
-                let expr_str = raw.repeat_expr.as_ref().ok_or_else(|| LoadError::MissingField {
-                    field: "repeat-expr".to_string(),
-                    context: context.to_string(),
-                })?;
+                let expr_str = raw
+                    .repeat_expr
+                    .as_ref()
+                    .ok_or_else(|| LoadError::MissingField {
+                        field: "repeat-expr".to_string(),
+                        context: context.to_string(),
+                    })?;
                 let expr = ExpressionEvaluator::parse(expr_str).map_err(|e| {
                     LoadError::InvalidExpression {
                         expr: expr_str.clone(),
@@ -354,10 +358,12 @@ impl DefinitionLoader {
             }
             Some("until") => {
                 let until_str =
-                    raw.repeat_until.as_ref().ok_or_else(|| LoadError::MissingField {
-                        field: "repeat-until".to_string(),
-                        context: context.to_string(),
-                    })?;
+                    raw.repeat_until
+                        .as_ref()
+                        .ok_or_else(|| LoadError::MissingField {
+                            field: "repeat-until".to_string(),
+                            context: context.to_string(),
+                        })?;
                 let expr = ExpressionEvaluator::parse(until_str).map_err(|e| {
                     LoadError::InvalidExpression {
                         expr: until_str.clone(),
@@ -508,8 +514,6 @@ enum RawPad {
 #[derive(Debug, Deserialize)]
 struct RawEnumDefinition(HashMap<i64, String>);
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,7 +634,10 @@ seq:
 "#;
         let def = DefinitionLoader::load_str(yaml).unwrap();
         assert!(def.fields[1].repeat.is_some());
-        assert!(matches!(def.fields[1].repeat, Some(RepeatSpec::Expression(_))));
+        assert!(matches!(
+            def.fields[1].repeat,
+            Some(RepeatSpec::Expression(_))
+        ));
     }
 
     #[test]
@@ -681,7 +688,10 @@ types:
 "#;
         let def = DefinitionLoader::load_str(yaml).unwrap();
         assert_eq!(def.fields.len(), 1);
-        assert_eq!(def.fields[0].field_type, FieldType::TypeRef("header_type".to_string()));
+        assert_eq!(
+            def.fields[0].field_type,
+            FieldType::TypeRef("header_type".to_string())
+        );
         assert!(def.types.contains_key("header_type"));
         let header_type = &def.types["header_type"];
         assert_eq!(header_type.fields.len(), 2);
@@ -735,7 +745,9 @@ seq:
 "#;
         let result = DefinitionLoader::load_str(yaml);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), LoadError::MissingField { field, .. } if field == "meta"));
+        assert!(
+            matches!(result.unwrap_err(), LoadError::MissingField { field, .. } if field == "meta")
+        );
     }
 
     #[test]
@@ -747,7 +759,9 @@ seq: []
 "#;
         let result = DefinitionLoader::load_str(yaml);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), LoadError::MissingField { field, .. } if field == "id"));
+        assert!(
+            matches!(result.unwrap_err(), LoadError::MissingField { field, .. } if field == "id")
+        );
     }
 
     #[test]
@@ -770,7 +784,9 @@ seq:
         let def = DefinitionLoader::load_str(yaml).unwrap();
         let result = DefinitionLoader::validate_type_references(&def);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), LoadError::UndefinedType { type_name, .. } if type_name == "undefined_type"));
+        assert!(
+            matches!(result.unwrap_err(), LoadError::UndefinedType { type_name, .. } if type_name == "undefined_type")
+        );
     }
 
     #[test]
@@ -805,7 +821,10 @@ seq:
     doc: This is a documentation string
 "#;
         let def = DefinitionLoader::load_str(yaml).unwrap();
-        assert_eq!(def.fields[0].doc, Some("This is a documentation string".to_string()));
+        assert_eq!(
+            def.fields[0].doc,
+            Some("This is a documentation string".to_string())
+        );
     }
 
     #[test]
@@ -914,10 +933,12 @@ types:
         type: u4
 "#;
         let def = DefinitionLoader::load_str(yaml).unwrap();
-        assert_eq!(def.fields[0].field_type, FieldType::TypeRef("my_custom_type".to_string()));
+        assert_eq!(
+            def.fields[0].field_type,
+            FieldType::TypeRef("my_custom_type".to_string())
+        );
     }
 }
-
 
 /// Property-based tests for definition loading.
 /// These tests verify universal properties across many random inputs.
@@ -1235,7 +1256,7 @@ mod proptests {
                 // Skip names that look like built-in types
                 prop_assume!(!type_name.starts_with("str"));
                 prop_assume!(!(type_name.len() == 2 && (type_name.starts_with('u') || type_name.starts_with('s'))));
-                
+
                 let yaml = format!(
                     "meta:\n  id: test\nseq:\n  - id: field1\n    type: {}\n",
                     type_name

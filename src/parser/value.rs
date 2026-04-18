@@ -74,7 +74,6 @@ impl<'a> Value<'a> {
     }
 }
 
-
 impl<'a> Value<'a> {
     /// Get the value as a string, trimming trailing padding characters.
     ///
@@ -178,11 +177,13 @@ impl<'a> Value<'a> {
                 if trimmed.is_empty() {
                     return Ok(0);
                 }
-                trimmed.parse::<i64>().map_err(|e| ConversionError::ParseError {
-                    value: cow.to_string(),
-                    target_type: "i64",
-                    message: e.to_string(),
-                })
+                trimmed
+                    .parse::<i64>()
+                    .map_err(|e| ConversionError::ParseError {
+                        value: cow.to_string(),
+                        target_type: "i64",
+                        message: e.to_string(),
+                    })
             }
             Value::Bytes(bytes) => {
                 let s = std::str::from_utf8(bytes).map_err(|e| ConversionError::ParseError {
@@ -194,11 +195,13 @@ impl<'a> Value<'a> {
                 if trimmed.is_empty() {
                     return Ok(0);
                 }
-                trimmed.parse::<i64>().map_err(|e| ConversionError::ParseError {
-                    value: s.to_string(),
-                    target_type: "i64",
-                    message: e.to_string(),
-                })
+                trimmed
+                    .parse::<i64>()
+                    .map_err(|e| ConversionError::ParseError {
+                        value: s.to_string(),
+                        target_type: "i64",
+                        message: e.to_string(),
+                    })
             }
             Value::Unsigned(n) => {
                 if *n <= i64::MAX as u64 {
@@ -243,11 +246,13 @@ impl<'a> Value<'a> {
                 if trimmed.is_empty() {
                     return Ok(0);
                 }
-                trimmed.parse::<u64>().map_err(|e| ConversionError::ParseError {
-                    value: cow.to_string(),
-                    target_type: "u64",
-                    message: e.to_string(),
-                })
+                trimmed
+                    .parse::<u64>()
+                    .map_err(|e| ConversionError::ParseError {
+                        value: cow.to_string(),
+                        target_type: "u64",
+                        message: e.to_string(),
+                    })
             }
             Value::Bytes(bytes) => {
                 let s = std::str::from_utf8(bytes).map_err(|e| ConversionError::ParseError {
@@ -259,11 +264,13 @@ impl<'a> Value<'a> {
                 if trimmed.is_empty() {
                     return Ok(0);
                 }
-                trimmed.parse::<u64>().map_err(|e| ConversionError::ParseError {
-                    value: s.to_string(),
-                    target_type: "u64",
-                    message: e.to_string(),
-                })
+                trimmed
+                    .parse::<u64>()
+                    .map_err(|e| ConversionError::ParseError {
+                        value: s.to_string(),
+                        target_type: "u64",
+                        message: e.to_string(),
+                    })
             }
             Value::Unsigned(n) => Ok(*n),
             Value::Struct(_) => Err(ConversionError::TypeMismatch {
@@ -301,11 +308,13 @@ impl<'a> Value<'a> {
                 if trimmed.is_empty() {
                     return Ok(0.0);
                 }
-                trimmed.parse::<f64>().map_err(|e| ConversionError::ParseError {
-                    value: cow.to_string(),
-                    target_type: "f64",
-                    message: e.to_string(),
-                })
+                trimmed
+                    .parse::<f64>()
+                    .map_err(|e| ConversionError::ParseError {
+                        value: cow.to_string(),
+                        target_type: "f64",
+                        message: e.to_string(),
+                    })
             }
             Value::Bytes(bytes) => {
                 let s = std::str::from_utf8(bytes).map_err(|e| ConversionError::ParseError {
@@ -317,11 +326,13 @@ impl<'a> Value<'a> {
                 if trimmed.is_empty() {
                     return Ok(0.0);
                 }
-                trimmed.parse::<f64>().map_err(|e| ConversionError::ParseError {
-                    value: s.to_string(),
-                    target_type: "f64",
-                    message: e.to_string(),
-                })
+                trimmed
+                    .parse::<f64>()
+                    .map_err(|e| ConversionError::ParseError {
+                        value: s.to_string(),
+                        target_type: "f64",
+                        message: e.to_string(),
+                    })
             }
             Value::Unsigned(n) => Ok(*n as f64),
             Value::Struct(_) => Err(ConversionError::TypeMismatch {
@@ -634,7 +645,6 @@ mod tests {
     }
 }
 
-
 // ==================== Property-Based Tests ====================
 
 #[cfg(test)]
@@ -865,7 +875,8 @@ mod property_tests {
                 // Pure alphabetic strings (excluding 'e' and 'E' which could form scientific notation)
                 "[a-df-zA-DF-Z]{1,10}",
                 // Mixed with special characters
-                "[a-zA-Z!@#$%^&*()]{2,10}".prop_filter("must not be valid number", |s| s.parse::<f64>().is_err()),
+                "[a-zA-Z!@#$%^&*()]{2,10}"
+                    .prop_filter("must not be valid number", |s| s.parse::<f64>().is_err()),
                 // Multiple decimal points
                 "[0-9]+\\.[0-9]+\\.[0-9]+",
                 // Letters mixed with digits - use letters that can't form scientific notation

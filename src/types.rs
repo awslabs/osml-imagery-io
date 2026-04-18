@@ -21,7 +21,6 @@ pub enum AssetType {
     Data,
 }
 
-
 /// Supported pixel data types for image assets.
 ///
 /// This enumeration represents the various numeric types that can be used

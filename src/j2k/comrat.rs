@@ -131,10 +131,7 @@ impl J2KComrat {
         } else {
             // Target bpp: "nn.n"
             let value: f32 = comrat.parse().map_err(|_| {
-                CodecError::InvalidFormat(format!(
-                    "Invalid COMRAT target bpp value: '{}'",
-                    comrat
-                ))
+                CodecError::InvalidFormat(format!("Invalid COMRAT target bpp value: '{}'", comrat))
             })?;
             Ok(J2KComrat::TargetBpp(value))
         }

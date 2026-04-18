@@ -1,7 +1,9 @@
 //! Unit tests for the structure writer.
 
 use super::*;
-use crate::parser::types::{Encoding, Endian, FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition};
+use crate::parser::types::{
+    Encoding, Endian, FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition,
+};
 
 fn create_simple_definition() -> Arc<StructureDefinition> {
     Arc::new(
@@ -34,12 +36,11 @@ fn create_definition_with_encoding() -> Arc<StructureDefinition> {
 
 fn create_definition_with_repeat() -> Arc<StructureDefinition> {
     Arc::new(
-        StructureDefinition::new("test_struct")
-            .with_field(
-                FieldDefinition::new("items", FieldType::String)
-                    .with_size(SizeSpec::fixed(4))
-                    .with_repeat(RepeatSpec::count(3)),
-            ),
+        StructureDefinition::new("test_struct").with_field(
+            FieldDefinition::new("items", FieldType::String)
+                .with_size(SizeSpec::fixed(4))
+                .with_repeat(RepeatSpec::count(3)),
+        ),
     )
 }
 
@@ -128,7 +129,10 @@ fn finish_fails_if_required_field_missing() {
 
     let result = writer.finish();
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WriteError::MissingRequired { .. }));
+    assert!(matches!(
+        result.unwrap_err(),
+        WriteError::MissingRequired { .. }
+    ));
 }
 
 #[test]
@@ -139,7 +143,10 @@ fn value_too_large_error() {
     // field1 is 10 bytes, try to write 16 bytes
     let result = writer.set("field1", "THIS IS TOO LONG");
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WriteError::ValueTooLarge { .. }));
+    assert!(matches!(
+        result.unwrap_err(),
+        WriteError::ValueTooLarge { .. }
+    ));
 }
 
 #[test]
@@ -174,7 +181,10 @@ fn bcs_a_validation_rejects_invalid_chars() {
     // Invalid BCS-A: contains control character
     let result = writer.set("bcs_a_field", "Hello\x00");
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WriteError::ValidationError { .. }));
+    assert!(matches!(
+        result.unwrap_err(),
+        WriteError::ValidationError { .. }
+    ));
 }
 
 #[test]
@@ -199,7 +209,10 @@ fn bcs_n_validation_rejects_letters() {
     // Invalid BCS-N: contains letters
     let result = writer.set("bcs_n_field", "12A34");
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WriteError::ValidationError { .. }));
+    assert!(matches!(
+        result.unwrap_err(),
+        WriteError::ValidationError { .. }
+    ));
 }
 
 #[test]
@@ -269,7 +282,10 @@ fn finish_fails_if_repeated_field_missing() {
 
     let result = writer.finish();
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WriteError::MissingRequired { .. }));
+    assert!(matches!(
+        result.unwrap_err(),
+        WriteError::MissingRequired { .. }
+    ));
 }
 
 // ==================== Integer encoding tests ====================
@@ -277,8 +293,7 @@ fn finish_fails_if_repeated_field_missing() {
 #[test]
 fn unsigned_integer_big_endian() {
     let def = Arc::new(
-        StructureDefinition::new("test")
-            .with_field(FieldDefinition::new("value", FieldType::u2())),
+        StructureDefinition::new("test").with_field(FieldDefinition::new("value", FieldType::u2())),
     );
     let mut writer = StructureWriter::new(def);
 
@@ -304,8 +319,7 @@ fn unsigned_integer_little_endian() {
 #[test]
 fn signed_integer_encoding() {
     let def = Arc::new(
-        StructureDefinition::new("test")
-            .with_field(FieldDefinition::new("value", FieldType::s2())),
+        StructureDefinition::new("test").with_field(FieldDefinition::new("value", FieldType::s2())),
     );
     let mut writer = StructureWriter::new(def);
 

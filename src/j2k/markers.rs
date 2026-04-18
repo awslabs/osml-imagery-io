@@ -65,7 +65,12 @@ fn read_u16(data: &[u8], offset: usize) -> u16 {
 
 /// Read a big-endian u32 from a byte slice at the given offset.
 fn read_u32(data: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+    u32::from_be_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ])
 }
 
 /// Parse TLM entries from a single TLM marker segment body (after the marker code).
@@ -119,7 +124,7 @@ fn parse_tlm_entries(
 
     // Data after Ltlm(2) + Ztlm(1) + Stlm(1) = 4 bytes of header
     let data_len = ltlm.saturating_sub(2); // Ltlm includes itself but not marker code
-    // The payload starts after Ztlm + Stlm = 2 bytes into the segment body (after Ltlm)
+                                           // The payload starts after Ztlm + Stlm = 2 bytes into the segment body (after Ltlm)
     let payload_start = 4; // Ltlm(2) + Ztlm(1) + Stlm(1)
     let payload_len = data_len.saturating_sub(2); // subtract Ztlm + Stlm
 
@@ -250,7 +255,8 @@ pub fn parse_main_header(codestream: &[u8]) -> Result<MainHeaderInfo, CodecError
             // Parse TLM entries with running_offset that accumulates across TLM segments.
             // We start from 0 and add first_sot_offset after the scan completes.
             let tlm_body = &codestream[pos + 2..pos + segment_total];
-            let (entries, new_running_offset) = parse_tlm_entries(tlm_body, pos, tlm_running_offset)?;
+            let (entries, new_running_offset) =
+                parse_tlm_entries(tlm_body, pos, tlm_running_offset)?;
             tlm_running_offset = new_running_offset;
             all_tlm_entries.extend(entries);
         }
@@ -259,9 +265,7 @@ pub fn parse_main_header(codestream: &[u8]) -> Result<MainHeaderInfo, CodecError
     }
 
     let first_sot_offset = first_sot_offset.ok_or_else(|| {
-        CodecError::InvalidFormat(
-            "J2K codestream truncated: no SOT marker found".to_string(),
-        )
+        CodecError::InvalidFormat("J2K codestream truncated: no SOT marker found".to_string())
     })?;
 
     // Fix up TLM entry offsets: the entries were parsed with running_offset=0,
@@ -534,13 +538,10 @@ pub fn build_minimal_codestream(
         let tile_part = &codestream[start..end];
         // Patch SOT marker: set Isot (bytes 4-5) to 0 so OpenJPEG sees tile_index=0.
         // SOT layout: marker(2) + Lsot(2) + Isot(2) + Psot(4) + TPsot(1) + TNsot(1)
-        if tile_part.len() >= 6
-            && tile_part[0] == 0xFF
-            && tile_part[1] == 0x90
-        {
+        if tile_part.len() >= 6 && tile_part[0] == 0xFF && tile_part[1] == 0x90 {
             out.extend_from_slice(&tile_part[..4]); // marker + Lsot
-            out.extend_from_slice(&[0x00, 0x00]);   // Isot = 0
-            out.extend_from_slice(&tile_part[6..]);  // rest of tile-part
+            out.extend_from_slice(&[0x00, 0x00]); // Isot = 0
+            out.extend_from_slice(&tile_part[6..]); // rest of tile-part
         } else {
             out.extend_from_slice(tile_part);
         }
@@ -656,7 +657,7 @@ mod tests {
         let mut tlm_body = Vec::new();
         let ztlm: u8 = 0;
         let stlm: u8 = 0x60; // ST=2, SP=1
-        // Entry: tile_index=0, length=100
+                             // Entry: tile_index=0, length=100
         let tile0_idx: u16 = 0;
         let tile0_len: u32 = 100;
         // Entry: tile_index=1, length=200
@@ -666,13 +667,13 @@ mod tests {
         // Payload: Ztlm + Stlm + entries
         let entry_size = 2 + 4; // 16-bit index + 32-bit length
         let _payload_size = 2 + entry_size * 2; // Ztlm + Stlm + 2 entries
-        // Ltlm = payload_size + 2 (for Ltlm itself)
-        // But we don't include Ltlm in the body passed to build_codestream
-        // because build_codestream adds the length field.
-        // Actually, for TLM we need to build the raw body that goes after the marker code + length.
-        // The build_codestream helper adds marker_code(2) + Lxxx(2) + body.
-        // So body = Ztlm(1) + Stlm(1) + entries...
-        // And Lxxx = body.len() + 2
+                                                // Ltlm = payload_size + 2 (for Ltlm itself)
+                                                // But we don't include Ltlm in the body passed to build_codestream
+                                                // because build_codestream adds the length field.
+                                                // Actually, for TLM we need to build the raw body that goes after the marker code + length.
+                                                // The build_codestream helper adds marker_code(2) + Lxxx(2) + body.
+                                                // So body = Ztlm(1) + Stlm(1) + entries...
+                                                // And Lxxx = body.len() + 2
         tlm_body.push(ztlm);
         tlm_body.push(stlm);
         tlm_body.extend_from_slice(&tile0_idx.to_be_bytes());
@@ -715,17 +716,11 @@ mod tests {
 
         // decode_header should not contain TLM marker bytes
         let tlm_marker_bytes = marker_codes::TLM.to_be_bytes();
-        let has_tlm = info
-            .decode_header
-            .windows(2)
-            .any(|w| w == tlm_marker_bytes);
+        let has_tlm = info.decode_header.windows(2).any(|w| w == tlm_marker_bytes);
         assert!(!has_tlm, "decode_header should not contain TLM marker");
 
         // decode_header should still start with SOC
-        assert_eq!(
-            read_u16(&info.decode_header, 0),
-            marker_codes::SOC
-        );
+        assert_eq!(read_u16(&info.decode_header, 0), marker_codes::SOC);
     }
 
     #[test]
@@ -735,7 +730,7 @@ mod tests {
         let mut tlm_body = Vec::new();
         tlm_body.push(0); // Ztlm
         tlm_body.push(0x00); // Stlm: ST=0, SP=0
-        // Two entries with 16-bit lengths, no tile index
+                             // Two entries with 16-bit lengths, no tile index
         tlm_body.extend_from_slice(&50u16.to_be_bytes());
         tlm_body.extend_from_slice(&75u16.to_be_bytes());
 
@@ -761,7 +756,7 @@ mod tests {
         let mut tlm_body = Vec::new();
         tlm_body.push(0); // Ztlm
         tlm_body.push(0x10); // Stlm: ST=1, SP=0
-        // Entry: tile_index=5 (8-bit), length=300 (16-bit)
+                             // Entry: tile_index=5 (8-bit), length=300 (16-bit)
         tlm_body.push(5u8);
         tlm_body.extend_from_slice(&300u16.to_be_bytes());
 
@@ -802,10 +797,7 @@ mod tests {
         tlm2.extend_from_slice(&1u16.to_be_bytes());
         tlm2.extend_from_slice(&200u32.to_be_bytes());
 
-        let cs = build_codestream(&[
-            (marker_codes::TLM, &tlm1),
-            (marker_codes::TLM, &tlm2),
-        ]);
+        let cs = build_codestream(&[(marker_codes::TLM, &tlm1), (marker_codes::TLM, &tlm2)]);
         let info = parse_main_header(&cs).unwrap();
 
         let table = info.tlm_offset_table.unwrap();
@@ -917,10 +909,7 @@ mod tests {
     fn test_scan_sot_multiple_tiles() {
         // Two tiles: tile 0 (Psot=24) and tile 1 (Psot=24)
         let data = [0xCC; 4];
-        let (cs, first_sot) = build_full_codestream(&[
-            (0, 24, 0, 1, &data),
-            (1, 24, 0, 1, &data),
-        ]);
+        let (cs, first_sot) = build_full_codestream(&[(0, 24, 0, 1, &data), (1, 24, 0, 1, &data)]);
 
         let table = scan_sot_markers(&cs, first_sot).unwrap();
         assert_eq!(table.len(), 2);
@@ -938,10 +927,7 @@ mod tests {
     fn test_scan_sot_multi_tile_part() {
         // Tile 0 with two tile-parts: TPsot=0 and TPsot=1
         let data = [0xDD; 2];
-        let (cs, first_sot) = build_full_codestream(&[
-            (0, 20, 0, 2, &data),
-            (0, 20, 1, 2, &data),
-        ]);
+        let (cs, first_sot) = build_full_codestream(&[(0, 20, 0, 2, &data), (0, 20, 1, 2, &data)]);
 
         let table = scan_sot_markers(&cs, first_sot).unwrap();
         assert_eq!(table.len(), 2);
@@ -1046,10 +1032,7 @@ mod tests {
     fn test_scan_sot_last_tile_psot_zero_with_preceding() {
         // Two tiles: first with Psot=20, second with Psot=0
         let data = [0xFF; 2];
-        let (cs, first_sot) = build_full_codestream(&[
-            (0, 20, 0, 1, &data),
-            (1, 0, 0, 1, &data),
-        ]);
+        let (cs, first_sot) = build_full_codestream(&[(0, 20, 0, 1, &data), (1, 0, 0, 1, &data)]);
 
         let table = scan_sot_markers(&cs, first_sot).unwrap();
         assert_eq!(table.len(), 2);
@@ -1093,10 +1076,7 @@ mod tests {
 
         // Verify starts with SOC and ends with EOC
         assert_eq!(read_u16(&result, 0), marker_codes::SOC);
-        assert_eq!(
-            read_u16(&result, result.len() - 2),
-            marker_codes::EOC
-        );
+        assert_eq!(read_u16(&result, result.len() - 2), marker_codes::EOC);
 
         // Verify exact capacity was pre-allocated
         assert_eq!(result.len(), result.capacity());
@@ -1142,10 +1122,14 @@ mod tests {
     /// Build a decode header with a realistic SIZ marker for testing.
     /// Returns a header with SOC + SIZ describing the given image/tile dimensions.
     fn build_siz_header(
-        xsiz: u32, ysiz: u32,
-        xosiz: u32, yosiz: u32,
-        xtsiz: u32, ytsiz: u32,
-        xtosiz: u32, ytosiz: u32,
+        xsiz: u32,
+        ysiz: u32,
+        xosiz: u32,
+        yosiz: u32,
+        xtsiz: u32,
+        ytsiz: u32,
+        xtosiz: u32,
+        ytosiz: u32,
         num_components: u16,
     ) -> Vec<u8> {
         let mut hdr = Vec::new();
@@ -1206,14 +1190,14 @@ mod tests {
 
         // Verify rewritten SIZ fields
         let siz_base = 2usize; // after SOC
-        assert_eq!(read_u32(&result, siz_base + 6), 208);  // Xsiz = 208
+        assert_eq!(read_u32(&result, siz_base + 6), 208); // Xsiz = 208
         assert_eq!(read_u32(&result, siz_base + 10), 256); // Ysiz = 256
-        assert_eq!(read_u32(&result, siz_base + 14), 0);   // XOsiz = 0
-        assert_eq!(read_u32(&result, siz_base + 18), 0);   // YOsiz = 0
+        assert_eq!(read_u32(&result, siz_base + 14), 0); // XOsiz = 0
+        assert_eq!(read_u32(&result, siz_base + 18), 0); // YOsiz = 0
         assert_eq!(read_u32(&result, siz_base + 22), 208); // XTsiz = 208
         assert_eq!(read_u32(&result, siz_base + 26), 256); // YTsiz = 256
-        assert_eq!(read_u32(&result, siz_base + 30), 0);   // XTOsiz = 0
-        assert_eq!(read_u32(&result, siz_base + 34), 0);   // YTOsiz = 0
+        assert_eq!(read_u32(&result, siz_base + 30), 0); // XTOsiz = 0
+        assert_eq!(read_u32(&result, siz_base + 34), 0); // YTOsiz = 0
     }
 
     #[test]
@@ -1223,7 +1207,7 @@ mod tests {
         let result = rewrite_siz_for_tile(&header, 56);
 
         let siz_base = 2usize;
-        assert_eq!(read_u32(&result, siz_base + 6), 256);  // Xsiz = 256
+        assert_eq!(read_u32(&result, siz_base + 6), 256); // Xsiz = 256
         assert_eq!(read_u32(&result, siz_base + 10), 208); // Ysiz = 208
         assert_eq!(read_u32(&result, siz_base + 22), 256); // XTsiz = 256
         assert_eq!(read_u32(&result, siz_base + 26), 208); // YTsiz = 208
@@ -1236,7 +1220,7 @@ mod tests {
         let result = rewrite_siz_for_tile(&header, 63);
 
         let siz_base = 2usize;
-        assert_eq!(read_u32(&result, siz_base + 6), 208);  // Xsiz = 208
+        assert_eq!(read_u32(&result, siz_base + 6), 208); // Xsiz = 208
         assert_eq!(read_u32(&result, siz_base + 10), 208); // Ysiz = 208
         assert_eq!(read_u32(&result, siz_base + 22), 208); // XTsiz = 208
         assert_eq!(read_u32(&result, siz_base + 26), 208); // YTsiz = 208
@@ -1304,16 +1288,16 @@ mod tests {
 
         // The SIZ in the output should be rewritten for edge tile
         let siz_base = 2usize;
-        assert_eq!(read_u32(&result, siz_base + 6), 208);  // Xsiz = 208
+        assert_eq!(read_u32(&result, siz_base + 6), 208); // Xsiz = 208
         assert_eq!(read_u32(&result, siz_base + 10), 256); // Ysiz = 256 (full height)
         assert_eq!(read_u32(&result, siz_base + 22), 208); // XTsiz = 208
         assert_eq!(read_u32(&result, siz_base + 26), 256); // YTsiz = 256
 
         // Isot should be patched to 0
         let sot_start = decode_header.len(); // SIZ was rewritten but same length
-        // Actually the header length changes because rewrite_siz_for_tile returns
-        // a new vec of the same length. Let's find the SOT in the output.
-        // The patched header has same length as original decode_header.
+                                             // Actually the header length changes because rewrite_siz_for_tile returns
+                                             // a new vec of the same length. Let's find the SOT in the output.
+                                             // The patched header has same length as original decode_header.
         let hdr_len = decode_header.len();
         assert_eq!(read_u16(&result, hdr_len + 4), 0); // Isot = 0
 

@@ -20,7 +20,9 @@
 use std::sync::Arc;
 
 use crate::error::CodecError;
-use crate::jbp::image::types::{ImageRepresentation, InterleaveMode, PixelJustification, PixelValueType};
+use crate::jbp::image::types::{
+    ImageRepresentation, InterleaveMode, PixelJustification, PixelValueType,
+};
 use crate::jbp::types::NitfFormat;
 use crate::parser::{StructureAccessor, StructureRegistry, Value};
 
@@ -62,9 +64,9 @@ impl<'a> ImageSubheaderFacade<'a> {
         format: NitfFormat,
     ) -> Result<Self, CodecError> {
         let def_name = format.image_subheader_definition();
-        let definition = registry
-            .get(def_name)
-            .ok_or_else(|| CodecError::InvalidFormat(format!("Structure definition not found: {}", def_name)))?;
+        let definition = registry.get(def_name).ok_or_else(|| {
+            CodecError::InvalidFormat(format!("Structure definition not found: {}", def_name))
+        })?;
 
         let accessor = StructureAccessor::new(definition, data)
             .map_err(|e| CodecError::Parse(format!("Failed to create accessor: {}", e)))?;
@@ -171,9 +173,10 @@ impl<'a> ImageSubheaderFacade<'a> {
     /// Returns the parsed `PixelJustification` enum.
     pub fn pjust(&self) -> Result<PixelJustification, CodecError> {
         let s = self.get_str_field("PJUST")?;
-        let c = s.chars().next().ok_or_else(|| {
-            CodecError::Parse("PJUST field is empty".to_string())
-        })?;
+        let c = s
+            .chars()
+            .next()
+            .ok_or_else(|| CodecError::Parse("PJUST field is empty".to_string()))?;
         PixelJustification::from_char(c)
     }
 
@@ -248,9 +251,10 @@ impl<'a> ImageSubheaderFacade<'a> {
     /// Returns the parsed `InterleaveMode` enum.
     pub fn imode(&self) -> Result<InterleaveMode, CodecError> {
         let s = self.get_str_field("IMODE")?;
-        let c = s.chars().next().ok_or_else(|| {
-            CodecError::Parse("IMODE field is empty".to_string())
-        })?;
+        let c = s
+            .chars()
+            .next()
+            .ok_or_else(|| CodecError::Parse("IMODE field is empty".to_string()))?;
         InterleaveMode::from_char(c)
     }
 
@@ -365,32 +369,35 @@ impl<'a> ImageSubheaderFacade<'a> {
 
     /// Get a string field from the accessor.
     fn get_str_field(&self, field: &str) -> Result<String, CodecError> {
-        let value = self.accessor
+        let value = self
+            .accessor
             .get(field)
             .map_err(|e| CodecError::Parse(format!("Failed to read field '{}': {}", field, e)))?;
-        let s = value
-            .as_str()
-            .map_err(|e| CodecError::Parse(format!("Failed to parse field '{}' as string: {}", field, e)))?;
+        let s = value.as_str().map_err(|e| {
+            CodecError::Parse(format!(
+                "Failed to parse field '{}' as string: {}",
+                field, e
+            ))
+        })?;
         Ok(s.to_string())
     }
 
     /// Get a u8 field from the accessor (parsed from string).
     fn get_u8_field(&self, field: &str) -> Result<u8, CodecError> {
         let s = self.get_str_field(field)?;
-        s.trim()
-            .parse::<u8>()
-            .map_err(|e| CodecError::Parse(format!("Failed to parse field '{}' as u8: {}", field, e)))
+        s.trim().parse::<u8>().map_err(|e| {
+            CodecError::Parse(format!("Failed to parse field '{}' as u8: {}", field, e))
+        })
     }
 
     /// Get a u32 field from the accessor (parsed from string).
     fn get_u32_field(&self, field: &str) -> Result<u32, CodecError> {
         let s = self.get_str_field(field)?;
-        s.trim()
-            .parse::<u32>()
-            .map_err(|e| CodecError::Parse(format!("Failed to parse field '{}' as u32: {}", field, e)))
+        s.trim().parse::<u32>().map_err(|e| {
+            CodecError::Parse(format!("Failed to parse field '{}' as u32: {}", field, e))
+        })
     }
 }
-
 
 /// Facade for per-band metadata access.
 ///
@@ -424,9 +431,9 @@ impl<'a> BandInfoFacade<'a> {
     /// Returns 'N' for no filter condition.
     pub fn ifc(&self) -> Result<char, CodecError> {
         let s = self.get_band_str_field("IFC")?;
-        s.chars().next().ok_or_else(|| {
-            CodecError::Parse("IFC field is empty".to_string())
-        })
+        s.chars()
+            .next()
+            .ok_or_else(|| CodecError::Parse("IFC field is empty".to_string()))
     }
 
     /// Get the band standard image filter code (IMFLTn).
@@ -455,8 +462,9 @@ impl<'a> BandInfoFacade<'a> {
                 let s = value
                     .as_str()
                     .map_err(|e| CodecError::Parse(format!("Failed to parse NELUT: {}", e)))?;
-                let num = s.trim().parse::<u32>()
-                    .map_err(|e| CodecError::Parse(format!("Failed to parse NELUT as u32: {}", e)))?;
+                let num = s.trim().parse::<u32>().map_err(|e| {
+                    CodecError::Parse(format!("Failed to parse NELUT as u32: {}", e))
+                })?;
                 Ok(Some(num))
             } else {
                 Ok(None)
@@ -487,10 +495,11 @@ impl<'a> BandInfoFacade<'a> {
         // calculate_field_offset with an explicit index. The offset cache
         // internally stores keys as "BAND_INFO_0", "BAND_INFO_1", etc.
         let field_name = self.band_info_field_name();
-        let (band_info_offset, _band_info_size) = self.accessor
+        let (band_info_offset, _band_info_size) = self
+            .accessor
             .calculate_field_offset(field_name, Some(self.index))
             .map_err(|e| CodecError::Parse(format!("Failed to get band info byte range: {}", e)))?;
-        
+
         // Calculate offset to LUT data within the band info
         // Band info structure:
         // - IREPBAND (2 bytes)
@@ -501,22 +510,25 @@ impl<'a> BandInfoFacade<'a> {
         // - NELUT (5 bytes) - only if NLUTS > 0
         // - LUT data (NELUT bytes per LUT, repeated NLUTS times)
         let lut_data_offset_in_band = 13 + 5; // 18 bytes of fixed fields before LUT data
-        
+
         // Calculate absolute offset for this LUT
         let lut_start = band_info_offset + lut_data_offset_in_band + (lut_index * nelut);
         let lut_end = lut_start + nelut;
-        
+
         // Get the raw data from the accessor's underlying buffer
         // We need to access the data directly since the accessor doesn't handle
         // expression-based sizes in nested structures properly
         let data = self.accessor.data();
-        
+
         if lut_end <= data.len() {
             Ok(Some(data[lut_start..lut_end].to_vec()))
         } else {
             Err(CodecError::Parse(format!(
                 "LUT data {} out of bounds: need bytes {}..{}, have {} bytes",
-                lut_index, lut_start, lut_end, data.len()
+                lut_index,
+                lut_start,
+                lut_end,
+                data.len()
             )))
         }
     }
@@ -541,40 +553,59 @@ impl<'a> BandInfoFacade<'a> {
         let field_name = self.band_info_field_name();
 
         // Get the array of band info structs
-        let array_value = self.accessor
+        let array_value = self
+            .accessor
             .get(field_name)
             .map_err(|e| CodecError::Parse(format!("Failed to get {}: {}", field_name, e)))?;
 
         let elements = match &array_value {
             Value::Array(arr) => arr,
-            _ => return Err(CodecError::Parse(format!(
-                "Expected {} to be an array, got {:?}", field_name, array_value
-            ))),
+            _ => {
+                return Err(CodecError::Parse(format!(
+                    "Expected {} to be an array, got {:?}",
+                    field_name, array_value
+                )))
+            }
         };
 
         if self.index >= elements.len() {
             return Err(CodecError::Parse(format!(
-                "Band index {} out of range (array length: {})", self.index, elements.len()
+                "Band index {} out of range (array length: {})",
+                self.index,
+                elements.len()
             )));
         }
 
         let struct_val = match &elements[self.index] {
             Value::Struct(sv) => sv,
-            _ => return Err(CodecError::Parse(format!(
-                "Expected {}[{}] to be a struct", field_name, self.index
-            ))),
+            _ => {
+                return Err(CodecError::Parse(format!(
+                    "Expected {}[{}] to be a struct",
+                    field_name, self.index
+                )))
+            }
         };
 
         // Look up the type definition from the parent accessor's definition types
-        let type_def = self.accessor.definition().types.get(&struct_val.type_name)
-            .ok_or_else(|| CodecError::Parse(format!(
-                "Type definition '{}' not found in parent definition types", struct_val.type_name
-            )))?;
+        let type_def = self
+            .accessor
+            .definition()
+            .types
+            .get(&struct_val.type_name)
+            .ok_or_else(|| {
+                CodecError::Parse(format!(
+                    "Type definition '{}' not found in parent definition types",
+                    struct_val.type_name
+                ))
+            })?;
 
         let nested_accessor = StructureAccessor::new(Arc::new(type_def.clone()), struct_val.data)
-            .map_err(|e| CodecError::Parse(format!(
-                "Failed to create nested accessor for {}: {}", struct_val.type_name, e
-            )))?;
+            .map_err(|e| {
+            CodecError::Parse(format!(
+                "Failed to create nested accessor for {}: {}",
+                struct_val.type_name, e
+            ))
+        })?;
 
         Ok(nested_accessor)
     }
@@ -582,24 +613,29 @@ impl<'a> BandInfoFacade<'a> {
     /// Get a string field from the band info.
     fn get_band_str_field(&self, field: &str) -> Result<String, CodecError> {
         let nested_accessor = self.get_band_accessor()?;
-        let value = nested_accessor
-            .get(field)
-            .map_err(|e| CodecError::Parse(format!("Failed to read band field '{}': {}", field, e)))?;
-        let s = value
-            .as_str()
-            .map_err(|e| CodecError::Parse(format!("Failed to parse band field '{}' as string: {}", field, e)))?;
+        let value = nested_accessor.get(field).map_err(|e| {
+            CodecError::Parse(format!("Failed to read band field '{}': {}", field, e))
+        })?;
+        let s = value.as_str().map_err(|e| {
+            CodecError::Parse(format!(
+                "Failed to parse band field '{}' as string: {}",
+                field, e
+            ))
+        })?;
         Ok(s.to_string())
     }
 
     /// Get a u8 field from the band info.
     fn get_band_u8_field(&self, field: &str) -> Result<u8, CodecError> {
         let s = self.get_band_str_field(field)?;
-        s.trim()
-            .parse::<u8>()
-            .map_err(|e| CodecError::Parse(format!("Failed to parse band field '{}' as u8: {}", field, e)))
+        s.trim().parse::<u8>().map_err(|e| {
+            CodecError::Parse(format!(
+                "Failed to parse band field '{}' as u8: {}",
+                field, e
+            ))
+        })
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -626,131 +662,131 @@ mod tests {
         ic: &str,
     ) -> Vec<u8> {
         let mut data = Vec::new();
-        
+
         // IM (2) - Image segment marker
         data.extend_from_slice(b"IM");
-        
+
         // IID1 (10) - Image identifier 1
         let iid1_padded = format!("{:<10}", iid1);
         data.extend_from_slice(&iid1_padded.as_bytes()[..10]);
-        
+
         // IDATIM (14) - Image date and time
         data.extend_from_slice(b"20240101120000");
-        
+
         // TGTID (17) - Target identifier
         data.extend_from_slice(b"                 ");
-        
+
         // IID2 (80) - Image identifier 2
         data.extend_from_slice(&[b' '; 80]);
-        
+
         // Security fields
-        data.push(b'U');           // ISCLAS (1)
-        data.extend_from_slice(b"  ");  // ISCLSY (2)
+        data.push(b'U'); // ISCLAS (1)
+        data.extend_from_slice(b"  "); // ISCLSY (2)
         data.extend_from_slice(&[b' '; 11]); // ISCODE (11)
-        data.extend_from_slice(b"  ");  // ISCTLH (2)
+        data.extend_from_slice(b"  "); // ISCTLH (2)
         data.extend_from_slice(&[b' '; 20]); // ISREL (20)
-        data.extend_from_slice(b"  ");  // ISDCTP (2)
-        data.extend_from_slice(&[b' '; 8]);  // ISDCDT (8)
-        data.extend_from_slice(&[b' '; 4]);  // ISDCXM (4)
-        data.push(b' ');           // ISDG (1)
-        data.extend_from_slice(&[b' '; 8]);  // ISDGDT (8)
+        data.extend_from_slice(b"  "); // ISDCTP (2)
+        data.extend_from_slice(&[b' '; 8]); // ISDCDT (8)
+        data.extend_from_slice(&[b' '; 4]); // ISDCXM (4)
+        data.push(b' '); // ISDG (1)
+        data.extend_from_slice(&[b' '; 8]); // ISDGDT (8)
         data.extend_from_slice(&[b' '; 43]); // ISCLTX (43)
-        data.push(b' ');           // ISCATP (1)
+        data.push(b' '); // ISCATP (1)
         data.extend_from_slice(&[b' '; 40]); // ISCAUT (40)
-        data.push(b' ');           // ISCRSN (1)
-        data.extend_from_slice(&[b' '; 8]);  // ISSRDT (8)
+        data.push(b' '); // ISCRSN (1)
+        data.extend_from_slice(&[b' '; 8]); // ISSRDT (8)
         data.extend_from_slice(&[b' '; 15]); // ISCTLN (15)
-        
+
         // ENCRYP (1)
         data.push(b'0');
-        
+
         // ISORCE (42)
         data.extend_from_slice(&[b' '; 42]);
-        
+
         // NROWS (8)
         data.extend_from_slice(format!("{:08}", nrows).as_bytes());
-        
+
         // NCOLS (8)
         data.extend_from_slice(format!("{:08}", ncols).as_bytes());
-        
+
         // PVTYPE (3)
         let pvtype_padded = format!("{:<3}", pvtype);
         data.extend_from_slice(&pvtype_padded.as_bytes()[..3]);
-        
+
         // IREP (8)
         let irep_padded = format!("{:<8}", irep);
         data.extend_from_slice(&irep_padded.as_bytes()[..8]);
-        
+
         // ICAT (8)
         data.extend_from_slice(b"VIS     ");
-        
+
         // ABPP (2)
         data.extend_from_slice(format!("{:02}", abpp).as_bytes());
-        
+
         // PJUST (1)
         data.push(pjust as u8);
-        
+
         // ICORDS (1) - Using blank to skip IGEOLO
         data.push(b' ');
-        
+
         // NICOM (1) - No comments
         data.push(b'0');
-        
+
         // IC (2) - Compression
         let ic_padded = format!("{:<2}", ic);
         data.extend_from_slice(&ic_padded.as_bytes()[..2]);
-        
+
         // NBANDS (1)
         data.push(b'0' + nbands);
-        
+
         // Band info for each band (when NBANDS > 0)
         for _ in 0..nbands {
             data.extend_from_slice(b"M "); // IREPBAND (2)
             data.extend_from_slice(&[b' '; 6]); // ISUBCAT (6)
-            data.push(b'N');        // IFC (1)
+            data.push(b'N'); // IFC (1)
             data.extend_from_slice(&[b' '; 3]); // IMFLT (3)
-            data.push(b'0');        // NLUTS (1) - No LUTs
+            data.push(b'0'); // NLUTS (1) - No LUTs
         }
-        
+
         // ISYNC (1)
         data.push(b'0');
-        
+
         // IMODE (1)
         data.push(imode as u8);
-        
+
         // NBPR (4)
         data.extend_from_slice(format!("{:04}", nbpr).as_bytes());
-        
+
         // NBPC (4)
         data.extend_from_slice(format!("{:04}", nbpc).as_bytes());
-        
+
         // NPPBH (4)
         data.extend_from_slice(format!("{:04}", nppbh).as_bytes());
-        
+
         // NPPBV (4)
         data.extend_from_slice(format!("{:04}", nppbv).as_bytes());
-        
+
         // NBPP (2)
         data.extend_from_slice(format!("{:02}", nbpp).as_bytes());
-        
+
         // IDLVL (3)
         data.extend_from_slice(b"001");
-        
+
         // IALVL (3)
         data.extend_from_slice(b"000");
-        
+
         // ILOC (10)
         data.extend_from_slice(b"0000000000");
-        
+
         // IMAG (4)
         data.extend_from_slice(b"1.0 ");
-        
+
         // UDIDL (5) - No user defined data
         data.extend_from_slice(b"00000");
-        
+
         // IXSHDL (5) - No extended subheader data
         data.extend_from_slice(b"00000");
-        
+
         data
     }
 
@@ -767,12 +803,20 @@ mod tests {
 
         let test_data = create_image_subheader_test_data(
             "TestImg01",
-            512, 512,
-            "INT", "MONO",
-            8, 8,
+            512,
+            512,
+            "INT",
+            "MONO",
+            8,
+            8,
             1,
-            1, 1, 512, 512,
-            'B', 'R', "NC",
+            1,
+            1,
+            512,
+            512,
+            'B',
+            'R',
+            "NC",
         );
 
         let accessor = crate::parser::StructureAccessor::new(definition, &test_data).unwrap();
@@ -810,12 +854,20 @@ mod tests {
         // 16-bit pixels, 2 bands
         let test_data = create_image_subheader_test_data(
             "TestImg02",
-            256, 256,
-            "INT", "MULTI",
-            16, 16,
+            256,
+            256,
+            "INT",
+            "MULTI",
+            16,
+            16,
             2,
-            1, 1, 256, 256,
-            'B', 'R', "NC",
+            1,
+            1,
+            256,
+            256,
+            'B',
+            'R',
+            "NC",
         );
 
         let accessor = crate::parser::StructureAccessor::new(definition, &test_data).unwrap();
@@ -823,10 +875,10 @@ mod tests {
 
         // bytes_per_pixel = ceil(16/8) = 2
         assert_eq!(facade.bytes_per_pixel().unwrap(), 2);
-        
+
         // block_size_bytes = 256 * 256 * 2 bands * 2 bytes = 262144
         assert_eq!(facade.block_size_bytes().unwrap(), 256 * 256 * 2 * 2);
-        
+
         // image_data_size = 1 * 1 * block_size = 262144
         assert_eq!(facade.image_data_size().unwrap(), 262144);
     }
@@ -848,7 +900,13 @@ mod property_tests {
     /// Ensures at least one non-space character to avoid all-space strings
     fn valid_bcs_a_string(len: usize) -> impl Strategy<Value = String> {
         // Generate a string with at least one non-space character
-        (0x21u8..=0x7Eu8, proptest::collection::vec(0x20u8..=0x7Eu8, len.saturating_sub(1)..=len.saturating_sub(1)))
+        (
+            0x21u8..=0x7Eu8,
+            proptest::collection::vec(
+                0x20u8..=0x7Eu8,
+                len.saturating_sub(1)..=len.saturating_sub(1),
+            ),
+        )
             .prop_map(move |(first_char, mut rest)| {
                 let mut result = vec![first_char];
                 result.append(&mut rest);
@@ -864,51 +922,33 @@ mod property_tests {
 
     /// Generate valid PVTYPE values
     fn valid_pvtype() -> impl Strategy<Value = &'static str> {
-        prop_oneof![
-            Just("INT"),
-            Just("SI "),
-            Just("R  "),
-        ]
+        prop_oneof![Just("INT"), Just("SI "), Just("R  "),]
     }
 
     /// Generate valid IREP values
     fn valid_irep() -> impl Strategy<Value = &'static str> {
-        prop_oneof![
-            Just("MONO    "),
-            Just("MULTI   "),
-        ]
+        prop_oneof![Just("MONO    "), Just("MULTI   "),]
     }
 
     /// Generate valid IMODE values
     fn valid_imode() -> impl Strategy<Value = char> {
-        prop_oneof![
-            Just('B'),
-            Just('P'),
-            Just('R'),
-            Just('S'),
-        ]
+        prop_oneof![Just('B'), Just('P'), Just('R'), Just('S'),]
     }
 
     /// Generate valid PJUST values
     fn valid_pjust() -> impl Strategy<Value = char> {
-        prop_oneof![
-            Just('R'),
-            Just('L'),
-        ]
+        prop_oneof![Just('R'), Just('L'),]
     }
 
     /// Generate valid IC values (uncompressed only for this test)
     fn valid_ic() -> impl Strategy<Value = &'static str> {
-        prop_oneof![
-            Just("NC"),
-            Just("NM"),
-        ]
+        prop_oneof![Just("NC"), Just("NM"),]
     }
 
     /// Generate valid NBPP values based on PVTYPE
     fn valid_nbpp_for_pvtype(pvtype: &str) -> u8 {
         match pvtype.trim() {
-            "INT" | "SI" => 8,  // Use 8-bit for simplicity
+            "INT" | "SI" => 8, // Use 8-bit for simplicity
             "R" => 32,
             _ => 8,
         }
@@ -932,143 +972,143 @@ mod property_tests {
         ic: &str,
     ) -> Vec<u8> {
         let mut data = Vec::new();
-        
+
         // IM (2)
         data.extend_from_slice(b"IM");
-        
+
         // IID1 (10)
         let iid1_bytes = iid1.as_bytes();
         let mut iid1_field = [b' '; 10];
         let copy_len = iid1_bytes.len().min(10);
         iid1_field[..copy_len].copy_from_slice(&iid1_bytes[..copy_len]);
         data.extend_from_slice(&iid1_field);
-        
+
         // IDATIM (14)
         data.extend_from_slice(b"20240101120000");
-        
+
         // TGTID (17)
         data.extend_from_slice(&[b' '; 17]);
-        
+
         // IID2 (80)
         data.extend_from_slice(&[b' '; 80]);
-        
+
         // Security fields (total 167 bytes)
-        data.push(b'U');           // ISCLAS (1)
-        data.extend_from_slice(&[b' '; 2]);  // ISCLSY (2)
+        data.push(b'U'); // ISCLAS (1)
+        data.extend_from_slice(&[b' '; 2]); // ISCLSY (2)
         data.extend_from_slice(&[b' '; 11]); // ISCODE (11)
-        data.extend_from_slice(&[b' '; 2]);  // ISCTLH (2)
+        data.extend_from_slice(&[b' '; 2]); // ISCTLH (2)
         data.extend_from_slice(&[b' '; 20]); // ISREL (20)
-        data.extend_from_slice(&[b' '; 2]);  // ISDCTP (2)
-        data.extend_from_slice(&[b' '; 8]);  // ISDCDT (8)
-        data.extend_from_slice(&[b' '; 4]);  // ISDCXM (4)
-        data.push(b' ');           // ISDG (1)
-        data.extend_from_slice(&[b' '; 8]);  // ISDGDT (8)
+        data.extend_from_slice(&[b' '; 2]); // ISDCTP (2)
+        data.extend_from_slice(&[b' '; 8]); // ISDCDT (8)
+        data.extend_from_slice(&[b' '; 4]); // ISDCXM (4)
+        data.push(b' '); // ISDG (1)
+        data.extend_from_slice(&[b' '; 8]); // ISDGDT (8)
         data.extend_from_slice(&[b' '; 43]); // ISCLTX (43)
-        data.push(b' ');           // ISCATP (1)
+        data.push(b' '); // ISCATP (1)
         data.extend_from_slice(&[b' '; 40]); // ISCAUT (40)
-        data.push(b' ');           // ISCRSN (1)
-        data.extend_from_slice(&[b' '; 8]);  // ISSRDT (8)
+        data.push(b' '); // ISCRSN (1)
+        data.extend_from_slice(&[b' '; 8]); // ISSRDT (8)
         data.extend_from_slice(&[b' '; 15]); // ISCTLN (15)
-        
+
         // ENCRYP (1)
         data.push(b'0');
-        
+
         // ISORCE (42)
         data.extend_from_slice(&[b' '; 42]);
-        
+
         // NROWS (8)
         data.extend_from_slice(format!("{:08}", nrows).as_bytes());
-        
+
         // NCOLS (8)
         data.extend_from_slice(format!("{:08}", ncols).as_bytes());
-        
+
         // PVTYPE (3)
         let pvtype_bytes = pvtype.as_bytes();
         let mut pvtype_field = [b' '; 3];
         let copy_len = pvtype_bytes.len().min(3);
         pvtype_field[..copy_len].copy_from_slice(&pvtype_bytes[..copy_len]);
         data.extend_from_slice(&pvtype_field);
-        
+
         // IREP (8)
         let irep_bytes = irep.as_bytes();
         let mut irep_field = [b' '; 8];
         let copy_len = irep_bytes.len().min(8);
         irep_field[..copy_len].copy_from_slice(&irep_bytes[..copy_len]);
         data.extend_from_slice(&irep_field);
-        
+
         // ICAT (8)
         data.extend_from_slice(b"VIS     ");
-        
+
         // ABPP (2) - same as NBPP for simplicity
         data.extend_from_slice(format!("{:02}", nbpp).as_bytes());
-        
+
         // PJUST (1)
         data.push(pjust as u8);
-        
+
         // ICORDS (1) - blank to skip IGEOLO
         data.push(b' ');
-        
+
         // NICOM (1) - No comments
         data.push(b'0');
-        
+
         // IC (2)
         let ic_bytes = ic.as_bytes();
         let mut ic_field = [b' '; 2];
         let copy_len = ic_bytes.len().min(2);
         ic_field[..copy_len].copy_from_slice(&ic_bytes[..copy_len]);
         data.extend_from_slice(&ic_field);
-        
+
         // NBANDS (1)
         data.push(b'0' + nbands);
-        
+
         // Band info for each band
         for _ in 0..nbands {
             data.extend_from_slice(b"M "); // IREPBAND (2)
             data.extend_from_slice(&[b' '; 6]); // ISUBCAT (6)
-            data.push(b'N');        // IFC (1)
+            data.push(b'N'); // IFC (1)
             data.extend_from_slice(&[b' '; 3]); // IMFLT (3)
-            data.push(b'0');        // NLUTS (1)
+            data.push(b'0'); // NLUTS (1)
         }
-        
+
         // ISYNC (1)
         data.push(b'0');
-        
+
         // IMODE (1)
         data.push(imode as u8);
-        
+
         // NBPR (4)
         data.extend_from_slice(format!("{:04}", nbpr).as_bytes());
-        
+
         // NBPC (4)
         data.extend_from_slice(format!("{:04}", nbpc).as_bytes());
-        
+
         // NPPBH (4)
         data.extend_from_slice(format!("{:04}", nppbh).as_bytes());
-        
+
         // NPPBV (4)
         data.extend_from_slice(format!("{:04}", nppbv).as_bytes());
-        
+
         // NBPP (2)
         data.extend_from_slice(format!("{:02}", nbpp).as_bytes());
-        
+
         // IDLVL (3)
         data.extend_from_slice(b"001");
-        
+
         // IALVL (3)
         data.extend_from_slice(b"000");
-        
+
         // ILOC (10)
         data.extend_from_slice(b"0000000000");
-        
+
         // IMAG (4)
         data.extend_from_slice(b"1.0 ");
-        
+
         // UDIDL (5)
         data.extend_from_slice(b"00000");
-        
+
         // IXSHDL (5)
         data.extend_from_slice(b"00000");
-        
+
         data
     }
 
@@ -1100,7 +1140,7 @@ mod property_tests {
             };
 
             let nbpp = valid_nbpp_for_pvtype(pvtype);
-            
+
             // Calculate blocking parameters to cover image dimensions
             let nppbh = ncols.min(8192);
             let nppbv = nrows.min(8192);
@@ -1134,11 +1174,11 @@ mod property_tests {
             let expected_pvtype = PixelValueType::from_str(pvtype).unwrap();
             prop_assert_eq!(facade.pvtype().unwrap(), expected_pvtype,
                 "PVTYPE should match input");
-            
+
             let expected_irep = ImageRepresentation::from_str(irep).unwrap();
             prop_assert_eq!(facade.irep().unwrap(), expected_irep,
                 "IREP should match input");
-            
+
             prop_assert_eq!(facade.nbpp().unwrap(), nbpp,
                 "NBPP should match input");
             prop_assert_eq!(facade.abpp().unwrap(), nbpp,
@@ -1179,7 +1219,7 @@ mod property_tests {
             let bytes_per_pixel = facade.bytes_per_pixel().unwrap();
             prop_assert!(bytes_per_pixel > 0,
                 "Bytes per pixel should be positive");
-            
+
             let block_size = facade.block_size_bytes().unwrap();
             let expected_block_size = (nppbh as usize) * (nppbv as usize) * (nbands as usize) * bytes_per_pixel;
             prop_assert_eq!(block_size, expected_block_size,
@@ -1205,13 +1245,13 @@ mod property_tests {
     /// Generate valid IREPBAND values (2 characters)
     fn valid_irepband() -> impl Strategy<Value = String> {
         prop_oneof![
-            Just("M ".to_string()),  // Mono
-            Just("R ".to_string()),  // Red
-            Just("G ".to_string()),  // Green
-            Just("B ".to_string()),  // Blue
-            Just("LU".to_string()),  // Lookup
-            Just("Y ".to_string()),  // Y (luminance)
-            Just("  ".to_string()),  // Blank
+            Just("M ".to_string()), // Mono
+            Just("R ".to_string()), // Red
+            Just("G ".to_string()), // Green
+            Just("B ".to_string()), // Blue
+            Just("LU".to_string()), // Lookup
+            Just("Y ".to_string()), // Y (luminance)
+            Just("  ".to_string()), // Blank
         ]
     }
 
@@ -1228,29 +1268,31 @@ mod property_tests {
     /// Generate valid IFC values (1 character)
     fn valid_ifc() -> impl Strategy<Value = char> {
         prop_oneof![
-            Just('N'),  // No filter
-            Just(' '),  // Blank
+            Just('N'), // No filter
+            Just(' '), // Blank
         ]
     }
 
     /// Generate valid IMFLT values (3 characters)
     fn valid_imflt() -> impl Strategy<Value = String> {
-        prop_oneof![
-            Just("   ".to_string()),
-            Just("A  ".to_string()),
-        ]
+        prop_oneof![Just("   ".to_string()), Just("A  ".to_string()),]
     }
 
     /// Generate a valid band info configuration
     fn valid_band_info_config() -> impl Strategy<Value = BandInfoConfig> {
-        (valid_irepband(), valid_isubcat(), valid_ifc(), valid_imflt())
+        (
+            valid_irepband(),
+            valid_isubcat(),
+            valid_ifc(),
+            valid_imflt(),
+        )
             .prop_map(|(irepband, isubcat, ifc, imflt)| {
                 BandInfoConfig {
                     irepband,
                     isubcat,
                     ifc,
                     imflt,
-                    nluts: 0,  // No LUTs for basic band info test
+                    nluts: 0, // No LUTs for basic band info test
                 }
             })
     }
@@ -1270,88 +1312,88 @@ mod property_tests {
         let mut data = Vec::new();
         let nbands = bands.len() as u8;
         let use_xbands = nbands == 0 || bands.len() > 9;
-        
+
         // IM (2)
         data.extend_from_slice(b"IM");
-        
+
         // IID1 (10)
         data.extend_from_slice(b"TestImage ");
-        
+
         // IDATIM (14)
         data.extend_from_slice(b"20240101120000");
-        
+
         // TGTID (17)
         data.extend_from_slice(&[b' '; 17]);
-        
+
         // IID2 (80)
         data.extend_from_slice(&[b' '; 80]);
-        
+
         // Security fields
-        data.push(b'U');           // ISCLAS (1)
-        data.extend_from_slice(&[b' '; 2]);  // ISCLSY (2)
+        data.push(b'U'); // ISCLAS (1)
+        data.extend_from_slice(&[b' '; 2]); // ISCLSY (2)
         data.extend_from_slice(&[b' '; 11]); // ISCODE (11)
-        data.extend_from_slice(&[b' '; 2]);  // ISCTLH (2)
+        data.extend_from_slice(&[b' '; 2]); // ISCTLH (2)
         data.extend_from_slice(&[b' '; 20]); // ISREL (20)
-        data.extend_from_slice(&[b' '; 2]);  // ISDCTP (2)
-        data.extend_from_slice(&[b' '; 8]);  // ISDCDT (8)
-        data.extend_from_slice(&[b' '; 4]);  // ISDCXM (4)
-        data.push(b' ');           // ISDG (1)
-        data.extend_from_slice(&[b' '; 8]);  // ISDGDT (8)
+        data.extend_from_slice(&[b' '; 2]); // ISDCTP (2)
+        data.extend_from_slice(&[b' '; 8]); // ISDCDT (8)
+        data.extend_from_slice(&[b' '; 4]); // ISDCXM (4)
+        data.push(b' '); // ISDG (1)
+        data.extend_from_slice(&[b' '; 8]); // ISDGDT (8)
         data.extend_from_slice(&[b' '; 43]); // ISCLTX (43)
-        data.push(b' ');           // ISCATP (1)
+        data.push(b' '); // ISCATP (1)
         data.extend_from_slice(&[b' '; 40]); // ISCAUT (40)
-        data.push(b' ');           // ISCRSN (1)
-        data.extend_from_slice(&[b' '; 8]);  // ISSRDT (8)
+        data.push(b' '); // ISCRSN (1)
+        data.extend_from_slice(&[b' '; 8]); // ISSRDT (8)
         data.extend_from_slice(&[b' '; 15]); // ISCTLN (15)
-        
+
         // ENCRYP (1)
         data.push(b'0');
-        
+
         // ISORCE (42)
         data.extend_from_slice(&[b' '; 42]);
-        
+
         // NROWS (8)
         data.extend_from_slice(format!("{:08}", nrows).as_bytes());
-        
+
         // NCOLS (8)
         data.extend_from_slice(format!("{:08}", ncols).as_bytes());
-        
+
         // PVTYPE (3)
         let pvtype_bytes = pvtype.as_bytes();
         let mut pvtype_field = [b' '; 3];
         let copy_len = pvtype_bytes.len().min(3);
         pvtype_field[..copy_len].copy_from_slice(&pvtype_bytes[..copy_len]);
         data.extend_from_slice(&pvtype_field);
-        
+
         // IREP (8)
         let irep_bytes = irep.as_bytes();
         let mut irep_field = [b' '; 8];
         let copy_len = irep_bytes.len().min(8);
         irep_field[..copy_len].copy_from_slice(&irep_bytes[..copy_len]);
         data.extend_from_slice(&irep_field);
-        
+
         // ICAT (8)
         data.extend_from_slice(b"VIS     ");
-        
+
         // ABPP (2)
         data.extend_from_slice(format!("{:02}", nbpp).as_bytes());
-        
+
         // PJUST (1)
         data.push(pjust as u8);
-        
+
         // ICORDS (1) - blank to skip IGEOLO
         data.push(b' ');
-        
+
         // NICOM (1) - No comments
         data.push(b'0');
-        
+
         // IC (2)
         let ic_bytes = ic.as_bytes();
         let mut ic_field = [b' '; 2];
         let copy_len = ic_bytes.len().min(2);
         ic_field[..copy_len].copy_from_slice(&ic_bytes[..copy_len]);
         data.extend_from_slice(&ic_field);
-        
+
         // NBANDS (1) - 0 if using XBANDS
         if use_xbands {
             data.push(b'0');
@@ -1360,7 +1402,7 @@ mod property_tests {
         } else {
             data.push(b'0' + nbands);
         }
-        
+
         // Band info for each band
         for band in bands {
             // IREPBAND (2)
@@ -1369,75 +1411,75 @@ mod property_tests {
             let copy_len = irepband_bytes.len().min(2);
             irepband_field[..copy_len].copy_from_slice(&irepband_bytes[..copy_len]);
             data.extend_from_slice(&irepband_field);
-            
+
             // ISUBCAT (6)
             let isubcat_bytes = band.isubcat.as_bytes();
             let mut isubcat_field = [b' '; 6];
             let copy_len = isubcat_bytes.len().min(6);
             isubcat_field[..copy_len].copy_from_slice(&isubcat_bytes[..copy_len]);
             data.extend_from_slice(&isubcat_field);
-            
+
             // IFC (1)
             data.push(band.ifc as u8);
-            
+
             // IMFLT (3)
             let imflt_bytes = band.imflt.as_bytes();
             let mut imflt_field = [b' '; 3];
             let copy_len = imflt_bytes.len().min(3);
             imflt_field[..copy_len].copy_from_slice(&imflt_bytes[..copy_len]);
             data.extend_from_slice(&imflt_field);
-            
+
             // NLUTS (1)
             data.push(b'0' + band.nluts);
-            
+
             // If NLUTS > 0, we'd need NELUT and LUT data, but for this test we use 0
         }
-        
+
         // ISYNC (1)
         data.push(b'0');
-        
+
         // IMODE (1)
         data.push(imode as u8);
-        
+
         // Calculate blocking parameters
         let nppbh = ncols.min(8192);
         let nppbv = nrows.min(8192);
         let nbpr = (ncols + nppbh - 1) / nppbh;
         let nbpc = (nrows + nppbv - 1) / nppbv;
-        
+
         // NBPR (4)
         data.extend_from_slice(format!("{:04}", nbpr).as_bytes());
-        
+
         // NBPC (4)
         data.extend_from_slice(format!("{:04}", nbpc).as_bytes());
-        
+
         // NPPBH (4)
         data.extend_from_slice(format!("{:04}", nppbh).as_bytes());
-        
+
         // NPPBV (4)
         data.extend_from_slice(format!("{:04}", nppbv).as_bytes());
-        
+
         // NBPP (2)
         data.extend_from_slice(format!("{:02}", nbpp).as_bytes());
-        
+
         // IDLVL (3)
         data.extend_from_slice(b"001");
-        
+
         // IALVL (3)
         data.extend_from_slice(b"000");
-        
+
         // ILOC (10)
         data.extend_from_slice(b"0000000000");
-        
+
         // IMAG (4)
         data.extend_from_slice(b"1.0 ");
-        
+
         // UDIDL (5)
         data.extend_from_slice(b"00000");
-        
+
         // IXSHDL (5)
         data.extend_from_slice(b"00000");
-        
+
         data
     }
 
@@ -1480,14 +1522,14 @@ mod property_tests {
                     3 => "B".to_string(),
                     _ => "".to_string(),  // All spaces trims to empty
                 };
-                
+
                 // Cycle through different ISUBCAT values (trimmed for comparison)
                 let isubcat = match i % 3 {
                     0 => "".to_string(),      // All spaces trims to empty
                     1 => "VIS".to_string(),
                     _ => "NIR".to_string(),
                 };
-                
+
                 bands.push(BandInfoConfig {
                     irepband,
                     isubcat,
@@ -1507,14 +1549,14 @@ mod property_tests {
                     3 => "B ".to_string(),
                     _ => "  ".to_string(),
                 };
-                
+
                 // Cycle through different ISUBCAT values (padded for writing)
                 let isubcat = match i % 3 {
                     0 => "      ".to_string(),
                     1 => "VIS   ".to_string(),
                     _ => "NIR   ".to_string(),
                 };
-                
+
                 BandInfoConfig {
                     irepband,
                     isubcat,
@@ -1653,14 +1695,14 @@ mod property_tests {
             for lut_idx in 0..nluts as usize {
                 let parsed_lut_data = band_info.lut_data(lut_idx)
                     .map_err(|e| TestCaseError::fail(format!("Failed to get LUT data {}: {}", lut_idx, e)))?;
-                
-                prop_assert!(parsed_lut_data.is_some(), 
+
+                prop_assert!(parsed_lut_data.is_some(),
                     "LUT data {} should be present", lut_idx);
-                
+
                 let parsed_bytes = parsed_lut_data.unwrap();
                 prop_assert_eq!(parsed_bytes.len(), nelut as usize,
                     "LUT {} should have {} entries", lut_idx, nelut);
-                
+
                 // Verify byte-identical
                 prop_assert_eq!(&parsed_bytes, &lut_data_vec[lut_idx],
                     "LUT {} data should be byte-identical", lut_idx);
@@ -1669,7 +1711,7 @@ mod property_tests {
             // Verify LUT data beyond nluts returns None
             let extra_lut = band_info.lut_data(nluts as usize)
                 .map_err(|e| TestCaseError::fail(format!("Failed to check extra LUT: {}", e)))?;
-            prop_assert!(extra_lut.is_none(), 
+            prop_assert!(extra_lut.is_none(),
                 "LUT data beyond NLUTS should return None");
         }
     }
@@ -1689,160 +1731,160 @@ mod property_tests {
         ic: &str,
     ) -> Vec<u8> {
         let mut data = Vec::new();
-        
+
         // IM (2)
         data.extend_from_slice(b"IM");
-        
+
         // IID1 (10)
         data.extend_from_slice(b"LUTTest   ");
-        
+
         // IDATIM (14)
         data.extend_from_slice(b"20240101120000");
-        
+
         // TGTID (17)
         data.extend_from_slice(&[b' '; 17]);
-        
+
         // IID2 (80)
         data.extend_from_slice(&[b' '; 80]);
-        
+
         // Security fields
-        data.push(b'U');           // ISCLAS (1)
-        data.extend_from_slice(&[b' '; 2]);  // ISCLSY (2)
+        data.push(b'U'); // ISCLAS (1)
+        data.extend_from_slice(&[b' '; 2]); // ISCLSY (2)
         data.extend_from_slice(&[b' '; 11]); // ISCODE (11)
-        data.extend_from_slice(&[b' '; 2]);  // ISCTLH (2)
+        data.extend_from_slice(&[b' '; 2]); // ISCTLH (2)
         data.extend_from_slice(&[b' '; 20]); // ISREL (20)
-        data.extend_from_slice(&[b' '; 2]);  // ISDCTP (2)
-        data.extend_from_slice(&[b' '; 8]);  // ISDCDT (8)
-        data.extend_from_slice(&[b' '; 4]);  // ISDCXM (4)
-        data.push(b' ');           // ISDG (1)
-        data.extend_from_slice(&[b' '; 8]);  // ISDGDT (8)
+        data.extend_from_slice(&[b' '; 2]); // ISDCTP (2)
+        data.extend_from_slice(&[b' '; 8]); // ISDCDT (8)
+        data.extend_from_slice(&[b' '; 4]); // ISDCXM (4)
+        data.push(b' '); // ISDG (1)
+        data.extend_from_slice(&[b' '; 8]); // ISDGDT (8)
         data.extend_from_slice(&[b' '; 43]); // ISCLTX (43)
-        data.push(b' ');           // ISCATP (1)
+        data.push(b' '); // ISCATP (1)
         data.extend_from_slice(&[b' '; 40]); // ISCAUT (40)
-        data.push(b' ');           // ISCRSN (1)
-        data.extend_from_slice(&[b' '; 8]);  // ISSRDT (8)
+        data.push(b' '); // ISCRSN (1)
+        data.extend_from_slice(&[b' '; 8]); // ISSRDT (8)
         data.extend_from_slice(&[b' '; 15]); // ISCTLN (15)
-        
+
         // ENCRYP (1)
         data.push(b'0');
-        
+
         // ISORCE (42)
         data.extend_from_slice(&[b' '; 42]);
-        
+
         // NROWS (8)
         data.extend_from_slice(format!("{:08}", nrows).as_bytes());
-        
+
         // NCOLS (8)
         data.extend_from_slice(format!("{:08}", ncols).as_bytes());
-        
+
         // PVTYPE (3)
         let pvtype_bytes = pvtype.as_bytes();
         let mut pvtype_field = [b' '; 3];
         let copy_len = pvtype_bytes.len().min(3);
         pvtype_field[..copy_len].copy_from_slice(&pvtype_bytes[..copy_len]);
         data.extend_from_slice(&pvtype_field);
-        
+
         // IREP (8)
         let irep_bytes = irep.as_bytes();
         let mut irep_field = [b' '; 8];
         let copy_len = irep_bytes.len().min(8);
         irep_field[..copy_len].copy_from_slice(&irep_bytes[..copy_len]);
         data.extend_from_slice(&irep_field);
-        
+
         // ICAT (8)
         data.extend_from_slice(b"VIS     ");
-        
+
         // ABPP (2)
         data.extend_from_slice(format!("{:02}", nbpp).as_bytes());
-        
+
         // PJUST (1)
         data.push(pjust as u8);
-        
+
         // ICORDS (1) - blank to skip IGEOLO
         data.push(b' ');
-        
+
         // NICOM (1) - No comments
         data.push(b'0');
-        
+
         // IC (2)
         let ic_bytes = ic.as_bytes();
         let mut ic_field = [b' '; 2];
         let copy_len = ic_bytes.len().min(2);
         ic_field[..copy_len].copy_from_slice(&ic_bytes[..copy_len]);
         data.extend_from_slice(&ic_field);
-        
+
         // NBANDS (1) - 1 band for RGB/LUT
         data.push(b'1');
-        
+
         // Band info for the single band with LUT
         // IREPBAND (2) - LU for lookup
         data.extend_from_slice(b"LU");
-        
+
         // ISUBCAT (6)
         data.extend_from_slice(&[b' '; 6]);
-        
+
         // IFC (1)
         data.push(b'N');
-        
+
         // IMFLT (3)
         data.extend_from_slice(&[b' '; 3]);
-        
+
         // NLUTS (1)
         data.push(b'0' + nluts);
-        
+
         // NELUT (5) - only present when NLUTS > 0
         data.extend_from_slice(format!("{:05}", nelut).as_bytes());
-        
+
         // LUT data for each LUT
         for lut_bytes in lut_data.iter().take(nluts as usize) {
             data.extend_from_slice(lut_bytes);
         }
-        
+
         // ISYNC (1)
         data.push(b'0');
-        
+
         // IMODE (1)
         data.push(imode as u8);
-        
+
         // Calculate blocking parameters
         let nppbh = ncols.min(8192);
         let nppbv = nrows.min(8192);
         let nbpr = (ncols + nppbh - 1) / nppbh;
         let nbpc = (nrows + nppbv - 1) / nppbv;
-        
+
         // NBPR (4)
         data.extend_from_slice(format!("{:04}", nbpr).as_bytes());
-        
+
         // NBPC (4)
         data.extend_from_slice(format!("{:04}", nbpc).as_bytes());
-        
+
         // NPPBH (4)
         data.extend_from_slice(format!("{:04}", nppbh).as_bytes());
-        
+
         // NPPBV (4)
         data.extend_from_slice(format!("{:04}", nppbv).as_bytes());
-        
+
         // NBPP (2)
         data.extend_from_slice(format!("{:02}", nbpp).as_bytes());
-        
+
         // IDLVL (3)
         data.extend_from_slice(b"001");
-        
+
         // IALVL (3)
         data.extend_from_slice(b"000");
-        
+
         // ILOC (10)
         data.extend_from_slice(b"0000000000");
-        
+
         // IMAG (4)
         data.extend_from_slice(b"1.0 ");
-        
+
         // UDIDL (5)
         data.extend_from_slice(b"00000");
-        
+
         // IXSHDL (5)
         data.extend_from_slice(b"00000");
-        
+
         data
     }
 }

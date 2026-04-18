@@ -105,9 +105,12 @@ impl TreEnvelope {
             }
         })?;
 
-        let cel: usize = cel_str.trim().parse().map_err(|_| JBPError::InvalidFormat {
-            message: format!("CEL field '{}' is not a valid number", cel_str),
-        })?;
+        let cel: usize = cel_str
+            .trim()
+            .parse()
+            .map_err(|_| JBPError::InvalidFormat {
+                message: format!("CEL field '{}' is not a valid number", cel_str),
+            })?;
 
         // Calculate total envelope size
         let total_size = MIN_ENVELOPE_SIZE + cel;
@@ -802,7 +805,10 @@ mod tests {
     fn parse_tre_fields_handles_nested_dots() {
         let mut metadata = std::collections::HashMap::new();
         // Only the first dot is used to split CETAG from field name
-        metadata.insert("GEOLOB.NESTED.FIELD".to_string(), serde_json::json!("value"));
+        metadata.insert(
+            "GEOLOB.NESTED.FIELD".to_string(),
+            serde_json::json!("value"),
+        );
 
         let groups = parse_tre_fields_from_metadata(&metadata);
 
@@ -835,7 +841,6 @@ mod tests {
         assert_eq!(test_group.get("NULL"), Some(&serde_json::Value::Null));
     }
 }
-
 
 #[cfg(test)]
 mod property_tests {
@@ -994,7 +999,7 @@ mod property_tests {
         ) {
             // Create a tag with an invalid character
             let invalid_tag = format!("{}{}", prefix, invalid_char);
-            
+
             // Attempting to create a TreEnvelope with invalid tag should fail
             let result = TreEnvelope::new(invalid_tag.clone(), data.clone());
             prop_assert!(
@@ -1002,7 +1007,7 @@ mod property_tests {
                 "Creating TreEnvelope with invalid CETAG '{}' should fail",
                 invalid_tag
             );
-            
+
             // Verify it's specifically an InvalidCetag error
             match result {
                 Err(JBPError::InvalidCetag { tag }) => {
@@ -1030,23 +1035,23 @@ mod property_tests {
         ) {
             let actual_len = ((declared_len as f64) * actual_len_ratio) as usize;
             let actual_data: Vec<u8> = (0..actual_len).map(|i| (i % 256) as u8).collect();
-            
+
             // Build raw bytes with mismatched CEL
             let padded_tag = format!("{:<6}", tag);
             let cel_str = format!("{:05}", declared_len);
-            
+
             let mut bytes = Vec::new();
             bytes.extend(padded_tag.as_bytes());
             bytes.extend(cel_str.as_bytes());
             bytes.extend(&actual_data);
-            
+
             // Parsing should fail with UnexpectedEof
             let result = TreEnvelope::parse(&bytes);
             prop_assert!(
                 result.is_err(),
                 "Parsing TRE with insufficient data should fail"
             );
-            
+
             match result {
                 Err(JBPError::UnexpectedEof { expected, available }) => {
                     // Expected is CETAG(6) + CEL(5) + declared_len
@@ -1080,14 +1085,14 @@ mod property_tests {
             short_len in 0usize..11
         ) {
             let bytes: Vec<u8> = (0..short_len).map(|i| b'A' + (i % 26) as u8).collect();
-            
+
             let result = TreEnvelope::parse(&bytes);
             prop_assert!(
                 result.is_err(),
                 "Parsing TRE with {} bytes (< 11) should fail",
                 short_len
             );
-            
+
             match result {
                 Err(JBPError::UnexpectedEof { expected, available }) => {
                     prop_assert_eq!(expected, 11, "Expected minimum header size of 11");
@@ -1103,4 +1108,3 @@ mod property_tests {
         }
     }
 }
-

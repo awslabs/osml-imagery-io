@@ -152,7 +152,7 @@ impl TiffEncodingHints {
         if !explicit_predictor {
             hints.predictor = match hints.compression {
                 tags::COMPRESSION_LZW | tags::COMPRESSION_DEFLATE => 2, // Horizontal
-                _ => 1, // None
+                _ => 1,                                                 // None
             };
         }
 
@@ -267,11 +267,9 @@ fn infer_field_type(value: &serde_json::Value) -> Result<InferredTag, CodecError
     // Check for explicit type annotation: {"value": ..., "type": N}
     if let Some(obj) = value.as_object() {
         if obj.contains_key("value") && obj.contains_key("type") {
-            let annotated_type = obj["type"]
-                .as_u64()
-                .ok_or_else(|| {
-                    CodecError::Encode("Explicit type annotation 'type' must be an integer".into())
-                })?;
+            let annotated_type = obj["type"].as_u64().ok_or_else(|| {
+                CodecError::Encode("Explicit type annotation 'type' must be an integer".into())
+            })?;
             if !(1..=12).contains(&annotated_type) {
                 return Err(CodecError::Encode(format!(
                     "Invalid TIFF field type {}: must be 1-12",
@@ -323,9 +321,9 @@ fn infer_field_type(value: &serde_json::Value) -> Result<InferredTag, CodecError
                     "Cannot infer TIFF field type from empty array".into(),
                 ));
             }
-            let has_float = arr.iter().any(|v| {
-                v.as_f64().is_some() && v.as_i64().is_none() && v.as_u64().is_none()
-            });
+            let has_float = arr
+                .iter()
+                .any(|v| v.as_f64().is_some() && v.as_i64().is_none() && v.as_u64().is_none());
             if has_float {
                 return Ok(InferredTag {
                     field_type: tags::TIFF_DOUBLE,
@@ -333,15 +331,15 @@ fn infer_field_type(value: &serde_json::Value) -> Result<InferredTag, CodecError
                 });
             }
             // All elements are integers
-            let all_integers = arr.iter().all(|v| v.as_i64().is_some() || v.as_u64().is_some());
+            let all_integers = arr
+                .iter()
+                .all(|v| v.as_i64().is_some() || v.as_u64().is_some());
             if !all_integers {
                 return Err(CodecError::Encode(
                     "Cannot infer TIFF field type from array with mixed types".into(),
                 ));
             }
-            let has_negative = arr.iter().any(|v| {
-                v.as_i64().is_some_and(|i| i < 0)
-            });
+            let has_negative = arr.iter().any(|v| v.as_i64().is_some_and(|i| i < 0));
             if has_negative {
                 Ok(InferredTag {
                     field_type: tags::TIFF_SSHORT,
@@ -385,9 +383,11 @@ fn write_inferred_tag(
                 let data: Result<Vec<u16>, _> = arr
                     .iter()
                     .map(|v| {
-                        v.as_u64()
-                            .map(|n| n as u16)
-                            .ok_or_else(|| CodecError::Encode("SHORT array element must be a non-negative integer".into()))
+                        v.as_u64().map(|n| n as u16).ok_or_else(|| {
+                            CodecError::Encode(
+                                "SHORT array element must be a non-negative integer".into(),
+                            )
+                        })
                     })
                     .collect();
                 handle.set_field_u16_array(tag, &data?)
@@ -409,9 +409,10 @@ fn write_inferred_tag(
             // RATIONAL is not directly writable via simple inference;
             // requires explicit annotation. Write as two-element u32 array
             // is not supported by TiffHandle — use DOUBLE as fallback.
-            let f = inferred.value.as_f64().ok_or_else(|| {
-                CodecError::Encode("RATIONAL tag value must be a number".into())
-            })?;
+            let f = inferred
+                .value
+                .as_f64()
+                .ok_or_else(|| CodecError::Encode("RATIONAL tag value must be a number".into()))?;
             handle.set_field_f64(tag, f)
         }
         tags::TIFF_SBYTE => {
@@ -428,9 +429,9 @@ fn write_inferred_tag(
                 serde_json::Value::Array(arr) => arr
                     .iter()
                     .map(|v| {
-                        v.as_i64()
-                            .map(|n| n as i16)
-                            .ok_or_else(|| CodecError::Encode("SSHORT array element must be an integer".into()))
+                        v.as_i64().map(|n| n as i16).ok_or_else(|| {
+                            CodecError::Encode("SSHORT array element must be an integer".into())
+                        })
                     })
                     .collect(),
                 _ => {
@@ -443,17 +444,19 @@ fn write_inferred_tag(
             handle.set_field_i16_array(tag, &data?)
         }
         tags::TIFF_SLONG => {
-            let n = inferred.value.as_i64().ok_or_else(|| {
-                CodecError::Encode("SLONG tag value must be an integer".into())
-            })?;
+            let n = inferred
+                .value
+                .as_i64()
+                .ok_or_else(|| CodecError::Encode("SLONG tag value must be an integer".into()))?;
             handle.set_field_i32(tag, n as i32)
         }
         tags::TIFF_SRATIONAL => {
             // SRATIONAL is not directly writable via simple inference;
             // requires explicit annotation. Write as DOUBLE fallback.
-            let f = inferred.value.as_f64().ok_or_else(|| {
-                CodecError::Encode("SRATIONAL tag value must be a number".into())
-            })?;
+            let f = inferred
+                .value
+                .as_f64()
+                .ok_or_else(|| CodecError::Encode("SRATIONAL tag value must be a number".into()))?;
             handle.set_field_f64(tag, f)
         }
         tags::TIFF_FLOAT => match &inferred.value {
@@ -461,17 +464,18 @@ fn write_inferred_tag(
                 let data: Result<Vec<f32>, _> = arr
                     .iter()
                     .map(|v| {
-                        v.as_f64()
-                            .map(|n| n as f32)
-                            .ok_or_else(|| CodecError::Encode("FLOAT array element must be a number".into()))
+                        v.as_f64().map(|n| n as f32).ok_or_else(|| {
+                            CodecError::Encode("FLOAT array element must be a number".into())
+                        })
                     })
                     .collect();
                 handle.set_field_f32_array(tag, &data?)
             }
             _ => {
-                let f = inferred.value.as_f64().ok_or_else(|| {
-                    CodecError::Encode("FLOAT tag value must be a number".into())
-                })?;
+                let f = inferred
+                    .value
+                    .as_f64()
+                    .ok_or_else(|| CodecError::Encode("FLOAT tag value must be a number".into()))?;
                 handle.set_field_f32(tag, f as f32)
             }
         },
@@ -480,8 +484,9 @@ fn write_inferred_tag(
                 let data: Result<Vec<f64>, _> = arr
                     .iter()
                     .map(|v| {
-                        v.as_f64()
-                            .ok_or_else(|| CodecError::Encode("DOUBLE array element must be a number".into()))
+                        v.as_f64().ok_or_else(|| {
+                            CodecError::Encode("DOUBLE array element must be a number".into())
+                        })
                     })
                     .collect();
                 handle.set_field_f64_array(tag, &data?)
@@ -506,11 +511,9 @@ fn extract_u8_array(value: &serde_json::Value) -> Result<Vec<u8>, CodecError> {
         serde_json::Value::Array(arr) => arr
             .iter()
             .map(|v| {
-                v.as_u64()
-                    .map(|n| n as u8)
-                    .ok_or_else(|| {
-                        CodecError::Encode("Byte array element must be a non-negative integer".into())
-                    })
+                v.as_u64().map(|n| n as u8).ok_or_else(|| {
+                    CodecError::Encode("Byte array element must be a non-negative integer".into())
+                })
             })
             .collect(),
         serde_json::Value::Number(n) => {
@@ -531,17 +534,15 @@ fn extract_i8_as_u8_array(value: &serde_json::Value) -> Result<Vec<u8>, CodecErr
         serde_json::Value::Array(arr) => arr
             .iter()
             .map(|v| {
-                v.as_i64()
-                    .map(|n| n as i8 as u8)
-                    .ok_or_else(|| {
-                        CodecError::Encode("SBYTE array element must be an integer".into())
-                    })
+                v.as_i64().map(|n| n as i8 as u8).ok_or_else(|| {
+                    CodecError::Encode("SBYTE array element must be an integer".into())
+                })
             })
             .collect(),
         serde_json::Value::Number(n) => {
-            let byte = n.as_i64().ok_or_else(|| {
-                CodecError::Encode("SBYTE tag value must be an integer".into())
-            })?;
+            let byte = n
+                .as_i64()
+                .ok_or_else(|| CodecError::Encode("SBYTE tag value must be an integer".into()))?;
             Ok(vec![byte as i8 as u8])
         }
         _ => Err(CodecError::Encode(
@@ -549,8 +550,6 @@ fn extract_i8_as_u8_array(value: &serde_json::Value) -> Result<Vec<u8>, CodecErr
         )),
     }
 }
-
-
 
 // =============================================================================
 // Pixel Layout Conversion
@@ -799,8 +798,7 @@ impl TIFFDatasetWriter {
         }
 
         // Reorder assets in-place using sorted_indices
-        let mut slots: Vec<Option<QueuedImageAsset>> =
-            self.assets.drain(..).map(Some).collect();
+        let mut slots: Vec<Option<QueuedImageAsset>> = self.assets.drain(..).map(Some).collect();
         let mut new_assets: Vec<QueuedImageAsset> = Vec::with_capacity(slots.len());
         for &idx in &sorted_indices {
             if let Some(asset) = slots[idx].take() {
@@ -809,7 +807,6 @@ impl TIFFDatasetWriter {
         }
         self.assets = new_assets;
     }
-
 
     /// Write a single image asset as one IFD.
     fn write_image_ifd(
@@ -898,8 +895,7 @@ impl TIFFDatasetWriter {
                 let (block_data, shape) = image.get_block(block_row, block_col, 0, None)?;
                 let [_bands, actual_rows, actual_cols] = shape;
 
-                let needs_padding = actual_rows < tile_height
-                    || actual_cols < tile_width;
+                let needs_padding = actual_rows < tile_height || actual_cols < tile_width;
 
                 // Pad edge tiles if needed
                 let padded = if needs_padding {
@@ -920,8 +916,9 @@ impl TIFFDatasetWriter {
                 if is_planar {
                     // Write each band as a separate tile plane
                     let tiles_per_plane = tiles_across * tiles_down;
-                    let plane_size =
-                        (tile_height as usize) * (tile_width as usize) * (bytes_per_sample as usize);
+                    let plane_size = (tile_height as usize)
+                        * (tile_width as usize)
+                        * (bytes_per_sample as usize);
                     for band in 0..num_bands {
                         let tile_index =
                             band * tiles_per_plane + block_row * tiles_across + block_col;
@@ -931,8 +928,7 @@ impl TIFFDatasetWriter {
                     }
                 } else {
                     // Convert CHW → HWC and write as a single tile
-                    let pixels_in_tile =
-                        tile_height * tile_width;
+                    let pixels_in_tile = tile_height * tile_width;
                     let interleaved =
                         bsq_to_interleaved(&padded, num_bands, pixels_in_tile, bytes_per_sample);
                     let tile_index = block_row * tiles_across + block_col;
@@ -947,31 +943,31 @@ impl TIFFDatasetWriter {
             let dict = meta.as_dict(None);
 
             if nsft == 0 {
-            // Build and write GeoKey directory (tags 34735, 34736, 34737)
-            let (directory, double_params, ascii_params) =
-                geotiff::build_geokey_directory(&dict)?;
-            if !directory.is_empty() {
-                handle.set_field_u16_array(tags::GEO_KEY_DIRECTORY_TAG, &directory)?;
-                if let Some(doubles) = double_params {
-                    handle.set_field_f64_array(tags::GEO_DOUBLE_PARAMS_TAG, &doubles)?;
+                // Build and write GeoKey directory (tags 34735, 34736, 34737)
+                let (directory, double_params, ascii_params) =
+                    geotiff::build_geokey_directory(&dict)?;
+                if !directory.is_empty() {
+                    handle.set_field_u16_array(tags::GEO_KEY_DIRECTORY_TAG, &directory)?;
+                    if let Some(doubles) = double_params {
+                        handle.set_field_f64_array(tags::GEO_DOUBLE_PARAMS_TAG, &doubles)?;
+                    }
+                    if let Some(ascii) = ascii_params {
+                        handle.set_field_string(tags::GEO_ASCII_PARAMS_TAG, &ascii)?;
+                    }
                 }
-                if let Some(ascii) = ascii_params {
-                    handle.set_field_string(tags::GEO_ASCII_PARAMS_TAG, &ascii)?;
-                }
-            }
 
-            // Write transformation tags (33550, 33922, 34264)
-            let (pixel_scale, tiepoints, transformation) =
-                geotiff::extract_transformation_tags(&dict)?;
-            if let Some(ps) = pixel_scale {
-                handle.set_field_f64_array(tags::MODEL_PIXEL_SCALE_TAG, &ps)?;
-            }
-            if let Some(tp) = tiepoints {
-                handle.set_field_f64_array(tags::MODEL_TIEPOINT_TAG, &tp)?;
-            }
-            if let Some(tf) = transformation {
-                handle.set_field_f64_array(tags::MODEL_TRANSFORMATION_TAG, &tf)?;
-            }
+                // Write transformation tags (33550, 33922, 34264)
+                let (pixel_scale, tiepoints, transformation) =
+                    geotiff::extract_transformation_tags(&dict)?;
+                if let Some(ps) = pixel_scale {
+                    handle.set_field_f64_array(tags::MODEL_PIXEL_SCALE_TAG, &ps)?;
+                }
+                if let Some(tp) = tiepoints {
+                    handle.set_field_f64_array(tags::MODEL_TIEPOINT_TAG, &tp)?;
+                }
+                if let Some(tf) = transformation {
+                    handle.set_field_f64_array(tags::MODEL_TRANSFORMATION_TAG, &tf)?;
+                }
             } // end nsft == 0
 
             // Write user-provided tags from numeric keys in the Tag_Dictionary.
@@ -1123,10 +1119,7 @@ impl DatasetWriter for TIFFDatasetWriter {
         // Write each queued image as a separate IFD
         for asset in &self.assets {
             let image = asset.provider.as_image().ok_or_else(|| {
-                CodecError::InvalidFormat(format!(
-                    "Asset '{}' is not an Image variant",
-                    asset.key
-                ))
+                CodecError::InvalidFormat(format!("Asset '{}' is not an Image variant", asset.key))
             })?;
 
             // Use provider block dimensions as defaults when metadata didn't
@@ -1140,7 +1133,9 @@ impl DatasetWriter for TIFFDatasetWriter {
                 &handle,
                 image.as_ref(),
                 &hints,
-                self.metadata.as_ref().map(|m| m.as_ref() as &dyn MetadataProvider),
+                self.metadata
+                    .as_ref()
+                    .map(|m| m.as_ref() as &dyn MetadataProvider),
                 &asset.roles,
                 &asset.key,
             )?;
@@ -1158,7 +1153,10 @@ impl DatasetWriter for TIFFDatasetWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buffered::{BufferedImageAssetProvider, BufferedMetadataProvider, BufferedTextAssetProvider, MemoryImageConfig};
+    use crate::buffered::{
+        BufferedImageAssetProvider, BufferedMetadataProvider, BufferedTextAssetProvider,
+        MemoryImageConfig,
+    };
 
     /// Helper: create a minimal 1-band 256×256 UInt8 image provider with block data populated.
     fn make_image_provider(key: &str) -> Arc<BufferedImageAssetProvider> {
@@ -1174,7 +1172,11 @@ mod tests {
 
     /// Helper: create a text asset provider (non-image).
     fn make_text_provider() -> Arc<BufferedTextAssetProvider> {
-        Arc::new(BufferedTextAssetProvider::new("text_0", "hello".to_string(), "UTF8"))
+        Arc::new(BufferedTextAssetProvider::new(
+            "text_0",
+            "hello".to_string(),
+            "UTF8",
+        ))
     }
 
     // =========================================================================
@@ -1235,7 +1237,13 @@ mod tests {
         writer
             .add_asset("image:0", AssetProvider::Image(p1), "Image 0", "desc", &[])
             .unwrap();
-        let result = writer.add_asset("image:0", AssetProvider::Image(p2), "Image 0 dup", "desc", &[]);
+        let result = writer.add_asset(
+            "image:0",
+            AssetProvider::Image(p2),
+            "Image 0 dup",
+            "desc",
+            &[],
+        );
         assert!(result.is_err());
         assert!(
             matches!(result.unwrap_err(), CodecError::DuplicateKey(_)),
@@ -1252,7 +1260,13 @@ mod tests {
         // Add one asset so close() has something to write
         let provider = make_image_provider("image:0");
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Image", "desc", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Image",
+                "desc",
+                &[],
+            )
             .unwrap();
         writer.close().unwrap();
 
@@ -1276,7 +1290,13 @@ mod tests {
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
         let provider = make_image_provider("image:0");
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Image", "desc", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Image",
+                "desc",
+                &[],
+            )
             .unwrap();
 
         assert!(writer.close().is_ok());
@@ -1302,10 +1322,7 @@ mod tests {
 
         // The latest metadata should be used
         let dict = writer.metadata.as_ref().unwrap().as_dict(None);
-        assert_eq!(
-            dict.get("Compression"),
-            Some(&serde_json::json!("None"))
-        );
+        assert_eq!(dict.get("Compression"), Some(&serde_json::json!("None")));
     }
 
     // =========================================================================
@@ -1366,7 +1383,7 @@ mod tests {
     fn writer_predictor_default_with_lzw_compression() {
         let meta = BufferedMetadataProvider::new();
         meta.set_json("259", serde_json::json!(5)); // Tag 259 = LZW
-        // No explicit Predictor → should default to Horizontal (2)
+                                                    // No explicit Predictor → should default to Horizontal (2)
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 2);
     }
@@ -1383,7 +1400,7 @@ mod tests {
     fn writer_predictor_default_without_compression() {
         let meta = BufferedMetadataProvider::new();
         meta.set_json("259", serde_json::json!(1)); // Tag 259 = None
-        // No explicit Predictor + no compression → should default to None (1)
+                                                    // No explicit Predictor + no compression → should default to None (1)
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 1);
     }
@@ -1534,18 +1551,42 @@ mod tests {
     #[test]
     fn writer_pixel_type_to_sample_format() {
         // Unsigned integers → SAMPLE_FORMAT_UINT (1)
-        assert_eq!(TIFFDatasetWriter::sample_format(PixelType::UInt8), tags::SAMPLE_FORMAT_UINT);
-        assert_eq!(TIFFDatasetWriter::sample_format(PixelType::UInt16), tags::SAMPLE_FORMAT_UINT);
-        assert_eq!(TIFFDatasetWriter::sample_format(PixelType::UInt32), tags::SAMPLE_FORMAT_UINT);
+        assert_eq!(
+            TIFFDatasetWriter::sample_format(PixelType::UInt8),
+            tags::SAMPLE_FORMAT_UINT
+        );
+        assert_eq!(
+            TIFFDatasetWriter::sample_format(PixelType::UInt16),
+            tags::SAMPLE_FORMAT_UINT
+        );
+        assert_eq!(
+            TIFFDatasetWriter::sample_format(PixelType::UInt32),
+            tags::SAMPLE_FORMAT_UINT
+        );
 
         // Signed integers → SAMPLE_FORMAT_INT (2)
-        assert_eq!(TIFFDatasetWriter::sample_format(PixelType::Int8), tags::SAMPLE_FORMAT_INT);
-        assert_eq!(TIFFDatasetWriter::sample_format(PixelType::Int16), tags::SAMPLE_FORMAT_INT);
-        assert_eq!(TIFFDatasetWriter::sample_format(PixelType::Int32), tags::SAMPLE_FORMAT_INT);
+        assert_eq!(
+            TIFFDatasetWriter::sample_format(PixelType::Int8),
+            tags::SAMPLE_FORMAT_INT
+        );
+        assert_eq!(
+            TIFFDatasetWriter::sample_format(PixelType::Int16),
+            tags::SAMPLE_FORMAT_INT
+        );
+        assert_eq!(
+            TIFFDatasetWriter::sample_format(PixelType::Int32),
+            tags::SAMPLE_FORMAT_INT
+        );
 
         // Floating point → SAMPLE_FORMAT_FLOAT (3)
-        assert_eq!(TIFFDatasetWriter::sample_format(PixelType::Float32), tags::SAMPLE_FORMAT_FLOAT);
-        assert_eq!(TIFFDatasetWriter::sample_format(PixelType::Float64), tags::SAMPLE_FORMAT_FLOAT);
+        assert_eq!(
+            TIFFDatasetWriter::sample_format(PixelType::Float32),
+            tags::SAMPLE_FORMAT_FLOAT
+        );
+        assert_eq!(
+            TIFFDatasetWriter::sample_format(PixelType::Float64),
+            tags::SAMPLE_FORMAT_FLOAT
+        );
     }
 
     // =========================================================================
@@ -1555,15 +1596,27 @@ mod tests {
     #[test]
     fn writer_photometric_interpretation_rgb() {
         // 3 or more bands → RGB (2)
-        assert_eq!(TIFFDatasetWriter::photometric_interpretation(3), tags::PHOTOMETRIC_RGB);
-        assert_eq!(TIFFDatasetWriter::photometric_interpretation(4), tags::PHOTOMETRIC_RGB);
+        assert_eq!(
+            TIFFDatasetWriter::photometric_interpretation(3),
+            tags::PHOTOMETRIC_RGB
+        );
+        assert_eq!(
+            TIFFDatasetWriter::photometric_interpretation(4),
+            tags::PHOTOMETRIC_RGB
+        );
     }
 
     #[test]
     fn writer_photometric_interpretation_minisblack() {
         // 1 or 2 bands → MinIsBlack (1)
-        assert_eq!(TIFFDatasetWriter::photometric_interpretation(1), tags::PHOTOMETRIC_MINISBLACK);
-        assert_eq!(TIFFDatasetWriter::photometric_interpretation(2), tags::PHOTOMETRIC_MINISBLACK);
+        assert_eq!(
+            TIFFDatasetWriter::photometric_interpretation(1),
+            tags::PHOTOMETRIC_MINISBLACK
+        );
+        assert_eq!(
+            TIFFDatasetWriter::photometric_interpretation(2),
+            tags::PHOTOMETRIC_MINISBLACK
+        );
     }
 
     // =========================================================================
@@ -1624,9 +1677,17 @@ mod tests {
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
         let provider = make_image_provider("image:0");
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Image", "desc", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Image",
+                "desc",
+                &[],
+            )
             .unwrap();
-        writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(meta))).unwrap();
+        writer
+            .set_metadata(Arc::new(BufferedMetadataProvider::from_provider(meta)))
+            .unwrap();
         writer.close().unwrap();
         std::fs::read(&path).unwrap()
     }
@@ -1686,9 +1747,17 @@ mod tests {
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
         let provider = make_image_provider("image:0");
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Image", "desc", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Image",
+                "desc",
+                &[],
+            )
             .unwrap();
-        writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta))).unwrap();
+        writer
+            .set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta)))
+            .unwrap();
         let result = writer.close();
 
         assert!(result.is_err());
@@ -1709,9 +1778,17 @@ mod tests {
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
         let provider = make_image_provider("image:0");
         writer
-            .add_asset("image:0", AssetProvider::Image(provider), "Image", "desc", &[])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Image",
+                "desc",
+                &[],
+            )
             .unwrap();
-        writer.set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta))).unwrap();
+        writer
+            .set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta)))
+            .unwrap();
         let result = writer.close();
 
         assert!(result.is_err());
@@ -1908,7 +1985,10 @@ mod tests {
         // Tag should be present — UNDEFINED type is read back as a byte array
         assert!(dict.contains_key("42113"));
         let val = dict.get("42113").unwrap();
-        assert!(val.is_array(), "UNDEFINED tag should be read back as an array");
+        assert!(
+            val.is_array(),
+            "UNDEFINED tag should be read back as an array"
+        );
     }
 
     #[test]
@@ -1990,7 +2070,10 @@ mod tests {
             serde_json::json!([1, 1, 1, 2, 1024, 0, 1, 1, 3072, 0, 1, 32618]),
         );
         meta.set_json("33550", serde_json::json!([0.5, 0.5, 0.0]));
-        meta.set_json("33922", serde_json::json!([0.0, 0.0, 0.0, 500000.0, 4000000.0, 0.0]));
+        meta.set_json(
+            "33922",
+            serde_json::json!([0.0, 0.0, 0.0, 500000.0, 4000000.0, 0.0]),
+        );
         writer.set_metadata(Arc::new(meta)).unwrap();
         writer.close().unwrap();
 
@@ -2002,12 +2085,30 @@ mod tests {
         let dict = ifd_meta.as_dict(None);
 
         // Overview IFD should NOT have any GeoTIFF tags
-        assert!(!dict.contains_key("33550"), "Overview should not have ModelPixelScaleTag");
-        assert!(!dict.contains_key("33922"), "Overview should not have ModelTiepointTag");
-        assert!(!dict.contains_key("34264"), "Overview should not have ModelTransformationTag");
-        assert!(!dict.contains_key("34735"), "Overview should not have GeoKeyDirectoryTag");
-        assert!(!dict.contains_key("34736"), "Overview should not have GeoDoubleParamsTag");
-        assert!(!dict.contains_key("34737"), "Overview should not have GeoAsciiParamsTag");
+        assert!(
+            !dict.contains_key("33550"),
+            "Overview should not have ModelPixelScaleTag"
+        );
+        assert!(
+            !dict.contains_key("33922"),
+            "Overview should not have ModelTiepointTag"
+        );
+        assert!(
+            !dict.contains_key("34264"),
+            "Overview should not have ModelTransformationTag"
+        );
+        assert!(
+            !dict.contains_key("34735"),
+            "Overview should not have GeoKeyDirectoryTag"
+        );
+        assert!(
+            !dict.contains_key("34736"),
+            "Overview should not have GeoDoubleParamsTag"
+        );
+        assert!(
+            !dict.contains_key("34737"),
+            "Overview should not have GeoAsciiParamsTag"
+        );
     }
 
     #[test]
@@ -2078,7 +2179,13 @@ mod tests {
 
         let full = make_sized_image_provider("image:0", 256, 256);
         writer
-            .add_asset("image:0", AssetProvider::Image(full), "Full", "desc", &["data".to_string()])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(full),
+                "Full",
+                "desc",
+                &["data".to_string()],
+            )
             .unwrap();
 
         writer.sort_assets_for_cog();
@@ -2107,7 +2214,13 @@ mod tests {
 
         let full_1 = make_sized_image_provider("image:1", 512, 512);
         writer
-            .add_asset("image:1", AssetProvider::Image(full_1), "Full 1", "desc", &["data".to_string()])
+            .add_asset(
+                "image:1",
+                AssetProvider::Image(full_1),
+                "Full 1",
+                "desc",
+                &["data".to_string()],
+            )
             .unwrap();
 
         let ovr_1_1 = make_sized_image_provider("image:1:overview:1", 256, 256);
@@ -2123,7 +2236,13 @@ mod tests {
 
         let full_0 = make_sized_image_provider("image:0", 512, 512);
         writer
-            .add_asset("image:0", AssetProvider::Image(full_0), "Full 0", "desc", &["data".to_string()])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(full_0),
+                "Full 0",
+                "desc",
+                &["data".to_string()],
+            )
             .unwrap();
 
         let ovr_0_1 = make_sized_image_provider("image:0:overview:1", 256, 256);
@@ -2170,17 +2289,35 @@ mod tests {
 
         let img_2 = make_sized_image_provider("image:2", 100, 100);
         writer
-            .add_asset("image:2", AssetProvider::Image(img_2), "Image 2", "desc", &["data".to_string()])
+            .add_asset(
+                "image:2",
+                AssetProvider::Image(img_2),
+                "Image 2",
+                "desc",
+                &["data".to_string()],
+            )
             .unwrap();
 
         let img_0 = make_sized_image_provider("image:0", 200, 200);
         writer
-            .add_asset("image:0", AssetProvider::Image(img_0), "Image 0", "desc", &["data".to_string()])
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(img_0),
+                "Image 0",
+                "desc",
+                &["data".to_string()],
+            )
             .unwrap();
 
         let img_1 = make_sized_image_provider("image:1", 150, 150);
         writer
-            .add_asset("image:1", AssetProvider::Image(img_1), "Image 1", "desc", &["data".to_string()])
+            .add_asset(
+                "image:1",
+                AssetProvider::Image(img_1),
+                "Image 1",
+                "desc",
+                &["data".to_string()],
+            )
             .unwrap();
 
         writer.sort_assets_for_cog();

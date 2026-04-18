@@ -219,7 +219,8 @@ pub trait J2KCodec: Send + Sync {
     /// Returns `CodecError::Encode` if encoder setup fails.
     /// Returns `CodecError::Unsupported` if the codec doesn't support the
     /// requested encoding mode (e.g., HTJ2K).
-    fn start_encode(&self, params: &J2KEncodeParams) -> Result<Box<dyn J2KEncodeState>, CodecError>;
+    fn start_encode(&self, params: &J2KEncodeParams)
+        -> Result<Box<dyn J2KEncodeState>, CodecError>;
 
     /// Get the number of resolution levels in a codestream without full decode.
     ///

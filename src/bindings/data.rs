@@ -145,12 +145,12 @@ impl PyDataAssetProvider {
     /// ```
     fn parse_as_xml(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let xml_string = self.inner.parse_as_xml()?;
-        
+
         // Import xml.etree.ElementTree and parse the XML string
         let et_module = py.import("xml.etree.ElementTree")?;
         let fromstring = et_module.getattr("fromstring")?;
         let element = fromstring.call1((xml_string,))?;
-        
+
         Ok(element.into())
     }
 

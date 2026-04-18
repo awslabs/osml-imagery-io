@@ -217,7 +217,10 @@ unsafe extern "C" fn memory_write_skip_callback(p_nb_bytes: i64, p_user_data: *m
 }
 
 /// Seek callback for write stream
-unsafe extern "C" fn memory_write_seek_callback(p_nb_bytes: i64, p_user_data: *mut c_void) -> c_int {
+unsafe extern "C" fn memory_write_seek_callback(
+    p_nb_bytes: i64,
+    p_user_data: *mut c_void,
+) -> c_int {
     if p_user_data.is_null() || p_nb_bytes < 0 {
         return OPJ_FALSE;
     }
@@ -253,7 +256,9 @@ impl OjpCodec {
     pub fn new_decompress() -> Result<Self, CodecError> {
         let ptr = unsafe { sys::opj_create_decompress(OPJ_CODEC_J2K) };
         if ptr.is_null() {
-            return Err(CodecError::Decode("Failed to create OpenJPEG decoder".into()));
+            return Err(CodecError::Decode(
+                "Failed to create OpenJPEG decoder".into(),
+            ));
         }
 
         // Set up message handlers
@@ -270,7 +275,9 @@ impl OjpCodec {
     pub fn new_compress() -> Result<Self, CodecError> {
         let ptr = unsafe { sys::opj_create_compress(OPJ_CODEC_J2K) };
         if ptr.is_null() {
-            return Err(CodecError::Encode("Failed to create OpenJPEG encoder".into()));
+            return Err(CodecError::Encode(
+                "Failed to create OpenJPEG encoder".into(),
+            ));
         }
 
         // Set up message handlers
@@ -297,7 +304,10 @@ impl OjpCodec {
         let result = unsafe { sys::opj_setup_decoder(self.ptr, params) };
         if result == OPJ_FALSE {
             let msg = take_last_error().unwrap_or_else(|| "Unknown error".into());
-            return Err(CodecError::Decode(format!("Failed to setup decoder: {}", msg)));
+            return Err(CodecError::Decode(format!(
+                "Failed to setup decoder: {}",
+                msg
+            )));
         }
         Ok(())
     }
@@ -311,7 +321,10 @@ impl OjpCodec {
         let result = unsafe { sys::opj_setup_encoder(self.ptr, params, image.ptr) };
         if result == OPJ_FALSE {
             let msg = take_last_error().unwrap_or_else(|| "Unknown error".into());
-            return Err(CodecError::Encode(format!("Failed to setup encoder: {}", msg)));
+            return Err(CodecError::Encode(format!(
+                "Failed to setup encoder: {}",
+                msg
+            )));
         }
         Ok(())
     }
@@ -327,27 +340,25 @@ impl OjpCodec {
     /// * `options` - Slice of option strings in "KEY=VALUE" format
     pub fn set_extra_options(&self, options: &[&str]) -> Result<(), CodecError> {
         use std::ffi::CString;
-        
+
         // Convert options to CStrings
         let c_options: Vec<CString> = options
             .iter()
             .map(|s| CString::new(*s).expect("Option string contains null byte"))
             .collect();
-        
+
         // Create array of pointers (null-terminated)
-        let mut option_ptrs: Vec<*const c_char> = c_options
-            .iter()
-            .map(|s| s.as_ptr())
-            .collect();
+        let mut option_ptrs: Vec<*const c_char> = c_options.iter().map(|s| s.as_ptr()).collect();
         option_ptrs.push(ptr::null()); // Null terminator
-        
-        let result = unsafe {
-            sys::opj_encoder_set_extra_options(self.ptr, option_ptrs.as_ptr())
-        };
-        
+
+        let result = unsafe { sys::opj_encoder_set_extra_options(self.ptr, option_ptrs.as_ptr()) };
+
         if result == OPJ_FALSE {
             let msg = take_last_error().unwrap_or_else(|| "Unknown error".into());
-            return Err(CodecError::Encode(format!("Failed to set extra options: {}", msg)));
+            return Err(CodecError::Encode(format!(
+                "Failed to set extra options: {}",
+                msg
+            )));
         }
         Ok(())
     }
@@ -358,7 +369,10 @@ impl OjpCodec {
         let result = unsafe { sys::opj_read_header(stream.ptr, self.ptr, &mut image_ptr) };
         if result == OPJ_FALSE || image_ptr.is_null() {
             let msg = take_last_error().unwrap_or_else(|| "Unknown error".into());
-            return Err(CodecError::Decode(format!("Failed to read header: {}", msg)));
+            return Err(CodecError::Decode(format!(
+                "Failed to read header: {}",
+                msg
+            )));
         }
         Ok(OjpImage { ptr: image_ptr })
     }
@@ -427,7 +441,10 @@ impl OjpCodec {
         let result = unsafe { sys::opj_end_compress(self.ptr, stream.ptr) };
         if result == OPJ_FALSE {
             let msg = take_last_error().unwrap_or_else(|| "Unknown error".into());
-            return Err(CodecError::Encode(format!("Failed to end compress: {}", msg)));
+            return Err(CodecError::Encode(format!(
+                "Failed to end compress: {}",
+                msg
+            )));
         }
         Ok(())
     }
@@ -473,9 +490,8 @@ impl OjpCodec {
         image: &OjpImage,
         tile_index: u32,
     ) -> Result<(), CodecError> {
-        let result = unsafe {
-            sys::opj_get_decoded_tile(self.ptr, stream.ptr, image.ptr, tile_index)
-        };
+        let result =
+            unsafe { sys::opj_get_decoded_tile(self.ptr, stream.ptr, image.ptr, tile_index) };
         if result == OPJ_FALSE {
             let msg = take_last_error().unwrap_or_else(|| "Unknown error".into());
             return Err(CodecError::Decode(format!(
@@ -773,7 +789,9 @@ impl OjpImage {
                 comp.data = sys::opj_image_data_alloc(expected_len * std::mem::size_of::<i32>())
                     as *mut i32;
                 if comp.data.is_null() {
-                    return Err(CodecError::Encode("Failed to allocate component data".into()));
+                    return Err(CodecError::Encode(
+                        "Failed to allocate component data".into(),
+                    ));
                 }
             }
             ptr::copy_nonoverlapping(data.as_ptr(), comp.data, expected_len);

@@ -20,8 +20,8 @@ use crate::j2k::codec::J2KCodec;
 use crate::j2k::image::J2KImageAssetProvider;
 use crate::j2k::markers::parse_main_header;
 use crate::j2k::metadata::J2KMetadataProvider;
-use crate::traits::asset::AssetProvider;
 use crate::traits::asset::AssetMetadata;
+use crate::traits::asset::AssetProvider;
 use crate::traits::metadata::MetadataProvider;
 use crate::traits::reader::DatasetReader;
 use crate::types::{AssetType, PixelType};
@@ -123,7 +123,10 @@ impl J2KDatasetReader {
         entries.insert("width".to_string(), json!(siz.width));
         entries.insert("height".to_string(), json!(siz.height));
         entries.insert("num_components".to_string(), json!(siz.num_components));
-        entries.insert("bits_per_component".to_string(), json!(siz.bits_per_component));
+        entries.insert(
+            "bits_per_component".to_string(),
+            json!(siz.bits_per_component),
+        );
         entries.insert("is_signed".to_string(), json!(siz.is_signed));
         entries.insert("tile_width".to_string(), json!(tile_width));
         entries.insert("tile_height".to_string(), json!(tile_height));
@@ -181,12 +184,8 @@ impl J2KDatasetReader {
         let mut pos = 0;
 
         while pos + 8 <= data.len() {
-            let box_len = u32::from_be_bytes([
-                data[pos],
-                data[pos + 1],
-                data[pos + 2],
-                data[pos + 3],
-            ]) as u64;
+            let box_len =
+                u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as u64;
             let box_type = &data[pos + 4..pos + 8];
 
             let (header_size, actual_len) = if box_len == 1 {
@@ -335,9 +334,9 @@ struct SizMarkerInfo {
 impl DatasetReader for J2KDatasetReader {
     fn get_asset(&self, key: &str) -> Result<AssetProvider, CodecError> {
         match &self.image_asset {
-            Some(asset) if asset.key() == key => {
-                Ok(AssetProvider::Image(asset.clone() as Arc<dyn crate::traits::image::ImageAssetProvider>))
-            }
+            Some(asset) if asset.key() == key => Ok(AssetProvider::Image(
+                asset.clone() as Arc<dyn crate::traits::image::ImageAssetProvider>
+            )),
             _ => Err(CodecError::AssetNotFound(key.to_string())),
         }
     }
@@ -348,26 +347,22 @@ impl DatasetReader for J2KDatasetReader {
         roles: Option<&[String]>,
     ) -> Vec<String> {
         match asset_type {
-            None | Some(AssetType::Image) => {
-                match &self.image_asset {
-                    Some(asset) => {
-                        if let Some(requested) = roles {
-                            let asset_roles = asset.roles();
-                            if requested.iter().any(|r| asset_roles.contains(r)) {
-                                vec!["image:0".to_string()]
-                            } else {
-                                Vec::new()
-                            }
-                        } else {
+            None | Some(AssetType::Image) => match &self.image_asset {
+                Some(asset) => {
+                    if let Some(requested) = roles {
+                        let asset_roles = asset.roles();
+                        if requested.iter().any(|r| asset_roles.contains(r)) {
                             vec!["image:0".to_string()]
+                        } else {
+                            Vec::new()
                         }
+                    } else {
+                        vec!["image:0".to_string()]
                     }
-                    None => Vec::new(),
                 }
-            }
-            Some(AssetType::Text) | Some(AssetType::Graphics) | Some(AssetType::Data) => {
-                Vec::new()
-            }
+                None => Vec::new(),
+            },
+            Some(AssetType::Text) | Some(AssetType::Graphics) | Some(AssetType::Data) => Vec::new(),
         }
     }
 
@@ -432,7 +427,12 @@ mod tests {
         fn get_tile_info(&self, _: &[u8]) -> Result<(u32, u32, u32, u32), CodecError> {
             unimplemented!("stub: not expected to be called")
         }
-        fn decode_tile(&self, _: &[u8], _: u32, _: &J2KDecodeParams) -> Result<J2KDecodeResult, CodecError> {
+        fn decode_tile(
+            &self,
+            _: &[u8],
+            _: u32,
+            _: &J2KDecodeParams,
+        ) -> Result<J2KDecodeResult, CodecError> {
             unimplemented!("stub: not expected to be called")
         }
     }
@@ -637,7 +637,9 @@ mod tests {
 
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
         assert_eq!(keys, vec!["image:0"]);
-        assert!(reader.get_asset_keys(Some(AssetType::Text), None).is_empty());
+        assert!(reader
+            .get_asset_keys(Some(AssetType::Text), None)
+            .is_empty());
 
         // Check metadata
         let meta = reader.metadata();
@@ -645,15 +647,19 @@ mod tests {
         assert_eq!(dict.get("width").and_then(|v| v.as_u64()), Some(64));
         assert_eq!(dict.get("height").and_then(|v| v.as_u64()), Some(64));
         assert_eq!(dict.get("num_components").and_then(|v| v.as_u64()), Some(1));
-        assert_eq!(dict.get("bits_per_component").and_then(|v| v.as_u64()), Some(8));
+        assert_eq!(
+            dict.get("bits_per_component").and_then(|v| v.as_u64()),
+            Some(8)
+        );
         assert_eq!(dict.get("is_signed").and_then(|v| v.as_bool()), Some(false));
-        assert_eq!(dict.get("compression_type").and_then(|v| v.as_str()), Some("j2k"));
+        assert_eq!(
+            dict.get("compression_type").and_then(|v| v.as_str()),
+            Some("j2k")
+        );
 
         // Decode and verify pixels
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("expected Image variant");
+        let image = asset.as_image().expect("expected Image variant");
         assert_eq!(image.num_columns(), 64);
         assert_eq!(image.num_rows(), 64);
         assert_eq!(image.num_bands(), 1);
@@ -679,9 +685,7 @@ mod tests {
 
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("expected Image variant");
+        let image = asset.as_image().expect("expected Image variant");
 
         assert_eq!(image.num_bands(), 3);
         let (data, shape) = image.get_block(0, 0, 0, None).unwrap();
@@ -714,7 +718,9 @@ mod tests {
         reader.close().unwrap();
         assert!(!reader.has_asset("image:0"));
         assert!(reader.get_asset("image:0").is_err());
-        assert!(reader.get_asset_keys(Some(AssetType::Image), None).is_empty());
+        assert!(reader
+            .get_asset_keys(Some(AssetType::Image), None)
+            .is_empty());
     }
 
     #[cfg(feature = "openjpeg")]
@@ -724,9 +730,7 @@ mod tests {
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("expected Image variant");
+        let image = asset.as_image().expect("expected Image variant");
 
         let err = image.get_block(1, 0, 0, None).unwrap_err();
         assert!(matches!(err, CodecError::InvalidBlockCoordinates(1, 0, 0)));
@@ -742,9 +746,7 @@ mod tests {
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("expected Image variant");
+        let image = asset.as_image().expect("expected Image variant");
 
         let err = image.get_block(0, 0, 99, None).unwrap_err();
         assert!(matches!(err, CodecError::InvalidResolutionLevel(99)));
@@ -764,9 +766,7 @@ mod tests {
         let cs = make_j2k_codestream(64, 64, 3, 8, false, &pixels);
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("expected Image variant");
+        let image = asset.as_image().expect("expected Image variant");
 
         // Request only band 0
         let (data, shape) = image.get_block(0, 0, 0, Some(&[0])).unwrap();
@@ -787,9 +787,7 @@ mod tests {
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("expected Image variant");
+        let image = asset.as_image().expect("expected Image variant");
 
         assert!(image.has_block(0, 0, 0));
         assert!(!image.has_block(1, 0, 0));
@@ -811,13 +809,14 @@ mod tests {
 
         let meta = reader.metadata();
         let dict = meta.as_dict(None);
-        assert_eq!(dict.get("bits_per_component").and_then(|v| v.as_u64()), Some(16));
+        assert_eq!(
+            dict.get("bits_per_component").and_then(|v| v.as_u64()),
+            Some(16)
+        );
         assert_eq!(dict.get("is_signed").and_then(|v| v.as_bool()), Some(false));
 
         let asset = reader.get_asset("image:0").unwrap();
-        let image = asset
-            .as_image()
-            .expect("expected Image variant");
+        let image = asset.as_image().expect("expected Image variant");
         assert_eq!(image.pixel_value_type(), PixelType::UInt16);
         assert_eq!(image.num_bits_per_pixel(), 16);
 

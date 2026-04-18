@@ -53,10 +53,10 @@ use crate::jbp::{JBPDatasetReader, JBPDatasetWriter, NitfFormat};
 #[cfg(feature = "libjpeg-turbo")]
 use crate::jpeg::{JPEGDatasetReader, JPEGDatasetWriter};
 use crate::png::{PNGDatasetReader, PNGDatasetWriter};
-use crate::traits::{DatasetReader, DatasetWriter, ImageAssetProvider};
-use crate::types::AssetType;
 #[cfg(feature = "libtiff")]
 use crate::tiff;
+use crate::traits::{DatasetReader, DatasetWriter, ImageAssetProvider};
+use crate::types::AssetType;
 
 /// Represents a parsed URI with its scheme and path components.
 #[derive(Debug, Clone)]
@@ -184,9 +184,9 @@ impl IO {
         let paths: Vec<String> = paths.into();
 
         // Validate that paths is not empty
-        let uri = paths.first().ok_or_else(|| {
-            PyValueError::new_err("paths list cannot be empty")
-        })?;
+        let uri = paths
+            .first()
+            .ok_or_else(|| PyValueError::new_err("paths list cannot be empty"))?;
 
         // Validate that no path is an empty string
         if paths.iter().any(|p| p.is_empty()) {
@@ -212,11 +212,12 @@ impl IO {
                 // auto-detect from the file extension (stripping .rN suffix).
                 let format_str = match format {
                     Some(f) => f.to_string(),
-                    None => detect_write_format(&parsed)
-                        .ok_or_else(|| PyValueError::new_err(
+                    None => detect_write_format(&parsed).ok_or_else(|| {
+                        PyValueError::new_err(
                             "Cannot determine output format: no format specified \
-                             and file extension is not recognized"
-                        ))?,
+                             and file extension is not recognized",
+                        )
+                    })?,
                 };
 
                 if paths.len() > 1 {
@@ -260,9 +261,7 @@ fn mmap_file(path: &str) -> Result<Mmap, CodecError> {
 /// - `"image.ntf"` → `None`
 /// - `"image.r1.ntf"` → `None` (`.r1` is not the final extension)
 fn extract_rset_level(path: &str) -> Option<u32> {
-    let filename = Path::new(path)
-        .file_name()
-        .and_then(|f| f.to_str())?;
+    let filename = Path::new(path).file_name().and_then(|f| f.to_str())?;
 
     // Find the last '.' in the filename
     let dot_pos = filename.rfind('.')?;
@@ -320,10 +319,7 @@ fn extract_primary_image(reader: &dyn DatasetReader) -> Option<Arc<dyn ImageAsse
 /// The first path is opened as the base reader. Additional paths matching
 /// the `.rN` filename pattern are opened independently, and their primary
 /// image assets are re-keyed as `image:0:overview:N` with role `"overview"`.
-fn create_multi_path_reader(
-    paths: &[String],
-    format: Option<&str>,
-) -> PyResult<PyDatasetReader> {
+fn create_multi_path_reader(paths: &[String], format: Option<&str>) -> PyResult<PyDatasetReader> {
     let boxed = create_multi_path_reader_boxed(paths, format)?;
     Ok(PyDatasetReader::new(boxed))
 }
@@ -371,8 +367,8 @@ fn create_multi_path_reader_boxed(
             });
 
             match rset_format {
-                Some("nitf") | Some("nitf21") | Some("nitf2.1") | Some("nsif")
-                | Some("nsif10") | Some("nsif1.0") | Some("jbp") => {
+                Some("nitf") | Some("nitf21") | Some("nitf2.1") | Some("nsif") | Some("nsif10")
+                | Some("nsif1.0") | Some("jbp") => {
                     let mmap = mmap_file(&rset_parsed.path)?;
                     let reader = JBPDatasetReader::from_bytes(&mmap)?;
                     Box::new(reader)
@@ -422,10 +418,7 @@ fn create_multi_path_reader_boxed(
     }
 
     // Build the composite reader
-    let composite = CompositeDatasetReader::new(
-        base_reader,
-        overview_entries,
-    );
+    let composite = CompositeDatasetReader::new(base_reader, overview_entries);
 
     Ok(Box::new(composite))
 }
@@ -440,8 +433,9 @@ fn detect_write_format(parsed: &ParsedUri) -> Option<String> {
     let effective_path = strip_rset_suffix(&parsed.path);
     let effective_parsed = ParsedUri::parse(&effective_path);
 
-    effective_parsed.extension().and_then(|ext| {
-        match ext.to_lowercase().as_str() {
+    effective_parsed
+        .extension()
+        .and_then(|ext| match ext.to_lowercase().as_str() {
             "ntf" | "nitf" => Some("nitf".to_string()),
             "nsf" | "nsif" => Some("nsif".to_string()),
             "tif" | "tiff" | "gtif" | "gtiff" => Some("tiff".to_string()),
@@ -449,8 +443,7 @@ fn detect_write_format(parsed: &ParsedUri) -> Option<String> {
             "j2k" | "jp2" => Some("j2k".to_string()),
             "jpg" | "jpeg" => Some("jpeg".to_string()),
             _ => None,
-        }
-    })
+        })
 }
 
 /// Creates a composite writer from multiple output paths with R-set detection.
@@ -460,10 +453,7 @@ fn detect_write_format(parsed: &ParsedUri) -> Option<String> {
 /// its overview level. The resulting `CompositeDatasetWriter` routes assets
 /// by key: overview assets go to the matching R-set writer, non-overview
 /// assets go to the base writer.
-fn create_multi_path_writer(
-    paths: &[String],
-    format: &str,
-) -> PyResult<PyDatasetWriter> {
+fn create_multi_path_writer(paths: &[String], format: &str) -> PyResult<PyDatasetWriter> {
     let base_parsed = ParsedUri::parse(&paths[0]);
     let base_writer = create_writer_boxed(&base_parsed, format)?;
 
@@ -507,17 +497,14 @@ fn create_reader_boxed(
     match parsed.scheme.as_str() {
         "file" => {}
         "s3" => {
-            return Err(CodecError::Unsupported(
-                "S3 URIs are not yet supported".to_string(),
-            )
-            .into());
+            return Err(
+                CodecError::Unsupported("S3 URIs are not yet supported".to_string()).into(),
+            );
         }
         scheme => {
-            return Err(CodecError::Unsupported(format!(
-                "Unsupported URI scheme: {}",
-                scheme
-            ))
-            .into());
+            return Err(
+                CodecError::Unsupported(format!("Unsupported URI scheme: {}", scheme)).into(),
+            );
         }
     }
 
@@ -553,11 +540,9 @@ fn create_reader_boxed(
                 return Ok(Box::new(reader));
             }
             _ => {
-                return Err(CodecError::InvalidFormat(format!(
-                    "Unsupported format: '{}'",
-                    fmt
-                ))
-                .into());
+                return Err(
+                    CodecError::InvalidFormat(format!("Unsupported format: '{}'", fmt)).into(),
+                );
             }
         }
     }
@@ -625,18 +610,12 @@ fn create_reader_boxed(
             }
         }
         Some(ext) => {
-            Err(CodecError::InvalidFormat(format!(
-                "Unsupported file format: .{}",
-                ext
-            ))
-            .into())
+            Err(CodecError::InvalidFormat(format!("Unsupported file format: .{}", ext)).into())
         }
-        None => {
-            Err(CodecError::InvalidFormat(
-                "Cannot determine file format: no file extension".to_string(),
-            )
-            .into())
-        }
+        None => Err(CodecError::InvalidFormat(
+            "Cannot determine file format: no file extension".to_string(),
+        )
+        .into()),
     }
 }
 
@@ -654,25 +633,19 @@ fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> 
 /// This is the core writer creation logic, returning a `Box<dyn DatasetWriter>`
 /// that can be used directly (e.g., in composite writers) or wrapped in
 /// `PyDatasetWriter` for Python exposure.
-fn create_writer_boxed(
-    parsed: &ParsedUri,
-    format: &str,
-) -> PyResult<Box<dyn DatasetWriter>> {
+fn create_writer_boxed(parsed: &ParsedUri, format: &str) -> PyResult<Box<dyn DatasetWriter>> {
     // Validate scheme is supported
     match parsed.scheme.as_str() {
         "file" => {}
         "s3" => {
-            return Err(CodecError::Unsupported(
-                "S3 URIs are not yet supported".to_string(),
-            )
-            .into());
+            return Err(
+                CodecError::Unsupported("S3 URIs are not yet supported".to_string()).into(),
+            );
         }
         scheme => {
-            return Err(CodecError::Unsupported(format!(
-                "Unsupported URI scheme: {}",
-                scheme
-            ))
-            .into());
+            return Err(
+                CodecError::Unsupported(format!("Unsupported URI scheme: {}", scheme)).into(),
+            );
         }
     }
 
@@ -691,12 +664,10 @@ fn create_writer_boxed(
             Ok(Box::new(writer))
         }
         #[cfg(not(feature = "libtiff"))]
-        "tif" | "tiff" | "gtif" | "gtiff" | "geotiff" => {
-            Err(CodecError::Unsupported(
-                "TIFF format writing requires the 'libtiff' feature".to_string(),
-            )
-            .into())
-        }
+        "tif" | "tiff" | "gtif" | "gtiff" | "geotiff" => Err(CodecError::Unsupported(
+            "TIFF format writing requires the 'libtiff' feature".to_string(),
+        )
+        .into()),
         "png" => {
             let writer = PNGDatasetWriter::new(&parsed.path)?;
             Ok(Box::new(writer))
@@ -707,31 +678,23 @@ fn create_writer_boxed(
             Ok(Box::new(writer))
         }
         #[cfg(not(feature = "openjpeg"))]
-        "j2k" | "jp2" | "jpeg2000" => {
-            Err(CodecError::Unsupported(
-                "JPEG 2000 format writing requires the 'openjpeg' feature".to_string(),
-            )
-            .into())
-        }
+        "j2k" | "jp2" | "jpeg2000" => Err(CodecError::Unsupported(
+            "JPEG 2000 format writing requires the 'openjpeg' feature".to_string(),
+        )
+        .into()),
         #[cfg(feature = "libjpeg-turbo")]
         "jpg" | "jpeg" => {
             let writer = JPEGDatasetWriter::new(&parsed.path)?;
             Ok(Box::new(writer))
         }
         #[cfg(not(feature = "libjpeg-turbo"))]
-        "jpg" | "jpeg" => {
-            Err(CodecError::Unsupported(
-                "JPEG format writing requires the 'libjpeg-turbo' feature".to_string(),
-            )
-            .into())
-        }
+        "jpg" | "jpeg" => Err(CodecError::Unsupported(
+            "JPEG format writing requires the 'libjpeg-turbo' feature".to_string(),
+        )
+        .into()),
         _ => {
             // Unknown format
-            Err(CodecError::InvalidFormat(format!(
-                "Unsupported file format: {}",
-                format
-            ))
-            .into())
+            Err(CodecError::InvalidFormat(format!("Unsupported file format: {}", format)).into())
         }
     }
 }
@@ -1022,7 +985,10 @@ mod tests {
     fn test_strip_rset_suffix_with_rset() {
         assert_eq!(strip_rset_suffix("image.ntf.r1"), "image.ntf");
         assert_eq!(strip_rset_suffix("image.ntf.r12"), "image.ntf");
-        assert_eq!(strip_rset_suffix("/path/to/image.ntf.r3"), "/path/to/image.ntf");
+        assert_eq!(
+            strip_rset_suffix("/path/to/image.ntf.r3"),
+            "/path/to/image.ntf"
+        );
     }
 
     #[test]
@@ -1061,7 +1027,10 @@ mod tests {
 
         // Should have base image + overview
         let all_keys = reader.get_asset_keys(None, None);
-        assert!(all_keys.contains(&"image:0".to_string()), "Missing image:0 key");
+        assert!(
+            all_keys.contains(&"image:0".to_string()),
+            "Missing image:0 key"
+        );
         assert!(
             all_keys.contains(&"image:0:overview:1".to_string()),
             "Missing image:0:overview:1 key"

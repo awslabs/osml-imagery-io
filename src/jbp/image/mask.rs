@@ -228,7 +228,8 @@ impl ImageDataMask {
         let block_offsets_size = self.block_offsets.len() * self.block_mask_record_length as usize;
         let pad_pixel_offsets_size =
             self.pad_pixel_offsets.len() * self.pad_pixel_mask_record_length as usize;
-        let total_mask_size = header_size + tpxcd_size + block_offsets_size + pad_pixel_offsets_size;
+        let total_mask_size =
+            header_size + tpxcd_size + block_offsets_size + pad_pixel_offsets_size;
 
         // Write IMDATOFF (4 bytes, u32 BE)
         bytes.extend_from_slice(&(total_mask_size as u32).to_be_bytes());
@@ -288,7 +289,8 @@ impl ImageDataMask {
             return true;
         }
 
-        let index = self.calculate_block_index(block_row, block_col, num_blocks_per_row, band, imode);
+        let index =
+            self.calculate_block_index(block_row, block_col, num_blocks_per_row, band, imode);
         if index >= self.block_offsets.len() {
             return false;
         }
@@ -320,7 +322,8 @@ impl ImageDataMask {
             return None;
         }
 
-        let index = self.calculate_block_index(block_row, block_col, num_blocks_per_row, band, imode);
+        let index =
+            self.calculate_block_index(block_row, block_col, num_blocks_per_row, band, imode);
         if index >= self.block_offsets.len() {
             return None;
         }
@@ -401,7 +404,7 @@ impl ImageDataMask {
         imode: InterleaveMode,
     ) -> Self {
         let num_blocks = num_blocks_per_row * num_blocks_per_col;
-        
+
         // For IMODE=S, we need num_blocks * num_bands records
         // For other modes, we need num_blocks records
         let num_records = if imode == InterleaveMode::S {
@@ -434,8 +437,8 @@ impl ImageDataMask {
         }
 
         Self {
-            image_data_offset: 0, // Will be calculated in to_bytes()
-            block_mask_record_length: 4, // Standard 32-bit offsets
+            image_data_offset: 0,            // Will be calculated in to_bytes()
+            block_mask_record_length: 4,     // Standard 32-bit offsets
             pad_pixel_mask_record_length: 0, // No pad pixel mask by default
             pad_pixel_code_length: 0,
             pad_pixel_code: None,
@@ -444,7 +447,6 @@ impl ImageDataMask {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -467,7 +469,7 @@ mod tests {
         ];
 
         let (mask, consumed) = ImageDataMask::parse(&data, 4, 1, InterleaveMode::B).unwrap();
-        
+
         assert_eq!(mask.image_data_offset, 10);
         assert_eq!(mask.block_mask_record_length, 0);
         assert_eq!(mask.pad_pixel_mask_record_length, 0);
@@ -494,7 +496,7 @@ mod tests {
         data.extend_from_slice(&400u32.to_be_bytes());
 
         let (mask, consumed) = ImageDataMask::parse(&data, 4, 1, InterleaveMode::B).unwrap();
-        
+
         assert_eq!(mask.block_mask_record_length, 4);
         assert_eq!(mask.block_offsets.len(), 4);
         assert_eq!(mask.block_offsets[0], 100);
@@ -512,11 +514,11 @@ mod tests {
             0x00, 0x00, // BMRLNTH = 0
             0x00, 0x00, // TMRLNTH = 0
             0x00, 0x08, // TPXCDLNTH = 8 bits
-            0xFF,       // TPXCD = 255
+            0xFF, // TPXCD = 255
         ];
 
         let (mask, consumed) = ImageDataMask::parse(&data, 0, 1, InterleaveMode::B).unwrap();
-        
+
         assert_eq!(mask.pad_pixel_code_length, 8);
         assert_eq!(mask.pad_pixel_code, Some(255));
         assert_eq!(consumed, 11);
@@ -534,7 +536,7 @@ mod tests {
         ];
 
         let (mask, consumed) = ImageDataMask::parse(&data, 0, 1, InterleaveMode::B).unwrap();
-        
+
         assert_eq!(mask.pad_pixel_code_length, 16);
         assert_eq!(mask.pad_pixel_code, Some(0x1234));
         assert_eq!(consumed, 12);
@@ -595,10 +597,19 @@ mod tests {
             pad_pixel_offsets: Vec::new(),
         };
 
-        assert_eq!(mask.get_block_offset(0, 0, 2, 0, InterleaveMode::B), Some(100));
-        assert_eq!(mask.get_block_offset(0, 1, 2, 0, InterleaveMode::B), Some(200));
+        assert_eq!(
+            mask.get_block_offset(0, 0, 2, 0, InterleaveMode::B),
+            Some(100)
+        );
+        assert_eq!(
+            mask.get_block_offset(0, 1, 2, 0, InterleaveMode::B),
+            Some(200)
+        );
         assert_eq!(mask.get_block_offset(1, 0, 2, 0, InterleaveMode::B), None); // masked
-        assert_eq!(mask.get_block_offset(1, 1, 2, 0, InterleaveMode::B), Some(400));
+        assert_eq!(
+            mask.get_block_offset(1, 1, 2, 0, InterleaveMode::B),
+            Some(400)
+        );
     }
 
     #[test]
@@ -640,7 +651,7 @@ mod tests {
 
         let bytes = mask.to_bytes();
         assert_eq!(bytes.len(), 10);
-        
+
         // IMDATOFF should be 10 (header size only)
         assert_eq!(&bytes[0..4], &[0x00, 0x00, 0x00, 0x0A]);
     }
@@ -660,10 +671,10 @@ mod tests {
         let bytes = mask.to_bytes();
         // Header (10) + 4 block offsets (16) = 26 bytes
         assert_eq!(bytes.len(), 26);
-        
+
         // IMDATOFF should be 26
         assert_eq!(&bytes[0..4], &[0x00, 0x00, 0x00, 0x1A]);
-        
+
         // BMRLNTH should be 4
         assert_eq!(&bytes[4..6], &[0x00, 0x04]);
     }
@@ -685,8 +696,14 @@ mod tests {
         let (parsed, _) = ImageDataMask::parse(&bytes, 4, 1, InterleaveMode::B).unwrap();
 
         // Note: image_data_offset is recalculated in to_bytes(), so we compare the calculated value
-        assert_eq!(parsed.block_mask_record_length, original.block_mask_record_length);
-        assert_eq!(parsed.pad_pixel_mask_record_length, original.pad_pixel_mask_record_length);
+        assert_eq!(
+            parsed.block_mask_record_length,
+            original.block_mask_record_length
+        );
+        assert_eq!(
+            parsed.pad_pixel_mask_record_length,
+            original.pad_pixel_mask_record_length
+        );
         assert_eq!(parsed.pad_pixel_code_length, original.pad_pixel_code_length);
         assert_eq!(parsed.pad_pixel_code, original.pad_pixel_code);
         assert_eq!(parsed.block_offsets, original.block_offsets);
@@ -749,12 +766,12 @@ mod tests {
 
         // Should have 4 blocks * 3 bands = 12 records
         assert_eq!(mask.block_offsets.len(), 12);
-        
+
         // Block (0, 0) should have all 3 bands present (indices 0, 1, 2)
         assert_eq!(mask.block_offsets[0], 0);
         assert_eq!(mask.block_offsets[1], 0);
         assert_eq!(mask.block_offsets[2], 0);
-        
+
         // Other blocks should be masked
         for i in 3..12 {
             assert_eq!(mask.block_offsets[i], EMPTY_BLOCK_OFFSET);

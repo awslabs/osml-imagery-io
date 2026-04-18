@@ -74,7 +74,6 @@ impl PixelValueType {
     }
 }
 
-
 /// Image representation (IREP field) describing how the image should be displayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageRepresentation {
@@ -142,7 +141,6 @@ impl ImageRepresentation {
     }
 }
 
-
 /// Image interleave mode (IMODE field) specifying how multi-band data is organized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterleaveMode {
@@ -179,7 +177,6 @@ impl InterleaveMode {
     }
 }
 
-
 /// Pixel justification (PJUST field) indicating bit alignment within storage.
 ///
 /// This enum represents the NITF PJUST field which specifies whether pixel
@@ -205,10 +202,7 @@ impl PixelJustification {
         match c {
             'R' => Ok(PixelJustification::Right),
             'L' => Ok(PixelJustification::Left),
-            _ => Err(CodecError::Parse(format!(
-                "Invalid PJUST value: '{}'",
-                c
-            ))),
+            _ => Err(CodecError::Parse(format!("Invalid PJUST value: '{}'", c))),
         }
     }
 
@@ -223,7 +217,6 @@ impl PixelJustification {
         }
     }
 }
-
 
 /// Look-up table for indexed color mapping.
 ///
@@ -261,7 +254,8 @@ impl LookUpTable {
         if index >= self.entries.len() {
             return Err(CodecError::Parse(format!(
                 "LUT index {} out of range (LUT size: {})",
-                index, self.entries.len()
+                index,
+                self.entries.len()
             )));
         }
         Ok(self.entries[index])
@@ -292,7 +286,6 @@ impl LookUpTable {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,7 +313,7 @@ mod tests {
         fn apply_valid_index() {
             let data = vec![100, 150, 200, 250];
             let lut = LookUpTable::from_bytes(&data);
-            
+
             assert_eq!(lut.apply(0).unwrap(), 100);
             assert_eq!(lut.apply(1).unwrap(), 150);
             assert_eq!(lut.apply(2).unwrap(), 200);
@@ -331,7 +324,7 @@ mod tests {
         fn apply_out_of_range() {
             let data = vec![100, 150, 200];
             let lut = LookUpTable::from_bytes(&data);
-            
+
             assert!(lut.apply(3).is_err());
             assert!(lut.apply(255).is_err());
         }
@@ -367,19 +360,43 @@ mod tests {
 
         #[test]
         fn from_str_valid_values() {
-            assert_eq!(PixelValueType::from_str("INT").unwrap(), PixelValueType::UnsignedInt);
-            assert_eq!(PixelValueType::from_str("SI").unwrap(), PixelValueType::SignedInt);
+            assert_eq!(
+                PixelValueType::from_str("INT").unwrap(),
+                PixelValueType::UnsignedInt
+            );
+            assert_eq!(
+                PixelValueType::from_str("SI").unwrap(),
+                PixelValueType::SignedInt
+            );
             assert_eq!(PixelValueType::from_str("R").unwrap(), PixelValueType::Real);
-            assert_eq!(PixelValueType::from_str("C").unwrap(), PixelValueType::Complex);
-            assert_eq!(PixelValueType::from_str("B").unwrap(), PixelValueType::BiLevel);
+            assert_eq!(
+                PixelValueType::from_str("C").unwrap(),
+                PixelValueType::Complex
+            );
+            assert_eq!(
+                PixelValueType::from_str("B").unwrap(),
+                PixelValueType::BiLevel
+            );
         }
 
         #[test]
         fn from_str_with_padding() {
-            assert_eq!(PixelValueType::from_str("SI ").unwrap(), PixelValueType::SignedInt);
-            assert_eq!(PixelValueType::from_str("R  ").unwrap(), PixelValueType::Real);
-            assert_eq!(PixelValueType::from_str("C  ").unwrap(), PixelValueType::Complex);
-            assert_eq!(PixelValueType::from_str("B  ").unwrap(), PixelValueType::BiLevel);
+            assert_eq!(
+                PixelValueType::from_str("SI ").unwrap(),
+                PixelValueType::SignedInt
+            );
+            assert_eq!(
+                PixelValueType::from_str("R  ").unwrap(),
+                PixelValueType::Real
+            );
+            assert_eq!(
+                PixelValueType::from_str("C  ").unwrap(),
+                PixelValueType::Complex
+            );
+            assert_eq!(
+                PixelValueType::from_str("B  ").unwrap(),
+                PixelValueType::BiLevel
+            );
         }
 
         #[test]
@@ -392,8 +409,11 @@ mod tests {
         #[test]
         fn to_str_round_trip() {
             let variants = [
-                PixelValueType::UnsignedInt, PixelValueType::SignedInt,
-                PixelValueType::Real, PixelValueType::Complex, PixelValueType::BiLevel,
+                PixelValueType::UnsignedInt,
+                PixelValueType::SignedInt,
+                PixelValueType::Real,
+                PixelValueType::Complex,
+                PixelValueType::BiLevel,
             ];
             for variant in variants {
                 assert_eq!(PixelValueType::from_str(variant.to_str()).unwrap(), variant);
@@ -402,16 +422,31 @@ mod tests {
 
         #[test]
         fn to_pixel_type_unsigned_int() {
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(8), PixelType::UInt8);
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(16), PixelType::UInt16);
-            assert_eq!(PixelValueType::UnsignedInt.to_pixel_type(32), PixelType::UInt32);
+            assert_eq!(
+                PixelValueType::UnsignedInt.to_pixel_type(8),
+                PixelType::UInt8
+            );
+            assert_eq!(
+                PixelValueType::UnsignedInt.to_pixel_type(16),
+                PixelType::UInt16
+            );
+            assert_eq!(
+                PixelValueType::UnsignedInt.to_pixel_type(32),
+                PixelType::UInt32
+            );
         }
 
         #[test]
         fn to_pixel_type_signed_int() {
             assert_eq!(PixelValueType::SignedInt.to_pixel_type(8), PixelType::Int8);
-            assert_eq!(PixelValueType::SignedInt.to_pixel_type(16), PixelType::Int16);
-            assert_eq!(PixelValueType::SignedInt.to_pixel_type(32), PixelType::Int32);
+            assert_eq!(
+                PixelValueType::SignedInt.to_pixel_type(16),
+                PixelType::Int16
+            );
+            assert_eq!(
+                PixelValueType::SignedInt.to_pixel_type(32),
+                PixelType::Int32
+            );
         }
 
         #[test]
@@ -422,7 +457,10 @@ mod tests {
 
         #[test]
         fn to_pixel_type_complex() {
-            assert_eq!(PixelValueType::Complex.to_pixel_type(64), PixelType::Float32);
+            assert_eq!(
+                PixelValueType::Complex.to_pixel_type(64),
+                PixelType::Float32
+            );
         }
 
         #[test]
@@ -437,12 +475,30 @@ mod tests {
 
         #[test]
         fn from_str_valid_values() {
-            assert_eq!(ImageRepresentation::from_str("MONO").unwrap(), ImageRepresentation::Mono);
-            assert_eq!(ImageRepresentation::from_str("RGB").unwrap(), ImageRepresentation::Rgb);
-            assert_eq!(ImageRepresentation::from_str("RGB/LUT").unwrap(), ImageRepresentation::RgbLut);
-            assert_eq!(ImageRepresentation::from_str("MULTI").unwrap(), ImageRepresentation::Multi);
-            assert_eq!(ImageRepresentation::from_str("NODISPLY").unwrap(), ImageRepresentation::NoDisplay);
-            assert_eq!(ImageRepresentation::from_str("YCbCr601").unwrap(), ImageRepresentation::YCbCr601);
+            assert_eq!(
+                ImageRepresentation::from_str("MONO").unwrap(),
+                ImageRepresentation::Mono
+            );
+            assert_eq!(
+                ImageRepresentation::from_str("RGB").unwrap(),
+                ImageRepresentation::Rgb
+            );
+            assert_eq!(
+                ImageRepresentation::from_str("RGB/LUT").unwrap(),
+                ImageRepresentation::RgbLut
+            );
+            assert_eq!(
+                ImageRepresentation::from_str("MULTI").unwrap(),
+                ImageRepresentation::Multi
+            );
+            assert_eq!(
+                ImageRepresentation::from_str("NODISPLY").unwrap(),
+                ImageRepresentation::NoDisplay
+            );
+            assert_eq!(
+                ImageRepresentation::from_str("YCbCr601").unwrap(),
+                ImageRepresentation::YCbCr601
+            );
         }
 
         #[test]
@@ -454,14 +510,21 @@ mod tests {
         #[test]
         fn to_str_round_trip() {
             let variants = [
-                ImageRepresentation::Mono, ImageRepresentation::Rgb,
-                ImageRepresentation::RgbLut, ImageRepresentation::Multi,
-                ImageRepresentation::NoDisplay, ImageRepresentation::NVector,
-                ImageRepresentation::Polar, ImageRepresentation::Vph,
+                ImageRepresentation::Mono,
+                ImageRepresentation::Rgb,
+                ImageRepresentation::RgbLut,
+                ImageRepresentation::Multi,
+                ImageRepresentation::NoDisplay,
+                ImageRepresentation::NVector,
+                ImageRepresentation::Polar,
+                ImageRepresentation::Vph,
                 ImageRepresentation::YCbCr601,
             ];
             for variant in variants {
-                assert_eq!(ImageRepresentation::from_str(variant.to_str()).unwrap(), variant);
+                assert_eq!(
+                    ImageRepresentation::from_str(variant.to_str()).unwrap(),
+                    variant
+                );
             }
         }
 
@@ -496,8 +559,16 @@ mod tests {
 
         #[test]
         fn to_char_round_trip() {
-            for variant in [InterleaveMode::B, InterleaveMode::P, InterleaveMode::R, InterleaveMode::S] {
-                assert_eq!(InterleaveMode::from_char(variant.to_char()).unwrap(), variant);
+            for variant in [
+                InterleaveMode::B,
+                InterleaveMode::P,
+                InterleaveMode::R,
+                InterleaveMode::S,
+            ] {
+                assert_eq!(
+                    InterleaveMode::from_char(variant.to_char()).unwrap(),
+                    variant
+                );
             }
         }
     }
@@ -508,8 +579,14 @@ mod tests {
 
         #[test]
         fn from_char_valid_values() {
-            assert_eq!(PixelJustification::from_char('R').unwrap(), PixelJustification::Right);
-            assert_eq!(PixelJustification::from_char('L').unwrap(), PixelJustification::Left);
+            assert_eq!(
+                PixelJustification::from_char('R').unwrap(),
+                PixelJustification::Right
+            );
+            assert_eq!(
+                PixelJustification::from_char('L').unwrap(),
+                PixelJustification::Left
+            );
         }
 
         #[test]

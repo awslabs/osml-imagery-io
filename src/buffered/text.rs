@@ -17,7 +17,6 @@ struct EmptyMetadataProvider {
     empty_bytes: Vec<u8>,
 }
 
-
 impl MetadataProvider for EmptyMetadataProvider {
     fn as_dict(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
         HashMap::new()
@@ -356,8 +355,7 @@ mod tests {
     #[test]
     fn test_raw_asset_utf8_encoding() {
         // UTF-8 text with special characters
-        let provider =
-            BufferedTextAssetProvider::new("text_0", "Héllo Wörld".to_string(), "UTF-8");
+        let provider = BufferedTextAssetProvider::new("text_0", "Héllo Wörld".to_string(), "UTF-8");
 
         let raw = provider.raw_asset().unwrap();
         let raw_str = String::from_utf8(raw).unwrap();
@@ -368,8 +366,7 @@ mod tests {
     #[test]
     fn test_raw_asset_ascii_error_on_non_ascii() {
         // ASCII encoding with non-ASCII characters should fail
-        let provider =
-            BufferedTextAssetProvider::new("text_0", "Héllo Wörld".to_string(), "ASCII");
+        let provider = BufferedTextAssetProvider::new("text_0", "Héllo Wörld".to_string(), "ASCII");
 
         let result = provider.raw_asset();
         assert!(result.is_err());

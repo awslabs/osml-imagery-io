@@ -14,8 +14,8 @@ use serde_json::{json, Value};
 use crate::error::CodecError;
 use crate::png::image::PNGImageAssetProvider;
 use crate::png::metadata::PNGMetadataProvider;
-use crate::traits::asset::AssetProvider;
 use crate::traits::asset::AssetMetadata;
+use crate::traits::asset::AssetProvider;
 use crate::traits::metadata::MetadataProvider;
 use crate::traits::reader::DatasetReader;
 use crate::types::{AssetType, PixelType};
@@ -119,13 +119,8 @@ impl PNGDatasetReader {
             Self::classify_output(&output_info, color_type, bit_depth)?;
 
         // Convert interleaved row-major pixels to BSQ format
-        let bsq_pixels = Self::interleaved_to_bsq(
-            &raw_pixels,
-            width,
-            height,
-            num_bands,
-            pixel_type,
-        );
+        let bsq_pixels =
+            Self::interleaved_to_bsq(&raw_pixels, width, height, num_bands, pixel_type);
 
         let metadata = Arc::new(PNGMetadataProvider::new(metadata_entries));
 
@@ -299,8 +294,7 @@ impl PNGDatasetReader {
                     let pixel_offset = row_start + col * num_bands as usize;
                     let linear_idx = row * width as usize + col;
                     for band in 0..num_bands as usize {
-                        bsq[band * num_pixels + linear_idx] =
-                            interleaved[pixel_offset + band];
+                        bsq[band * num_pixels + linear_idx] = interleaved[pixel_offset + band];
                     }
                 }
             }
@@ -310,13 +304,11 @@ impl PNGDatasetReader {
             for row in 0..height as usize {
                 let row_byte_start = row * samples_per_row * 2;
                 for col in 0..width as usize {
-                    let pixel_byte_offset =
-                        row_byte_start + col * num_bands as usize * 2;
+                    let pixel_byte_offset = row_byte_start + col * num_bands as usize * 2;
                     let linear_idx = row * width as usize + col;
                     for band in 0..num_bands as usize {
                         let src = pixel_byte_offset + band * 2;
-                        let be_val =
-                            u16::from_be_bytes([interleaved[src], interleaved[src + 1]]);
+                        let be_val = u16::from_be_bytes([interleaved[src], interleaved[src + 1]]);
                         let ne_bytes = be_val.to_ne_bytes();
                         let dst = band * band_size + linear_idx * 2;
                         bsq[dst] = ne_bytes[0];
@@ -349,9 +341,9 @@ impl PNGDatasetReader {
 impl DatasetReader for PNGDatasetReader {
     fn get_asset(&self, key: &str) -> Result<AssetProvider, CodecError> {
         match &self.image_asset {
-            Some(asset) if asset.key() == key => {
-                Ok(AssetProvider::Image(asset.clone() as Arc<dyn crate::traits::image::ImageAssetProvider>))
-            }
+            Some(asset) if asset.key() == key => Ok(AssetProvider::Image(
+                asset.clone() as Arc<dyn crate::traits::image::ImageAssetProvider>
+            )),
             _ => Err(CodecError::AssetNotFound(key.to_string())),
         }
     }
@@ -362,26 +354,22 @@ impl DatasetReader for PNGDatasetReader {
         roles: Option<&[String]>,
     ) -> Vec<String> {
         match asset_type {
-            None | Some(AssetType::Image) => {
-                match &self.image_asset {
-                    Some(asset) => {
-                        if let Some(requested) = roles {
-                            let asset_roles = asset.roles();
-                            if requested.iter().any(|r| asset_roles.contains(r)) {
-                                vec!["image:0".to_string()]
-                            } else {
-                                Vec::new()
-                            }
-                        } else {
+            None | Some(AssetType::Image) => match &self.image_asset {
+                Some(asset) => {
+                    if let Some(requested) = roles {
+                        let asset_roles = asset.roles();
+                        if requested.iter().any(|r| asset_roles.contains(r)) {
                             vec!["image:0".to_string()]
+                        } else {
+                            Vec::new()
                         }
+                    } else {
+                        vec!["image:0".to_string()]
                     }
-                    None => Vec::new(),
                 }
-            }
-            Some(AssetType::Text) | Some(AssetType::Graphics) | Some(AssetType::Data) => {
-                Vec::new()
-            }
+                None => Vec::new(),
+            },
+            Some(AssetType::Text) | Some(AssetType::Graphics) | Some(AssetType::Data) => Vec::new(),
         }
     }
 
@@ -433,7 +421,13 @@ mod tests {
     /// Helper: create a simple 2x2 grayscale 8-bit PNG.
     fn make_gray_2x2() -> Vec<u8> {
         // Interleaved (trivial for 1 band): row0=[10,20], row1=[30,40]
-        make_png(2, 2, png::ColorType::Grayscale, png::BitDepth::Eight, &[10, 20, 30, 40])
+        make_png(
+            2,
+            2,
+            png::ColorType::Grayscale,
+            png::BitDepth::Eight,
+            &[10, 20, 30, 40],
+        )
     }
 
     // =========================================================================
@@ -555,8 +549,12 @@ mod tests {
     fn test_get_asset_keys_text_empty() {
         let data = make_gray_2x2();
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
-        assert!(reader.get_asset_keys(Some(AssetType::Text), None).is_empty());
-        assert!(reader.get_asset_keys(Some(AssetType::Data), None).is_empty());
+        assert!(reader
+            .get_asset_keys(Some(AssetType::Text), None)
+            .is_empty());
+        assert!(reader
+            .get_asset_keys(Some(AssetType::Data), None)
+            .is_empty());
         assert!(reader
             .get_asset_keys(Some(AssetType::Graphics), None)
             .is_empty());
@@ -575,7 +573,9 @@ mod tests {
         reader.close().unwrap();
         assert!(!reader.has_asset("image:0"));
         assert!(reader.get_asset("image:0").is_err());
-        assert!(reader.get_asset_keys(Some(AssetType::Image), None).is_empty());
+        assert!(reader
+            .get_asset_keys(Some(AssetType::Image), None)
+            .is_empty());
     }
 
     // =========================================================================
@@ -608,7 +608,13 @@ mod tests {
             7, 8, 9, // pixel (1,0)
             10, 11, 12, // pixel (1,1)
         ];
-        let data = make_png(2, 2, png::ColorType::Rgb, png::BitDepth::Eight, &interleaved);
+        let data = make_png(
+            2,
+            2,
+            png::ColorType::Rgb,
+            png::BitDepth::Eight,
+            &interleaved,
+        );
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
@@ -629,7 +635,13 @@ mod tests {
             10, 20, 30, 40, // pixel (0,0)
             50, 60, 70, 80, // pixel (0,1)
         ];
-        let data = make_png(2, 1, png::ColorType::Rgba, png::BitDepth::Eight, &interleaved);
+        let data = make_png(
+            2,
+            1,
+            png::ColorType::Rgba,
+            png::BitDepth::Eight,
+            &interleaved,
+        );
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
@@ -678,7 +690,13 @@ mod tests {
         for &v in &[100u16, 200, 300, 400, 500, 600] {
             interleaved.extend_from_slice(&v.to_be_bytes());
         }
-        let data = make_png(1, 2, png::ColorType::Rgb, png::BitDepth::Sixteen, &interleaved);
+        let data = make_png(
+            1,
+            2,
+            png::ColorType::Rgb,
+            png::BitDepth::Sixteen,
+            &interleaved,
+        );
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
@@ -690,9 +708,8 @@ mod tests {
         assert_eq!(shape, [3, 2, 1]);
 
         // BSQ: R=[100,400], G=[200,500], B=[300,600] in native endian
-        let read_u16 = |offset: usize| -> u16 {
-            u16::from_ne_bytes([pixels[offset], pixels[offset + 1]])
-        };
+        let read_u16 =
+            |offset: usize| -> u16 { u16::from_ne_bytes([pixels[offset], pixels[offset + 1]]) };
         // Band 0 (R)
         assert_eq!(read_u16(0), 100);
         assert_eq!(read_u16(2), 400);

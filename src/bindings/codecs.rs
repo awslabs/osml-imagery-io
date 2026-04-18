@@ -77,10 +77,7 @@ pub fn decode_jpeg2000(
             use crate::j2k::markers::rewrite_siz_for_tile;
 
             // Extract original Isot from the tile-part SOT marker before patching.
-            let isot = if codestream.len() >= 6
-                && codestream[0] == 0xFF
-                && codestream[1] == 0x90
-            {
+            let isot = if codestream.len() >= 6 && codestream[0] == 0xFF && codestream[1] == 0x90 {
                 Some(u16::from_be_bytes([codestream[4], codestream[5]]))
             } else {
                 None
@@ -289,7 +286,8 @@ pub fn decode_jbp_block(
     let bytes_per_pixel = pixel_type.bytes_per_pixel();
 
     // Validate data length
-    let expected = num_bands as usize * block_height as usize * block_width as usize * bytes_per_pixel;
+    let expected =
+        num_bands as usize * block_height as usize * block_width as usize * bytes_per_pixel;
     if data.len() != expected {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Data size mismatch: expected {} bytes, got {}",
@@ -315,7 +313,6 @@ pub fn decode_jbp_block(
     let shape = [num_bands, block_height, block_width];
     create_numpy_array(py, &native_data, shape, pixel_type)
 }
-
 
 // =============================================================================
 // TIFF Tile Decode
@@ -386,9 +383,9 @@ fn build_synthetic_tiff(
     let mut buf = Vec::with_capacity(total_size);
 
     // --- TIFF Header (8 bytes) ---
-    buf.extend_from_slice(b"II");                    // Little-endian byte order
-    buf.extend_from_slice(&42u16.to_le_bytes());     // TIFF magic number
-    buf.extend_from_slice(&8u32.to_le_bytes());      // IFD offset
+    buf.extend_from_slice(b"II"); // Little-endian byte order
+    buf.extend_from_slice(&42u16.to_le_bytes()); // TIFF magic number
+    buf.extend_from_slice(&8u32.to_le_bytes()); // IFD offset
 
     // --- IFD ---
     buf.extend_from_slice(&num_entries.to_le_bytes());
@@ -504,8 +501,9 @@ pub fn decode_tiff_tile(
     jpeg_tables: Option<&[u8]>,
 ) -> PyResult<Py<PyAny>> {
     // Map sample_format + bits_per_sample to PixelType
-    let pixel_type = map_pixel_type(Some(sample_format), bits_per_sample)
-        .map_err(|e: crate::error::CodecError| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    let pixel_type = map_pixel_type(Some(sample_format), bits_per_sample).map_err(
+        |e: crate::error::CodecError| pyo3::exceptions::PyValueError::new_err(e.to_string()),
+    )?;
 
     let bytes_per_sample = pixel_type.bytes_per_pixel();
     let bands = samples_per_pixel as u32;
@@ -534,9 +532,7 @@ pub fn decode_tiff_tile(
     })?;
 
     // For JPEG with YCbCr photometric, set JPEGCOLORMODE_RGB
-    if compression == tags::COMPRESSION_JPEG
-        && photometric == tags::PHOTOMETRIC_YCBCR
-    {
+    if compression == tags::COMPRESSION_JPEG && photometric == tags::PHOTOMETRIC_YCBCR {
         handle
             .set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, tags::JPEGCOLORMODE_RGB as u32)
             .map_err(|e| {
@@ -611,21 +607,21 @@ mod tests {
 
         let tiff_buf = build_synthetic_tiff(
             &pixel_data,
-            tags::COMPRESSION_NONE, // compression = 1 (uncompressed)
-            8,                      // bits_per_sample
-            1,                      // samples_per_pixel (grayscale)
+            tags::COMPRESSION_NONE,       // compression = 1 (uncompressed)
+            8,                            // bits_per_sample
+            1,                            // samples_per_pixel (grayscale)
             tags::PHOTOMETRIC_MINISBLACK, // photometric
             tags::PLANAR_CONFIG_CONTIG,   // planar_config
-            1,                      // predictor (none)
-            4,                      // tile_width
-            4,                      // tile_height
-            tags::SAMPLE_FORMAT_UINT, // sample_format
-            None,                   // no jpeg_tables
+            1,                            // predictor (none)
+            4,                            // tile_width
+            4,                            // tile_height
+            tags::SAMPLE_FORMAT_UINT,     // sample_format
+            None,                         // no jpeg_tables
         );
 
         // Open the synthetic TIFF
-        let handle = TiffHandle::from_bytes(&tiff_buf)
-            .expect("Failed to open synthetic TIFF from bytes");
+        let handle =
+            TiffHandle::from_bytes(&tiff_buf).expect("Failed to open synthetic TIFF from bytes");
 
         // Read tile 0
         let decoded = handle
@@ -651,14 +647,14 @@ mod tests {
 
         let tiff_buf = build_synthetic_tiff(
             &pixel_data,
-            9999,                   // invalid compression type
-            8,                      // bits_per_sample
-            1,                      // samples_per_pixel
+            9999, // invalid compression type
+            8,    // bits_per_sample
+            1,    // samples_per_pixel
             tags::PHOTOMETRIC_MINISBLACK,
             tags::PLANAR_CONFIG_CONTIG,
-            1,                      // predictor
-            4,                      // tile_width
-            4,                      // tile_height
+            1, // predictor
+            4, // tile_width
+            4, // tile_height
             tags::SAMPLE_FORMAT_UINT,
             None,
         );
@@ -705,8 +701,8 @@ mod tests {
             None,
         );
 
-        let handle = TiffHandle::from_bytes(&tiff_buf)
-            .expect("Failed to open synthetic TIFF buffer");
+        let handle =
+            TiffHandle::from_bytes(&tiff_buf).expect("Failed to open synthetic TIFF buffer");
 
         // Verify libtiff parsed the IFD correctly
         assert!(handle.is_tiled(), "Synthetic TIFF should be tiled");
@@ -742,9 +738,7 @@ mod tests {
         assert_eq!(read_tl, tile_h, "TileLength mismatch");
 
         // Verify the tile data round-trips for multi-band uncompressed
-        let decoded = handle
-            .read_encoded_tile(0)
-            .expect("Failed to read tile 0");
+        let decoded = handle.read_encoded_tile(0).expect("Failed to read tile 0");
         assert_eq!(
             decoded, pixel_data,
             "Multi-band uncompressed tile data should round-trip exactly"

@@ -12,9 +12,7 @@ use std::ptr;
 
 use crate::error::CodecError;
 
-use super::sys::{
-    self, tjhandle, TJPF_GRAY, TJPF_RGB, TJSAMP_420, TJSAMP_444, TJSAMP_GRAY,
-};
+use super::sys::{self, tjhandle, TJPF_GRAY, TJPF_RGB, TJSAMP_420, TJSAMP_444, TJSAMP_GRAY};
 
 // =============================================================================
 // Thread-Local Error Storage
@@ -142,7 +140,10 @@ impl TjCompressor {
             if !jpeg_buf.is_null() {
                 unsafe { sys::tjFree(jpeg_buf) };
             }
-            return Err(CodecError::Encode(format!("JPEG compression failed: {}", err)));
+            return Err(CodecError::Encode(format!(
+                "JPEG compression failed: {}",
+                err
+            )));
         }
 
         // Copy the data to a Vec and free the TurboJPEG buffer
@@ -255,7 +256,11 @@ impl TjDecompressor {
             num_bands
         };
 
-        let actual_pixel_format = if actual_bands == 1 { TJPF_GRAY } else { pixel_format };
+        let actual_pixel_format = if actual_bands == 1 {
+            TJPF_GRAY
+        } else {
+            pixel_format
+        };
 
         let output_size = width * height * actual_bands;
         let mut output = vec![0u8; output_size];
@@ -484,7 +489,8 @@ pub fn decompress_12bit(
     // For now, return an error indicating this limitation.
     Err(CodecError::Unsupported(
         "12-bit JPEG decompression requires a specially compiled libjpeg12 library. \
-         Standard libjpeg/libjpeg-turbo only supports 8-bit JPEG.".into(),
+         Standard libjpeg/libjpeg-turbo only supports 8-bit JPEG."
+            .into(),
     ))
 }
 
@@ -573,7 +579,7 @@ mod tests {
         // 12-bit JPEG requires a specially compiled libjpeg12 library
         let result = decompress_12bit(&[], 8, 8);
         assert!(result.is_err());
-        
+
         // Verify the error message mentions the library requirement
         if let Err(CodecError::Unsupported(msg)) = result {
             assert!(msg.contains("libjpeg12") || msg.contains("12-bit"));
@@ -609,7 +615,10 @@ mod tests {
                 assert!(
                     (dec - orig).abs() < 20,
                     "Pixel ({},{}) differs too much: {} vs {}",
-                    row, col, dec, orig
+                    row,
+                    col,
+                    dec,
+                    orig
                 );
             }
         }
@@ -619,9 +628,11 @@ mod tests {
             for col in 0..block_w {
                 if row >= jpeg_h || col >= jpeg_w {
                     assert_eq!(
-                        decoded[row * block_w + col], 0,
+                        decoded[row * block_w + col],
+                        0,
                         "Padding pixel ({},{}) should be zero",
-                        row, col
+                        row,
+                        col
                     );
                 }
             }

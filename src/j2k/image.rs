@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::error::CodecError;
 use crate::j2k::codec::{J2KCodec, J2KDecodeParams};
-use crate::j2k::markers::{TilePartOffsetTable, scan_sot_markers};
+use crate::j2k::markers::{scan_sot_markers, TilePartOffsetTable};
 use crate::j2k::metadata::J2KMetadataProvider;
 use crate::traits::asset::AssetMetadata;
 use crate::traits::image::ImageAssetProvider;
@@ -206,7 +206,9 @@ impl ImageAssetProvider for J2KImageAssetProvider {
             resolution_level,
             region: None,
         };
-        let result = self.codec.decode_tile(self.codestream(), tile_index, &params)?;
+        let result = self
+            .codec
+            .decode_tile(self.codestream(), tile_index, &params)?;
 
         let bps = self.pixel_type.bytes_per_pixel();
         let band_size = (result.width * result.height) as usize * bps;
@@ -225,10 +227,7 @@ impl ImageAssetProvider for J2KImageAssetProvider {
                 .enumerate()
                 .all(|(i, &b)| b == i as u32)
         {
-            return Ok((
-                result.data,
-                [num_out_bands, result.height, result.width],
-            ));
+            return Ok((result.data, [num_out_bands, result.height, result.width]));
         }
 
         // Band subsetting: extract only requested bands
