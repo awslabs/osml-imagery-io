@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
+use std::ptr::NonNull;
 
 use crate::error::CodecError;
 
@@ -357,7 +358,7 @@ impl OjpCodec {
         params: &mut opj_cparameters_t,
         image: &OjpImage,
     ) -> Result<(), CodecError> {
-        let result = unsafe { sys::opj_setup_encoder(self.ptr, params, image.ptr) };
+        let result = unsafe { sys::opj_setup_encoder(self.ptr, params, image.ptr.as_ptr()) };
         if result == OPJ_FALSE {
             let msg = take_last_error().unwrap_or_else(|| "Unknown error".into());
             return Err(CodecError::Encode(format!(
@@ -413,7 +414,10 @@ impl OjpCodec {
                 msg
             )));
         }
-        Ok(OjpImage { ptr: image_ptr })
+        // Safety: we just checked image_ptr is non-null above
+        Ok(OjpImage {
+            ptr: unsafe { NonNull::new_unchecked(image_ptr) },
+        })
     }
 
     /// Set decoded resolution factor.
@@ -431,7 +435,7 @@ impl OjpCodec {
 
     /// Decode image from stream.
     pub fn decode(&self, stream: &OjpStream, image: &OjpImage) -> Result<(), CodecError> {
-        let result = unsafe { sys::opj_decode(self.ptr, stream.ptr, image.ptr) };
+        let result = unsafe { sys::opj_decode(self.ptr, stream.ptr, image.ptr.as_ptr()) };
         if result == OPJ_FALSE {
             let msg = take_last_error().unwrap_or_else(|| "Unknown error".into());
             return Err(CodecError::Decode(format!("Failed to decode: {}", msg)));
@@ -454,7 +458,7 @@ impl OjpCodec {
 
     /// Start compression.
     pub fn start_compress(&self, image: &OjpImage, stream: &OjpStream) -> Result<(), CodecError> {
-        let result = unsafe { sys::opj_start_compress(self.ptr, image.ptr, stream.ptr) };
+        let result = unsafe { sys::opj_start_compress(self.ptr, image.ptr.as_ptr(), stream.ptr) };
         if result == OPJ_FALSE {
             let msg = take_last_error().unwrap_or_else(|| "Unknown error".into());
             return Err(CodecError::Encode(format!(
@@ -529,8 +533,9 @@ impl OjpCodec {
         image: &OjpImage,
         tile_index: u32,
     ) -> Result<(), CodecError> {
-        let result =
-            unsafe { sys::opj_get_decoded_tile(self.ptr, stream.ptr, image.ptr, tile_index) };
+        let result = unsafe {
+            sys::opj_get_decoded_tile(self.ptr, stream.ptr, image.ptr.as_ptr(), tile_index)
+        };
         if result == OPJ_FALSE {
             let msg = take_last_error().unwrap_or_else(|| "Unknown error".into());
             return Err(CodecError::Decode(format!(
@@ -662,7 +667,7 @@ unsafe impl Send for OjpStream {}
 
 /// Safe wrapper for OpenJPEG image handle.
 pub struct OjpImage {
-    ptr: *mut opj_image_t,
+    ptr: NonNull<opj_image_t>,
 }
 
 impl OjpImage {
@@ -694,19 +699,19 @@ impl OjpImage {
             _ => OPJ_CLRSPC_UNSPECIFIED,
         };
 
-        let ptr =
+        let raw_ptr =
             unsafe { sys::opj_image_create(num_components, cmptparms.as_mut_ptr(), color_space) };
 
-        if ptr.is_null() {
-            return Err(CodecError::Encode("Failed to create image".into()));
-        }
+        let ptr = NonNull::new(raw_ptr)
+            .ok_or_else(|| CodecError::Encode("Failed to create image".into()))?;
 
         // Set image dimensions
         unsafe {
-            (*ptr).x0 = 0;
-            (*ptr).y0 = 0;
-            (*ptr).x1 = width;
-            (*ptr).y1 = height;
+            let p = ptr.as_ptr();
+            (*p).x0 = 0;
+            (*p).y0 = 0;
+            (*p).x1 = width;
+            (*p).y1 = height;
         }
 
         Ok(Self { ptr })
@@ -740,20 +745,20 @@ impl OjpImage {
             _ => OPJ_CLRSPC_UNSPECIFIED,
         };
 
-        let ptr = unsafe {
+        let raw_ptr = unsafe {
             sys::opj_image_tile_create(num_components, cmptparms.as_mut_ptr(), color_space)
         };
 
-        if ptr.is_null() {
-            return Err(CodecError::Encode("Failed to create tile image".into()));
-        }
+        let ptr = NonNull::new(raw_ptr)
+            .ok_or_else(|| CodecError::Encode("Failed to create tile image".into()))?;
 
         // Set image dimensions
         unsafe {
-            (*ptr).x0 = 0;
-            (*ptr).y0 = 0;
-            (*ptr).x1 = width;
-            (*ptr).y1 = height;
+            let p = ptr.as_ptr();
+            (*p).x0 = 0;
+            (*p).y0 = 0;
+            (*p).x1 = width;
+            (*p).y1 = height;
         }
 
         Ok(Self { ptr })
@@ -761,17 +766,23 @@ impl OjpImage {
 
     /// Get image width.
     pub fn width(&self) -> u32 {
-        unsafe { (*self.ptr).x1 - (*self.ptr).x0 }
+        unsafe {
+            let p = self.ptr.as_ptr();
+            (*p).x1 - (*p).x0
+        }
     }
 
     /// Get image height.
     pub fn height(&self) -> u32 {
-        unsafe { (*self.ptr).y1 - (*self.ptr).y0 }
+        unsafe {
+            let p = self.ptr.as_ptr();
+            (*p).y1 - (*p).y0
+        }
     }
 
     /// Get number of components.
     pub fn num_components(&self) -> u32 {
-        unsafe { (*self.ptr).numcomps }
+        unsafe { (*self.ptr.as_ptr()).numcomps }
     }
 
     /// Get component info.
@@ -780,7 +791,7 @@ impl OjpImage {
             return None;
         }
         unsafe {
-            let comp = &*(*self.ptr).comps.add(index as usize);
+            let comp = &*(*self.ptr.as_ptr()).comps.add(index as usize);
             Some(ComponentInfo {
                 width: comp.w,
                 height: comp.h,
@@ -797,7 +808,7 @@ impl OjpImage {
             return None;
         }
         unsafe {
-            let comp = &*(*self.ptr).comps.add(index as usize);
+            let comp = &*(*self.ptr.as_ptr()).comps.add(index as usize);
             if comp.data.is_null() {
                 return None;
             }
@@ -815,7 +826,7 @@ impl OjpImage {
             )));
         }
         unsafe {
-            let comp = &mut *(*self.ptr).comps.add(index as usize);
+            let comp = &mut *(*self.ptr.as_ptr()).comps.add(index as usize);
             let expected_len = (comp.w * comp.h) as usize;
             if data.len() != expected_len {
                 return Err(CodecError::Encode(format!(
@@ -841,10 +852,8 @@ impl OjpImage {
 
 impl Drop for OjpImage {
     fn drop(&mut self) {
-        if !self.ptr.is_null() {
-            unsafe {
-                sys::opj_image_destroy(self.ptr);
-            }
+        unsafe {
+            sys::opj_image_destroy(self.ptr.as_ptr());
         }
     }
 }
