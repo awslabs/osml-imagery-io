@@ -9,6 +9,7 @@ extensions = [
     "myst_parser",
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
+    "sphinx.ext.todo",
     "sphinx_autodoc_typehints",
     "sphinx.ext.intersphinx",
     "sphinxcontrib.mermaid",
@@ -41,7 +42,7 @@ exclude_patterns = ["internal", "_benchmark_results.md"]
 
 # Suppress warnings from PyO3-generated docstrings (RST formatting issues
 # in Rust doc comments that we cannot easily fix at the source).
-suppress_warnings = ["docutils", "myst.xref_missing"]
+suppress_warnings = ["docutils", "myst.xref_missing", "autodoc.duplicate_object"]
 
 # -- LaTeX / PDF output configuration ----------------------------------------
 

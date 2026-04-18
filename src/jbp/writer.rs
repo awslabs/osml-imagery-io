@@ -3736,7 +3736,6 @@ mod tests {
     #[test]
     fn collect_provided_blocks_returns_provided_only() {
         use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
-        
 
         // Create a 2x2 block grid (32x32 image with 16x16 blocks)
         let config = MemoryImageConfig::new(32, 32)
@@ -3763,7 +3762,6 @@ mod tests {
     #[test]
     fn validate_blocks_for_ic_accepts_complete_non_masked() {
         use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
-        
 
         // Create a 2x2 block grid
         let config = MemoryImageConfig::new(32, 32)
@@ -3789,7 +3787,6 @@ mod tests {
     #[test]
     fn validate_blocks_for_ic_rejects_sparse_non_masked() {
         use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
-        
 
         // Create a 2x2 block grid
         let config = MemoryImageConfig::new(32, 32)
@@ -3825,7 +3822,6 @@ mod tests {
     #[test]
     fn validate_blocks_for_ic_accepts_sparse_masked() {
         use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
-        
 
         // Create a 2x2 block grid
         let config = MemoryImageConfig::new(32, 32)
@@ -3849,7 +3845,6 @@ mod tests {
     #[test]
     fn validate_blocks_for_ic_accepts_all_masked_ic_values() {
         use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
-        
 
         let config = MemoryImageConfig::new(32, 32)
             .with_bands(1)
@@ -3879,7 +3874,6 @@ mod tests {
     #[test]
     fn validate_blocks_for_ic_rejects_sparse_for_all_non_masked() {
         use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
-        
 
         let config = MemoryImageConfig::new(32, 32)
             .with_bands(1)

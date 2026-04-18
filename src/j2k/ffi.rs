@@ -19,6 +19,45 @@ use super::sys::{
 };
 
 // =============================================================================
+// Version Helpers
+// =============================================================================
+
+/// Get the OpenJPEG library version as a string (e.g. "2.5.0").
+pub fn openjpeg_version() -> String {
+    unsafe {
+        let ptr = sys::opj_version();
+        if ptr.is_null() {
+            return String::new();
+        }
+        CStr::from_ptr(ptr).to_string_lossy().into_owned()
+    }
+}
+
+/// Parse a version string like "2.5.3" into (major, minor, patch).
+fn parse_version(version: &str) -> Option<(u32, u32, u32)> {
+    let parts: Vec<&str> = version.split('.').collect();
+    if parts.len() >= 3 {
+        Some((
+            parts[0].parse().ok()?,
+            parts[1].parse().ok()?,
+            parts[2].parse().ok()?,
+        ))
+    } else {
+        None
+    }
+}
+
+/// Check if the runtime OpenJPEG version is at least the given version.
+pub fn openjpeg_version_at_least(major: u32, minor: u32, patch: u32) -> bool {
+    let version = openjpeg_version();
+    if let Some((maj, min, pat)) = parse_version(&version) {
+        (maj, min, pat) >= (major, minor, patch)
+    } else {
+        false
+    }
+}
+
+// =============================================================================
 // Message Handler
 // =============================================================================
 

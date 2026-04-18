@@ -41,17 +41,28 @@ fn configure_static_linking() {
     let zstd_root = required_env("DEP_ZSTD_ROOT", "zstd");
     let lerc_root = required_env("DEP_LERC_ROOT", "LERC");
 
-    // Search paths
-    println!("cargo:rustc-link-search=native={}/lib", openjp2_root);
-    println!("cargo:rustc-link-search=native={}/lib", jpeg_root);
-    println!("cargo:rustc-link-search=native={}/lib", tiff_root);
-    // libtiff may install to lib64 on some Linux systems
-    println!("cargo:rustc-link-search=native={}/lib64", tiff_root);
-    println!("cargo:rustc-link-search=native={}/lib", deflate_root);
-    println!("cargo:rustc-link-search=native={}/lib", zstd_root);
-    println!("cargo:rustc-link-search=native={}/lib64", zstd_root);
-    println!("cargo:rustc-link-search=native={}/lib", lerc_root);
-    println!("cargo:rustc-link-search=native={}/lib64", lerc_root);
+    // Search paths — include both lib/ and lib64/ for all libraries
+    // since cmake may install to either depending on the platform.
+    for root in [
+        &openjp2_root,
+        &jpeg_root,
+        &tiff_root,
+        &deflate_root,
+        &zstd_root,
+        &lerc_root,
+    ] {
+        println!("cargo:rustc-link-search=native={}/lib", root);
+        println!("cargo:rustc-link-search=native={}/lib64", root);
+    }
+    // Optional: cross-compiled zlib and xz for aarch64 builds
+    if let Ok(zlib_root) = std::env::var("DEP_ZLIB_ROOT") {
+        println!("cargo:rustc-link-search=native={}/lib", zlib_root);
+        println!("cargo:rustc-link-search=native={}/lib64", zlib_root);
+    }
+    if let Ok(xz_root) = std::env::var("DEP_XZ_ROOT") {
+        println!("cargo:rustc-link-search=native={}/lib", xz_root);
+        println!("cargo:rustc-link-search=native={}/lib64", xz_root);
+    }
 
     // Verify static archives exist before linking
     require_static_lib(&openjp2_root, "openjp2");

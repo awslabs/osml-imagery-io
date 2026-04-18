@@ -101,7 +101,7 @@ pub type tjhandle = *mut c_void;
 // TurboJPEG API Functions
 // =============================================================================
 
-#[link(name = "turbojpeg")]
+#[cfg_attr(not(feature = "static"), link(name = "turbojpeg"))]
 extern "C" {
     // -------------------------------------------------------------------------
     // Instance Management
@@ -847,7 +847,7 @@ pub struct jpeg_decompress_struct {
 // libjpeg API Functions
 // =============================================================================
 
-#[link(name = "jpeg")]
+#[cfg_attr(not(feature = "static"), link(name = "jpeg"))]
 extern "C" {
     // -------------------------------------------------------------------------
     // Error Handling
@@ -1028,7 +1028,7 @@ extern "C" {
 // linked for 12-bit support. The API is identical but uses 16-bit sample types.
 
 #[cfg(feature = "libjpeg-turbo-12bit")]
-#[link(name = "jpeg12")]
+#[cfg_attr(not(feature = "static"), link(name = "jpeg12"))]
 extern "C" {
     /// Write 12-bit scanlines.
     pub fn jpeg12_write_scanlines(

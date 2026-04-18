@@ -2047,7 +2047,7 @@ mod tre_property_tests {
 
             // Verify registry is initialized
             prop_assert!(
-                reader.registry.search_paths().len() >= 0,
+                !reader.registry.search_paths().is_empty(),
                 "Registry should be initialized"
             );
 

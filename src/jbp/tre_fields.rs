@@ -166,7 +166,9 @@ fn json_to_write_value(value: &serde_json::Value) -> Option<WriteValue> {
                 Some(WriteValue::Integer(i))
             } else if let Some(u) = n.as_u64() {
                 Some(WriteValue::Unsigned(u))
-            } else { n.as_f64().map(WriteValue::Float) }
+            } else {
+                n.as_f64().map(WriteValue::Float)
+            }
         }
         serde_json::Value::Bool(b) => Some(WriteValue::String(if *b {
             "1".to_string()

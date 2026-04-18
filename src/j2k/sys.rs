@@ -434,8 +434,18 @@ pub type opj_msg_callback =
 // External Functions
 // =============================================================================
 
-#[link(name = "openjp2")]
+#[cfg_attr(not(feature = "static"), link(name = "openjp2"))]
 extern "C" {
+    // -------------------------------------------------------------------------
+    // Version
+    // -------------------------------------------------------------------------
+
+    /// Get the version of the OpenJPEG library.
+    ///
+    /// # Returns
+    /// A static string with the version number (e.g. "2.5.0")
+    pub fn opj_version() -> *const c_char;
+
     // -------------------------------------------------------------------------
     // Codec Lifecycle Functions
     // -------------------------------------------------------------------------

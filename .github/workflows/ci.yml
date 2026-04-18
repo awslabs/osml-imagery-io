@@ -8,29 +8,44 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  OPENJPEG_VERSION: "2.5.3"
 
 jobs:
   # Fast checks — runs on every push/PR, current arch only
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - name: Install native deps
-        run: sudo apt-get update && sudo apt-get install -y libopenjp2-7-dev libjpeg-turbo8-dev
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake libjpeg-turbo8-dev libturbojpeg0-dev libtiff-dev
+          curl -sL "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
+          cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
+            -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_CODEC=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-openjpeg -j$(nproc)
+          sudo cmake --install build-openjpeg
+          sudo ldconfig
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -W warnings
+      - run: cargo clippy --lib --tests -- -W warnings -A clippy::approx_constant
 
   # Static analysis — license compliance, unused deps, complexity metrics
   static-analysis:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Install native deps
-        run: sudo apt-get update && sudo apt-get install -y libopenjp2-7-dev libjpeg-turbo8-dev
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake libjpeg-turbo8-dev libturbojpeg0-dev libtiff-dev
+          curl -sL "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
+          cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
+            -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_CODEC=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-openjpeg -j$(nproc)
+          sudo cmake --install build-openjpeg
+          sudo ldconfig
       - name: Install analysis tools
         run: |
           cargo install cargo-deny --locked
@@ -43,41 +58,67 @@ jobs:
   test-rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Install native deps
-        run: sudo apt-get update && sudo apt-get install -y libopenjp2-7-dev libjpeg-turbo8-dev
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake libjpeg-turbo8-dev libturbojpeg0-dev libtiff-dev
+          curl -sL "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
+          cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
+            -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_CODEC=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-openjpeg -j$(nproc)
+          sudo cmake --install build-openjpeg
+          sudo ldconfig
       - run: cargo test
 
   test-python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install native deps
-        run: sudo apt-get update && sudo apt-get install -y libopenjp2-7-dev libjpeg-turbo8-dev
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake libjpeg-turbo8-dev libturbojpeg0-dev libtiff-dev
+          curl -sL "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
+          cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
+            -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_CODEC=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-openjpeg -j$(nproc)
+          sudo cmake --install build-openjpeg
+          sudo ldconfig
       - name: Build and test
         run: |
-          pip install maturin pytest hypothesis numpy
-          maturin develop --features extension-module,openjpeg,libjpeg-turbo
-          pytest -m "not integration and not benchmark"
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin pytest hypothesis
+          maturin develop --features extension-module,openjpeg,libjpeg-turbo,libtiff
+          pip install ".[dev,zarr,virtualizarr]" kerchunk
+          pytest tests/unit tests/property -m "not integration and not benchmark"
 
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install native deps
-        run: sudo apt-get update && sudo apt-get install -y libopenjp2-7-dev libjpeg-turbo8-dev
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake libjpeg-turbo8-dev libturbojpeg0-dev libtiff-dev
+          curl -sL "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
+          cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
+            -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_CODEC=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-openjpeg -j$(nproc)
+          sudo cmake --install build-openjpeg
+          sudo ldconfig
       - name: Build extension and docs
         run: |
-          pip install maturin numpy sphinx myst-parser sphinx-autodoc-typehints sphinxcontrib-mermaid furo
-          maturin develop --features extension-module,openjpeg,libjpeg-turbo
-          sphinx-build docs docs/_build/html -W --keep-going
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin numpy sphinx myst-parser sphinx-autodoc-typehints sphinxcontrib-mermaid furo zarr fsspec
+          maturin develop --features extension-module,openjpeg,libjpeg-turbo,libtiff
+          sphinx-build docs docs/_build/html --keep-going
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'
         with:

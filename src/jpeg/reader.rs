@@ -71,6 +71,14 @@ impl JPEGDatasetReader {
             ));
         }
 
+        // After SOI, the next byte must be 0xFF (start of a marker segment).
+        // This catches truncated files that have SOI but no actual JPEG structure.
+        if data.len() < 4 || data[2] != 0xFF {
+            return Err(CodecError::InvalidFormat(
+                "Not a valid JPEG file: no marker segment after SOI".to_string(),
+            ));
+        }
+
         // Use libjpeg-turbo to parse the header for dimensions and color info
         let decompressor = TjDecompressor::new().map_err(|_| {
             CodecError::InvalidFormat("Not a valid JPEG file: failed to parse header".to_string())

@@ -39,7 +39,6 @@ use crate::traits::{
 };
 use crate::types::PixelType;
 
-
 /// Generate an asset key from segment type and index.
 ///
 /// Asset keys follow the pattern `{type}:{index}` where:

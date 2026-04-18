@@ -828,7 +828,7 @@ mod tests {
 mod property_tests {
     use super::*;
     use crate::jbp::image::decoder::BlockDecoder;
-    
+
     use crate::traits::ImageAssetProvider;
     use proptest::prelude::*;
     use std::sync::Arc;

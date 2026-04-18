@@ -1295,9 +1295,9 @@ mod tests {
 
         // Isot should be patched to 0
         let _sot_start = decode_header.len(); // SIZ was rewritten but same length
-                                             // Actually the header length changes because rewrite_siz_for_tile returns
-                                             // a new vec of the same length. Let's find the SOT in the output.
-                                             // The patched header has same length as original decode_header.
+                                              // Actually the header length changes because rewrite_siz_for_tile returns
+                                              // a new vec of the same length. Let's find the SOT in the output.
+                                              // The patched header has same length as original decode_header.
         let hdr_len = decode_header.len();
         assert_eq!(read_u16(&result, hdr_len + 4), 0); // Isot = 0
 

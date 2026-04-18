@@ -1,9 +1,14 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish wheels to PyPI"
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,11 +29,11 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-14
           - target: aarch64-apple-darwin
             runner: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build tools
         run: brew install cmake zlib
@@ -38,67 +43,76 @@ jobs:
           set -euo pipefail
           PREFIX="${RUNNER_TEMP}/deps"
 
+          # Retry wrapper for flaky downloads
+          fetch() { for i in 1 2 3 4 5; do curl -fsSL "$1" && return 0; echo "Retry $i for $1..."; sleep $((i * 5)); done; return 1; }
+
+          # Cross-compilation: set CMAKE_OSX_ARCHITECTURES when target != host
+          CMAKE_EXTRA=""
+          if [[ "${{ matrix.target }}" == "x86_64-apple-darwin" && "$(uname -m)" == "arm64" ]]; then
+            CMAKE_EXTRA="-DCMAKE_OSX_ARCHITECTURES=x86_64"
+          fi
+
           # --- OpenJPEG ---
-          curl -sL "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
+          fetch "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
           cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/openjpeg" \
             -DBUILD_SHARED_LIBS=OFF \
             -DBUILD_CODEC=OFF \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
           cmake --build build-openjpeg --config Release
           cmake --install build-openjpeg
 
           # --- libjpeg-turbo ---
-          curl -sL "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_TURBO_VERSION}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" | tar xz
+          fetch "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_TURBO_VERSION}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" | tar xz
           cmake -S "libjpeg-turbo-${LIBJPEG_TURBO_VERSION}" -B build-jpeg \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/jpeg" \
             -DENABLE_SHARED=OFF \
             -DWITH_JPEG8=1 \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
           cmake --build build-jpeg --config Release
           cmake --install build-jpeg
 
           # --- libdeflate ---
-          curl -sL "https://github.com/ebiggers/libdeflate/archive/refs/tags/v${LIBDEFLATE_VERSION}.tar.gz" | tar xz
+          fetch "https://github.com/ebiggers/libdeflate/archive/refs/tags/v${LIBDEFLATE_VERSION}.tar.gz" | tar xz
           cmake -S "libdeflate-${LIBDEFLATE_VERSION}" -B build-libdeflate \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/libdeflate" \
             -DBUILD_SHARED_LIBS=OFF \
             -DLIBDEFLATE_BUILD_SHARED_LIB=OFF \
             -DLIBDEFLATE_BUILD_GZIP=OFF \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
           cmake --build build-libdeflate --config Release
           cmake --install build-libdeflate
 
           # --- zstd ---
-          curl -sL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz
+          fetch "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz
           cmake -S "zstd-${ZSTD_VERSION}/build/cmake" -B build-zstd \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/zstd" \
             -DBUILD_SHARED_LIBS=OFF \
             -DZSTD_BUILD_PROGRAMS=OFF \
             -DZSTD_BUILD_SHARED=OFF \
             -DZSTD_BUILD_STATIC=ON \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
           cmake --build build-zstd --config Release
           cmake --install build-zstd
 
           # --- LERC ---
-          curl -sL "https://github.com/Esri/lerc/archive/refs/tags/v${LERC_VERSION}.tar.gz" | tar xz
+          fetch "https://github.com/Esri/lerc/archive/refs/tags/v${LERC_VERSION}.tar.gz" | tar xz
           cmake -S "lerc-${LERC_VERSION}" -B build-lerc \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/lerc" \
             -DBUILD_SHARED_LIBS=OFF \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
           cmake --build build-lerc --config Release
           cmake --install build-lerc
 
           # --- libtiff (with all codec dependencies) ---
-          curl -sL "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz" | tar xz
+          fetch "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz" | tar xz
           cmake -S "tiff-${LIBTIFF_VERSION}" -B build-tiff \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/tiff" \
             -DBUILD_SHARED_LIBS=OFF \
             -DCMAKE_PREFIX_PATH="${PREFIX}/jpeg;${PREFIX}/libdeflate;${PREFIX}/zstd;${PREFIX}/lerc" \
             -Djbig=OFF -Dwebp=OFF \
             -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
           cmake --build build-tiff --config Release
           cmake --install build-tiff
 
@@ -114,7 +128,7 @@ jobs:
           DEP_ZSTD_ROOT: ${{ runner.temp }}/deps/zstd
           DEP_LERC_ROOT: ${{ runner.temp }}/deps/lerc
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-macos-${{ matrix.target }}
           path: target/wheels/*.whl
@@ -130,7 +144,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
           - target: aarch64-unknown-linux-gnu
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: PyO3/maturin-action@v1
         with:
@@ -140,8 +154,23 @@ jobs:
           before-script-linux: |
             set -euo pipefail
 
-            # Install build tools (manylinux_2_28 is CentOS Stream 8-based)
-            yum install -y cmake3 make gcc gcc-c++ zlib-devel xz-devel
+            # Version pins (must be defined here — workflow env vars are not
+            # passed into the manylinux Docker container)
+            OPENJPEG_VERSION="2.5.3"
+            LIBJPEG_TURBO_VERSION="3.1.0"
+            LIBDEFLATE_VERSION="1.25"
+            ZSTD_VERSION="1.5.7"
+            LERC_VERSION="4.1.0"
+            LIBTIFF_VERSION="4.7.0"
+
+            # Install build tools (manylinux_2_28 is AlmaLinux/CentOS Stream 8-based)
+            if command -v yum &> /dev/null; then
+              yum install -y cmake3 make gcc gcc-c++ zlib-devel xz-devel
+            elif command -v dnf &> /dev/null; then
+              dnf install -y cmake3 make gcc gcc-c++ zlib-devel xz-devel
+            elif command -v apt-get &> /dev/null; then
+              apt-get update && apt-get install -y cmake make gcc g++ zlib1g-dev liblzma-dev gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            fi
 
             # Use cmake3 as cmake if cmake is not available
             if ! command -v cmake &> /dev/null; then
@@ -150,67 +179,105 @@ jobs:
 
             PREFIX="/tmp/deps"
 
+            # Retry wrapper for flaky downloads (GitHub/osgeo 504s)
+            fetch() { for i in 1 2 3 4 5; do curl -fsSL "$1" && return 0; echo "Retry $i for $1..."; sleep $((i * 5)); done; return 1; }
+
+            # Cross-compilation: detect if we're building for a different arch
+            # and set CMAKE toolchain variables accordingly.
+            # Static libraries linked into a shared object (.so) need PIC
+            CMAKE_EXTRA="-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+            HOST_ARCH=$(uname -m)
+            TARGET_ARCH="${CARGO_BUILD_TARGET:-}"
+            if [[ "$TARGET_ARCH" == *"aarch64"* && "$HOST_ARCH" == "x86_64" ]]; then
+              CMAKE_EXTRA="$CMAKE_EXTRA -DCMAKE_C_COMPILER=aarch64-unknown-linux-gnu-gcc -DCMAKE_CXX_COMPILER=aarch64-unknown-linux-gnu-g++ -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64"
+
+              # Cross-compile zlib and xz (lzma) — transitive deps of libtiff
+              # that must match the target architecture.
+              fetch "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz" | tar xz
+              cmake -S "zlib-1.3.1" -B build-zlib \
+                -DCMAKE_INSTALL_PREFIX="${PREFIX}/zlib" \
+                -DBUILD_SHARED_LIBS=OFF \
+                -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
+              cmake --build build-zlib --config Release
+              cmake --install build-zlib
+
+              fetch "https://github.com/tukaani-project/xz/releases/download/v5.6.4/xz-5.6.4.tar.gz" | tar xz
+              cmake -S "xz-5.6.4" -B build-xz \
+                -DCMAKE_INSTALL_PREFIX="${PREFIX}/xz" \
+                -DBUILD_SHARED_LIBS=OFF \
+                -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
+              cmake --build build-xz --config Release
+              cmake --install build-xz
+
+              # Add cross-compiled zlib/xz to CMAKE_PREFIX_PATH for libtiff
+              export CROSS_PREFIX_PATH="${PREFIX}/zlib;${PREFIX}/xz"
+            fi
+
             # --- OpenJPEG ---
-            curl -sL "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
+            fetch "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
             cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
               -DCMAKE_INSTALL_PREFIX="${PREFIX}/openjpeg" \
               -DBUILD_SHARED_LIBS=OFF \
               -DBUILD_CODEC=OFF \
-              -DCMAKE_BUILD_TYPE=Release
+              -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
             cmake --build build-openjpeg --config Release
             cmake --install build-openjpeg
 
             # --- libjpeg-turbo ---
-            curl -sL "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_TURBO_VERSION}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" | tar xz
+            fetch "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_TURBO_VERSION}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" | tar xz
             cmake -S "libjpeg-turbo-${LIBJPEG_TURBO_VERSION}" -B build-jpeg \
               -DCMAKE_INSTALL_PREFIX="${PREFIX}/jpeg" \
               -DENABLE_SHARED=OFF \
               -DWITH_JPEG8=1 \
-              -DCMAKE_BUILD_TYPE=Release
+              -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
             cmake --build build-jpeg --config Release
             cmake --install build-jpeg
 
             # --- libdeflate ---
-            curl -sL "https://github.com/ebiggers/libdeflate/archive/refs/tags/v${LIBDEFLATE_VERSION}.tar.gz" | tar xz
+            fetch "https://github.com/ebiggers/libdeflate/archive/refs/tags/v${LIBDEFLATE_VERSION}.tar.gz" | tar xz
             cmake -S "libdeflate-${LIBDEFLATE_VERSION}" -B build-libdeflate \
               -DCMAKE_INSTALL_PREFIX="${PREFIX}/libdeflate" \
               -DBUILD_SHARED_LIBS=OFF \
               -DLIBDEFLATE_BUILD_SHARED_LIB=OFF \
               -DLIBDEFLATE_BUILD_GZIP=OFF \
-              -DCMAKE_BUILD_TYPE=Release
+              -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
             cmake --build build-libdeflate --config Release
             cmake --install build-libdeflate
 
             # --- zstd ---
-            curl -sL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz
+            fetch "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz
             cmake -S "zstd-${ZSTD_VERSION}/build/cmake" -B build-zstd \
               -DCMAKE_INSTALL_PREFIX="${PREFIX}/zstd" \
               -DBUILD_SHARED_LIBS=OFF \
               -DZSTD_BUILD_PROGRAMS=OFF \
               -DZSTD_BUILD_SHARED=OFF \
               -DZSTD_BUILD_STATIC=ON \
-              -DCMAKE_BUILD_TYPE=Release
+              -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
             cmake --build build-zstd --config Release
             cmake --install build-zstd
 
             # --- LERC ---
-            curl -sL "https://github.com/Esri/lerc/archive/refs/tags/v${LERC_VERSION}.tar.gz" | tar xz
+            fetch "https://github.com/Esri/lerc/archive/refs/tags/v${LERC_VERSION}.tar.gz" | tar xz
             cmake -S "lerc-${LERC_VERSION}" -B build-lerc \
               -DCMAKE_INSTALL_PREFIX="${PREFIX}/lerc" \
               -DBUILD_SHARED_LIBS=OFF \
-              -DCMAKE_BUILD_TYPE=Release
+              -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
             cmake --build build-lerc --config Release
             cmake --install build-lerc
 
             # --- libtiff (with all codec dependencies) ---
-            curl -sL "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz" | tar xz
+            fetch "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz" | tar xz
+            TIFF_PREFIX_PATH="${PREFIX}/jpeg;${PREFIX}/libdeflate;${PREFIX}/zstd;${PREFIX}/lerc"
+            if [[ -d "${PREFIX}/zlib" ]]; then
+              TIFF_PREFIX_PATH="${TIFF_PREFIX_PATH};${PREFIX}/zlib;${PREFIX}/xz"
+            fi
             cmake -S "tiff-${LIBTIFF_VERSION}" -B build-tiff \
               -DCMAKE_INSTALL_PREFIX="${PREFIX}/tiff" \
               -DBUILD_SHARED_LIBS=OFF \
-              -DCMAKE_PREFIX_PATH="${PREFIX}/jpeg;${PREFIX}/libdeflate;${PREFIX}/zstd;${PREFIX}/lerc" \
+              -DCMAKE_PREFIX_PATH="${TIFF_PREFIX_PATH}" \
               -Djbig=OFF -Dwebp=OFF \
               -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-contrib=OFF -Dtiff-docs=OFF \
-              -DCMAKE_BUILD_TYPE=Release
+              -DCMAKE_BUILD_TYPE=Release $CMAKE_EXTRA
             cmake --build build-tiff --config Release
             cmake --install build-tiff
 
@@ -220,6 +287,10 @@ jobs:
             export DEP_DEFLATE_ROOT="${PREFIX}/libdeflate"
             export DEP_ZSTD_ROOT="${PREFIX}/zstd"
             export DEP_LERC_ROOT="${PREFIX}/lerc"
+            if [[ -d "${PREFIX}/zlib" ]]; then
+              export DEP_ZLIB_ROOT="${PREFIX}/zlib"
+              export DEP_XZ_ROOT="${PREFIX}/xz"
+            fi
         env:
           DEP_OPENJP2_ROOT: /tmp/deps/openjpeg
           DEP_JPEG_ROOT: /tmp/deps/jpeg
@@ -228,7 +299,7 @@ jobs:
           DEP_ZSTD_ROOT: /tmp/deps/zstd
           DEP_LERC_ROOT: /tmp/deps/lerc
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-linux-${{ matrix.target }}
           path: target/wheels/*.whl
@@ -239,14 +310,14 @@ jobs:
   sdist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -255,13 +326,14 @@ jobs:
   # Publish to PyPI via OIDC trusted publishing
   # ---------------------------------------------------------------------------
   publish:
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish)
     runs-on: ubuntu-latest
     needs: [macos, linux, sdist]
     permissions:
       id-token: write
     environment: release
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true

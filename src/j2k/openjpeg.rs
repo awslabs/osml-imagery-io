@@ -706,10 +706,13 @@ impl OpenJpegEncodeState {
 
         codec.setup_encoder(&mut cparams, &image)?;
 
-        // Enable TLM (Tile-part Length Marker) segments for optimized random access
-        // This is supported in OpenJPEG 2.4.0+ and allows decoders to efficiently
-        // seek to specific tiles without parsing the entire codestream
-        codec.set_extra_options(&["TLM=YES"])?;
+        // Enable TLM (Tile-part Length Marker) segments for optimized random access.
+        // TLM encoding was added in OpenJPEG 2.5.0 but had bugs that caused
+        // segfaults during encoding. These were fixed in 2.5.3 (#1538).
+        // Only enable TLM on versions known to be safe.
+        if crate::j2k::ffi::openjpeg_version_at_least(2, 5, 3) {
+            codec.set_extra_options(&["TLM=YES"])?;
+        }
 
         // Create output stream
         let stream = OjpStream::new_memory_write()?;
@@ -1033,7 +1036,11 @@ mod tests {
 
     #[test]
     fn test_encode_with_tlm_markers() {
-        // Test that TLM markers are generated in the codestream
+        // TLM encoding is only enabled on OpenJPEG >= 2.5.3 due to bugs in
+        // earlier versions. Skip the TLM assertion on older versions but still
+        // verify that encoding produces a valid codestream.
+        let tlm_expected = crate::j2k::ffi::openjpeg_version_at_least(2, 5, 3);
+
         let codec = OpenJpegCodec::new();
         let params = J2KEncodeParams {
             width: 64,
@@ -1060,38 +1067,41 @@ mod tests {
         assert_eq!(codestream[0], 0xFF);
         assert_eq!(codestream[1], 0x4F);
 
-        // Search for TLM marker (0xFF55) in the codestream
-        // TLM markers should appear in the main header (before SOT marker 0xFF90)
-        let mut found_tlm = false;
-        let mut i = 2;
-        while i + 1 < codestream.len() {
-            if codestream[i] == 0xFF {
-                let marker = codestream[i + 1];
-                if marker == 0x55 {
-                    // Found TLM marker
-                    found_tlm = true;
-                    break;
-                }
-                if marker == 0x90 {
-                    // Reached SOT marker, stop searching
-                    break;
-                }
-                // Skip marker segment (marker + length + data)
-                if i + 3 < codestream.len() && marker != 0x4F && marker != 0xD9 {
-                    let len = u16::from_be_bytes([codestream[i + 2], codestream[i + 3]]) as usize;
-                    i += 2 + len;
+        if tlm_expected {
+            // Search for TLM marker (0xFF55) in the codestream
+            // TLM markers should appear in the main header (before SOT marker 0xFF90)
+            let mut found_tlm = false;
+            let mut i = 2;
+            while i + 1 < codestream.len() {
+                if codestream[i] == 0xFF {
+                    let marker = codestream[i + 1];
+                    if marker == 0x55 {
+                        // Found TLM marker
+                        found_tlm = true;
+                        break;
+                    }
+                    if marker == 0x90 {
+                        // Reached SOT marker, stop searching
+                        break;
+                    }
+                    // Skip marker segment (marker + length + data)
+                    if i + 3 < codestream.len() && marker != 0x4F && marker != 0xD9 {
+                        let len =
+                            u16::from_be_bytes([codestream[i + 2], codestream[i + 3]]) as usize;
+                        i += 2 + len;
+                    } else {
+                        i += 2;
+                    }
                 } else {
-                    i += 2;
+                    i += 1;
                 }
-            } else {
-                i += 1;
             }
-        }
 
-        assert!(
-            found_tlm,
-            "TLM marker (0xFF55) not found in codestream header"
-        );
+            assert!(
+                found_tlm,
+                "TLM marker (0xFF55) not found in codestream header"
+            );
+        }
     }
 
     #[test]

@@ -1081,7 +1081,7 @@ mod tests {
 #[cfg(test)]
 mod property_tests {
     use super::*;
-    
+
     use crate::parser::StructureRegistry;
     use proptest::prelude::*;
 

@@ -62,7 +62,7 @@ pub type TIFFErrorHandlerExt = Option<
 // External Functions
 // =============================================================================
 
-#[link(name = "tiff")]
+#[cfg_attr(not(feature = "static"), link(name = "tiff"))]
 extern "C" {
     // -------------------------------------------------------------------------
     // Lifecycle Functions
