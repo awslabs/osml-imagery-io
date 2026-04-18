@@ -6,11 +6,12 @@
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![Rust](https://img.shields.io/badge/rust-2021_edition-orange)](https://www.rust-lang.org/)
 
-Specification-compliant read/write for NITF, GeoTIFF, JPEG 2000, and more — with no
-system dependencies and cloud-native tile access. Built in Rust, used from Python.
+Specification-compliant read/write for NITF, GeoTIFF, JPEG 2000, and more. Performant cloud-native
+tile access with no complex dependencies. Built in Rust for speed with Python APIs for easy integration
+with the latest ML frameworks and data science environments.
 
 <p align="center">
-  <img src="docs/_static/images/hero.png" alt="Satellite imagery decoded with osml-imagery-io" width="640">
+  <img src="docs/_static/images/overview.png" alt="OversightML Imagery IO Overview Slide" width="720">
 </p>
 
 ## Why This Library
