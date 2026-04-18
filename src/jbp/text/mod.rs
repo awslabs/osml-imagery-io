@@ -35,7 +35,7 @@ pub use facade::TextSubheaderFacade;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
     use crate::parser::{StructureAccessor, StructureRegistry};
 
     /// Calculate the expected size of a text subheader without TRE data.

@@ -533,7 +533,7 @@ mod proptests {
             /// For any byte, is_valid_bcs_a_byte returns true iff byte is in 0x20-0x7E
             #[test]
             fn single_byte_validation(byte: u8) {
-                let expected = byte >= 0x20 && byte <= 0x7E;
+                let expected = (0x20..=0x7E).contains(&byte);
                 let actual = is_valid_bcs_a_byte(byte);
                 prop_assert_eq!(expected, actual,
                     "Byte 0x{:02X}: expected {}, got {}", byte, expected, actual);
@@ -542,7 +542,7 @@ mod proptests {
             /// For any byte sequence, validate_bcs_a returns true iff all bytes are valid
             #[test]
             fn slice_validation(bytes in prop::collection::vec(any::<u8>(), 0..100)) {
-                let expected = bytes.iter().all(|&b| b >= 0x20 && b <= 0x7E);
+                let expected = bytes.iter().all(|&b| (0x20..=0x7E).contains(&b));
                 let actual = validate_bcs_a(&bytes);
                 prop_assert_eq!(expected, actual);
             }
@@ -652,7 +652,7 @@ mod proptests {
             /// For any byte, is_valid_bcs_n_byte returns true iff byte is in the valid set
             #[test]
             fn single_byte_validation(byte: u8) {
-                let expected = (byte >= 0x30 && byte <= 0x39)
+                let expected = (0x30..=0x39).contains(&byte)
                     || byte == 0x20
                     || byte == 0x2B
                     || byte == 0x2D
@@ -667,7 +667,7 @@ mod proptests {
             #[test]
             fn slice_validation(bytes in prop::collection::vec(any::<u8>(), 0..100)) {
                 let expected = bytes.iter().all(|&b|
-                    (b >= 0x30 && b <= 0x39) || b == 0x20 || b == 0x2B || b == 0x2D || b == 0x2E || b == 0x2F
+                    (0x30..=0x39).contains(&b) || b == 0x20 || b == 0x2B || b == 0x2D || b == 0x2E || b == 0x2F
                 );
                 let actual = validate_bcs_n(&bytes);
                 prop_assert_eq!(expected, actual);

@@ -4,7 +4,6 @@
 //! DatasetReader trait to Python with context manager support.
 
 use pyo3::prelude::*;
-use pyo3::IntoPyObjectExt;
 
 use crate::bindings::{
     PyDataAssetProvider, PyGraphicsAssetProvider, PyImageAssetProvider, PyMetadataProvider,

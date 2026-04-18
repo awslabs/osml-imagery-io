@@ -390,8 +390,8 @@ mod tests {
             &self,
             params: &J2KEncodeParams,
         ) -> Result<Box<dyn J2KEncodeState>, CodecError> {
-            let tiles_x = (params.width + params.tile_width - 1) / params.tile_width;
-            let tiles_y = (params.height + params.tile_height - 1) / params.tile_height;
+            let tiles_x = params.width.div_ceil(params.tile_width);
+            let tiles_y = params.height.div_ceil(params.tile_height);
             Ok(Box::new(MockEncodeState::new(tiles_x * tiles_y)))
         }
 

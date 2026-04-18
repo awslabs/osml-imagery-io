@@ -187,7 +187,7 @@ impl TiffEncodingHints {
         let jpeg_quality_key = tags::TIFFTAG_JPEGQUALITY.to_string();
         if let Some(val) = dict.get(&jpeg_quality_key) {
             let q = parse_u32_from_json(val, "JPEG quality (65537)")?;
-            if q < 1 || q > 100 {
+            if !(1..=100).contains(&q) {
                 return Err(CodecError::InvalidFormat(format!(
                     "JPEG quality must be between 1 and 100, got {}",
                     q

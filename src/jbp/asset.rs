@@ -39,8 +39,6 @@ use crate::traits::{
 };
 use crate::types::PixelType;
 
-#[cfg(test)]
-use crate::types::AssetType;
 
 /// Generate an asset key from segment type and index.
 ///
@@ -1346,7 +1344,7 @@ mod tests {
         let location = SegmentLocation::new(0, subheader_len, subheader_len, image_data_len);
         let registry = create_test_registry();
 
-        let provider = JBPImageAssetProvider::new(
+        let _provider = JBPImageAssetProvider::new(
             "image:0".to_string(),
             "Test Image".to_string(),
             "A test image segment".to_string(),
@@ -1480,7 +1478,7 @@ mod tests {
         let metadata = create_test_metadata(definition);
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
-        let provider = JBPTextAssetProvider::new(
+        let _provider = JBPTextAssetProvider::new(
             "text:0".to_string(),
             "Test Text".to_string(),
             "A test text segment".to_string(),
@@ -1839,7 +1837,7 @@ mod tests {
         let metadata = create_test_metadata(definition);
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
-        let provider = JBPGraphicsAssetProvider::new(
+        let _provider = JBPGraphicsAssetProvider::new(
             "graphic:0".to_string(),
             "Test Graphic".to_string(),
             "A test graphic segment".to_string(),
@@ -1902,7 +1900,7 @@ mod tests {
         let metadata = create_test_metadata(definition);
         let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
 
-        let provider = JBPDataAssetProvider::new(
+        let _provider = JBPDataAssetProvider::new(
             "des:0".to_string(),
             "Test DES".to_string(),
             "A test DES segment".to_string(),
@@ -2338,12 +2336,11 @@ mod property_tests {
             ) {
                 // Skip if we accidentally generate a valid key
                 let key = format!("{}:{}", prefix, suffix);
-                if SegmentType::from_key_prefix(&prefix).is_some() {
-                    if suffix.parse::<usize>().is_ok() {
+                if SegmentType::from_key_prefix(&prefix).is_some()
+                    && suffix.parse::<usize>().is_ok() {
                         // This is actually a valid key, skip
                         return Ok(());
                     }
-                }
 
                 let parsed = parse_asset_key(&key);
                 prop_assert_eq!(parsed, None,
@@ -2495,8 +2492,8 @@ mod property_tests {
             subheader.push(b'B');
 
             // Calculate blocking parameters
-            let nbpr = (ncols + nppbh - 1) / nppbh;
-            let nbpc = (nrows + nppbv - 1) / nppbv;
+            let nbpr = ncols.div_ceil(nppbh);
+            let nbpc = nrows.div_ceil(nppbv);
 
             // NBPR (4)
             subheader.extend_from_slice(format!("{:04}", nbpr).as_bytes());
@@ -2532,7 +2529,7 @@ mod property_tests {
             subheader.extend_from_slice(b"00000");
 
             // Calculate image data size
-            let bytes_per_pixel = ((nbpp as usize) + 7) / 8;
+            let bytes_per_pixel = (nbpp as usize).div_ceil(8);
             let block_size =
                 (nppbh as usize) * (nppbv as usize) * (nbands as usize) * bytes_per_pixel;
             let total_blocks = (nbpr as usize) * (nbpc as usize);

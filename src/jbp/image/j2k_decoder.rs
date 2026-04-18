@@ -748,7 +748,7 @@ mod tests {
             num_components: u32,
             bits_per_component: u8,
         ) -> Self {
-            let bytes_per_pixel = ((bits_per_component as usize) + 7) / 8;
+            let bytes_per_pixel = (bits_per_component as usize).div_ceil(8);
             let data_size = (width * height * num_components) as usize * bytes_per_pixel;
             self.decode_result = Some(crate::j2k::J2KDecodeResult {
                 data: vec![0u8; data_size],
@@ -840,7 +840,7 @@ mod tests {
 
             // Return a result sized for the tile
             if let Some(ref result) = self.decode_result {
-                let bytes_per_pixel = ((result.bits_per_component as usize) + 7) / 8;
+                let bytes_per_pixel = (result.bits_per_component as usize).div_ceil(8);
                 let data_size =
                     (tile_width * tile_height * result.num_components) as usize * bytes_per_pixel;
                 Ok(crate::j2k::J2KDecodeResult {
@@ -1343,7 +1343,7 @@ mod tests {
         let (data, shape) = result.unwrap();
         // Shape is [bands, rows, cols] (CHW format)
         assert_eq!(shape, [1, 64, 64]);
-        assert_eq!(data.len(), 64 * 64 * 1);
+        assert_eq!(data.len(), (64 * 64));
     }
 
     #[test]
@@ -1438,6 +1438,6 @@ mod tests {
 
         let (data, shape) = result.unwrap();
         assert_eq!(shape, [1, 64, 64]);
-        assert_eq!(data.len(), 64 * 64 * 1);
+        assert_eq!(data.len(), (64 * 64));
     }
 }

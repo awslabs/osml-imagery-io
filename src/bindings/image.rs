@@ -8,7 +8,6 @@ use std::sync::Arc;
 use numpy::PyArrayMethods;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
-use pyo3::IntoPyObjectExt;
 
 use crate::bindings::PyMetadataProvider;
 use crate::traits::ImageAssetProvider;

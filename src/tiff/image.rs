@@ -536,7 +536,7 @@ impl TIFFImageAssetProvider {
         // on decode. This treats the YCbCr↔RGB conversion as an internal
         // codec detail — callers always see RGB pixels.
         if self.compression == tags::COMPRESSION_JPEG && self.bands >= 3 {
-            guard.set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, tags::JPEGCOLORMODE_RGB as u32)?;
+            guard.set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, tags::JPEGCOLORMODE_RGB)?;
         }
 
         let requested_bands = self.resolve_bands(bands);
@@ -613,7 +613,7 @@ impl TIFFImageAssetProvider {
         // on decode. This treats the YCbCr↔RGB conversion as an internal
         // codec detail — callers always see RGB pixels.
         if self.compression == tags::COMPRESSION_JPEG && self.bands >= 3 {
-            guard.set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, tags::JPEGCOLORMODE_RGB as u32)?;
+            guard.set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, tags::JPEGCOLORMODE_RGB)?;
         }
 
         let requested_bands = self.resolve_bands(bands);
@@ -1283,7 +1283,7 @@ mod tests {
         assert!(ranges.contains_key(&(1, 1)));
 
         // Each tile should have a single-element Vec with 2x2 × 1 byte = 4 bytes
-        for (_, range_list) in &ranges {
+        for range_list in ranges.values() {
             assert_eq!(range_list.len(), 1);
             assert_eq!(range_list[0].1, 4);
         }

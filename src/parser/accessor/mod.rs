@@ -363,7 +363,7 @@ impl<'a> StructureAccessor<'a> {
                 return Ok(element_value);
             } else {
                 let count = self.get_actual_repeat_count(
-                    &field.repeat.as_ref().unwrap(),
+                    field.repeat.as_ref().unwrap(),
                     &field_name,
                     offset,
                     field,

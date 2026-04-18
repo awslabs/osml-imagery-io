@@ -827,8 +827,8 @@ mod tests {
 #[cfg(test)]
 mod property_tests {
     use super::*;
-    use crate::jbp::image::decoder::{create_block_decoder, BlockDecoder};
-    use crate::jbp::image::facade::ImageSubheaderFacade;
+    use crate::jbp::image::decoder::BlockDecoder;
+    
     use crate::traits::ImageAssetProvider;
     use proptest::prelude::*;
     use std::sync::Arc;
@@ -884,7 +884,7 @@ mod property_tests {
             imode in interleave_mode_strategy(),
         ) {
             // Feature: block-encoder-refactor, Property 3: IMODE Conversion Preserves Pixels
-            let bpp = ((nbpp as usize) + 7) / 8;
+            let bpp = (nbpp as usize).div_ceil(8);
             let total_pixels = (nrows as usize) * (ncols as usize) * (nbands as usize);
             let data_size = total_pixels * bpp;
 
@@ -978,7 +978,7 @@ mod property_tests {
 
     impl TestUncompressedBlockDecoder {
         fn bytes_per_pixel(&self) -> usize {
-            ((self.nbpp as usize) + 7) / 8
+            (self.nbpp as usize).div_ceil(8)
         }
 
         fn actual_block_dimensions(&self, block_row: u32, block_col: u32) -> (u32, u32) {
@@ -1194,8 +1194,8 @@ mod property_tests {
         }
 
         fn block_grid_size(&self) -> (u32, u32) {
-            let rows = (self.nrows + self.block_height - 1) / self.block_height;
-            let cols = (self.ncols + self.block_width - 1) / self.block_width;
+            let rows = self.nrows.div_ceil(self.block_height);
+            let cols = self.ncols.div_ceil(self.block_width);
             (rows, cols)
         }
     }
@@ -1535,8 +1535,8 @@ mod round_trip_property_tests {
             // Read back all blocks and reassemble the image
             let block_width = image_provider.num_pixels_per_block_horizontal();
             let block_height = image_provider.num_pixels_per_block_vertical();
-            let grid_cols = (ncols + block_width - 1) / block_width;
-            let grid_rows = (nrows + block_height - 1) / block_height;
+            let grid_cols = ncols.div_ceil(block_width);
+            let grid_rows = nrows.div_ceil(block_height);
 
             // Reassemble the full image from blocks
             let pixels_per_band = (nrows as usize) * (ncols as usize);
@@ -1603,8 +1603,8 @@ mod round_trip_property_tests {
             let (grid_rows, grid_cols) = encoder.block_grid_size();
 
             // Expected values using ceiling division
-            let expected_rows = (nrows + block_height - 1) / block_height;
-            let expected_cols = (ncols + block_width - 1) / block_width;
+            let expected_rows = nrows.div_ceil(block_height);
+            let expected_cols = ncols.div_ceil(block_width);
 
             prop_assert_eq!(
                 grid_rows, expected_rows,
@@ -1673,8 +1673,8 @@ mod round_trip_property_tests {
                 .expect("Asset should be an image provider");
 
             // Calculate expected grid size
-            let expected_grid_cols = (ncols + block_width - 1) / block_width;
-            let expected_grid_rows = (nrows + block_height - 1) / block_height;
+            let expected_grid_cols = ncols.div_ceil(block_width);
+            let expected_grid_rows = nrows.div_ceil(block_height);
 
             // Verify edge blocks have correct dimensions
             // Check right edge block (last column)
@@ -1683,7 +1683,7 @@ mod round_trip_property_tests {
                 let edge_col = expected_grid_cols - 1;
                 let expected_edge_width = ncols - (edge_col * block_width);
 
-                let (block_data, shape) = image_provider.get_block(0, edge_col, 0, None).unwrap();
+                let (_block_data, shape) = image_provider.get_block(0, edge_col, 0, None).unwrap();
                 prop_assert_eq!(
                     shape[2], expected_edge_width,
                     "Right edge block width should be {}, got {}",
@@ -1696,7 +1696,7 @@ mod round_trip_property_tests {
                 let edge_row = expected_grid_rows - 1;
                 let expected_edge_height = nrows - (edge_row * block_height);
 
-                let (block_data, shape) = image_provider.get_block(edge_row, 0, 0, None).unwrap();
+                let (_block_data, shape) = image_provider.get_block(edge_row, 0, 0, None).unwrap();
                 prop_assert_eq!(
                     shape[1], expected_edge_height,
                     "Bottom edge block height should be {}, got {}",
@@ -1816,8 +1816,8 @@ mod round_trip_property_tests {
             // Reassemble the full image from blocks
             let read_block_width = image_provider.num_pixels_per_block_horizontal();
             let read_block_height = image_provider.num_pixels_per_block_vertical();
-            let grid_cols = (ncols + read_block_width - 1) / read_block_width;
-            let grid_rows = (nrows + read_block_height - 1) / read_block_height;
+            let grid_cols = ncols.div_ceil(read_block_width);
+            let grid_rows = nrows.div_ceil(read_block_height);
 
             let pixels_per_band = (nrows as usize) * (ncols as usize);
             let mut reassembled = vec![0u8; total_pixels];

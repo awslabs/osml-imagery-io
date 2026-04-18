@@ -881,14 +881,14 @@ mod property_tests {
 
             // Additional property: blocking should be minimal (no extra blocks)
             // NBPR should be the ceiling of NCOLS / NPPBH
-            let expected_nbpr = (ncols + nppbh - 1) / nppbh;
+            let expected_nbpr = ncols.div_ceil(nppbh);
             prop_assert_eq!(
                 nbpr, expected_nbpr,
                 "NBPR should be ceiling(NCOLS / NPPBH)"
             );
 
             // NBPC should be the ceiling of NROWS / NPPBV
-            let expected_nbpc = (nrows + nppbv - 1) / nppbv;
+            let expected_nbpc = nrows.div_ceil(nppbv);
             prop_assert_eq!(
                 nbpc, expected_nbpc,
                 "NBPC should be ceiling(NROWS / NPPBV)"

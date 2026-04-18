@@ -12,7 +12,7 @@ use proptest::prelude::*;
 /// **Validates: Requirements 9.2, 9.3**
 mod prop_23_streaming_mode_order {
     use super::*;
-    use proptest::prelude::*;
+    
 
     fn create_multi_field_def() -> Arc<StructureDefinition> {
         Arc::new(
@@ -111,7 +111,7 @@ mod prop_23_streaming_mode_order {
 /// **Validates: Requirements 8.4**
 mod prop_20_missing_required_field {
     use super::*;
-    use proptest::prelude::*;
+    
 
     fn field_name(index: usize) -> &'static str {
         ["alpha", "beta", "gamma", "delta", "epsilon"][index]
@@ -182,7 +182,7 @@ mod prop_20_missing_required_field {
 /// **Validates: Requirements 8.5, 10.4, 10.5**
 mod prop_21_value_too_large {
     use super::*;
-    use proptest::prelude::*;
+    
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
@@ -257,7 +257,7 @@ mod prop_21_value_too_large {
 /// **Validates: Requirements 8.6**
 mod prop_22_padding_application {
     use super::*;
-    use proptest::prelude::*;
+    
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
@@ -361,7 +361,7 @@ mod prop_22_padding_application {
 /// **Validates: Requirements 10.2, 10.3**
 mod prop_24_write_character_set_validation {
     use super::*;
-    use proptest::prelude::*;
+    
 
     fn valid_bcs_a_string(len: usize) -> impl Strategy<Value = String> {
         proptest::collection::vec(0x20u8..=0x7Eu8, len..=len)
@@ -519,7 +519,7 @@ mod prop_2_binary_data_round_trip {
     use super::*;
     use crate::parser::accessor::StructureAccessor;
     use crate::parser::value::Value;
-    use proptest::prelude::*;
+    
 
     fn create_simple_round_trip_def() -> Arc<StructureDefinition> {
         Arc::new(

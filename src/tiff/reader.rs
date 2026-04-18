@@ -175,7 +175,7 @@ impl TIFFDatasetReader {
                         .unwrap_or(tags::PHOTOMETRIC_RGB);
                     if photometric == tags::PHOTOMETRIC_YCBCR {
                         metadata.set_tag(
-                            tags::PHOTOMETRIC_INTERPRETATION as u32,
+                            tags::PHOTOMETRIC_INTERPRETATION,
                             serde_json::Value::from(tags::PHOTOMETRIC_RGB as i64),
                         );
                     }

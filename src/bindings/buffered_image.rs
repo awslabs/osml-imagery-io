@@ -7,7 +7,6 @@ use std::sync::Arc;
 use numpy::PyReadonlyArrayDyn;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use pyo3::IntoPyObjectExt;
 
 use crate::bindings::{PyImageAssetProvider, PyMetadataProvider};
 use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};

@@ -1144,8 +1144,8 @@ mod property_tests {
             // Calculate blocking parameters to cover image dimensions
             let nppbh = ncols.min(8192);
             let nppbv = nrows.min(8192);
-            let nbpr = (ncols + nppbh - 1) / nppbh;
-            let nbpc = (nrows + nppbv - 1) / nppbv;
+            let nbpr = ncols.div_ceil(nppbh);
+            let nbpc = nrows.div_ceil(nppbv);
 
             // Create test data
             let test_data = create_test_subheader(
@@ -1444,8 +1444,8 @@ mod property_tests {
         // Calculate blocking parameters
         let nppbh = ncols.min(8192);
         let nppbv = nrows.min(8192);
-        let nbpr = (ncols + nppbh - 1) / nppbh;
-        let nbpc = (nrows + nppbv - 1) / nppbv;
+        let nbpr = ncols.div_ceil(nppbh);
+        let nbpc = nrows.div_ceil(nppbv);
 
         // NBPR (4)
         data.extend_from_slice(format!("{:04}", nbpr).as_bytes());
@@ -1849,8 +1849,8 @@ mod property_tests {
         // Calculate blocking parameters
         let nppbh = ncols.min(8192);
         let nppbv = nrows.min(8192);
-        let nbpr = (ncols + nppbh - 1) / nppbh;
-        let nbpc = (nrows + nppbv - 1) / nppbv;
+        let nbpr = ncols.div_ceil(nppbh);
+        let nbpc = nrows.div_ceil(nppbv);
 
         // NBPR (4)
         data.extend_from_slice(format!("{:04}", nbpr).as_bytes());

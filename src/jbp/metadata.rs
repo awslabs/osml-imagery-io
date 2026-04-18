@@ -408,7 +408,7 @@ fn value_to_json(
                 .or_else(|| registry.and_then(|reg| reg.get(&struct_val.type_name)));
 
             if let Some(def) = resolved_def {
-                if let Ok(accessor) = StructureAccessor::new(Arc::clone(&def), &struct_val.data) {
+                if let Ok(accessor) = StructureAccessor::new(Arc::clone(&def), struct_val.data) {
                     let mut obj = serde_json::Map::new();
                     // Use the resolved definition as the new parent for nested structs
                     for field_path in accessor.fields() {
@@ -984,7 +984,7 @@ mod property_tests {
                 prop_assert_eq!(dict.len(), num_matching,
                     "Expected {} matching fields, got {}", num_matching, dict.len());
 
-                for (name, _) in &dict {
+                for name in dict.keys() {
                     prop_assert!(name.starts_with("FS"),
                         "Field '{}' should start with 'FS'", name);
                 }
@@ -1073,7 +1073,7 @@ mod property_tests {
                 let dict = provider.as_dict(Some("IM"));
 
                 prop_assert_eq!(dict.len(), num_matching);
-                for (name, _) in &dict {
+                for name in dict.keys() {
                     prop_assert!(name.starts_with("IM"));
                 }
             }
@@ -2694,7 +2694,7 @@ mod property_tests {
     /// **Validates: Requirements 3.1, 3.3, 3.4, 6.3**
     mod prop_6_struct_resolution_nested_dicts {
         use super::*;
-        use crate::parser::{Encoding, Expression, ExpressionEvaluator, RepeatSpec};
+        use crate::parser::{Encoding, Expression, RepeatSpec};
 
         /// Strategy to generate a BCS-A field value of a given size (uppercase + digits)
         fn field_value_strategy(size: usize) -> impl Strategy<Value = String> {

@@ -106,7 +106,7 @@ mod tests {
         let comrat = JpegComrat::parse("50.0").unwrap();
         assert!(matches!(comrat, JpegComrat::Quality(_)));
         let q = comrat.quality();
-        assert!(q >= 45 && q <= 55, "Expected quality ~50, got {}", q);
+        assert!((45..=55).contains(&q), "Expected quality ~50, got {}", q);
     }
 
     #[test]
@@ -115,7 +115,7 @@ mod tests {
         let comrat = JpegComrat::parse("75.0").unwrap();
         assert!(matches!(comrat, JpegComrat::Quality(_)));
         let q = comrat.quality();
-        assert!(q >= 70 && q <= 80, "Expected quality ~75, got {}", q);
+        assert!((70..=80).contains(&q), "Expected quality ~75, got {}", q);
     }
 
     #[test]
@@ -124,7 +124,7 @@ mod tests {
         let comrat = JpegComrat::parse("25.0").unwrap();
         assert!(matches!(comrat, JpegComrat::Quality(_)));
         let q = comrat.quality();
-        assert!(q >= 20 && q <= 30, "Expected quality ~25, got {}", q);
+        assert!((20..=30).contains(&q), "Expected quality ~25, got {}", q);
     }
 
     #[test]
@@ -325,7 +325,7 @@ mod tests {
         assert_eq!(s.len(), 4);
         // Should be close to "00.0"
         let parsed: f32 = s.parse().unwrap();
-        assert!(parsed >= 0.0 && parsed <= 5.0);
+        assert!((0.0..=5.0).contains(&parsed));
     }
 
     #[test]
@@ -335,7 +335,7 @@ mod tests {
         assert_eq!(s.len(), 4);
         // Should be close to "99.9"
         let parsed: f32 = s.parse().unwrap();
-        assert!(parsed >= 95.0 && parsed <= 99.9);
+        assert!((95.0..=99.9).contains(&parsed));
     }
 
     // -------------------------------------------------------------------------

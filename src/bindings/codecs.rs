@@ -6,7 +6,6 @@
 //! and decoder parameters, and return NumPy ndarrays.
 
 use pyo3::prelude::*;
-use pyo3::IntoPyObjectExt;
 
 use crate::jbp::image::decoder::swap_be_to_ne;
 use crate::jbp::image::interleave;
@@ -534,7 +533,7 @@ pub fn decode_tiff_tile(
     // For JPEG with YCbCr photometric, set JPEGCOLORMODE_RGB
     if compression == tags::COMPRESSION_JPEG && photometric == tags::PHOTOMETRIC_YCBCR {
         handle
-            .set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, tags::JPEGCOLORMODE_RGB as u32)
+            .set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, tags::JPEGCOLORMODE_RGB)
             .map_err(|e| {
                 pyo3::exceptions::PyValueError::new_err(format!(
                     "Failed to set JPEGCOLORMODE_RGB: {}",

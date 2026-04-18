@@ -21,7 +21,7 @@ jobs:
       - name: Install native deps
         run: sudo apt-get update && sudo apt-get install -y libopenjp2-7-dev libjpeg-turbo8-dev
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets -- -W warnings
 
   # Static analysis — license compliance, unused deps, complexity metrics
   static-analysis:

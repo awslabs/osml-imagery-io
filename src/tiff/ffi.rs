@@ -2161,7 +2161,7 @@ mod tests {
         let custom_data_offset: u32 = pixel_data_offset + strip_bytes;
 
         // Helper to write a 12-byte IFD entry
-        let mut write_entry = |b: &mut Vec<u8>, tag: u16, typ: u16, cnt: u32, val: u32| {
+        let write_entry = |b: &mut Vec<u8>, tag: u16, typ: u16, cnt: u32, val: u32| {
             b.extend_from_slice(&tag.to_le_bytes());
             b.extend_from_slice(&typ.to_le_bytes());
             b.extend_from_slice(&cnt.to_le_bytes());

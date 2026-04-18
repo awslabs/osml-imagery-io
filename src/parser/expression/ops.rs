@@ -219,7 +219,7 @@ pub(crate) fn eval_shift_left(
 ) -> Result<EvalResult, ExpressionError> {
     match (left, right) {
         (EvalResult::Integer(a), EvalResult::Integer(b)) => {
-            if b < 0 || b >= 64 {
+            if !(0..64).contains(&b) {
                 Err(ExpressionError::TypeError {
                     operator: "<<".to_string(),
                     operand_type: format!("shift amount {} out of range 0..63", b),
@@ -242,7 +242,7 @@ pub(crate) fn eval_shift_right(
 ) -> Result<EvalResult, ExpressionError> {
     match (left, right) {
         (EvalResult::Integer(a), EvalResult::Integer(b)) => {
-            if b < 0 || b >= 64 {
+            if !(0..64).contains(&b) {
                 Err(ExpressionError::TypeError {
                     operator: ">>".to_string(),
                     operand_type: format!("shift amount {} out of range 0..63", b),

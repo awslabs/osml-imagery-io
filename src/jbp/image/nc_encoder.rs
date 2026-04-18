@@ -872,7 +872,7 @@ mod tests {
         /// Validates: Requirement 8.4
         #[test]
         fn incomplete_encoding_error_includes_grid_size() {
-            let mut encoder =
+            let encoder =
                 UncompressedBlockEncoder::new(64, 64, 1, 8, InterleaveMode::B, 32, 32);
             // Don't encode any blocks
 
