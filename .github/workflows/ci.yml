@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   OPENJPEG_VERSION: "2.5.3"
@@ -98,6 +101,10 @@ jobs:
 
   docs:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
