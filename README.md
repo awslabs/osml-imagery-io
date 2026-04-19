@@ -3,11 +3,10 @@
 [![CI](https://github.com/awslabs/osml-imagery-io/actions/workflows/ci.yml/badge.svg)](https://github.com/awslabs/osml-imagery-io/actions/workflows/ci.yml)
 [![Docs](https://github.com/awslabs/osml-imagery-io/actions/workflows/docs.yml/badge.svg)](https://awslabs.github.io/osml-imagery-io/)
 [![PyPI](https://img.shields.io/pypi/v/osml-imagery-io)](https://pypi.org/project/osml-imagery-io/)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
-[![Rust](https://img.shields.io/badge/rust-2021_edition-orange)](https://www.rust-lang.org/)
+[![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
+[![Rust](https://img.shields.io/badge/Rust-2021_edition-orange)](https://www.rust-lang.org/)
 
-Specification-compliant read/write for NITF, GeoTIFF, JPEG 2000, and more. Performant cloud-native
+Flexible read/write for NITF, GeoTIFF, JPEG 2000, and more. Performant cloud-native
 tile access with no complex dependencies. Built in Rust for speed with Python APIs for easy integration
 with the latest ML frameworks and data science environments.
 
@@ -39,7 +38,15 @@ with the latest ML frameworks and data science environments.
 
 - **Simple when you want it, deep when you need it** — `imread` / `imsave` / `tiles`
   for common tasks; full low-level API for format-specific control over segments,
-  metadata, block masks, and compression parameters.
+  metadata, tiling, masks, and compression parameters.
+
+## What This Library is Not
+
+This is not a library of image operations or photogrammetry routines — there are no
+orthorectification pipelines, pan-sharpening filters, or coordinate transforms here.
+The goal is to get pixels from geospatial imagery formats into a NumPy array as
+efficiently as possible so you can feed them into your ML framework, image processing
+toolkit, or analysis pipeline of choice.
 
 ## Quick Start
 
@@ -110,18 +117,17 @@ See the [User Guide](docs/user-guide/index.md) for the full API including
 [writing imagery](docs/user-guide/image-assets-writing.md), and
 [cloud-native Zarr access](docs/user-guide/zarr-codecs.md).
 
-## Supported Formats
+## Format Specific Features
 
 ### NITF / NSIF
 
 | Capability | Details |
 |------------|---------|
 | Versions | NITF 2.1, NSIF 1.0 |
-| Compression (IC) | NC, NM (uncompressed/masked), C8, M8 (JPEG 2000), CD, MD (HTJ2K), C3, M3, I1 (JPEG DCT) |
+| Compression Options (IC) | NC, NM (uncompressed/masked), C8, M8 (JPEG 2000), CD, MD (HTJ2K), C3, M3, I1 (JPEG DCT) |
 | Interleave (IMODE) | B (band), P (pixel), R (row), S (sequential) |
 | TRE parser | Data-driven with definitions for all publicly available TREs |
 | Data Extensions | Read and write DES payloads (SICD/SIDD XML, TRE overflow, etc.) |
-| SAR | SICD complex data, SIDD derived products |
 | Pixel types | 8/16/32-bit unsigned, 16/32-bit signed, 32/64-bit float, 32/64-bit complex |
 | Block masks | Sparse imagery via masked compression modes (NM, M8, MD, M3) |
 | Multi-segment | Multiple image, text, graphic, and data segments per file |
@@ -131,7 +137,7 @@ See the [User Guide](docs/user-guide/index.md) for the full API including
 
 | Capability | Details |
 |------------|---------|
-| Compression | Deflate, LZW, None — with horizontal differencing predictor |
+| Compression Options | Uncompressed, Deflate and LZW, — with horizontal differencing predictor |
 | Tiling | Configurable tile dimensions (multiples of 16) |
 | GeoKeys | OGC GeoTIFF 1.1 — CRS, pixel scale, tiepoints, affine transforms |
 | COG | Cloud Optimized GeoTIFF with overview IFDs and correct NewSubfileType |
@@ -139,9 +145,9 @@ See the [User Guide](docs/user-guide/index.md) for the full API including
 
 ### Other Formats
 
-JPEG 2000, JPEG, and PNG are also supported for read and write. These are not
-geospatial formats, but they appear frequently as interchange formats and
-quick-look products alongside NITF and GeoTIFF imagery.
+JP2, JPEG, and PNG file formats are also supported for read and write. These lack robust metadata,
+but they appear frequently as interchange formats for tiles and quick-look products alongside NITF 
+and GeoTIFF imagery.
 
 ## Cloud-Native Access
 
