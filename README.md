@@ -55,12 +55,17 @@ pip install osml-imagery-io
 ```
 
 ```python
-from aws.osml.io import imread, imsave, tiles
+from aws.osml.io import imread, imsave, iminfo, tiles
 
-# Read an image as a NumPy array
+# Inspect metadata without reading pixels
+info = iminfo("image.ntf")
+print(info.metadata["RPC00B"])     # Rational polynomial coefficients
+print(info.metadata["STDIDC"])     # Acquisition context
+
+# Read an image as a NumPy array, careful this is the whole image
 pixels = imread("image.ntf")                              # shape: (bands, height, width)
 
-# Read a windowed region
+# Read a single windowed region, much more practical
 chip = imread("image.ntf", window=(100, 200, 256, 256))   # (x, y, width, height)
 
 # Save to any supported format — inferred from extension
@@ -90,8 +95,7 @@ with IO.open("satellite_scene.ntf", "r") as dataset:
 
     # Rational polynomial coefficients for geopositioning
     rpc = meta["RPC00B"]
-    lat_off = rpc["LAT_OFF"]
-    line_scale = rpc["LINE_SCALE"]
+    # TODO: Use coefficients to construct sensor model ...
 
     # Acquisition context — mission, pass, date
     stdidc = meta["STDIDC"]
@@ -111,11 +115,6 @@ The dataset model is inspired by the
 [SpatioTemporal Asset Catalog (STAC)](https://stacspec.org/en) specification — each
 dataset maps to a STAC Item, assets map to STAC Assets with typed roles, and the
 structural alignment makes it straightforward to publish datasets as STAC Items.
-
-See the [User Guide](docs/user-guide/index.md) for the full API including
-[metadata and TRE access](docs/user-guide/metadata.md),
-[writing imagery](docs/user-guide/image-assets-writing.md), and
-[cloud-native Zarr access](docs/user-guide/zarr-codecs.md).
 
 ## Format Specific Features
 
@@ -200,7 +199,7 @@ root = zarr.open_group(store, mode="r", zarr_format=2)
 tile = root["0/data"][0:3, 768:1024, 1024:1280]
 ```
 
-See the [Cloud Imagery Access guide](docs/user-guide/zarr-codecs.md) for the full
+See the [Cloud Imagery Access guide](https://awslabs.github.io/osml-imagery-io/user-guide/zarr-codecs.html) for the full
 workflow.
 
 ## Documentation

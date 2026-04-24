@@ -65,23 +65,30 @@ imsave("gray.png", grayscale)
 
 ## Inspect Metadata
 
-Get dimensions, band count, pixel type, and block layout without reading any pixels:
+Get image properties and the full format-specific metadata without reading any pixels:
 
 ```python
 from aws.osml.io import iminfo
 
 info = iminfo("image.ntf")
 print(f"{info.width}x{info.height}, {info.bands} bands, {info.dtype}")
-print(f"Block size: {info.block_size}")
-print(f"Resolution levels: {info.num_resolution_levels}")
 ```
 
 The `metadata` attribute gives you the full format-specific metadata dictionary
-for the image segment — NITF subheader fields and TREs, or TIFF IFD tags:
+for the image segment — NITF subheader fields and parsed TREs, or TIFF IFD tags:
 
 ```python
-print(info.metadata["IC"])          # "C8" — compression type
-print(info.metadata["IGEOLO"])      # geographic corner coordinates
+# Rational polynomial coefficients for geopositioning
+rpc = info.metadata["RPC00B"]
+print(rpc["LAT_OFF"], rpc["LINE_SCALE"])
+
+# Acquisition context — mission, date
+stdidc = info.metadata["STDIDC"]
+print(stdidc["MISSION"], stdidc["ACQ_DATE"])
+
+# Exploitation usability — GSD, sun angles
+use00a = info.metadata["USE00A"]
+print(use00a["MEAN_GSD"], use00a["SUN_EL"])
 ```
 
 ## Iterate Over Tiles
