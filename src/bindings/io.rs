@@ -547,8 +547,11 @@ fn create_reader_boxed(
         }
     }
 
-    // Detect format from extension
-    let extension = parsed.extension().map(|e| e.to_lowercase());
+    // Detect format from extension, stripping any .rN R-set suffix first
+    // so that paths like "image.ntf.r1" are detected as NITF.
+    let effective_path = strip_rset_suffix(&parsed.path);
+    let effective_parsed = ParsedUri::parse(&effective_path);
+    let extension = effective_parsed.extension().map(|e| e.to_lowercase());
 
     match extension.as_deref() {
         Some("ntf") | Some("nitf") | Some("nsif") | Some("nsf") => {

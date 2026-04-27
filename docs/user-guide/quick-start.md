@@ -197,7 +197,7 @@ provider = BufferedImageAssetProvider.create(
 provider.set_full_image(data)
 
 # Write to disk
-with IO.open(["output.tif"], "w", "geotiff") as writer:
+with IO.open("output.tif", "w", "geotiff") as writer:
     writer.add_asset("image_0", provider)
 ```
 

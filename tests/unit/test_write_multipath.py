@@ -64,8 +64,12 @@ class TestSinglePathFormatAutoDetection:
         writer.add_asset("image:0", provider, "Test", "test", ["data"])
         writer.close()
 
-        # Verify the file was written and is readable as NITF
+        # Verify the file was written and has a NITF header (auto-detected format)
         assert path.exists()
+        with path.open("rb") as f:
+            assert f.read(4) == b"NITF"
+
+        # Verify the file is readable as NITF
         with IO.open([str(path)], "r") as reader:
             keys = reader.get_asset_keys(asset_type=AssetType.Image)
             assert "image:0" in keys
@@ -109,7 +113,7 @@ class TestMultiPathWrite:
         r2_path = tmp_dir / "out.ntf.r2"
 
         writer = IO.open(
-            [str(base_path), str(r1_path), str(r2_path)], "w", "nitf"
+            [str(base_path), str(r1_path), str(r2_path)], "w"
         )
 
         # Add base asset
@@ -189,16 +193,20 @@ class TestFormatAutoDetectionRsetSuffix:
     """
 
     def test_rset_suffix_stripped_for_format_detection(self, tmp_dir):
-        """IO.open(["out.ntf.r1"], "w") with format=None detects NITF format."""
+        """IO.open(["out.ntf.r1"], "w") with format=None detects NITF format.
+
+        Both read and write auto-detection strip .rN suffixes before checking
+        the extension, so "out.ntf.r1" is detected as NITF in either mode.
+        """
         path = tmp_dir / "out.ntf.r1"
         writer = IO.open([str(path)], "w")
         provider = _create_provider("image:0", 64, 64)
         writer.add_asset("image:0", provider, "Test", "test", ["data"])
         writer.close()
 
-        # Verify the file was written and is readable as NITF
-        # (must specify format on read since .r1 extension is not auto-detected by reader)
+        # Verify the file is readable without explicit format — reader also
+        # strips .rN suffix for auto-detection
         assert path.exists()
-        with IO.open([str(path)], "r", "nitf") as reader:
+        with IO.open([str(path)], "r") as reader:
             keys = reader.get_asset_keys(asset_type=AssetType.Image)
             assert "image:0" in keys

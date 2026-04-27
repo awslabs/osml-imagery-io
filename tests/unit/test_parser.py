@@ -1,4 +1,4 @@
-"""Integration tests for the data-driven binary parser Python bindings.
+"""Unit tests for the data-driven binary parser Python bindings.
 
 This module tests the Python bindings for StructureRegistry, StructureAccessor,
 StructureWriter, and Value classes.
@@ -422,8 +422,11 @@ class TestMmapSupport:
 
     def test_accessor_with_mmap(self, nitf_definition):
         """Test creating accessor from memory-mapped file."""
+        file_size = Path(SYNTHETIC_NITF).stat().st_size
+        if file_size == 0:
+            pytest.skip("Synthetic NITF file is empty; cannot mmap empty file on all platforms.")
         with open(SYNTHETIC_NITF, "rb") as f, \
-             mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+             mmap.mmap(f.fileno(), file_size, access=mmap.ACCESS_READ) as mm:
             accessor = StructureAccessor(nitf_definition, mm)
 
             # Should be able to access fields
