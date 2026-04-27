@@ -81,6 +81,7 @@ def chip_zarr(
             if layout:
                 multiscales = layout
         except Exception:
+            # Multiscale metadata may be absent or malformed; fall through to flat index
             pass
 
         if multiscales:

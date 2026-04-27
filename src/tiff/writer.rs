@@ -1831,6 +1831,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn infer_float_to_double() {
         let val = serde_json::json!(3.14);
         let result = infer_field_type(&val).unwrap();

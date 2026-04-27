@@ -1032,11 +1032,6 @@ mod proptests {
         "[a-z][a-z0-9]{2,6}".prop_map(|s| format!("tre_{}", s))
     }
 
-    /// Generate a valid DES name (now lowercase with des_ prefix)
-    fn valid_des_name() -> impl Strategy<Value = String> {
-        "[a-z][a-z0-9_]{2,10}".prop_map(|s| format!("des_{}", s))
-    }
-
     /// Create a minimal valid KSY file content
     fn create_ksy_content(id: &str, title: Option<&str>) -> String {
         let title_line = title
@@ -1054,10 +1049,10 @@ mod proptests {
         )
     }
 
-    /// Property 25: Registry Search Path Priority
-    /// For any structure name with definitions in multiple search paths,
-    /// get() SHALL return the definition from the highest-priority path.
-    /// **Validates: Requirements 11.2, 11.4, 11.5**
+    // Property 25: Registry Search Path Priority
+    // For any structure name with definitions in multiple search paths,
+    // get() SHALL return the definition from the highest-priority path.
+    // **Validates: Requirements 11.2, 11.4, 11.5**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(50))]
         #[test]
@@ -1098,10 +1093,10 @@ mod proptests {
         }
     }
 
-    /// Property 26: Registry List Completeness
-    /// For any registry, list() SHALL return all structure names that are
-    /// resolvable via get().
-    /// **Validates: Requirements 11.6**
+    // Property 26: Registry List Completeness
+    // For any registry, list() SHALL return all structure names that are
+    // resolvable via get().
+    // **Validates: Requirements 11.6**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(30))]
         #[test]
@@ -1163,10 +1158,10 @@ mod proptests {
         }
     }
 
-    /// Property 27: Runtime Registration Priority
-    /// For any structure name, a runtime-registered definition SHALL take
-    /// priority over file-based definitions.
-    /// **Validates: Requirements 11.8**
+    // Property 27: Runtime Registration Priority
+    // For any structure name, a runtime-registered definition SHALL take
+    // priority over file-based definitions.
+    // **Validates: Requirements 11.8**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(50))]
         #[test]

@@ -952,7 +952,10 @@ Examples:
         type=str,
         default=None,
         metavar="RATIO",
-        help="Compression ratio for JPEG2000 or JPEG: N001.0 (J2K lossless), 01.0 (J2K 1.0 bpp), 75.0 (JPEG quality), etc."
+        help=(
+            "Compression ratio for JPEG2000 or JPEG: N001.0 (J2K lossless),"
+            " 01.0 (J2K 1.0 bpp), 75.0 (JPEG quality), etc."
+        )
     )
 
     # Masking options
@@ -1025,7 +1028,7 @@ def main() -> int:
     elif config.io_format == "j2k":
         print(f"  Compression: {config.compression}")
     elif config.io_format == "jpeg":
-        print(f"  Quality: 85")
+        print("  Quality: 85")
     else:
         print(f"  Compression: {config.compression}")
     if config.masked:

@@ -14,14 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import tempfile
 from pathlib import Path
 
 import pytest
-from fsspec.implementations.reference import ReferenceFileSystem
-
 from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
-
+from fsspec.implementations.reference import ReferenceFileSystem
 
 # ---------------------------------------------------------------------------
 # _is_multi_range detection

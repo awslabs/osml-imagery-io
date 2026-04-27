@@ -91,7 +91,7 @@ class TestComputeAccessPatterns:
                 assert ce <= 900
 
 
-from scripts.generate_benchmark_report import (
+from scripts.generate_benchmark_report import (  # noqa: E402
     _extract_access_pattern,
     generate_table,
 )

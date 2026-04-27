@@ -422,16 +422,13 @@ class TestMmapSupport:
 
     def test_accessor_with_mmap(self, nitf_definition):
         """Test creating accessor from memory-mapped file."""
-        with open(SYNTHETIC_NITF, "rb") as f:
-            mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-            try:
-                accessor = StructureAccessor(nitf_definition, mm)
+        with open(SYNTHETIC_NITF, "rb") as f, \
+             mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            accessor = StructureAccessor(nitf_definition, mm)
 
-                # Should be able to access fields
-                fhdr = accessor["FHDR"]
-                assert fhdr.as_str() == "NITF"
-            finally:
-                mm.close()
+            # Should be able to access fields
+            fhdr = accessor["FHDR"]
+            assert fhdr.as_str() == "NITF"
 
     def test_accessor_with_memoryview(self, nitf_definition):
         """Test creating accessor from memoryview."""

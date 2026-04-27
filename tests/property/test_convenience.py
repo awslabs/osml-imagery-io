@@ -18,8 +18,14 @@ from hypothesis.extra.numpy import arrays
 
 from .conftest import pbt_settings
 from .helpers import assert_lossless_match
-from .strategies import axis_aligned_corners, band_subsets, convenience_image, overlap_sizes, tile_sizes, window_coordinates
-
+from .strategies import (
+    axis_aligned_corners,
+    band_subsets,
+    convenience_image,
+    overlap_sizes,
+    tile_sizes,
+    window_coordinates,
+)
 
 # =============================================================================
 # Property 1: Lossless round-trip preserves pixel data

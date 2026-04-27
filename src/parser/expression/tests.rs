@@ -21,6 +21,7 @@ fn parse_negative_integer() {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn parse_float_literal() {
     let expr = ExpressionEvaluator::parse("2.718").unwrap();
     assert_eq!(expr, Expression::Literal(Literal::Float(2.718)));

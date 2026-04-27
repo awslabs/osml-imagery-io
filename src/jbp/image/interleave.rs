@@ -1050,7 +1050,7 @@ mod tests {
     }
 }
 
-/// Property-based tests for interleave conversion
+// Property-based tests for interleave conversion
 #[cfg(test)]
 mod property_tests {
     use super::*;
@@ -1076,11 +1076,11 @@ mod property_tests {
         )
     }
 
-    /// Property 9: Interleave Conversion Preserves Pixel Values
-    /// For any valid image data and source/target interleave mode pair,
-    /// converting from source to target and back to source SHALL produce
-    /// byte-identical output.
-    /// **Validates: Requirements 12.1-12.5**
+    // Property 9: Interleave Conversion Preserves Pixel Values
+    // For any valid image data and source/target interleave mode pair,
+    // converting from source to target and back to source SHALL produce
+    // byte-identical output.
+    // **Validates: Requirements 12.1-12.5**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
 

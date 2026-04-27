@@ -9,7 +9,7 @@ cognitive-complexity-threshold = 25
 too-many-lines-threshold = 100
 
 # Maximum number of function arguments (default: 7)
-too-many-arguments-threshold = 7
+too-many-arguments-threshold = 10
 
 # Maximum number of struct fields (default: 8)
 max-struct-bools = 3

@@ -2437,6 +2437,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_read_tag_value_float() {
         // FLOAT (type 11), count 1, value = 3.14
         let data = make_tiff_with_custom_tag(700, 11, 1, &3.14f32.to_le_bytes());
@@ -2449,6 +2450,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_read_tag_value_double() {
         // DOUBLE (type 12), count 1, value = 2.718281828
         let vb = 2.718281828f64.to_le_bytes().to_vec();

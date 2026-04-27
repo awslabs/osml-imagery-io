@@ -481,7 +481,7 @@ class OversightMLParser:
         """
         _import_virtualizarr()
 
-        from virtualizarr.manifests import ManifestGroup, ManifestStore
+        from virtualizarr.manifests import ManifestStore
 
         # --- URL normalization ---
         use_templates = url is None

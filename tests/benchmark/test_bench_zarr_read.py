@@ -27,8 +27,8 @@ import pytest
 zarr = pytest.importorskip("zarr", minversion="3.0")
 fsspec = pytest.importorskip("fsspec")
 
-from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
-from zarr.storage._fsspec import FsspecStore
+from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem  # noqa: E402
+from zarr.storage._fsspec import FsspecStore  # noqa: E402
 
 
 @pytest.mark.benchmark
@@ -45,6 +45,7 @@ def test_bench_zarr_read(benchmark, zarr_read_params):
                 import s3fs
                 s3fs.S3FileSystem.clear_instance_cache()
             except Exception:
+                # s3fs may not be installed; cache clearing is best-effort
                 pass
 
         fs_kwargs = {"fo": index_path, "skip_instance_cache": True, "asynchronous": True}

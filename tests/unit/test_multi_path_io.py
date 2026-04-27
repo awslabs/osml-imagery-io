@@ -13,7 +13,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from aws.osml.io import (
     IO,
     AssetType,

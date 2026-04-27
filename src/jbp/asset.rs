@@ -2561,7 +2561,9 @@ mod property_tests {
             abpp: u32,
             nppbh: u32,
             nppbv: u32,
+            #[allow(dead_code)]
             nbpr: u32,
+            #[allow(dead_code)]
             nbpc: u32,
         }
 

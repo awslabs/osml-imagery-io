@@ -812,31 +812,7 @@ mod tests {
         for band in 0..nbands {
             for row in 0..nrows {
                 for col in 0..ncols {
-                    let value = (band * 10000 + row * 100 + col);
-                    match bytes_per_pixel {
-                        1 => data.push((value % 256) as u8),
-                        2 => data.extend_from_slice(&(value as u16).to_be_bytes()),
-                        4 => data.extend_from_slice(&value.to_be_bytes()),
-                        _ => panic!("Unsupported bytes_per_pixel"),
-                    }
-                }
-            }
-        }
-        data
-    }
-
-    /// Create test image data in BIP format (band interleaved by pixel)
-    fn create_test_image_data_bip(
-        nrows: u32,
-        ncols: u32,
-        nbands: u32,
-        bytes_per_pixel: usize,
-    ) -> Vec<u8> {
-        let mut data = Vec::new();
-        for row in 0..nrows {
-            for col in 0..ncols {
-                for band in 0..nbands {
-                    let value = (band * 10000 + row * 100 + col);
+                    let value = band * 10000 + row * 100 + col;
                     match bytes_per_pixel {
                         1 => data.push((value % 256) as u8),
                         2 => data.extend_from_slice(&(value as u16).to_be_bytes()),

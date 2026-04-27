@@ -17,6 +17,7 @@
 //! let pvtype = facade.pvtype()?;
 //! ```
 
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::error::CodecError;
@@ -1240,61 +1241,6 @@ mod property_tests {
         ifc: char,
         imflt: String,
         nluts: u8,
-    }
-
-    /// Generate valid IREPBAND values (2 characters)
-    fn valid_irepband() -> impl Strategy<Value = String> {
-        prop_oneof![
-            Just("M ".to_string()), // Mono
-            Just("R ".to_string()), // Red
-            Just("G ".to_string()), // Green
-            Just("B ".to_string()), // Blue
-            Just("LU".to_string()), // Lookup
-            Just("Y ".to_string()), // Y (luminance)
-            Just("  ".to_string()), // Blank
-        ]
-    }
-
-    /// Generate valid ISUBCAT values (6 characters, BCS-A)
-    fn valid_isubcat() -> impl Strategy<Value = String> {
-        prop_oneof![
-            Just("      ".to_string()),
-            Just("VIS   ".to_string()),
-            Just("NIR   ".to_string()),
-            Just("SWIR  ".to_string()),
-        ]
-    }
-
-    /// Generate valid IFC values (1 character)
-    fn valid_ifc() -> impl Strategy<Value = char> {
-        prop_oneof![
-            Just('N'), // No filter
-            Just(' '), // Blank
-        ]
-    }
-
-    /// Generate valid IMFLT values (3 characters)
-    fn valid_imflt() -> impl Strategy<Value = String> {
-        prop_oneof![Just("   ".to_string()), Just("A  ".to_string()),]
-    }
-
-    /// Generate a valid band info configuration
-    fn valid_band_info_config() -> impl Strategy<Value = BandInfoConfig> {
-        (
-            valid_irepband(),
-            valid_isubcat(),
-            valid_ifc(),
-            valid_imflt(),
-        )
-            .prop_map(|(irepband, isubcat, ifc, imflt)| {
-                BandInfoConfig {
-                    irepband,
-                    isubcat,
-                    ifc,
-                    imflt,
-                    nluts: 0, // No LUTs for basic band info test
-                }
-            })
     }
 
     /// Helper function to create synthetic NITF image subheader with configurable band info.

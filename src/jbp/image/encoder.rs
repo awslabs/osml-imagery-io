@@ -823,11 +823,10 @@ mod tests {
     }
 }
 
-/// Property-based tests for block encoder
+// Property-based tests for block encoder
 #[cfg(test)]
 mod property_tests {
     use super::*;
-    use crate::jbp::image::decoder::BlockDecoder;
 
     use crate::traits::ImageAssetProvider;
     use proptest::prelude::*;
@@ -871,10 +870,10 @@ mod property_tests {
         )
     }
 
-    /// Property 3: IMODE Conversion Preserves Pixels
-    /// For any valid image data and target IMODE, encoding with BlockEncoder
-    /// and then decoding with BlockDecoder SHALL produce byte-identical pixel data.
-    /// **Validates: Requirements 2.2, 2.4, 6.4, 7.3**
+    // Property 3: IMODE Conversion Preserves Pixels
+    // For any valid image data and target IMODE, encoding with BlockEncoder
+    // and then decoding with BlockDecoder SHALL produce byte-identical pixel data.
+    // **Validates: Requirements 2.2, 2.4, 6.4, 7.3**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
 
@@ -969,10 +968,14 @@ mod property_tests {
         nppbv: u32,
         nbands: u32,
         nbpp: u8,
+        #[allow(dead_code)]
         abpp: u8,
+        #[allow(dead_code)]
         pvtype: crate::jbp::image::types::PixelValueType,
+        #[allow(dead_code)]
         pjust: crate::jbp::image::types::PixelJustification,
         imode: InterleaveMode,
+        #[allow(dead_code)]
         ic: String,
     }
 
@@ -1330,16 +1333,6 @@ mod property_tests {
         }
     }
 
-    /// Strategy for generating tile size combinations
-    fn tile_size_strategy() -> impl Strategy<Value = (u32, u32, u32, u32)> {
-        (
-            2u32..=16, // source tile width
-            2u32..=16, // source tile height
-            2u32..=16, // output tile width
-            2u32..=16, // output tile height
-        )
-    }
-
     /// Strategy for generating image dimensions that work with tile sizes
     fn image_with_tiles_strategy() -> impl Strategy<Value = (u32, u32, u32, u32, u32, u32, u32)> {
         (
@@ -1435,9 +1428,9 @@ mod property_tests {
     }
 }
 
-/// Property-based tests for round-trip consistency (Task 9).
-/// These tests validate that encoding with JBPDatasetWriter and decoding with
-/// JBPDatasetReader produces pixel-perfect results.
+// Property-based tests for round-trip consistency (Task 9).
+// These tests validate that encoding with JBPDatasetWriter and decoding with
+// JBPDatasetReader produces pixel-perfect results.
 #[cfg(test)]
 mod round_trip_property_tests {
     use super::*;
@@ -1447,7 +1440,7 @@ mod round_trip_property_tests {
     use crate::jbp::reader::JBPDatasetReader;
     use crate::jbp::types::NitfFormat;
     use crate::jbp::writer::JBPDatasetWriter;
-    use crate::traits::{AssetProvider, DatasetReader, DatasetWriter, ImageAssetProvider};
+    use crate::traits::{AssetProvider, DatasetReader, DatasetWriter};
     use crate::types::AssetType;
     use proptest::prelude::*;
     use std::sync::Arc;

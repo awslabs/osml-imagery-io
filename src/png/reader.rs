@@ -397,7 +397,6 @@ impl DatasetReader for PNGDatasetReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::image::ImageAssetProvider;
 
     /// Helper: create a minimal valid PNG in memory using the `png` crate encoder.
     fn make_png(

@@ -1984,37 +1984,7 @@ mod validation_property_tests {
 #[cfg(test)]
 mod tre_property_tests {
     use super::*;
-    use crate::jbp::tre::TreEnvelope;
-    use crate::parser::{Encoding, FieldDefinition, FieldType, SizeSpec, StructureDefinition};
     use proptest::prelude::*;
-
-    /// Strategy to generate valid CETAG strings (1-6 alphanumeric characters)
-    fn valid_cetag_strategy() -> impl Strategy<Value = String> {
-        prop::collection::vec(prop::char::ranges(vec!['A'..='Z', '0'..='9'].into()), 1..=6)
-            .prop_map(|chars| chars.into_iter().collect::<String>())
-    }
-
-    /// Strategy to generate CEDATA bytes (0 to 100 bytes for practical testing)
-    fn cedata_strategy() -> impl Strategy<Value = Vec<u8>> {
-        prop::collection::vec(any::<u8>(), 0..=100)
-    }
-
-    /// Strategy to generate a valid TRE envelope
-    fn tre_envelope_strategy() -> impl Strategy<Value = TreEnvelope> {
-        (valid_cetag_strategy(), cedata_strategy())
-            .prop_map(|(tag, data)| TreEnvelope::new(tag, data).unwrap())
-    }
-
-    /// Create a simple TRE definition for testing
-    fn create_test_tre_definition() -> StructureDefinition {
-        StructureDefinition::new("tre_test")
-            .with_title("Test TRE")
-            .with_field(
-                FieldDefinition::new("value", FieldType::String)
-                    .with_size(SizeSpec::Fixed(10))
-                    .with_encoding(Encoding::BcsA),
-            )
-    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]

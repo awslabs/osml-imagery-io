@@ -822,6 +822,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn parse_tre_fields_preserves_value_types() {
         let mut metadata = std::collections::HashMap::new();
         metadata.insert("TEST.STRING".to_string(), serde_json::json!("text"));

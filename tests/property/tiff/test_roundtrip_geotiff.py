@@ -8,6 +8,7 @@ These validate that GeoTIFF metadata (GeoKeys, transformation tags) survives
 write-read cycles through TIFFDatasetWriter and TIFFDatasetReader.
 """
 
+import math
 import tempfile
 from pathlib import Path
 
@@ -33,7 +34,7 @@ def _normalize_json_value(val):
     Python values so roundtrip comparisons work correctly.
     """
     if isinstance(val, float):
-        if val == int(val) and not (val != val) and abs(val) < 2**53:
+        if val == int(val) and not math.isnan(val) and abs(val) < 2**53:
             return int(val)
         return val
     if isinstance(val, list):

@@ -8,11 +8,8 @@ use std::sync::Arc;
 use criterion::{BenchmarkId, Criterion, Throughput};
 use tempfile::NamedTempFile;
 
-use _io::png::{PNGDatasetReader, PNGDatasetWriter, PNGImageAssetProvider};
-use _io::{
-    BufferedImageAssetProvider, DatasetReader, DatasetWriter, ImageAssetProvider,
-    MemoryImageConfig, PixelType,
-};
+use _io::png::{PNGDatasetReader, PNGDatasetWriter};
+use _io::{BufferedImageAssetProvider, DatasetReader, DatasetWriter, MemoryImageConfig, PixelType};
 
 use super::super::common;
 
@@ -39,7 +36,7 @@ pub fn bench_png_decode(c: &mut Criterion) {
     writer
         .add_asset(
             "image_segment_0",
-            Arc::new(provider),
+            _io::AssetProvider::Image(Arc::new(provider)),
             "Benchmark Image",
             "",
             &[],
@@ -52,10 +49,7 @@ pub fn bench_png_decode(c: &mut Criterion) {
     let reader = PNGDatasetReader::from_bytes(&file_data).expect("reader creation failed");
     let asset_keys = reader.get_asset_keys(Some(_io::AssetType::Image), None);
     let asset = reader.get_asset(&asset_keys[0]).expect("get_asset failed");
-    let image_provider = asset
-        .as_any()
-        .downcast_ref::<PNGImageAssetProvider>()
-        .expect("downcast to PNGImageAssetProvider failed");
+    let image_provider = asset.as_image().expect("expected Image asset variant");
 
     // --- Benchmark ---
     let mut group = c.benchmark_group("png_decode");

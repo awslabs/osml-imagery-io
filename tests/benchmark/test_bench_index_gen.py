@@ -18,9 +18,10 @@ import pytest
 zarr = pytest.importorskip("zarr")
 fsspec = pytest.importorskip("fsspec")
 
-from aws.osml.io import IO, AssetType
-from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
-from tests.benchmark.conftest import _first_image_segments
+from aws.osml.io import IO, AssetType  # noqa: E402
+from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index  # noqa: E402
+
+from tests.benchmark.conftest import _first_image_segments  # noqa: E402
 
 
 @pytest.mark.benchmark
@@ -56,9 +57,11 @@ def test_bench_index_generation(benchmark, dataset_entry, tmp_path):
                 if "IC" in meta:
                     compression = meta["IC"]
             except Exception:
+                # Compression metadata may not be available; use default label
                 pass
         reader.close()
     except Exception:
+        # Best-effort metadata collection; benchmark results are still valid
         pass
 
     benchmark.extra_info["num_segments"] = num_segments

@@ -192,7 +192,6 @@ impl DatasetReader for JPEGDatasetReader {
 mod tests {
     use super::*;
     use crate::jpeg::ffi::compress_8bit;
-    use crate::traits::image::ImageAssetProvider;
     use crate::types::PixelType;
 
     // =========================================================================

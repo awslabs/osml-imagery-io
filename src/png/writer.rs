@@ -407,7 +407,6 @@ mod tests {
     use super::*;
     use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
     use crate::png::reader::PNGDatasetReader;
-    use crate::traits::image::ImageAssetProvider;
     use crate::traits::reader::DatasetReader;
     use std::sync::Arc;
 

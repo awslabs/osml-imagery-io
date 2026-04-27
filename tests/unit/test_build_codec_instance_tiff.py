@@ -15,8 +15,8 @@ import pytest
 
 virtualizarr = pytest.importorskip("virtualizarr", minversion="2.0")
 
-from aws.osml.io.virtualizarr_parsers import _build_codec_instance
-from aws.osml.io.zarr_codecs import TiffTileCodec
+from aws.osml.io.virtualizarr_parsers import _build_codec_instance  # noqa: E402
+from aws.osml.io.zarr_codecs import TiffTileCodec  # noqa: E402
 
 
 def _make_mock_asset(codec_config, num_bands=3, num_bits_per_pixel=8,

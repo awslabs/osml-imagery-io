@@ -3,6 +3,8 @@
 //! This module defines enumerations for pixel value types, image representation,
 //! interleave modes, and pixel justification used in NITF image subheaders.
 
+use std::str::FromStr;
+
 use crate::error::CodecError;
 use crate::types::PixelType;
 
@@ -24,9 +26,11 @@ pub enum PixelValueType {
     BiLevel,
 }
 
-impl PixelValueType {
+impl FromStr for PixelValueType {
+    type Err = CodecError;
+
     /// Parse from PVTYPE string field (3 characters, space-padded).
-    pub fn from_str(s: &str) -> Result<Self, CodecError> {
+    fn from_str(s: &str) -> Result<Self, CodecError> {
         match s.trim() {
             "INT" => Ok(PixelValueType::UnsignedInt),
             "SI" => Ok(PixelValueType::SignedInt),
@@ -36,7 +40,9 @@ impl PixelValueType {
             _ => Err(CodecError::Parse(format!("Invalid PVTYPE value: '{}'", s))),
         }
     }
+}
 
+impl PixelValueType {
     /// Convert to PVTYPE string for writing (3 characters, space-padded).
     pub fn to_str(&self) -> &'static str {
         match self {
@@ -97,9 +103,11 @@ pub enum ImageRepresentation {
     YCbCr601,
 }
 
-impl ImageRepresentation {
+impl FromStr for ImageRepresentation {
+    type Err = CodecError;
+
     /// Parse from IREP string field (8 characters, space-padded).
-    pub fn from_str(s: &str) -> Result<Self, CodecError> {
+    fn from_str(s: &str) -> Result<Self, CodecError> {
         match s.trim() {
             "MONO" => Ok(ImageRepresentation::Mono),
             "RGB" => Ok(ImageRepresentation::Rgb),
@@ -113,7 +121,9 @@ impl ImageRepresentation {
             _ => Err(CodecError::Parse(format!("Invalid IREP value: '{}'", s))),
         }
     }
+}
 
+impl ImageRepresentation {
     /// Convert to IREP string for writing (8 characters, space-padded).
     pub fn to_str(&self) -> &'static str {
         match self {

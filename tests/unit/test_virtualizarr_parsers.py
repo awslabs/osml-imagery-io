@@ -12,7 +12,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from aws.osml.io import (
     IO,
     BufferedImageAssetProvider,
@@ -404,7 +403,6 @@ class TestBuildMultiscaleGroup:
     def test_multiscales_metadata_structure(self):
         """Verify multiscales is a GeoZarr dict with layout, zarr_conventions, and no OME-NGFF fields."""
         from aws.osml.io.virtualizarr_parsers import (
-            GEOZARR_MULTISCALES_CONVENTION,
             _build_multiscale_group,
         )
 
@@ -1326,13 +1324,12 @@ class TestPortableIndex:
         import json
 
         import zarr
-        from zarr.storage._fsspec import FsspecStore
-
         from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
         from aws.osml.io.virtualizarr_parsers import (
             OversightMLParser,
             write_tile_index,
         )
+        from zarr.storage._fsspec import FsspecStore
 
         # Write a NITF with known data
         rng = np.random.default_rng(42)

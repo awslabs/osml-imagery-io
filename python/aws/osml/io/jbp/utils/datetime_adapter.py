@@ -52,7 +52,7 @@ class DateTimeAdapter:
             if raw == "--":
                 if name == "year":
                     raise ValueError(
-                        f"Year component cannot be unknown ('--')"
+                        "Year component cannot be unknown ('--')"
                     )
                 values[name] = None
                 has_unknown = True

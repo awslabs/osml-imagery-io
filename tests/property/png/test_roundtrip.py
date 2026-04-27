@@ -11,7 +11,6 @@ from ..conftest import pbt_settings
 from ..helpers import assert_lossless_match, write_and_read_png
 from ..strategies import png_writable_image
 
-
 # =============================================================================
 # Pixel roundtrip (lossless)
 # =============================================================================

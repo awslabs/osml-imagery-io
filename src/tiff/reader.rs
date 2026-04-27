@@ -282,7 +282,6 @@ fn compression_name(code: u16) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::image::ImageAssetProvider;
 
     /// Helper: write a single IFD entry (12 bytes) in little-endian format.
     fn write_ifd_entry(buf: &mut Vec<u8>, tag: u16, dtype: u16, count: u32, value: u32) {

@@ -7,6 +7,8 @@
 
 use pyo3::prelude::*;
 
+use std::str::FromStr;
+
 use crate::jbp::image::decoder::swap_be_to_ne;
 use crate::jbp::image::interleave;
 use crate::jbp::image::types::{InterleaveMode, PixelValueType};

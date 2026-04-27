@@ -3,7 +3,6 @@
 from datetime import datetime
 
 import pytest
-
 from aws.osml.io.jbp.utils import (
     DateTimeAdapter,
     IGEOLOAdapter,
@@ -11,11 +10,9 @@ from aws.osml.io.jbp.utils import (
     NitfDateTime,
     SecurityClassification,
     SecurityClassificationAdapter,
-    TGTID,
     TGTIDAdapter,
     UTMCoordinate,
 )
-
 
 # ── DateTimeAdapter Tests ──────────────────────────────────────────────
 

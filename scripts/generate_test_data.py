@@ -56,7 +56,6 @@ from aws.osml.io import (  # noqa: E402
     PixelType,
 )
 
-
 # ── Shared metadata helpers ──────────────────────────────────────────────────
 
 def _nitf_file_metadata(ftitle: str) -> BufferedMetadataProvider:

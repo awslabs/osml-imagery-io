@@ -767,6 +767,7 @@ mod tests {
         }
 
         #[test]
+        #[allow(clippy::approx_constant)]
         fn decode_f32() {
             let value: f32 = 3.14;
             let data = value.to_be_bytes();
@@ -775,6 +776,7 @@ mod tests {
         }
 
         #[test]
+        #[allow(clippy::approx_constant)]
         fn decode_f64() {
             let value: f64 = 3.14159265358979;
             let data = value.to_be_bytes();
@@ -844,6 +846,7 @@ mod tests {
         }
 
         #[test]
+        #[allow(clippy::approx_constant)]
         fn encode_f32() {
             let encoded = encode_pixel(3.14, PixelValueType::Real, 32).unwrap();
             let decoded = f32::from_be_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]);
@@ -851,6 +854,7 @@ mod tests {
         }
 
         #[test]
+        #[allow(clippy::approx_constant)]
         fn encode_f64() {
             let encoded = encode_pixel(3.14159265358979, PixelValueType::Real, 64).unwrap();
             let decoded = f64::from_be_bytes([
@@ -1013,6 +1017,7 @@ mod tests {
         }
 
         #[test]
+        #[allow(clippy::approx_constant)]
         fn bulk_f32_round_trip() {
             let values = vec![0.0, 1.5, -3.14, 1000.0];
             let encoded = encode(

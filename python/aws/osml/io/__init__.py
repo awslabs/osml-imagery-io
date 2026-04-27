@@ -74,4 +74,5 @@ try:
 
     __all__ += ["OversightMLParser", "write_tile_index"]
 except ImportError:
+    # virtualizarr is an optional dependency; skip exports when not installed
     pass

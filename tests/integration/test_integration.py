@@ -169,7 +169,7 @@ def run_tiff_checks(reader) -> None:
     if "GeoTiepoints" in geo:
         tiepoints = geo["GeoTiepoints"]
         assert isinstance(tiepoints, list) and len(tiepoints) > 0, (
-            f"GeoTiepoints should be a non-empty list"
+            "GeoTiepoints should be a non-empty list"
         )
         for tp in tiepoints:
             assert isinstance(tp, list) and len(tp) == 6, (

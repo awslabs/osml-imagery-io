@@ -496,7 +496,7 @@ impl PyStructureAccessor {
         // Extract bytes from various Python buffer types
         let bytes: Vec<u8> = if let Ok(bytes) = data.extract::<Vec<u8>>() {
             bytes
-        } else if let Ok(bytes_obj) = data.downcast::<PyBytes>() {
+        } else if let Ok(bytes_obj) = data.cast::<PyBytes>() {
             bytes_obj.as_bytes().to_vec()
         } else if data.hasattr("tobytes")? {
             // Try tobytes() method (works with memoryview)
@@ -775,7 +775,7 @@ fn python_to_write_value(value: &Bound<'_, PyAny>) -> PyResult<WriteValue> {
     }
 
     // Try PyBytes
-    if let Ok(bytes_obj) = value.downcast::<PyBytes>() {
+    if let Ok(bytes_obj) = value.cast::<PyBytes>() {
         return Ok(WriteValue::Bytes(bytes_obj.as_bytes().to_vec()));
     }
 

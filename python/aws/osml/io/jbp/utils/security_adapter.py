@@ -1,6 +1,6 @@
 """SecurityClassificationAdapter — extract and produce NITF security classification blocks."""
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 
 # The 16 security fields in order (suffix after prefix).
 SECURITY_FIELDS = [

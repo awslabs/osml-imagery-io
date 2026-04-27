@@ -869,23 +869,6 @@ mod tests {
         Arc::from(data)
     }
 
-    /// Create a mock image subheader for testing
-    fn create_mock_subheader(
-        ic: &str,
-        imode: char,
-        nbpp: u8,
-        abpp: u8,
-        nrows: u32,
-        ncols: u32,
-        nbands: u32,
-        pvtype: &str,
-    ) -> Vec<u8> {
-        // This is a simplified mock - in real tests we'd use the actual
-        // structure definition. For now, we'll test with the real facade.
-        let _ = (ic, imode, nbpp, abpp, nrows, ncols, nbands, pvtype);
-        Vec::new()
-    }
-
     // =========================================================================
     // Validation Tests
     // =========================================================================

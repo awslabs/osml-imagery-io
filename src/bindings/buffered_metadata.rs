@@ -22,12 +22,12 @@ fn python_to_json(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<serde_json::Value
     let bound = obj.bind(py);
     if bound.is_none() {
         Ok(serde_json::Value::Null)
-    } else if let Ok(b) = bound.downcast::<PyBool>() {
+    } else if let Ok(b) = bound.cast::<PyBool>() {
         Ok(serde_json::Value::Bool(b.is_true()))
-    } else if let Ok(i) = bound.downcast::<PyInt>() {
+    } else if let Ok(i) = bound.cast::<PyInt>() {
         let val: i64 = i.extract()?;
         Ok(serde_json::json!(val))
-    } else if let Ok(f) = bound.downcast::<PyFloat>() {
+    } else if let Ok(f) = bound.cast::<PyFloat>() {
         let val: f64 = f.extract()?;
         // Use from_f64 to preserve float representation. serde_json::json!()
         // would coerce whole-number floats like 1.0 to integer, causing
@@ -42,16 +42,16 @@ fn python_to_json(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<serde_json::Value
                 )))
             }
         }
-    } else if let Ok(s) = bound.downcast::<PyString>() {
+    } else if let Ok(s) = bound.cast::<PyString>() {
         let val: String = s.extract()?;
         Ok(serde_json::Value::String(val))
-    } else if let Ok(list) = bound.downcast::<PyList>() {
+    } else if let Ok(list) = bound.cast::<PyList>() {
         let mut arr = Vec::new();
         for item in list.iter() {
             arr.push(python_to_json(py, &item.unbind())?);
         }
         Ok(serde_json::Value::Array(arr))
-    } else if let Ok(dict) = bound.downcast::<PyDict>() {
+    } else if let Ok(dict) = bound.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             let key: String = k.str()?.extract()?;

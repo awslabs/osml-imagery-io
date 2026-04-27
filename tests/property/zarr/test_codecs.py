@@ -7,10 +7,9 @@ import os
 
 import numpy as np
 import pytest
+from aws.osml.io._io import decode_jbp_block
 from hypothesis import given
 from hypothesis import strategies as st
-
-from aws.osml.io._io import decode_jbp_block
 
 from ..conftest import pbt_settings
 from ..helpers import write_and_read_jbp

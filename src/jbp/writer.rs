@@ -3642,7 +3642,7 @@ mod tests {
     fn writer_round_trip_with_buffered_image_provider() {
         use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
         use crate::jbp::reader::JBPDatasetReader;
-        use crate::traits::{DatasetReader, ImageAssetProvider};
+        use crate::traits::DatasetReader;
         use crate::types::AssetType;
 
         let dir = tempdir().unwrap();
@@ -4896,6 +4896,7 @@ mod metadata_writing_tests {
     struct MetaAssetProvider {
         key: String,
         title: String,
+        #[allow(dead_code)]
         asset_type: AssetType,
         metadata: Arc<dyn MetadataProvider>,
         data: Vec<u8>,

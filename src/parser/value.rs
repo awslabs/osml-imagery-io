@@ -41,7 +41,7 @@ pub struct StructValue<'a> {
 
 impl<'a> Value<'a> {
     /// Create a string value from a borrowed string slice.
-    pub fn from_str(s: &'a str) -> Self {
+    pub fn from_borrowed(s: &'a str) -> Self {
         Value::String(Cow::Borrowed(s))
     }
 
@@ -87,7 +87,7 @@ impl<'a> Value<'a> {
     /// ```ignore
     /// use _io::parser::Value;
     ///
-    /// let value = Value::from_str("HELLO   ");
+    /// let value = Value::from_borrowed("HELLO   ");
     /// assert_eq!(value.as_str().unwrap(), "HELLO");
     /// ```
     pub fn as_str(&self) -> Result<&str, ConversionError> {
@@ -164,10 +164,10 @@ impl<'a> Value<'a> {
     /// ```ignore
     /// use _io::parser::Value;
     ///
-    /// let value = Value::from_str("  123  ");
+    /// let value = Value::from_borrowed("  123  ");
     /// assert_eq!(value.as_i64().unwrap(), 123);
     ///
-    /// let negative = Value::from_str("-456");
+    /// let negative = Value::from_borrowed("-456");
     /// assert_eq!(negative.as_i64().unwrap(), -456);
     /// ```
     pub fn as_i64(&self) -> Result<i64, ConversionError> {
@@ -236,7 +236,7 @@ impl<'a> Value<'a> {
     /// ```ignore
     /// use _io::parser::Value;
     ///
-    /// let value = Value::from_str("00123");
+    /// let value = Value::from_borrowed("00123");
     /// assert_eq!(value.as_u64().unwrap(), 123);
     /// ```
     pub fn as_u64(&self) -> Result<u64, ConversionError> {
@@ -295,10 +295,10 @@ impl<'a> Value<'a> {
     /// ```ignore
     /// use _io::parser::Value;
     ///
-    /// let value = Value::from_str("2.71828");
+    /// let value = Value::from_borrowed("2.71828");
     /// assert!((value.as_f64().unwrap() - 2.71828).abs() < 1e-10);
     ///
-    /// let int_value = Value::from_str("42");
+    /// let int_value = Value::from_borrowed("42");
     /// assert_eq!(int_value.as_f64().unwrap(), 42.0);
     /// ```
     pub fn as_f64(&self) -> Result<f64, ConversionError> {
@@ -433,19 +433,19 @@ mod tests {
 
     #[test]
     fn as_str_from_string_no_padding() {
-        let value = Value::from_str("HELLO");
+        let value = Value::from_borrowed("HELLO");
         assert_eq!(value.as_str().unwrap(), "HELLO");
     }
 
     #[test]
     fn as_str_from_string_with_trailing_spaces() {
-        let value = Value::from_str("HELLO   ");
+        let value = Value::from_borrowed("HELLO   ");
         assert_eq!(value.as_str().unwrap(), "HELLO");
     }
 
     #[test]
     fn as_str_from_string_all_spaces() {
-        let value = Value::from_str("     ");
+        let value = Value::from_borrowed("     ");
         assert_eq!(value.as_str().unwrap(), "");
     }
 
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn as_str_with_custom_pad() {
-        let value = Value::from_str("00123000");
+        let value = Value::from_borrowed("00123000");
         assert_eq!(value.as_str_with_pad('0').unwrap(), "00123");
     }
 
@@ -471,37 +471,37 @@ mod tests {
 
     #[test]
     fn as_i64_from_positive_string() {
-        let value = Value::from_str("12345");
+        let value = Value::from_borrowed("12345");
         assert_eq!(value.as_i64().unwrap(), 12345);
     }
 
     #[test]
     fn as_i64_from_negative_string() {
-        let value = Value::from_str("-12345");
+        let value = Value::from_borrowed("-12345");
         assert_eq!(value.as_i64().unwrap(), -12345);
     }
 
     #[test]
     fn as_i64_from_padded_string() {
-        let value = Value::from_str("  123  ");
+        let value = Value::from_borrowed("  123  ");
         assert_eq!(value.as_i64().unwrap(), 123);
     }
 
     #[test]
     fn as_i64_from_leading_zeros() {
-        let value = Value::from_str("00042");
+        let value = Value::from_borrowed("00042");
         assert_eq!(value.as_i64().unwrap(), 42);
     }
 
     #[test]
     fn as_i64_from_empty_string() {
-        let value = Value::from_str("");
+        let value = Value::from_borrowed("");
         assert_eq!(value.as_i64().unwrap(), 0);
     }
 
     #[test]
     fn as_i64_from_spaces_only() {
-        let value = Value::from_str("   ");
+        let value = Value::from_borrowed("   ");
         assert_eq!(value.as_i64().unwrap(), 0);
     }
 
@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn as_i64_invalid_string() {
-        let value = Value::from_str("abc");
+        let value = Value::from_borrowed("abc");
         assert!(value.as_i64().is_err());
     }
 
@@ -527,13 +527,13 @@ mod tests {
 
     #[test]
     fn as_u64_from_string() {
-        let value = Value::from_str("12345");
+        let value = Value::from_borrowed("12345");
         assert_eq!(value.as_u64().unwrap(), 12345);
     }
 
     #[test]
     fn as_u64_from_padded_string() {
-        let value = Value::from_str("  00123  ");
+        let value = Value::from_borrowed("  00123  ");
         assert_eq!(value.as_u64().unwrap(), 123);
     }
 
@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn as_u64_negative_fails() {
-        let value = Value::from_str("-123");
+        let value = Value::from_borrowed("-123");
         assert!(value.as_u64().is_err());
     }
 
@@ -553,25 +553,26 @@ mod tests {
 
     #[test]
     fn as_f64_from_integer_string() {
-        let value = Value::from_str("42");
+        let value = Value::from_borrowed("42");
         assert_eq!(value.as_f64().unwrap(), 42.0);
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn as_f64_from_decimal_string() {
-        let value = Value::from_str("2.71828");
+        let value = Value::from_borrowed("2.71828");
         assert!((value.as_f64().unwrap() - 2.71828).abs() < 1e-10);
     }
 
     #[test]
     fn as_f64_from_scientific_notation() {
-        let value = Value::from_str("1.5e10");
+        let value = Value::from_borrowed("1.5e10");
         assert_eq!(value.as_f64().unwrap(), 1.5e10);
     }
 
     #[test]
     fn as_f64_from_negative() {
-        let value = Value::from_str("-2.5");
+        let value = Value::from_borrowed("-2.5");
         assert_eq!(value.as_f64().unwrap(), -2.5);
     }
 
@@ -583,7 +584,7 @@ mod tests {
 
     #[test]
     fn as_f64_invalid_string() {
-        let value = Value::from_str("not a number");
+        let value = Value::from_borrowed("not a number");
         assert!(value.as_f64().is_err());
     }
 
@@ -597,7 +598,7 @@ mod tests {
 
     #[test]
     fn as_bytes_from_string() {
-        let value = Value::from_str("WORLD");
+        let value = Value::from_borrowed("WORLD");
         assert_eq!(value.as_bytes(), b"WORLD");
     }
 
@@ -605,7 +606,7 @@ mod tests {
 
     #[test]
     fn type_checks() {
-        assert!(Value::from_str("test").is_string());
+        assert!(Value::from_borrowed("test").is_string());
         assert!(Value::from_bytes(b"test").is_bytes());
         assert!(Value::from_unsigned(42).is_unsigned());
         assert!(Value::from_array(vec![]).is_array());
@@ -616,7 +617,7 @@ mod tests {
 
     #[test]
     fn len_string() {
-        let value = Value::from_str("HELLO");
+        let value = Value::from_borrowed("HELLO");
         assert_eq!(value.len(), 5);
     }
 
@@ -638,10 +639,10 @@ mod tests {
 
     #[test]
     fn is_empty() {
-        assert!(Value::from_str("").is_empty());
+        assert!(Value::from_borrowed("").is_empty());
         assert!(Value::from_bytes(b"").is_empty());
         assert!(Value::from_array(vec![]).is_empty());
-        assert!(!Value::from_str("x").is_empty());
+        assert!(!Value::from_borrowed("x").is_empty());
     }
 }
 
@@ -667,7 +668,7 @@ mod property_tests {
                 num_spaces in 0usize..20
             ) {
                 let padded = format!("{}{}", content, " ".repeat(num_spaces));
-                let value = Value::from_str(&padded);
+                let value = Value::from_borrowed(&padded);
                 let result = value.as_str().unwrap();
                 prop_assert_eq!(result, content.trim_end(),
                     "Expected '{}', got '{}'", content.trim_end(), result);
@@ -681,7 +682,7 @@ mod property_tests {
                 if content.is_empty() {
                     return Ok(());
                 }
-                let value = Value::from_str(content);
+                let value = Value::from_borrowed(content);
                 let result = value.as_str().unwrap();
                 prop_assert_eq!(result, content);
             }
@@ -705,7 +706,7 @@ mod property_tests {
                 num_zeros in 0usize..10
             ) {
                 let padded = format!("{}{}", content, "0".repeat(num_zeros));
-                let value = Value::from_str(&padded);
+                let value = Value::from_borrowed(&padded);
                 let result = value.as_str_with_pad('0').unwrap();
                 prop_assert_eq!(result, content.trim_end_matches('0'));
             }
@@ -714,7 +715,7 @@ mod property_tests {
             #[test]
             fn all_spaces_becomes_empty(num_spaces in 1usize..50) {
                 let spaces = " ".repeat(num_spaces);
-                let value = Value::from_str(&spaces);
+                let value = Value::from_borrowed(&spaces);
                 let result = value.as_str().unwrap();
                 prop_assert!(result.is_empty(),
                     "Expected empty string, got '{}'", result);
@@ -738,7 +739,7 @@ mod property_tests {
             #[test]
             fn i64_round_trip(n in any::<i64>()) {
                 let s = format!("{}", n);
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 let parsed = value.as_i64().unwrap();
                 prop_assert_eq!(n, parsed,
                     "Expected {}, got {} from '{}'", n, parsed, s);
@@ -748,7 +749,7 @@ mod property_tests {
             #[test]
             fn u64_round_trip(n in any::<u64>()) {
                 let s = format!("{}", n);
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 let parsed = value.as_u64().unwrap();
                 prop_assert_eq!(n, parsed,
                     "Expected {}, got {} from '{}'", n, parsed, s);
@@ -758,7 +759,7 @@ mod property_tests {
             #[test]
             fn f64_round_trip(n in any::<f64>().prop_filter("finite", |f| f.is_finite())) {
                 let s = format!("{}", n);
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 let parsed = value.as_f64().unwrap();
                 // Allow small floating-point error
                 let diff = (n - parsed).abs();
@@ -771,7 +772,7 @@ mod property_tests {
             #[test]
             fn leading_zeros_parse(n in 0u64..1000000, leading_zeros in 1usize..10) {
                 let s = format!("{:0>width$}", n, width = leading_zeros + n.to_string().len());
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 let parsed = value.as_u64().unwrap();
                 prop_assert_eq!(n, parsed,
                     "Expected {}, got {} from '{}'", n, parsed, s);
@@ -785,7 +786,7 @@ mod property_tests {
                 trailing_spaces in 0usize..5
             ) {
                 let s = format!("{}{}{}", " ".repeat(leading_spaces), n, " ".repeat(trailing_spaces));
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 let parsed = value.as_i64().unwrap();
                 prop_assert_eq!(n, parsed,
                     "Expected {}, got {} from '{}'", n, parsed, s);
@@ -795,7 +796,7 @@ mod property_tests {
             #[test]
             fn negative_integers_parse(n in i64::MIN..0i64) {
                 let s = format!("{}", n);
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 let parsed = value.as_i64().unwrap();
                 prop_assert_eq!(n, parsed);
             }
@@ -827,7 +828,7 @@ mod property_tests {
             /// Empty string parses as zero
             #[test]
             fn empty_string_is_zero(_unused in 0..1i32) {
-                let value = Value::from_str("");
+                let value = Value::from_borrowed("");
                 prop_assert_eq!(value.as_i64().unwrap(), 0);
                 prop_assert_eq!(value.as_u64().unwrap(), 0);
                 prop_assert_eq!(value.as_f64().unwrap(), 0.0);
@@ -837,7 +838,7 @@ mod property_tests {
             #[test]
             fn whitespace_only_is_zero(num_spaces in 1usize..20) {
                 let s = " ".repeat(num_spaces);
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 prop_assert_eq!(value.as_i64().unwrap(), 0);
                 prop_assert_eq!(value.as_u64().unwrap(), 0);
                 prop_assert_eq!(value.as_f64().unwrap(), 0.0);
@@ -850,7 +851,7 @@ mod property_tests {
                 exponent in -10i32..10
             ) {
                 let s = format!("{}e{}", mantissa, exponent);
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 let expected = mantissa * 10f64.powi(exponent);
                 let parsed = value.as_f64().unwrap();
                 let diff = (expected - parsed).abs();
@@ -890,7 +891,7 @@ mod property_tests {
             /// Non-numeric strings fail as_i64()
             #[test]
             fn non_numeric_fails_i64(s in non_numeric_string()) {
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 prop_assert!(value.as_i64().is_err(),
                     "Expected error for '{}', but got success", s);
             }
@@ -898,7 +899,7 @@ mod property_tests {
             /// Non-numeric strings fail as_u64()
             #[test]
             fn non_numeric_fails_u64(s in non_numeric_string()) {
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 prop_assert!(value.as_u64().is_err(),
                     "Expected error for '{}', but got success", s);
             }
@@ -906,7 +907,7 @@ mod property_tests {
             /// Non-numeric strings fail as_f64()
             #[test]
             fn non_numeric_fails_f64(s in non_numeric_string()) {
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 prop_assert!(value.as_f64().is_err(),
                     "Expected error for '{}', but got success", s);
             }
@@ -915,7 +916,7 @@ mod property_tests {
             #[test]
             fn negative_fails_u64(n in i64::MIN..-1i64) {
                 let s = format!("{}", n);
-                let value = Value::from_str(&s);
+                let value = Value::from_borrowed(&s);
                 prop_assert!(value.as_u64().is_err(),
                     "Expected error for negative '{}', but got success", s);
             }

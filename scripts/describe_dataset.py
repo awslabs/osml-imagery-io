@@ -167,6 +167,7 @@ def is_sicd_sidd_segment(asset) -> bool:
         if desid in sicd_sidd_ids or "SICD" in desid or "SIDD" in desid:
             return True
     except Exception:
+        # Metadata read may fail for malformed segments; treat as non-SICD/SIDD
         pass
     return False
 

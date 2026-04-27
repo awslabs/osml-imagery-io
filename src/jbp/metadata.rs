@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn value_to_json_string() {
-        let value = Value::from_str("HELLO   ");
+        let value = Value::from_borrowed("HELLO   ");
         let json = value_to_json(&value, None, None).unwrap();
         assert_eq!(json, serde_json::json!("HELLO"));
     }

@@ -899,6 +899,7 @@ def _build_geokey_directory(metadata, crs: str) -> None:
         try:
             epsg = int(crs_upper.split(":")[1])
         except (ValueError, IndexError):
+            # Malformed EPSG code; fall through to default geographic
             pass
 
     # Determine if projected or geographic
@@ -907,7 +908,7 @@ def _build_geokey_directory(metadata, crs: str) -> None:
         is_projected = True
     elif epsg == 4326:
         is_projected = False
-    elif epsg > 2000 and epsg != 4326:
+    elif epsg > 2000:
         # Heuristic: most EPSG codes > 2000 that aren't 4326 are projected
         # This is a simplification; a full CRS database would be more accurate
         is_projected = True

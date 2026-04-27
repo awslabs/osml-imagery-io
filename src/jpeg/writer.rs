@@ -279,7 +279,6 @@ mod tests {
     use super::*;
     use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
     use crate::jpeg::reader::JPEGDatasetReader;
-    use crate::traits::image::ImageAssetProvider;
     use crate::traits::reader::DatasetReader;
 
     /// Helper: create a BufferedImageAssetProvider with the given config and BSQ data.

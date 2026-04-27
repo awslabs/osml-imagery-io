@@ -1246,9 +1246,9 @@ mod property_tests {
         data
     }
 
-    /// Property 10: Zero Dimension Validation
-    /// For any image subheader with NROWS=0 or NCOLS=0, validation SHALL return an error.
-    /// **Validates: Requirements 13.1, 13.2**
+    // Property 10: Zero Dimension Validation
+    // For any image subheader with NROWS=0 or NCOLS=0, validation SHALL return an error.
+    // **Validates: Requirements 13.1, 13.2**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
         #[test]
@@ -1307,9 +1307,9 @@ mod property_tests {
         }
     }
 
-    /// Property 11: Pixel Type Validation
-    /// For any invalid PVTYPE/NBPP combination, validation SHALL return an error.
-    /// **Validates: Requirements 14.1-14.5**
+    // Property 11: Pixel Type Validation
+    // For any invalid PVTYPE/NBPP combination, validation SHALL return an error.
+    // **Validates: Requirements 14.1-14.5**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
         #[test]
@@ -1367,9 +1367,9 @@ mod property_tests {
         }
     }
 
-    /// Property 11b: ABPP exceeds NBPP validation
-    /// For any image subheader with ABPP > NBPP, validation SHALL return an error.
-    /// **Validates: Requirement 14.2**
+    // Property 11b: ABPP exceeds NBPP validation
+    // For any image subheader with ABPP > NBPP, validation SHALL return an error.
+    // **Validates: Requirement 14.2**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(50))]
         #[test]
@@ -1418,10 +1418,10 @@ mod property_tests {
         }
     }
 
-    /// Property 12: Band Configuration Validation
-    /// For any IREP with a required band count, validation SHALL return an error
-    /// if the actual band count doesn't match.
-    /// **Validates: Requirements 15.1-15.5**
+    // Property 12: Band Configuration Validation
+    // For any IREP with a required band count, validation SHALL return an error
+    // if the actual band count doesn't match.
+    // **Validates: Requirements 15.1-15.5**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
         #[test]
@@ -1479,9 +1479,9 @@ mod property_tests {
         }
     }
 
-    /// Property 12b: IMODE=S with single band warning
-    /// For any image with IMODE=S and band count=1, validation SHALL return a warning.
-    /// **Validates: Requirement 15.5**
+    // Property 12b: IMODE=S with single band warning
+    // For any image with IMODE=S and band count=1, validation SHALL return a warning.
+    // **Validates: Requirement 15.5**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(20))]
         #[test]
@@ -1530,9 +1530,9 @@ mod property_tests {
         }
     }
 
-    /// Property 13: LUT Configuration Validation
-    /// For any invalid LUT configuration, validation SHALL return an error.
-    /// **Validates: Requirements 16.1-16.4**
+    // Property 13: LUT Configuration Validation
+    // For any invalid LUT configuration, validation SHALL return an error.
+    // **Validates: Requirements 16.1-16.4**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(50))]
         #[test]
@@ -1588,9 +1588,9 @@ mod property_tests {
         }
     }
 
-    /// Property 13b: Incomplete LUT warning
-    /// For any LUT with NELUT < 2^ABPP, validation SHALL return a warning.
-    /// **Validates: Requirement 16.4**
+    // Property 13b: Incomplete LUT warning
+    // For any LUT with NELUT < 2^ABPP, validation SHALL return a warning.
+    // **Validates: Requirement 16.4**
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(30))]
         #[test]

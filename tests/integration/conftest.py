@@ -91,6 +91,8 @@ def load_manifest() -> tuple[Path, IntegrationManifest]:
         # only during a session.  We parse them from sys.argv instead so
         # load_manifest stays callable at module scope.
     except Exception:
+        # Not running under pytest or internal API changed; fall through to
+        # sys.argv parsing below
         pass
 
     import sys

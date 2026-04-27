@@ -11,8 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
-from aws.osml.io import IO, AssetType, imread, iminfo, imsave, tiles, ImageInfo, Tile
+from aws.osml.io import IO, AssetType, iminfo, imread, imsave, tiles
 
 # Path to existing unit test data
 UNIT_DATA = Path("data/unit")

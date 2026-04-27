@@ -390,7 +390,6 @@ impl DatasetReader for J2KDatasetReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::image::ImageAssetProvider;
 
     // =========================================================================
     // Signature validation tests

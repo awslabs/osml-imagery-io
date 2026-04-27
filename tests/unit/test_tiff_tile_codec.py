@@ -9,7 +9,6 @@ import base64
 import pytest
 from aws.osml.io.zarr_codecs import TiffTileCodec
 
-
 # Non-default config values used across round-trip tests
 JPEG_TABLES_BYTES = b"\xff\xd8\xff\xdb\x00\x43\x00\x08\xff\xd9"
 JPEG_TABLES_B64 = base64.b64encode(JPEG_TABLES_BYTES).decode("ascii")

@@ -1307,12 +1307,12 @@ mod tests {
 
     // ---- Property-based tests ----
 
-    /// **Validates: Requirements 1.1, 1.2, 1.5**
-    ///
-    /// Property 1: Main Header Extraction Preserves Bytes
-    /// For any valid J2K codestream containing SOC, SIZ, and at least one SOT marker,
-    /// the bytes returned by parse_main_header().main_header shall be byte-identical
-    /// to codestream[0..first_sot_offset].
+    // **Validates: Requirements 1.1, 1.2, 1.5**
+    //
+    // Property 1: Main Header Extraction Preserves Bytes
+    // For any valid J2K codestream containing SOC, SIZ, and at least one SOT marker,
+    // the bytes returned by parse_main_header().main_header shall be byte-identical
+    // to codestream[0..first_sot_offset].
     proptest! {
         #[test]
         fn prop_main_header_extraction_preserves_bytes(
@@ -1378,17 +1378,17 @@ mod tests {
         }
     }
 
-    /// **Validates: Requirements 1.6**
-    ///
-    /// Property 2: TLM Stripping Round-Trip
-    /// For any valid main header with 0–5 TLM segments and 0–3 non-TLM marker
-    /// segments, the decode header produced by parse_main_header().decode_header
-    /// shall satisfy:
-    /// (a) it contains no TLM marker bytes (no 0xFF55 in 2-byte windows),
-    /// (b) all non-TLM marker segments from the original main header are present
-    ///     and byte-identical in the decode_header,
-    /// (c) decode_header starts with SOC (0xFF4F),
-    /// (d) decode_header length equals main_header length minus total TLM segment bytes.
+    // **Validates: Requirements 1.6**
+    //
+    // Property 2: TLM Stripping Round-Trip
+    // For any valid main header with 0–5 TLM segments and 0–3 non-TLM marker
+    // segments, the decode header produced by parse_main_header().decode_header
+    // shall satisfy:
+    // (a) it contains no TLM marker bytes (no 0xFF55 in 2-byte windows),
+    // (b) all non-TLM marker segments from the original main header are present
+    //     and byte-identical in the decode_header,
+    // (c) decode_header starts with SOC (0xFF4F),
+    // (d) decode_header length equals main_header length minus total TLM segment bytes.
     proptest! {
         #[test]
         fn prop_tlm_stripping_round_trip(
