@@ -1,6 +1,6 @@
 //! Error types for the osml-imagery-io crate.
 
-use pyo3::exceptions::{PyIOError, PyIndexError, PyKeyError, PyValueError};
+use pyo3::exceptions::{PyIOError, PyIndexError, PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use thiserror::Error;
 
@@ -148,6 +148,16 @@ pub enum CodecError {
         /// Description of why the mask table is invalid
         reason: String,
     },
+
+    /// Python exception propagated through the callback adapter.
+    ///
+    /// This error is returned when a Python method called by
+    /// `PyCallbackImageAssetProvider` raises an exception.
+    ///
+    /// # Requirements
+    /// - 5.1: CodecError SHALL include a Python variant carrying the exception message
+    #[error("Python error: {0}")]
+    Python(String),
 }
 
 impl From<CodecError> for PyErr {
@@ -202,6 +212,9 @@ impl From<CodecError> for PyErr {
             )),
             CodecError::InvalidMaskTable { reason } => {
                 PyValueError::new_err(format!("Invalid mask table: {}", reason))
+            }
+            CodecError::Python(msg) => {
+                PyRuntimeError::new_err(format!("Python error: {}", msg))
             }
             CodecError::Parse(msg) => PyValueError::new_err(format!("Parse error: {}", msg)),
             _ => PyIOError::new_err(err.to_string()),
@@ -378,6 +391,50 @@ mod tests {
         Python::attach(|py| {
             let py_err: PyErr = err.into();
             assert!(py_err.is_instance_of::<PyIOError>(py));
+        });
+    }
+
+    // =========================================================================
+    // CodecError::Python variant tests (Requirements 5.1, 5.4)
+    // =========================================================================
+
+    #[test]
+    fn test_python_error_display_formatting() {
+        let err = CodecError::Python("something went wrong".to_string());
+        let msg = err.to_string();
+        assert_eq!(msg, "Python error: something went wrong");
+    }
+
+    #[test]
+    fn test_python_error_display_includes_message() {
+        let err = CodecError::Python("custom callback failure".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("custom callback failure"));
+        assert!(msg.starts_with("Python error: "));
+    }
+
+    #[test]
+    fn test_python_error_to_pyerr_is_runtime_error() {
+        Python::initialize();
+
+        let err = CodecError::Python("test exception".to_string());
+
+        Python::attach(|py| {
+            let py_err: PyErr = err.into();
+            assert!(py_err.is_instance_of::<PyRuntimeError>(py));
+        });
+    }
+
+    #[test]
+    fn test_python_error_to_pyerr_contains_message() {
+        Python::initialize();
+
+        let err = CodecError::Python("original error message".to_string());
+
+        Python::attach(|py| {
+            let py_err: PyErr = err.into();
+            let msg = py_err.value(py).to_string();
+            assert!(msg.contains("original error message"));
         });
     }
 }

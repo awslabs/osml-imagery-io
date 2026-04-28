@@ -28,6 +28,7 @@ pub mod asset;
 pub mod buffered_image;
 pub mod buffered_metadata;
 pub mod buffered_text;
+pub(crate) mod callback_provider;
 pub mod codecs;
 pub mod data;
 pub mod graphics;

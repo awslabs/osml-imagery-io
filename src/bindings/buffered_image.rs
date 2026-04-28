@@ -21,7 +21,7 @@ use crate::types::{AssetType, PixelType};
 ///
 /// Note: Uses native byte order for internal representation. The NITF
 /// encoder handles conversion to big-endian at the file boundary.
-fn extract_array_bytes(py: Python<'_>, data: &Py<PyAny>) -> PyResult<Vec<u8>> {
+pub(crate) fn extract_array_bytes(py: Python<'_>, data: &Py<PyAny>) -> PyResult<Vec<u8>> {
     // Get the dtype string from the array
     let dtype_str: String = data
         .getattr(py, "dtype")?

@@ -7,6 +7,9 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 
+use crate::bindings::callback_provider::{
+    is_duck_typed_image_provider, PyCallbackImageAssetProvider,
+};
 use crate::bindings::{
     PyAssetProvider, PyBufferedImageAssetProvider, PyBufferedTextAssetProvider,
     PyDataAssetProvider, PyGraphicsAssetProvider, PyImageAssetProvider, PyMetadataProvider,
@@ -115,12 +118,17 @@ impl PyDatasetWriter {
         } else if let Ok(asset) = provider.extract::<PyRef<PyAssetProvider>>() {
             // PyAssetProvider wraps an AssetProvider enum internally
             asset.inner().clone()
+        } else if is_duck_typed_image_provider(provider) {
+            // Duck-typing fallback for Python-defined image providers
+            let adapter = PyCallbackImageAssetProvider::new(_py, provider)?;
+            AssetProvider::Image(Arc::new(adapter))
         } else {
             return Err(pyo3::exceptions::PyTypeError::new_err(
                 "provider must be an AssetProvider, ImageAssetProvider, \
                  BufferedImageAssetProvider, TextAssetProvider, \
-                 BufferedTextAssetProvider, DataAssetProvider, or \
-                 GraphicsAssetProvider",
+                 BufferedTextAssetProvider, DataAssetProvider, \
+                 GraphicsAssetProvider, or a duck-typed image provider \
+                 with required methods (get_block, num_rows, etc.)",
             ));
         };
 

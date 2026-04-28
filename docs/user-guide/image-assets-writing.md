@@ -222,6 +222,77 @@ with IO.open(["compressed.ntf"], "w", "nitf") as writer:
 ```
 
 
+## Custom Python Image Providers
+
+`add_asset()` also accepts plain Python objects that implement the image provider
+interface via duck typing. This enables lazy per-block processing pipelines — your
+`get_block()` is called during encoding, so you only need O(block_size) memory
+instead of materializing the entire image up front.
+
+```python
+import numpy as np
+from aws.osml.io import IO, BufferedMetadataProvider
+
+class InvertProvider:
+    """Wraps a source image and inverts pixel values on the fly."""
+
+    def __init__(self, source, metadata):
+        self.key = source.key
+        self.title = source.title
+        self.description = source.description
+        self.num_rows = source.num_rows
+        self.num_columns = source.num_columns
+        self.num_bands = source.num_bands
+        self.num_bits_per_pixel = source.num_bits_per_pixel
+        self.actual_bits_per_pixel = source.actual_bits_per_pixel
+        self.pixel_value_type = source.pixel_value_type
+        self.num_pixels_per_block_horizontal = source.num_pixels_per_block_horizontal
+        self.num_pixels_per_block_vertical = source.num_pixels_per_block_vertical
+        self.num_resolution_levels = source.num_resolution_levels
+        self.pad_pixel_value = source.pad_pixel_value
+        self._source = source
+        self._metadata = metadata
+
+    def get_block(self, block_row, block_col, resolution_level, bands=None):
+        block = self._source.get_block(block_row, block_col, resolution_level)
+        return np.iinfo(block.dtype).max - block  # invert
+
+    def get_metadata(self):
+        return self._metadata
+
+with IO.open(["input.ntf"], "r") as reader:
+    source = reader.get_asset("image:0")
+
+    # Copy source metadata and set encoding hints
+    metadata = BufferedMetadataProvider(source=source.metadata)
+    metadata.set("IC", "NC")
+
+    provider = InvertProvider(source, metadata)
+
+    with IO.open(["inverted.ntf"], "w", "nitf") as writer:
+        writer.add_asset("image:0", provider,
+                         "Inverted", "Lazy inversion", ["data"])
+```
+
+A few things to keep in mind:
+
+- **GIL on every block access.** The adapter acquires the Python GIL each time it
+  calls `get_block()` or `has_block()`. All other properties (`num_rows`,
+  `pixel_value_type`, etc.) are cached in Rust at construction time and never
+  re-acquire the GIL.
+- **Optional methods have safe defaults.** If your object has no `has_block` method,
+  all blocks are assumed present. If it has no `get_metadata` method, empty metadata
+  is used.
+- **Required attributes.** The object must have all 14 attributes: `key`, `title`,
+  `description`, `get_block`, `num_rows`, `num_columns`, `num_bands`,
+  `num_bits_per_pixel`, `actual_bits_per_pixel`, `pixel_value_type`,
+  `num_pixels_per_block_horizontal`, `num_pixels_per_block_vertical`,
+  `num_resolution_levels`, and `pad_pixel_value`. A missing attribute produces a
+  `TypeError`.
+- **Exception propagation.** If `get_block()` raises, the exception surfaces as a
+  `RuntimeError` containing the original message.
+
+
 ## Asset Roles and COG Writing
 
 The `roles` parameter on `add_asset()` assigns semantic labels to each asset. Roles
