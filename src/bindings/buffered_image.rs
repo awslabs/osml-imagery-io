@@ -8,6 +8,9 @@ use numpy::PyReadonlyArrayDyn;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use crate::bindings::callback_provider::{
+    is_duck_typed_image_provider, PyCallbackImageAssetProvider,
+};
 use crate::bindings::{PyImageAssetProvider, PyMetadataProvider};
 use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
 use crate::traits::{AssetMetadata, ImageAssetProvider};
@@ -284,8 +287,10 @@ impl PyBufferedImageAssetProvider {
     /// need a fully independent snapshot, iterate over the blocks and
     /// call :meth:`set_block` for each one.
     ///
-    /// :param provider: The source image asset to delegate to.
-    /// :type provider: ImageAssetProvider
+    /// :param provider: The source image asset to delegate to. Accepts
+    ///     :class:`ImageAssetProvider`, :class:`BufferedImageAssetProvider`,
+    ///     or any duck-typed object with the required image provider interface.
+    /// :type provider: ImageAssetProvider | BufferedImageAssetProvider
     /// :param key: Optional new key for the copy. If ``None``, the source
     ///     key is reused.
     /// :type key: str, optional
@@ -314,13 +319,29 @@ impl PyBufferedImageAssetProvider {
     #[staticmethod]
     #[pyo3(signature = (provider, key=None, block_width=None, block_height=None, metadata=None))]
     fn from_provider(
-        provider: &PyImageAssetProvider,
+        py: Python<'_>,
+        provider: &Bound<'_, PyAny>,
         key: Option<&str>,
         block_width: Option<u32>,
         block_height: Option<u32>,
         metadata: Option<&PyMetadataProvider>,
     ) -> PyResult<Self> {
-        let src = provider.inner();
+        // Extract Arc<dyn ImageAssetProvider> from whichever Python type was passed
+        let src: Arc<dyn ImageAssetProvider> =
+            if let Ok(img) = provider.extract::<PyRef<PyImageAssetProvider>>() {
+                img.inner().clone()
+            } else if let Ok(buf) = provider.extract::<PyRef<PyBufferedImageAssetProvider>>() {
+                buf.inner().clone()
+            } else if is_duck_typed_image_provider(provider) {
+                let adapter = PyCallbackImageAssetProvider::new(py, provider)?;
+                Arc::new(adapter)
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "provider must be an ImageAssetProvider, \
+                     BufferedImageAssetProvider, or a duck-typed image \
+                     provider with required methods (get_block, num_rows, etc.)",
+                ));
+            };
 
         let bw = block_width.unwrap_or_else(|| src.num_pixels_per_block_horizontal());
         let bh = block_height.unwrap_or_else(|| src.num_pixels_per_block_vertical());
@@ -340,7 +361,7 @@ impl PyBufferedImageAssetProvider {
         let buffered = BufferedImageAssetProvider::new(asset_key, config)
             .with_title(src.title(), src.description())
             .with_metadata(meta)
-            .with_source(Arc::clone(src));
+            .with_source(Arc::clone(&src));
 
         Ok(Self {
             inner: Arc::new(buffered),
