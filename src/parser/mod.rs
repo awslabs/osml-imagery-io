@@ -14,6 +14,7 @@
 //! - [`ExpressionEvaluator`] - Evaluates expressions for computed values and conditions
 
 mod accessor;
+mod builtins;
 mod definition;
 pub mod encoding;
 mod error;

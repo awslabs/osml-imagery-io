@@ -6,7 +6,7 @@
 //! # Search Path Priority
 //!
 //! Definitions are searched in the following order (later overrides earlier):
-//! 1. Built-in definitions compiled into the library
+//! 1. Built-in definitions compiled into the library (lowest priority)
 //! 2. Package data directory: `$CARGO_MANIFEST_DIR/data/structures/`
 //! 3. Paths from `OSML_IO_STRUCTURE_PATH` environment variable
 //! 4. Runtime-registered definitions (highest priority)
@@ -25,14 +25,42 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
+use super::builtins::builtin_definitions;
 use super::definition::DefinitionLoader;
 use super::error::LoadError;
 use super::types::StructureDefinition;
 
 /// Environment variable for additional structure search paths.
 const STRUCTURE_PATH_ENV: &str = "OSML_IO_STRUCTURE_PATH";
+
+/// Lazily-initialized cache of built-in definitions parsed from embedded YAML.
+///
+/// Parsed once on first access and shared across all `StructureRegistry` instances.
+static BUILTIN_CACHE: OnceLock<HashMap<String, Arc<StructureDefinition>>> = OnceLock::new();
+
+/// Parse all built-in definitions and return a shared map.
+fn get_builtin_cache() -> &'static HashMap<String, Arc<StructureDefinition>> {
+    BUILTIN_CACHE.get_or_init(|| {
+        let mut map = HashMap::new();
+        for (name, yaml) in builtin_definitions() {
+            match DefinitionLoader::load_str(yaml) {
+                Ok(def) => {
+                    map.insert((*name).to_string(), Arc::new(def));
+                }
+                Err(_e) => {
+                    // Skip definitions that fail to parse at startup.
+                    // This should not happen for shipped definitions, but
+                    // we don't want to panic in a library.
+                    #[cfg(debug_assertions)]
+                    eprintln!("Warning: failed to parse built-in definition '{}': {}", name, _e);
+                }
+            }
+        }
+        map
+    })
+}
 
 /// Registry for structure definitions with search path resolution.
 ///
@@ -123,6 +151,7 @@ impl StructureRegistry {
     /// 1. Runtime-registered definitions
     /// 2. File cache
     /// 3. Search paths (loading and caching if found)
+    /// 4. Built-in definitions (compiled into the library)
     ///
     /// Returns `None` if the definition is not found.
     pub fn get(&self, name: &str) -> Option<Arc<StructureDefinition>> {
@@ -145,6 +174,11 @@ impl StructureRegistry {
             let mut cache = self.file_cache.write().unwrap();
             let entry = cache.entry(name.to_string()).or_insert(def);
             return Some(Arc::clone(entry));
+        }
+
+        // Fall back to built-in definitions (lowest priority)
+        if let Some(def) = get_builtin_cache().get(name) {
+            return Some(Arc::clone(def));
         }
 
         None
@@ -180,6 +214,11 @@ impl StructureRegistry {
             }
         }
 
+        // Fall back to built-in definitions (lowest priority)
+        if let Some(def) = get_builtin_cache().get(name) {
+            return Some(Arc::clone(def));
+        }
+
         None
     }
 
@@ -189,6 +228,7 @@ impl StructureRegistry {
     /// - Runtime-registered definitions
     /// - Cached definitions
     /// - All KSY files found in search paths
+    /// - Built-in definitions
     pub fn list(&self) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
 
@@ -213,6 +253,13 @@ impl StructureRegistry {
                         names.push(name);
                     }
                 }
+            }
+        }
+
+        // Add built-in definitions
+        for name in get_builtin_cache().keys() {
+            if !names.contains(name) {
+                names.push(name.clone());
             }
         }
 
@@ -1005,6 +1052,50 @@ mod ksy_integration_tests {
                 report.join("\n")
             );
         }
+    }
+    #[test]
+    fn builtin_definitions_resolve_without_search_paths() {
+        // Simulate the wheel scenario: create a registry with no valid search paths.
+        let mut registry = StructureRegistry {
+            runtime_definitions: HashMap::new(),
+            file_cache: RwLock::new(HashMap::new()),
+            search_paths: Vec::new(), // No filesystem paths at all
+        };
+
+        // The critical definition that triggered the original bug
+        let def = registry.get("nitf_02.10_file_header");
+        assert!(
+            def.is_some(),
+            "nitf_02.10_file_header should be available from built-in definitions"
+        );
+
+        // Verify a sample from each category
+        assert!(
+            registry.get("nitf_02.10_image_subheader").is_some(),
+            "NITF image subheader should be available"
+        );
+        assert!(
+            registry.get("des_tre_overflow").is_some(),
+            "DES definitions should be available"
+        );
+        assert!(
+            registry.get("tre_geolob").is_some(),
+            "TRE definitions should be available"
+        );
+
+        // Verify list() includes built-in names
+        let names = registry.list();
+        assert!(
+            names.contains(&"nitf_02.10_file_header".to_string()),
+            "list() should include built-in definitions"
+        );
+
+        // Verify get_mut() also falls back to built-ins
+        let def_mut = registry.get_mut("nsif_01.00_file_header");
+        assert!(
+            def_mut.is_some(),
+            "NSIF file header should be available via get_mut()"
+        );
     }
 }
 
