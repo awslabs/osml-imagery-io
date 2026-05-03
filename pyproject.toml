@@ -40,7 +40,9 @@ dev = [
 ]
 
 virtualizarr = ["virtualizarr>=2.0"]
-zarr = ["zarr>=3.0", "fsspec"]
+# zarr capped at <3.2: virtualizarr imports zarr.core.metadata.v3.RegularChunkGrid,
+# which was removed in zarr 3.2.0. Remove cap when virtualizarr supports zarr 3.2+.
+zarr = ["zarr>=3.0,<3.2", "fsspec"]
 
 docs = [
     "sphinx>=7.0",

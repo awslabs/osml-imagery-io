@@ -54,7 +54,10 @@ fn get_builtin_cache() -> &'static HashMap<String, Arc<StructureDefinition>> {
                     // This should not happen for shipped definitions, but
                     // we don't want to panic in a library.
                     #[cfg(debug_assertions)]
-                    eprintln!("Warning: failed to parse built-in definition '{}': {}", name, _e);
+                    eprintln!(
+                        "Warning: failed to parse built-in definition '{}': {}",
+                        name, _e
+                    );
                 }
             }
         }

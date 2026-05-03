@@ -38,8 +38,7 @@ fn generate_builtin_definitions() {
     use std::fmt::Write;
     use std::path::Path;
 
-    let manifest_dir =
-        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
 
     let structures_dir = Path::new(&manifest_dir).join("data").join("structures");
@@ -65,11 +64,7 @@ fn generate_builtin_definitions() {
     )
     .unwrap();
     writeln!(code).unwrap();
-    writeln!(
-        code,
-        "pub(crate) const BUILTIN_KSY: &[(&str, &str)] = &["
-    )
-    .unwrap();
+    writeln!(code, "pub(crate) const BUILTIN_KSY: &[(&str, &str)] = &[").unwrap();
     for (name, rel_path) in &ksy_files {
         // Use forward slashes for the path (works on all platforms in include_str!)
         let unix_path = rel_path.replace('\\', "/");
