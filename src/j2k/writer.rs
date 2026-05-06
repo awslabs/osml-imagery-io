@@ -20,8 +20,10 @@
 //! - `J2K_QUALITY_LAYERS` (u8) — quality layers (default 1)
 //! - `J2K_HTJK` (bool) — use HTJ2K (Part 15) encoding (default false)
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::error::CodecError;
 use crate::j2k::codec::{J2KCodec, J2KEncodeParams};
@@ -43,8 +45,15 @@ struct QueuedJ2KAsset {
 /// Queues a single image asset and optional metadata, then encodes
 /// everything into a JPEG 2000 codestream file on `close()`.
 pub struct J2KDatasetWriter {
-    /// Output file path.
-    path: PathBuf,
+    /// Output target, taken by `close()` when writing.
+    ///
+    /// Wrapped in `Mutex` so the struct is `Sync` (required by the
+    /// `DatasetWriter` trait) even though `Box<dyn Write + Send>` alone is
+    /// only `Send`. The inner `Option` allows `close()` to move the writer
+    /// out via `take()` for a final `write_all` + `flush`. There is no
+    /// runtime contention because the `DatasetWriter` methods only ever take
+    /// `&mut self`.
+    output: Mutex<Option<Box<dyn Write + Send>>>,
     /// Whether an image asset has been queued.
     image_queued: bool,
     /// Dataset-level metadata (encoding hints source).
@@ -60,19 +69,45 @@ pub struct J2KDatasetWriter {
 impl J2KDatasetWriter {
     /// Create a new writer targeting the given output path.
     ///
-    /// No file is opened until `close()` is called.
+    /// The file is opened immediately and wrapped in a `BufWriter<File>`,
+    /// then delegated to `new_with_output`.
     #[cfg(feature = "openjpeg")]
     pub fn new(path: impl AsRef<Path>) -> Result<Self, CodecError> {
-        Self::new_with_codec(path, get_j2k_codec())
+        let file = File::create(path.as_ref()).map_err(CodecError::Io)?;
+        let buf_writer = BufWriter::new(file);
+        Self::new_with_output(Box::new(buf_writer))
+    }
+
+    /// Create a new writer targeting the given output writer.
+    ///
+    /// Accepts any `Box<dyn Write + Send>`, enabling output to files, Python
+    /// streams (via `PyWriteStream`), in-memory buffers, or any other
+    /// `Write` implementation.
+    #[cfg(feature = "openjpeg")]
+    pub fn new_with_output(output: Box<dyn Write + Send>) -> Result<Self, CodecError> {
+        Self::new_with_output_and_codec(output, get_j2k_codec())
     }
 
     /// Create a new writer with a specific codec (for testing).
+    ///
+    /// The file is opened immediately and wrapped in a `BufWriter<File>`,
+    /// then delegated to `new_with_output_and_codec`.
     pub(crate) fn new_with_codec(
         path: impl AsRef<Path>,
         codec: Arc<dyn J2KCodec>,
     ) -> Result<Self, CodecError> {
+        let file = File::create(path.as_ref()).map_err(CodecError::Io)?;
+        let buf_writer = BufWriter::new(file);
+        Self::new_with_output_and_codec(Box::new(buf_writer), codec)
+    }
+
+    /// Create a new writer with a specific output writer and codec (for testing).
+    pub(crate) fn new_with_output_and_codec(
+        output: Box<dyn Write + Send>,
+        codec: Arc<dyn J2KCodec>,
+    ) -> Result<Self, CodecError> {
         Ok(Self {
-            path: path.as_ref().to_path_buf(),
+            output: Mutex::new(Some(output)),
             image_queued: false,
             metadata: None,
             closed: false,
@@ -262,8 +297,17 @@ impl DatasetWriter for J2KDatasetWriter {
             .finalize()
             .map_err(|e| CodecError::Encode(format!("J2K encode error: {}", e)))?;
 
-        // Write codestream to file
-        std::fs::write(&self.path, &codestream).map_err(CodecError::Io)?;
+        // Write codestream to the stored output writer
+        let mut output = self
+            .output
+            .lock()
+            .map_err(|_| CodecError::Unsupported("J2K writer output mutex poisoned".to_string()))?
+            .take()
+            .ok_or_else(|| {
+                CodecError::Unsupported("J2K writer output is not available".to_string())
+            })?;
+        output.write_all(&codestream).map_err(CodecError::Io)?;
+        output.flush().map_err(CodecError::Io)?;
 
         Ok(())
     }

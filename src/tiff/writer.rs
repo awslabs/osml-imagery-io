@@ -5,8 +5,10 @@
 //! via `TIFFClientOpen` with custom write callbacks, then flushes to disk on `close()`.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::error::CodecError;
 use crate::tiff::ffi::TiffHandle;
@@ -650,10 +652,17 @@ struct QueuedImageAsset {
 /// Writer for tiled TIFF files implementing the `DatasetWriter` trait.
 ///
 /// Assembles the TIFF in memory via libtiff's `TIFFClientOpen` with custom
-/// write callbacks, then flushes the bytes to disk on `close()`.
+/// write callbacks, then flushes the bytes to the configured output on `close()`.
 pub struct TIFFDatasetWriter {
-    /// Output file path (written on close).
-    path: PathBuf,
+    /// Output target, taken by `close()` when writing.
+    ///
+    /// Wrapped in `Mutex` so the struct is `Sync` (required by the
+    /// `DatasetWriter` trait) even though `Box<dyn Write + Send>` alone is
+    /// only `Send`. The inner `Option` allows `close()` to move the writer
+    /// out via `take()` for a final `write_all` + `flush`. There is no
+    /// runtime contention because the `DatasetWriter` methods only ever take
+    /// `&mut self`.
+    output: Mutex<Option<Box<dyn Write + Send>>>,
     /// Queued image assets in insertion order.
     assets: Vec<QueuedImageAsset>,
     /// Set of asset keys for duplicate detection.
@@ -665,12 +674,27 @@ pub struct TIFFDatasetWriter {
 }
 
 impl TIFFDatasetWriter {
-    /// Create a new writer for the given output path.
+    /// Create a new writer targeting the given output path.
     ///
-    /// No file or libtiff handle is opened until `close()` is called.
+    /// The file is opened immediately and wrapped in a `BufWriter<File>`,
+    /// then delegated to `new_with_output`. This is a behavioral change
+    /// from earlier versions that deferred file opening to `close()`; the
+    /// eager-open pattern is consistent with the PNG/JPEG/J2K writers.
     pub fn new(path: impl AsRef<Path>) -> Result<Self, CodecError> {
+        let file = File::create(path.as_ref()).map_err(CodecError::Io)?;
+        let buf_writer = BufWriter::new(file);
+        Self::new_with_output(Box::new(buf_writer))
+    }
+
+    /// Create a new writer targeting the given output writer.
+    ///
+    /// Accepts any `Box<dyn Write + Send>`, enabling output to files, Python
+    /// streams (via `PyWriteStream`), in-memory buffers, or any other
+    /// `Write` implementation. The assembled TIFF bytes are written in a
+    /// single `write_all` + `flush` during `close()`.
+    pub fn new_with_output(output: Box<dyn Write + Send>) -> Result<Self, CodecError> {
         Ok(Self {
-            path: path.as_ref().to_path_buf(),
+            output: Mutex::new(Some(output)),
             assets: Vec::new(),
             asset_keys: HashSet::new(),
             metadata: None,
@@ -1141,9 +1165,18 @@ impl DatasetWriter for TIFFDatasetWriter {
             )?;
         }
 
-        // Extract assembled TIFF bytes and write to disk
+        // Extract assembled TIFF bytes and write to the stored output writer
         let bytes = handle.into_bytes()?;
-        std::fs::write(&self.path, &bytes).map_err(CodecError::Io)?;
+        let mut output = self
+            .output
+            .lock()
+            .map_err(|_| CodecError::Unsupported("TIFF writer output mutex poisoned".to_string()))?
+            .take()
+            .ok_or_else(|| {
+                CodecError::Unsupported("TIFF writer output is not available".to_string())
+            })?;
+        output.write_all(&bytes).map_err(CodecError::Io)?;
+        output.flush().map_err(CodecError::Io)?;
 
         self.closed = true;
         Ok(())

@@ -21,7 +21,7 @@ import math
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 import numpy as np
 
@@ -125,6 +125,17 @@ _SUPPORTED_DTYPES: dict[str, set[str]] = {
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _is_file_like(obj: object) -> bool:
+    """Return True if *obj* is a file-like object (not a str or list).
+
+    A file-like object is anything that is not a ``str`` or ``list`` and
+    has a ``.read()`` or ``.write()`` attribute.
+    """
+    return not isinstance(obj, (str, list)) and (
+        hasattr(obj, "read") or hasattr(obj, "write")
+    )
 
 
 def _resolve_asset_key(dataset, asset: str | None) -> str:
@@ -274,22 +285,32 @@ def _assemble_blocks(
 
 
 def imread(
-    path: str,
+    path: str | BinaryIO,
     *,
     window: tuple[int, int, int, int] | None = None,
     asset: str | None = None,
     bands: list[int] | None = None,
     resolution_level: int = 0,
     fill_value: int | float = 0,
+    format: str | None = None,
 ) -> NDArray:
     """Read an image file (or a windowed region) as a NumPy array.
 
     Returns a CHW array with shape ``(bands, height, width)``.
 
+    .. note::
+
+       When reading from a stream, the entire content is loaded into memory
+       via ``.read()``. For large files (multi-GB NITF), this is significantly
+       more expensive than the memory-mapped file path. Consider downloading
+       large files to the local filesystem, or using the VirtualiZarr-based
+       tile index for cloud-native range-read access.
+
     Parameters
     ----------
-    path : str
-        Path to the image file.
+    path : str or BinaryIO
+        Path to the image file, or a file-like object containing image
+        bytes.
     window : tuple[int, int, int, int] or None
         Optional pixel region to read as ``(x, y, width, height)`` where
         *x* and *y* are column and row offsets of the top-left corner.
@@ -308,6 +329,10 @@ def imread(
     fill_value : int or float
         Value used to fill regions where ``has_block()`` returns False.
         Defaults to ``0``.
+    format : str or None
+        Explicit format string (e.g. ``"png"``, ``"nitf"``). Required
+        when reading from a stream. If ``None`` and *path* is a string,
+        the format is inferred from the file extension.
 
     Returns
     -------
@@ -320,13 +345,22 @@ def imread(
         If the file does not exist or cannot be opened.
     ValueError
         If the specified asset key does not exist, if the dataset
-        contains no image assets, or if the window has zero or negative
-        dimensions after clamping.
+        contains no image assets, if the window has zero or negative
+        dimensions after clamping, or if *path* is a stream and
+        *format* is not provided.
     """
     # Deferred import to avoid circular imports
     from aws.osml.io import IO
 
-    with IO.open(path, "r") as dataset:
+    if _is_file_like(path) and format is None:
+        raise ValueError(
+            "format is required when reading from a stream "
+            "(e.g., format='png')"
+        )
+
+    open_args = (path, "r", format) if format is not None else (path, "r")
+
+    with IO.open(*open_args) as dataset:
         # Resolve which asset to read
         asset_key = _resolve_asset_key(dataset, asset)
         image_asset = dataset.get_asset(asset_key)
@@ -951,7 +985,7 @@ def _build_geokey_directory(metadata, crs: str) -> None:
 
 
 def imsave(
-    path: str,
+    path: str | BinaryIO,
     data: np.ndarray,
     *,
     compression: str | None = None,
@@ -959,6 +993,7 @@ def imsave(
     corners: list[tuple[float, float]] | None = None,
     crs: str | None = None,
     quality: float | None = None,
+    format: str | None = None,
 ) -> None:
     """Save a NumPy array to an image file.
 
@@ -966,14 +1001,17 @@ def imsave(
     2-D arrays ``(height, width)`` are treated as single-band images
     by reshaping to ``(1, height, width)`` before writing.
 
-    The output format is inferred from the file extension.
+    The output format is inferred from the file extension when *path*
+    is a string and *format* is not provided. When *path* is a
+    file-like object, *format* must be specified explicitly.
 
     Parameters
     ----------
-    path : str
-        Output file path. The extension determines the format
-        (e.g. ``.ntf`` → NITF, ``.tif`` → GeoTIFF, ``.png`` → PNG,
-        ``.j2k`` → JPEG 2000, ``.jpg`` → JPEG).
+    path : str or BinaryIO
+        Output file path or a writable file-like object. When a string,
+        the extension determines the format (e.g. ``.ntf`` → NITF,
+        ``.tif`` → GeoTIFF, ``.png`` → PNG, ``.j2k`` → JPEG 2000,
+        ``.jpg`` → JPEG).
     data : numpy.ndarray
         Pixel data in CHW layout ``(bands, height, width)`` or a 2-D
         array ``(height, width)`` for single-band images.
@@ -996,18 +1034,32 @@ def imsave(
     quality : float or None
         Quality parameter for lossy formats (e.g. JPEG quality 0–100,
         JPEG 2000 compression ratio).
+    format : str or None
+        Explicit format string (e.g. ``"png"``, ``"nitf"``). Required
+        when writing to a stream. If ``None`` and *path* is a string,
+        the format is inferred from the file extension.
 
     Raises
     ------
     ValueError
         If the file extension is not recognized, the array dtype is
         unsupported for the target format, the array has invalid
-        dimensions (0-D, 1-D, or >3-D), or the array is empty.
+        dimensions (0-D, 1-D, or >3-D), the array is empty, or
+        *path* is a stream and *format* is not provided.
     """
     from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 
-    # 1. Infer format from file extension
-    fmt = _resolve_format(path)
+    # 1. Determine format
+    is_stream = _is_file_like(path)
+    if is_stream:
+        if format is None:
+            raise ValueError(
+                "format is required when writing to a stream "
+                "(e.g., format='png')"
+            )
+        fmt = format
+    else:
+        fmt = _resolve_format(path) if format is None else format
 
     # The IO library uses "tiff" as the format string for GeoTIFF
     io_format = "tiff" if fmt == "geotiff" else fmt
@@ -1080,9 +1132,10 @@ def imsave(
 
 
 def iminfo(
-    path: str,
+    path: str | BinaryIO,
     *,
     asset: str | None = None,
+    format: str | None = None,
 ) -> ImageInfo:
     """Get image metadata without reading pixel data.
 
@@ -1092,12 +1145,17 @@ def iminfo(
 
     Parameters
     ----------
-    path : str
-        Path to the image file.
+    path : str or BinaryIO
+        Path to the image file, or a file-like object containing image
+        bytes.
     asset : str or None
         Explicit asset key to inspect. If ``None``, the first image
         asset with role ``"data"`` is used (falling back to the first
         image asset of any role).
+    format : str or None
+        Explicit format string (e.g. ``"png"``, ``"nitf"``). Required
+        when reading from a stream. If ``None`` and *path* is a string,
+        the format is inferred from the file extension.
 
     Returns
     -------
@@ -1112,12 +1170,21 @@ def iminfo(
     IOError
         If the file does not exist or cannot be opened.
     ValueError
-        If the specified asset key does not exist, or if the dataset
-        contains no image assets.
+        If the specified asset key does not exist, if the dataset
+        contains no image assets, or if *path* is a stream and
+        *format* is not provided.
     """
     from aws.osml.io import IO
 
-    with IO.open(path, "r") as dataset:
+    if _is_file_like(path) and format is None:
+        raise ValueError(
+            "format is required when reading from a stream "
+            "(e.g., format='png')"
+        )
+
+    open_args = (path, "r", format) if format is not None else (path, "r")
+
+    with IO.open(*open_args) as dataset:
         asset_key = _resolve_asset_key(dataset, asset)
         image_asset = dataset.get_asset(asset_key)
 
@@ -1142,7 +1209,7 @@ def iminfo(
 
 
 def tiles(
-    path: str,
+    path: str | BinaryIO,
     tile_size: tuple[int, int],
     *,
     overlap: tuple[int, int] = (0, 0),
@@ -1150,6 +1217,7 @@ def tiles(
     bands: list[int] | None = None,
     resolution_level: int = 0,
     fill_value: int | float = 0,
+    format: str | None = None,
 ) -> Iterator[Tile]:
     """Iterate over fixed-size tiles of an image.
 
@@ -1162,8 +1230,9 @@ def tiles(
 
     Parameters
     ----------
-    path : str
-        Path to the image file.
+    path : str or BinaryIO
+        Path to the image file, or a file-like object containing image
+        bytes.
     tile_size : tuple[int, int]
         Tile dimensions as ``(width, height)``.
     overlap : tuple[int, int]
@@ -1181,6 +1250,10 @@ def tiles(
     fill_value : int or float
         Value used to fill regions where ``has_block()`` returns False.
         Defaults to ``0``.
+    format : str or None
+        Explicit format string (e.g. ``"png"``, ``"nitf"``). Required
+        when reading from a stream. If ``None`` and *path* is a string,
+        the format is inferred from the file extension.
 
     Yields
     ------
@@ -1193,10 +1266,17 @@ def tiles(
         If the file does not exist or cannot be opened.
     ValueError
         If *tile_size* has non-positive dimensions, if *overlap* is
-        greater than or equal to *tile_size* in either dimension, or
-        if the specified asset key does not exist.
+        greater than or equal to *tile_size* in either dimension, if
+        the specified asset key does not exist, or if *path* is a
+        stream and *format* is not provided.
     """
     from aws.osml.io import IO
+
+    if _is_file_like(path) and format is None:
+        raise ValueError(
+            "format is required when reading from a stream "
+            "(e.g., format='png')"
+        )
 
     tile_w, tile_h = tile_size
     overlap_w, overlap_h = overlap
@@ -1215,7 +1295,9 @@ def tiles(
     stride_w = tile_w - overlap_w
     stride_h = tile_h - overlap_h
 
-    with IO.open(path, "r") as dataset:
+    open_args = (path, "r", format) if format is not None else (path, "r")
+
+    with IO.open(*open_args) as dataset:
         # Resolve which asset to read
         asset_key = _resolve_asset_key(dataset, asset)
         image_asset = dataset.get_asset(asset_key)

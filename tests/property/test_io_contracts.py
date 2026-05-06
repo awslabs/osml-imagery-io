@@ -583,9 +583,9 @@ class TestTiffFormatDetection:
         keys = reader.get_asset_keys()
         assert "image:0" in keys
 
-    def test_tiff_write_mode_supported(self):
+    def test_tiff_write_mode_supported(self, tmp_path):
         """TIFF write mode creates a writer successfully."""
-        writer = IO.open(["output.tif"], "w", "tiff")
+        writer = IO.open([str(tmp_path / "output.tif")], "w", "tiff")
         assert writer is not None
 
     def test_tiff_has_asset_consistency(self):

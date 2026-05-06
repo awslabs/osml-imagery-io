@@ -14,9 +14,9 @@
 
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::BufWriter;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::io::{BufWriter, Write};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::error::CodecError;
 use crate::traits::{AssetProvider, DatasetWriter, MetadataProvider};
@@ -47,8 +47,15 @@ struct QueuedPngAsset {
 /// Queues a single image asset and optional metadata, then encodes
 /// everything into a valid PNG file on `close()`.
 pub struct PNGDatasetWriter {
-    /// Output file path.
-    path: PathBuf,
+    /// Output target, taken by `close()` when writing.
+    ///
+    /// Wrapped in `Mutex` so the struct is `Sync` (required by the
+    /// `DatasetWriter` trait) even though `Box<dyn Write + Send>` alone is
+    /// only `Send`. The inner `Option` allows `close()` to move the writer
+    /// out via `take()`, which is needed because `png::Encoder::new` consumes
+    /// the writer by value. There is no runtime contention because the
+    /// `DatasetWriter` methods only ever take `&mut self`.
+    output: Mutex<Option<Box<dyn Write + Send>>>,
     /// Whether an image asset has been queued.
     image_queued: bool,
     /// Dataset-level metadata (encoding hints, tEXt source).
@@ -62,10 +69,22 @@ pub struct PNGDatasetWriter {
 impl PNGDatasetWriter {
     /// Create a new writer targeting the given output path.
     ///
-    /// No file is opened until `close()` is called.
+    /// The file is opened immediately and wrapped in a `BufWriter<File>`,
+    /// then delegated to `new_with_output`.
     pub fn new(path: impl AsRef<Path>) -> Result<Self, CodecError> {
+        let file = File::create(path.as_ref()).map_err(CodecError::Io)?;
+        let buf_writer = BufWriter::new(file);
+        Self::new_with_output(Box::new(buf_writer))
+    }
+
+    /// Create a new writer targeting the given output writer.
+    ///
+    /// Accepts any `Box<dyn Write + Send>`, enabling output to files, Python
+    /// streams (via `PyWriteStream`), in-memory buffers, or any other
+    /// `Write` implementation.
+    pub fn new_with_output(output: Box<dyn Write + Send>) -> Result<Self, CodecError> {
         Ok(Self {
-            path: path.as_ref().to_path_buf(),
+            output: Mutex::new(Some(output)),
             image_queued: false,
             metadata: None,
             closed: false,
@@ -341,11 +360,17 @@ impl DatasetWriter for PNGDatasetWriter {
             }
         };
 
-        // Create the output file and encoder
-        let file = File::create(&self.path).map_err(CodecError::Io)?;
-        let buf_writer = BufWriter::new(file);
+        // Create the encoder using the stored output writer
+        let output = self
+            .output
+            .lock()
+            .map_err(|_| CodecError::Unsupported("PNG writer output mutex poisoned".to_string()))?
+            .take()
+            .ok_or_else(|| {
+                CodecError::Unsupported("PNG writer output is not available".to_string())
+            })?;
 
-        let mut encoder = png::Encoder::new(buf_writer, width, height);
+        let mut encoder = png::Encoder::new(output, width, height);
         encoder.set_color(color_type);
         encoder.set_depth(bit_depth);
 
@@ -392,6 +417,12 @@ impl DatasetWriter for PNGDatasetWriter {
 
         writer
             .write_image_data(&encoded_data)
+            .map_err(|e| CodecError::Encode(format!("PNG encode error: {}", e)))?;
+
+        // Explicitly finish to write IEND and flush the underlying writer,
+        // surfacing any I/O errors instead of silently dropping them.
+        writer
+            .finish()
             .map_err(|e| CodecError::Encode(format!("PNG encode error: {}", e)))?;
 
         Ok(())

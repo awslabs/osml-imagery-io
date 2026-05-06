@@ -37,6 +37,7 @@ pub mod io;
 pub mod metadata;
 pub mod parser;
 pub mod reader;
+pub(crate) mod stream;
 pub mod text;
 pub mod writer;
 

@@ -138,27 +138,33 @@ class TestDuplicateKeyRejection:
             "image:0", hints,
         )
 
-        writer = IO.open([f"dup_test{ext}"], "w", fmt)
-        writer.metadata = metadata
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+            path = Path(f.name)
 
-        # First add should succeed
-        writer.add_asset(
-            key="image:0",
-            provider=provider1,
-            title="Image 0",
-            description="",
-            roles=["data"],
-        )
+        try:
+            writer = IO.open([str(path)], "w", fmt)
+            writer.metadata = metadata
 
-        # Second add with same key should fail
-        with pytest.raises(Exception):
+            # First add should succeed
             writer.add_asset(
                 key="image:0",
-                provider=provider2,
-                title="Image 0 dup",
+                provider=provider1,
+                title="Image 0",
                 description="",
                 roles=["data"],
             )
+
+            # Second add with same key should fail
+            with pytest.raises(Exception):
+                writer.add_asset(
+                    key="image:0",
+                    provider=provider2,
+                    title="Image 0 dup",
+                    description="",
+                    roles=["data"],
+                )
+        finally:
+            path.unlink(missing_ok=True)
 
 
 # =============================================================================

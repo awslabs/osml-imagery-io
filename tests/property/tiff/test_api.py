@@ -538,8 +538,8 @@ class TestTiffNonImageAssetRejection:
     on a TIFFDatasetWriter shall raise an error. TIFF only supports images.
     """
 
-    def test_text_asset_rejected(self):
-        writer = IO.open(["reject_text.tif"], "w", "tiff")
+    def test_text_asset_rejected(self, tmp_path):
+        writer = IO.open([str(tmp_path / "reject_text.tif")], "w", "tiff")
         asset = AssetProvider.from_bytes(
             key="text:0",
             data=b"Hello world",
@@ -549,8 +549,8 @@ class TestTiffNonImageAssetRejection:
         with pytest.raises(Exception):
             writer.add_asset("text:0", asset, "Text", "desc", ["metadata"])
 
-    def test_data_asset_rejected(self):
-        writer = IO.open(["reject_data.tif"], "w", "tiff")
+    def test_data_asset_rejected(self, tmp_path):
+        writer = IO.open([str(tmp_path / "reject_data.tif")], "w", "tiff")
         asset = AssetProvider.from_bytes(
             key="des:0",
             data=b"\x00\x01\x02",

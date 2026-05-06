@@ -27,8 +27,8 @@
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::error::CodecError;
 use crate::jbp::error::JBPError;
@@ -301,8 +301,15 @@ struct QueuedAsset {
 /// The writer is `Send + Sync` to allow use across threads, though
 /// typical usage is single-threaded.
 pub struct JBPDatasetWriter {
-    /// Output file path
-    path: PathBuf,
+    /// Output target, taken by `close()` when writing.
+    ///
+    /// Wrapped in `Mutex` so the struct is `Sync` (required by the
+    /// `DatasetWriter` trait) even though `Box<dyn Write + Send>` alone is
+    /// only `Send`. The inner `Option` allows `close()` to move the writer
+    /// out via `take()` for the final `write_all` + `flush`. There is no
+    /// runtime contention because the `DatasetWriter` methods only ever take
+    /// `&mut self`.
+    output: Mutex<Option<Box<dyn Write + Send>>>,
     /// Output format (NITF 2.1 or NSIF 1.0)
     format: NitfFormat,
     /// Queued assets in order of addition
@@ -320,7 +327,8 @@ pub struct JBPDatasetWriter {
 impl JBPDatasetWriter {
     /// Create a new writer for the specified path and format.
     ///
-    /// The file is not created until `close()` is called.
+    /// The output file is opened immediately and wrapped in a
+    /// `BufWriter<File>`, then delegated to [`Self::new_with_output`].
     ///
     /// # Arguments
     /// * `path` - Output file path
@@ -335,8 +343,29 @@ impl JBPDatasetWriter {
     /// let writer = JBPDatasetWriter::new("output.ntf", NitfFormat::Nitf21)?;
     /// ```
     pub fn new(path: impl AsRef<Path>, format: NitfFormat) -> Result<Self, CodecError> {
+        let file = File::create(path.as_ref())
+            .map_err(|e| CodecError::from(JBPError::IoError { source: e }))?;
+        let buf_writer = BufWriter::new(file);
+        Self::new_with_output(Box::new(buf_writer), format)
+    }
+
+    /// Create a new writer targeting the given output writer.
+    ///
+    /// Accepts any `Box<dyn Write + Send>`, enabling output to files, Python
+    /// streams (via `PyWriteStream`), in-memory buffers, or any other
+    /// `Write` implementation. The caller is responsible for providing a
+    /// buffered writer when the underlying sink has small per-write
+    /// overhead.
+    ///
+    /// # Arguments
+    /// * `output` - Output writer to receive the assembled NITF bytes
+    /// * `format` - NITF format variant (NITF 2.1 or NSIF 1.0)
+    pub fn new_with_output(
+        output: Box<dyn Write + Send>,
+        format: NitfFormat,
+    ) -> Result<Self, CodecError> {
         Ok(Self {
-            path: path.as_ref().to_path_buf(),
+            output: Mutex::new(Some(output)),
             format,
             assets: Vec::new(),
             asset_keys: HashSet::new(),
@@ -351,6 +380,10 @@ impl JBPDatasetWriter {
     /// The registry is used to look up TRE definitions for serializing
     /// TRE field values from metadata.
     ///
+    /// The output file is opened immediately and wrapped in a
+    /// `BufWriter<File>`, then delegated to
+    /// [`Self::new_with_output_and_registry`].
+    ///
     /// # Arguments
     /// * `path` - Output file path
     /// * `format` - NITF format variant (NITF 2.1 or NSIF 1.0)
@@ -363,8 +396,28 @@ impl JBPDatasetWriter {
         format: NitfFormat,
         registry: Arc<StructureRegistry>,
     ) -> Result<Self, CodecError> {
+        let file = File::create(path.as_ref())
+            .map_err(|e| CodecError::from(JBPError::IoError { source: e }))?;
+        let buf_writer = BufWriter::new(file);
+        Self::new_with_output_and_registry(Box::new(buf_writer), format, registry)
+    }
+
+    /// Create a new writer with TRE support targeting the given output writer.
+    ///
+    /// Accepts any `Box<dyn Write + Send>`, enabling output to files, Python
+    /// streams, in-memory buffers, or any other `Write` implementation.
+    ///
+    /// # Arguments
+    /// * `output` - Output writer to receive the assembled NITF bytes
+    /// * `format` - NITF format variant (NITF 2.1 or NSIF 1.0)
+    /// * `registry` - Structure registry containing TRE definitions
+    pub fn new_with_output_and_registry(
+        output: Box<dyn Write + Send>,
+        format: NitfFormat,
+        registry: Arc<StructureRegistry>,
+    ) -> Result<Self, CodecError> {
         Ok(Self {
-            path: path.as_ref().to_path_buf(),
+            output: Mutex::new(Some(output)),
             format,
             assets: Vec::new(),
             asset_keys: HashSet::new(),
@@ -377,11 +430,6 @@ impl JBPDatasetWriter {
     /// Get the output format.
     pub fn format(&self) -> NitfFormat {
         self.format
-    }
-
-    /// Get the output path.
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     /// Get the number of queued assets.
@@ -2377,9 +2425,17 @@ impl DatasetWriter for JBPDatasetWriter {
             + des_info.iter().map(|(sh, d)| sh + d).sum::<usize>();
         let file_length = header_length + segments_length;
 
-        // Create output file
-        let file = File::create(&self.path).map_err(|e| JBPError::IoError { source: e })?;
-        let mut writer = BufWriter::new(file);
+        // Take the stored output writer — the file was opened eagerly at
+        // construction time (or supplied by the caller via
+        // `new_with_output` / `new_with_output_and_registry`).
+        let mut writer = self
+            .output
+            .lock()
+            .map_err(|_| CodecError::Unsupported("JBP writer output mutex poisoned".to_string()))?
+            .take()
+            .ok_or_else(|| {
+                CodecError::Unsupported("JBP writer output is not available".to_string())
+            })?;
 
         // Write file header
         self.write_file_header(
@@ -2718,7 +2774,6 @@ mod tests {
         let writer = JBPDatasetWriter::new(&path, NitfFormat::Nitf21).unwrap();
 
         assert_eq!(writer.format(), NitfFormat::Nitf21);
-        assert_eq!(writer.path(), path);
         assert_eq!(writer.asset_count(), 0);
         assert!(!writer.is_closed());
     }

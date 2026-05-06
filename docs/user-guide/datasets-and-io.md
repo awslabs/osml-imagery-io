@@ -32,28 +32,132 @@ the format (NITF, TIFF/GeoTIFF, PNG, etc.) and returns a `DatasetReader` or `Dat
 ```python
 from aws.osml.io import IO
 
-# Read mode — returns a DatasetReader (format auto-detected)
+# Read mode — format auto-detected from extension
 with IO.open(["image.ntf"], "r") as dataset:
     print(type(dataset))  # DatasetReader
 
-with IO.open(["image.tif"], "r") as dataset:
-    print(type(dataset))  # DatasetReader
-
-with IO.open(["image.png"], "r") as dataset:
-    print(type(dataset))  # DatasetReader
-
-# Write mode — returns a DatasetWriter
-with IO.open(["output.ntf"], "w", "nitf") as writer:
-    print(type(writer))  # DatasetWriter
-
+# Write mode — format specified explicitly
 with IO.open(["output.tif"], "w", "geotiff") as writer:
-    print(type(writer))  # DatasetWriter
-
-with IO.open(["output.png"], "w", "png") as writer:
     print(type(writer))  # DatasetWriter
 ```
 
 Use the context manager (`with`) to ensure file handles are released when you're done.
+
+## Input Sources
+
+`IO.open()` and the convenience functions (`imread`, `imsave`, `iminfo`, `tiles`)
+accept two kinds of input:
+
+### File paths (recommended for large files)
+
+Pass a string path (or list of paths for multi-file pyramids). The library
+memory-maps the file, so only the pages you access are loaded into RAM. This is
+the most performant option — the operating system efficiently manages loading
+imagery from disk into memory without requiring the entire file to be resident.
+
+```python
+from aws.osml.io import imread
+
+pixels = imread("large_image.ntf")
+```
+
+### Python file-like objects
+
+Any object with a standard `.read()` / `.write()` interface works — `io.BytesIO`,
+fsspec handles, HTTP response bodies, or any duck-typed object with the required
+methods. This is convenient when you already have bytes in memory or want to
+encode directly to a buffer without touching the filesystem.
+
+```python
+import io
+from aws.osml.io import IO, imread, imsave
+import numpy as np
+
+# Read from an in-memory buffer
+png_bytes = download_image_bytes()
+pixels = imread(io.BytesIO(png_bytes), format="png")
+
+# Write directly to a buffer
+data = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
+buffer = io.BytesIO()
+imsave(buffer, data, format="jpeg")
+```
+
+### Trade-offs
+
+Stream sources are read entirely into memory via a single `.read()` call. For
+large files (multi-GB NITF imagery) this can be problematic:
+
+- **Memory pressure** — the full file must fit in RAM, unlike memory-mapped paths
+  which load pages on demand.
+- **Latency for remote files** — if the stream backs cloud storage (e.g., an
+  fsspec S3 handle), the entire file must be downloaded before decoding begins.
+
+For efficient access to large remote imagery without downloading the full file,
+use the [VirtualiZarr tile-based access](zarr-codecs.md) path. It issues HTTP
+range requests for only the tiles you need:
+
+```python
+import zarr
+import numpy as np
+from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
+from zarr.storage._fsspec import FsspecStore
+
+fs = MultiReferenceFileSystem(
+    fo="s3://bucket/image.ntf.tile_index.json",
+    template_overrides={"base": "s3://bucket/imagery/"},
+    asynchronous=True,
+    remote_options={"asynchronous": True},
+    skip_instance_cache=True,
+)
+store = FsspecStore(fs=fs, read_only=True, path="")
+root = zarr.open_group(store, mode="r", zarr_format=2)
+
+# Read only the tiles you need — no full-file download
+tile = np.asarray(root["0/data"][0:3, 0:256, 0:256])
+```
+
+See [Cloud Imagery Access via Zarr](zarr-codecs.md) for the full workflow.
+
+Alternatively, download the remote file to a local path first to get
+memory-mapped performance:
+
+```python
+import tempfile
+from aws.osml.io import imread
+
+with tempfile.NamedTemporaryFile(suffix=".ntf") as tmp:
+    tmp.write(remote_file.read())
+    tmp.flush()
+    pixels = imread(tmp.name)
+```
+
+### The `format` parameter
+
+When working with streams, the library cannot infer the image format from a file
+extension. The `format` parameter is **required** for all stream operations:
+
+```python
+# Raises ValueError — no format specified
+imread(io.BytesIO(data))
+
+# Works
+imread(io.BytesIO(data), format="png")
+```
+
+Supported format strings: `"nitf"`, `"tiff"`, `"png"`, `"j2k"`, `"jpeg"`.
+
+When using file paths, `format` remains optional — the library infers it from the
+file extension.
+
+### When streams are a good fit
+
+- The file is small enough to fit in memory (PNG thumbnails, JPEG tiles, small
+  NITF chips)
+- You already have the bytes in memory (HTTP response bodies, message payloads)
+- You want to encode output directly to a buffer without a temporary file (tile
+  server responses)
+- You are using fsspec handles for moderate-sized files from cloud storage
 
 ## Dataset Structure
 
@@ -218,6 +322,64 @@ Some things to keep in mind with multi-file pyramids:
   only.
 - The same multi-path pattern works for writing — see
   [Writing Multi-File R-Set Pyramids](image-assets-writing.md#writing-multi-file-r-set-pyramids).
+
+### Streams and Explicit Roles
+
+When sources are streams rather than file paths, there are no filenames to parse for
+`.rN` suffixes. The `roles` parameter tells the library the purpose of each source
+explicitly:
+
+```python
+import io
+from aws.osml.io import IO
+
+base_stream = io.BytesIO(base_bytes)
+overview1_stream = io.BytesIO(overview1_bytes)
+overview2_stream = io.BytesIO(overview2_bytes)
+
+with IO.open(
+    [base_stream, overview1_stream, overview2_stream],
+    "r",
+    format="nitf",
+    roles=[["data"], ["overview:1"], ["overview:2"]],
+) as dataset:
+    # Same asset key structure as file-path R-sets
+    for key in dataset.get_asset_keys(asset_type="image"):
+        asset = dataset.get_asset(key)
+        print(f"{key}: {asset.num_columns}x{asset.num_rows}")
+    # image:0: 4096x4096
+    # image:0:overview:1: 2048x2048
+    # image:0:overview:2: 1024x1024
+```
+
+The `roles` parameter assigns semantic roles to each source in a multi-source
+dataset:
+
+| First argument | `roles` type | Description |
+|----------------|--------------|-------------|
+| Single source (`str` or stream) | `list[str]` | Roles for the single source |
+| List of sources | `list[list[str]]` | One inner list per source (must match list length) |
+
+Role strings:
+
+| Role string | Meaning |
+|-------------|---------|
+| `"data"` | Base image (full resolution). If omitted, the first source is treated as the base. |
+| `"overview:N"` | R-set overview at level N (N ≥ 1). Maps to the `image:0:overview:N` asset key. |
+
+When `roles` is required:
+
+- **List of streams** — always required (no filenames to detect from). Omitting raises `ValueError`.
+- **List of file paths with `roles`** — explicit roles override `.rN` filename detection.
+- **List of file paths without `roles`** — falls back to `.rN` detection (common convention).
+
+```python
+# Paths with explicit roles — bypasses .rN detection
+IO.open(["base.ntf", "ovr.ntf"], "r", roles=[["data"], ["overview:1"]])
+
+# Paths without roles — uses .rN detection
+IO.open(["image.ntf", "image.ntf.r1"], "r")
+```
 
 ## Discovering Assets
 

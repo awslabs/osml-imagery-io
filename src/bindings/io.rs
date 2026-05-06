@@ -4,46 +4,100 @@
 //! reader/writer implementations based on URI scheme and file format.
 
 use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
 use memmap2::Mmap;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyIOError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyList};
 
+use crate::bindings::stream::PyWriteStream;
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
 use crate::composite::{CompositeDatasetReader, CompositeDatasetWriter};
 
-/// Accepts either a single string or a list of strings from Python.
+/// Accepts a single string, a list of strings, a single file-like object,
+/// or a list of file-like objects from Python.
 ///
-/// This enum allows `IO.open()` to accept both `str` and `list[str]` as the
-/// `paths` argument, normalizing a bare string to a single-element list.
+/// This enum allows `IO.open()` to accept:
+/// - `str` → `Single` (single file path)
+/// - `list[str]` → `Multiple` (R-set file paths)
+/// - file-like object → `Stream` (single stream)
+/// - `list[BinaryIO]` → `StreamList` (multi-source streams, requires `roles`)
 #[cfg_attr(test, derive(Debug))]
 enum PathsArg {
     Single(String),
     Multiple(Vec<String>),
+    Stream(Py<PyAny>),
+    StreamList(Vec<Py<PyAny>>),
+}
+
+/// Returns true if the object is file-like (has a `.read` or `.write` attribute).
+///
+/// This is a duck-typing check that matches any object implementing the
+/// standard Python read/write protocol — `io.BytesIO`, fsspec file handles,
+/// HTTP response stream wrappers, etc.
+fn is_file_like(obj: &Bound<'_, PyAny>) -> bool {
+    obj.hasattr("read").unwrap_or(false) || obj.hasattr("write").unwrap_or(false)
 }
 
 impl<'a, 'py> FromPyObject<'a, 'py> for PathsArg {
     type Error = PyErr;
 
     fn extract(ob: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        // Try `str` first — this takes precedence so a bare Python string is
+        // always treated as a file path, even though strings happen to have
+        // attributes that collide with file-like probing.
         if let Ok(s) = ob.extract::<String>() {
-            Ok(PathsArg::Single(s))
-        } else if let Ok(v) = ob.extract::<Vec<String>>() {
-            Ok(PathsArg::Multiple(v))
-        } else {
-            Err(PyValueError::new_err("paths must be a str or list[str]"))
+            return Ok(PathsArg::Single(s));
         }
-    }
-}
 
-impl From<PathsArg> for Vec<String> {
-    fn from(arg: PathsArg) -> Vec<String> {
-        match arg {
-            PathsArg::Single(s) => vec![s],
-            PathsArg::Multiple(v) => v,
+        // Try a list — the elements are either all strings (path list) or
+        // all file-like objects (stream list); mixed lists are rejected.
+        if let Ok(list) = ob.cast::<PyList>() {
+            let mut strings: Vec<String> = Vec::new();
+            let mut streams: Vec<Py<PyAny>> = Vec::new();
+
+            for item in list.iter() {
+                if let Ok(s) = item.extract::<String>() {
+                    if !streams.is_empty() {
+                        return Err(PyTypeError::new_err(
+                            "List elements must be all strings or all file-like objects \
+                             (mixed list not supported)",
+                        ));
+                    }
+                    strings.push(s);
+                } else if is_file_like(&item) {
+                    if !strings.is_empty() {
+                        return Err(PyTypeError::new_err(
+                            "List elements must be all strings or all file-like objects \
+                             (mixed list not supported)",
+                        ));
+                    }
+                    streams.push(item.clone().unbind());
+                } else {
+                    return Err(PyTypeError::new_err(
+                        "List elements must be all strings or all file-like objects",
+                    ));
+                }
+            }
+
+            if !strings.is_empty() {
+                return Ok(PathsArg::Multiple(strings));
+            }
+            if !streams.is_empty() {
+                return Ok(PathsArg::StreamList(streams));
+            }
+            return Err(PyValueError::new_err("paths list cannot be empty"));
         }
+
+        // Not a str, not a list — try a single file-like object.
+        if is_file_like(&ob) {
+            return Ok(PathsArg::Stream(Py::<PyAny>::from(ob)));
+        }
+
+        Err(PyValueError::new_err("paths must be a str or list[str]"))
     }
 }
 use crate::error::CodecError;
@@ -105,12 +159,14 @@ impl ParsedUri {
 
 /// Entry point for opening geospatial datasets for reading or writing.
 ///
-/// The ``IO`` class provides a single static method, ``open``, that accepts a
-/// file path string or a list of file paths (or URIs) and returns either a
-/// :class:`DatasetReader` or a :class:`DatasetWriter` depending on the requested
-/// mode. The file format is auto-detected from the extension and file header
-/// bytes when reading; supported formats include NITF 2.0/2.1, NSIF 1.0, and
-/// TIFF/GeoTIFF. Both local file paths and ``file://`` URIs are supported.
+/// The ``IO`` class provides a single static method, ``open``, that accepts
+/// a file path string, a list of file paths, a file-like object (stream),
+/// or a list of file-like objects, and returns either a
+/// :class:`DatasetReader` or a :class:`DatasetWriter` depending on the
+/// requested mode. The file format is auto-detected from the extension and
+/// file header bytes when reading from paths; when reading from a stream,
+/// the ``format`` parameter must be specified explicitly. Both local file
+/// paths and ``file://`` URIs are supported.
 ///
 /// Example:
 ///
@@ -121,6 +177,11 @@ impl ParsedUri {
 /// with IO.open("image.ntf", "r") as dataset:
 ///     keys = dataset.get_asset_keys()
 ///     asset = dataset.get_asset(keys[0])
+///
+/// # Read mode — from an in-memory byte buffer
+/// import io
+/// with IO.open(io.BytesIO(raw_bytes), "r", format="png") as dataset:
+///     keys = dataset.get_asset_keys()
 ///
 /// # Write mode — returns a DatasetWriter
 /// with IO.open("output.ntf", "w", "nitf") as writer:
@@ -133,107 +194,211 @@ pub struct IO;
 impl IO {
     /// Open a dataset for reading or writing.
     ///
-    /// The format is auto-detected from the file extension when reading. When
-    /// writing, a format string must be provided. Use a context manager (``with``
-    /// statement) on the returned object to ensure file handles are released.
+    /// The format is auto-detected from the file extension when reading from
+    /// a file path. When writing to a file, a format string is inferred from
+    /// the extension or may be provided explicitly. When reading from or
+    /// writing to a file-like object (stream), the ``format`` parameter is
+    /// required since there is no filename to inspect. Use a context manager
+    /// (``with`` statement) on the returned object to ensure file handles
+    /// are released.
     ///
-    /// :param paths: A file path or list of file paths to the dataset. For
-    ///     single-file formats a bare string is accepted (``"image.ntf"``).
-    ///     For multi-file R-set datasets a list is required. Accepts local
-    ///     paths, ``file://`` URIs, and ``s3://`` URIs.
-    /// :type paths: str | list[str]
+    /// :param paths: A file path, list of file paths, file-like object, or
+    ///     list of file-like objects. For single-file formats a bare string
+    ///     is accepted (``"image.ntf"``). For multi-file R-set datasets a
+    ///     list is required. File-like objects must implement ``.read()``
+    ///     for read mode and ``.write()`` + ``.flush()`` for write mode
+    ///     (e.g., ``io.BytesIO``, fsspec file handles). Accepts local paths,
+    ///     ``file://`` URIs, and ``s3://`` URIs.
+    /// :type paths: str | list[str] | BinaryIO | list[BinaryIO]
     /// :param mode: ``"r"`` for reading or ``"w"`` for writing. Defaults to
     ///     ``"r"``.
     /// :type mode: str
-    /// :param format: Format identifier required when *mode* is ``"w"``
-    ///     (e.g., ``"nitf"``, ``"geotiff"``). Ignored when reading.
+    /// :param format: Format identifier (e.g., ``"nitf"``, ``"geotiff"``,
+    ///     ``"png"``). Required when ``paths`` is a stream or list of
+    ///     streams. Required when writing to a file with an unrecognized
+    ///     extension. Optional otherwise.
     /// :type format: str or None
+    /// :param roles: Explicit role strings for each source. ``list[str]``
+    ///     when ``paths`` is a single source, ``list[list[str]]`` when
+    ///     ``paths`` is a list. Recognised roles: ``"data"`` designates the
+    ///     base source; ``"overview:N"`` (N >= 1) designates an R-set
+    ///     overview at resolution level N. ``roles`` is required when
+    ///     ``paths`` is a list of streams (no filename to derive roles
+    ///     from). For a list of file paths, ``roles`` is optional; if
+    ///     omitted, the library falls back to ``.rN`` filename detection
+    ///     for backward compatibility.
+    /// :type roles: list[str] or list[list[str]] or None
     /// :returns: A :class:`DatasetReader` when *mode* is ``"r"``, or a
     ///     :class:`DatasetWriter` when *mode* is ``"w"``.
     /// :rtype: DatasetReader or DatasetWriter
-    /// :raises ValueError: If *paths* is empty, the mode is invalid, or the
-    ///     file format is not supported.
+    /// :raises ValueError: If *paths* is empty, the mode is invalid, the
+    ///     file format is not supported, or ``format``/``roles`` is missing
+    ///     when required.
+    /// :raises TypeError: If ``paths`` has an invalid type, or a file-like
+    ///     object is missing the required methods.
     /// :raises IOError: If the file cannot be opened.
+    ///
+    /// .. note::
+    ///
+    ///    When reading from a stream, the entire content is loaded into
+    ///    memory via ``.read()``. For large files (multi-GB NITF) this is
+    ///    significantly more expensive than the memory-mapped file path.
+    ///    Consider downloading large files to the local filesystem, or
+    ///    using the library's VirtualiZarr-based tile index for
+    ///    cloud-native range-read access.
     ///
     /// Example:
     ///
     /// ```python
     /// from aws.osml.io import IO
+    /// import io
     ///
     /// # Read mode — single string path
     /// with IO.open("image.ntf", "r") as dataset:
     ///     print(type(dataset))  # DatasetReader
     ///
-    /// # Read mode — list of paths (R-set)
+    /// # Read mode — list of paths (R-set, .rN detection)
     /// with IO.open(["image.ntf", "image.ntf.r1"], "r") as dataset:
     ///     print(type(dataset))  # DatasetReader
     ///
-    /// # Write mode — format must be specified
-    /// with IO.open("output.ntf", "w", "nitf") as writer:
-    ///     print(type(writer))  # DatasetWriter
+    /// # Read mode — list of streams with explicit roles
+    /// streams = [open("image.ntf", "rb"), open("image.ntf.r1", "rb")]
+    /// with IO.open(streams, "r", format="nitf",
+    ///              roles=[["data"], ["overview:1"]]) as dataset:
+    ///     print(type(dataset))  # DatasetReader
+    ///
+    /// # Write mode — to an in-memory buffer
+    /// buf = io.BytesIO()
+    /// with IO.open(buf, "w", "png") as writer:
+    ///     writer.add_asset("image", provider, "Title", "Description", ["data"])
+    /// encoded_bytes = buf.getvalue()
     /// ```
     #[staticmethod]
-    #[pyo3(signature = (paths, mode="r", format=None))]
+    #[pyo3(signature = (paths, mode="r", format=None, roles=None))]
     fn open(
         py: Python<'_>,
         paths: PathsArg,
         mode: &str,
         format: Option<&str>,
+        roles: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        // Normalize PathsArg to Vec<String>
-        let paths: Vec<String> = paths.into();
+        match paths {
+            PathsArg::Single(path) => {
+                // Validate the path is not an empty string.
+                if path.is_empty() {
+                    return Err(PyValueError::new_err("paths list cannot be empty"));
+                }
+                // `roles` is accepted for a single source but has no routing
+                // effect in v1 (it is validated for shape only).
+                let _ = normalize_roles(roles, 1)?;
 
-        // Validate that paths is not empty
-        let uri = paths
-            .first()
-            .ok_or_else(|| PyValueError::new_err("paths list cannot be empty"))?;
-
-        // Validate that no path is an empty string
-        if paths.iter().any(|p| p.is_empty()) {
-            return Err(PyValueError::new_err("paths list cannot be empty"));
-        }
-
-        let parsed = ParsedUri::parse(uri);
-
-        match mode {
-            "r" => {
-                if paths.len() > 1 {
-                    // Multi-path: detect R-set files and build composite reader
-                    let reader = create_multi_path_reader(&paths, format)?;
-                    Ok(reader.into_pyobject(py)?.into_any().unbind())
-                } else {
-                    // Single-path: existing behavior
-                    let reader = create_reader(&parsed, format)?;
-                    Ok(reader.into_pyobject(py)?.into_any().unbind())
+                let parsed = ParsedUri::parse(&path);
+                match mode {
+                    "r" => {
+                        let reader = create_reader(&parsed, format)?;
+                        Ok(reader.into_pyobject(py)?.into_any().unbind())
+                    }
+                    "w" => {
+                        let format_str = match format {
+                            Some(f) => f.to_string(),
+                            None => detect_write_format(&parsed).ok_or_else(|| {
+                                PyValueError::new_err(
+                                    "Cannot determine output format: no format specified \
+                                     and file extension is not recognized",
+                                )
+                            })?,
+                        };
+                        let writer = create_writer(&parsed, &format_str)?;
+                        Ok(writer.into_pyobject(py)?.into_any().unbind())
+                    }
+                    _ => Err(PyValueError::new_err(format!(
+                        "Invalid mode '{}'. Expected 'r' for reading or 'w' for writing.",
+                        mode
+                    ))),
                 }
             }
-            "w" => {
-                // Resolve format: use explicit format if provided, otherwise
-                // auto-detect from the file extension (stripping .rN suffix).
-                let format_str = match format {
-                    Some(f) => f.to_string(),
-                    None => detect_write_format(&parsed).ok_or_else(|| {
-                        PyValueError::new_err(
-                            "Cannot determine output format: no format specified \
-                             and file extension is not recognized",
-                        )
-                    })?,
-                };
+            PathsArg::Multiple(paths) => {
+                if paths.is_empty() {
+                    return Err(PyValueError::new_err("paths list cannot be empty"));
+                }
+                if paths.iter().any(|p| p.is_empty()) {
+                    return Err(PyValueError::new_err("paths list cannot be empty"));
+                }
 
-                if paths.len() > 1 {
-                    // Multi-path: create composite writer for R-set files
-                    let writer = create_multi_path_writer(&paths, &format_str)?;
-                    Ok(writer.into_pyobject(py)?.into_any().unbind())
-                } else {
-                    // Single-path: existing behavior
-                    let writer = create_writer(&parsed, &format_str)?;
-                    Ok(writer.into_pyobject(py)?.into_any().unbind())
+                let normalized = normalize_roles(roles, paths.len())?;
+                if let Some(roles_per_source) = normalized {
+                    // Explicit roles provided — bypass `.rN` filename detection.
+                    return open_multi_path_with_roles(py, &paths, mode, format, &roles_per_source);
+                }
+
+                // No roles — fall back to the existing `.rN` filename detection.
+                match mode {
+                    "r" => {
+                        let reader = create_multi_path_reader(&paths, format)?;
+                        Ok(reader.into_pyobject(py)?.into_any().unbind())
+                    }
+                    "w" => {
+                        let base_parsed = ParsedUri::parse(&paths[0]);
+                        let format_str = match format {
+                            Some(f) => f.to_string(),
+                            None => detect_write_format(&base_parsed).ok_or_else(|| {
+                                PyValueError::new_err(
+                                    "Cannot determine output format: no format specified \
+                                     and file extension is not recognized",
+                                )
+                            })?,
+                        };
+                        let writer = create_multi_path_writer(&paths, &format_str)?;
+                        Ok(writer.into_pyobject(py)?.into_any().unbind())
+                    }
+                    _ => Err(PyValueError::new_err(format!(
+                        "Invalid mode '{}'. Expected 'r' for reading or 'w' for writing.",
+                        mode
+                    ))),
                 }
             }
-            _ => Err(PyValueError::new_err(format!(
-                "Invalid mode '{}'. Expected 'r' for reading or 'w' for writing.",
-                mode
-            ))),
+            PathsArg::Stream(stream_obj) => {
+                let fmt = format.ok_or_else(|| {
+                    PyValueError::new_err(
+                        "format is required when reading from or writing to a stream",
+                    )
+                })?;
+                // `roles` is accepted for a single source but has no routing
+                // effect in v1 (it is validated for shape only).
+                let _ = normalize_roles(roles, 1)?;
+
+                match mode {
+                    "r" => {
+                        let reader = create_reader_from_stream(py, &stream_obj, fmt)?;
+                        Ok(reader.into_pyobject(py)?.into_any().unbind())
+                    }
+                    "w" => {
+                        let writer = create_writer_for_stream(py, stream_obj, fmt)?;
+                        Ok(writer.into_pyobject(py)?.into_any().unbind())
+                    }
+                    _ => Err(PyValueError::new_err(format!(
+                        "Invalid mode '{}'. Expected 'r' for reading or 'w' for writing.",
+                        mode
+                    ))),
+                }
+            }
+            PathsArg::StreamList(streams) => {
+                if streams.is_empty() {
+                    return Err(PyValueError::new_err("paths list cannot be empty"));
+                }
+                let fmt = format.ok_or_else(|| {
+                    PyValueError::new_err(
+                        "format is required when reading from or writing to a stream",
+                    )
+                })?;
+                let roles_per_source = normalize_roles(roles, streams.len())?.ok_or_else(|| {
+                    PyValueError::new_err(
+                        "roles is required when the source list contains file-like objects; \
+                         there is no filename to derive roles from",
+                    )
+                })?;
+                open_multi_stream_with_roles(py, streams, mode, fmt, &roles_per_source)
+            }
         }
     }
 }
@@ -470,6 +635,13 @@ fn create_multi_path_writer(paths: &[String], format: &str) -> PyResult<PyDatase
         rset_writers.push((level, writer));
     }
 
+    // Single-path case: return the base writer directly so format-specific
+    // writers (e.g. TIFFDatasetWriter) can handle overview assets natively
+    // within a single file (COG multi-IFD layout).
+    if rset_writers.is_empty() {
+        return Ok(PyDatasetWriter::new(base_writer));
+    }
+
     let composite = CompositeDatasetWriter::new(base_writer, rset_writers);
     Ok(PyDatasetWriter::new(Box::new(composite)))
 }
@@ -636,6 +808,10 @@ fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> 
 /// This is the core writer creation logic, returning a `Box<dyn DatasetWriter>`
 /// that can be used directly (e.g., in composite writers) or wrapped in
 /// `PyDatasetWriter` for Python exposure.
+///
+/// The writer is backed by a file on disk — this function opens the file,
+/// wraps it in a `BufWriter`, then delegates to
+/// [`create_writer_boxed_from_output`] for the format-specific dispatch.
 fn create_writer_boxed(parsed: &ParsedUri, format: &str) -> PyResult<Box<dyn DatasetWriter>> {
     // Validate scheme is supported
     match parsed.scheme.as_str() {
@@ -652,18 +828,34 @@ fn create_writer_boxed(parsed: &ParsedUri, format: &str) -> PyResult<Box<dyn Dat
         }
     }
 
+    let file = File::create(&parsed.path).map_err(CodecError::Io)?;
+    let buf_writer = std::io::BufWriter::new(file);
+    let output: Box<dyn Write + Send> = Box::new(buf_writer);
+    create_writer_boxed_from_output(output, format)
+}
+
+/// Internal: creates a boxed `DatasetWriter` targeting a generic `Write` output.
+///
+/// This is the format-specific dispatch shared by the file-path writer
+/// ([`create_writer_boxed`]) and the stream writer
+/// ([`create_writer_for_stream`]). The `output` is moved into the format
+/// writer, which is responsible for calling `.flush()` on its own schedule.
+fn create_writer_boxed_from_output(
+    output: Box<dyn Write + Send>,
+    format: &str,
+) -> PyResult<Box<dyn DatasetWriter>> {
     match format.to_lowercase().as_str() {
         "nitf" | "nitf21" | "nitf2.1" => {
-            let writer = JBPDatasetWriter::new(&parsed.path, NitfFormat::Nitf21)?;
+            let writer = JBPDatasetWriter::new_with_output(output, NitfFormat::Nitf21)?;
             Ok(Box::new(writer))
         }
         "nsif" | "nsif10" | "nsif1.0" => {
-            let writer = JBPDatasetWriter::new(&parsed.path, NitfFormat::Nsif10)?;
+            let writer = JBPDatasetWriter::new_with_output(output, NitfFormat::Nsif10)?;
             Ok(Box::new(writer))
         }
         #[cfg(feature = "libtiff")]
         "tif" | "tiff" | "gtif" | "gtiff" | "geotiff" => {
-            let writer = tiff::TIFFDatasetWriter::new(&parsed.path)?;
+            let writer = tiff::TIFFDatasetWriter::new_with_output(output)?;
             Ok(Box::new(writer))
         }
         #[cfg(not(feature = "libtiff"))]
@@ -672,12 +864,12 @@ fn create_writer_boxed(parsed: &ParsedUri, format: &str) -> PyResult<Box<dyn Dat
         )
         .into()),
         "png" => {
-            let writer = PNGDatasetWriter::new(&parsed.path)?;
+            let writer = PNGDatasetWriter::new_with_output(output)?;
             Ok(Box::new(writer))
         }
         #[cfg(feature = "openjpeg")]
         "j2k" | "jp2" | "jpeg2000" => {
-            let writer = J2KDatasetWriter::new(&parsed.path)?;
+            let writer = J2KDatasetWriter::new_with_output(output)?;
             Ok(Box::new(writer))
         }
         #[cfg(not(feature = "openjpeg"))]
@@ -687,7 +879,7 @@ fn create_writer_boxed(parsed: &ParsedUri, format: &str) -> PyResult<Box<dyn Dat
         .into()),
         #[cfg(feature = "libjpeg-turbo")]
         "jpg" | "jpeg" => {
-            let writer = JPEGDatasetWriter::new(&parsed.path)?;
+            let writer = JPEGDatasetWriter::new_with_output(output)?;
             Ok(Box::new(writer))
         }
         #[cfg(not(feature = "libjpeg-turbo"))]
@@ -697,8 +889,445 @@ fn create_writer_boxed(parsed: &ParsedUri, format: &str) -> PyResult<Box<dyn Dat
         .into()),
         _ => {
             // Unknown format
-            Err(CodecError::InvalidFormat(format!("Unsupported file format: {}", format)).into())
+            Err(CodecError::InvalidFormat(format!("Unsupported format: '{}'", format)).into())
         }
+    }
+}
+
+// =========================================================================
+// ParsedRole — structured role parsing for the `roles` parameter.
+// =========================================================================
+
+/// Parsed form of a role string from the `roles` parameter.
+///
+/// The library uses roles to route sources in a multi-source dataset: the
+/// base source ("data") carries the primary image, overview sources
+/// ("overview:N") carry R-set pyramid levels, and other roles are reserved
+/// for future extensions.
+#[cfg_attr(test, derive(Debug, PartialEq))]
+enum ParsedRole {
+    /// Base asset (primary image). One source per dataset.
+    Data,
+    /// R-set overview at resolution level N (N >= 1). Matches the
+    /// `image:0:overview:N` asset key convention.
+    Overview(u32),
+    /// A role not recognised by v1 routing. Reserved for future extensions
+    /// (e.g., `"metadata"`). Carried through but not routed; the captured
+    /// string is retained so downstream code can inspect or log it.
+    #[allow(dead_code)]
+    Other(String),
+}
+
+/// Parses a single role string into a [`ParsedRole`].
+///
+/// Accepts:
+/// - `"data"` → [`ParsedRole::Data`]
+/// - `"overview:N"` where N is a positive integer → [`ParsedRole::Overview`]
+/// - any other string → [`ParsedRole::Other`] (not routed in v1)
+///
+/// # Errors
+/// - `ValueError` if the role has the `"overview:"` prefix but N is not a
+///   positive integer (including `"overview:0"` — 0 is the base, not an
+///   overview).
+fn parse_role(s: &str) -> PyResult<ParsedRole> {
+    if s == "data" {
+        return Ok(ParsedRole::Data);
+    }
+    if let Some(n_str) = s.strip_prefix("overview:") {
+        let level = n_str.parse::<u32>().map_err(|_| {
+            PyValueError::new_err(format!(
+                "Invalid overview level in role '{}': expected 'overview:N' with positive integer N",
+                s
+            ))
+        })?;
+        if level == 0 {
+            return Err(PyValueError::new_err(format!(
+                "Invalid role '{}': overview level must be positive (0 is the base)",
+                s
+            )));
+        }
+        return Ok(ParsedRole::Overview(level));
+    }
+    // Unknown role — carried through but not routed in v1.
+    Ok(ParsedRole::Other(s.to_string()))
+}
+
+/// Normalized roles shape: one `Vec<String>` per source, indexed by source
+/// position. See [`normalize_roles`].
+type NormalizedRoles = Vec<Vec<String>>;
+
+/// Normalizes the Python `roles` parameter into a `Vec<Vec<String>>`.
+///
+/// The parameter accepts two shapes from Python:
+/// - `list[str]` (single-source form): one role list applied to the single
+///   source. `num_sources` must be 1.
+/// - `list[list[str]]` (multi-source form): one inner list per source. The
+///   length must match `num_sources`.
+///
+/// Returns `Ok(None)` when `roles` was not provided.
+fn normalize_roles(
+    roles: Option<&Bound<'_, PyAny>>,
+    num_sources: usize,
+) -> PyResult<Option<NormalizedRoles>> {
+    let Some(obj) = roles else {
+        return Ok(None);
+    };
+
+    // Prefer the multi-source form: list[list[str]]
+    if let Ok(outer) = obj.extract::<Vec<Vec<String>>>() {
+        if outer.len() != num_sources {
+            return Err(PyValueError::new_err(format!(
+                "roles list length ({}) does not match number of sources ({})",
+                outer.len(),
+                num_sources
+            )));
+        }
+        return Ok(Some(outer));
+    }
+
+    // Fall back to the single-source form: list[str]
+    if let Ok(flat) = obj.extract::<Vec<String>>() {
+        if num_sources != 1 {
+            return Err(PyValueError::new_err(
+                "roles must be list[list[str]] when there are multiple sources",
+            ));
+        }
+        return Ok(Some(vec![flat]));
+    }
+
+    Err(PyTypeError::new_err(
+        "roles must be list[str] or list[list[str]]",
+    ))
+}
+
+// =========================================================================
+// Stream readers/writers
+// =========================================================================
+
+/// Reads all bytes from a Python stream via `.read()`.
+///
+/// Validates the stream has a `.read()` method, calls it, and returns the
+/// result as an owned `Vec<u8>`. Copying to an owned buffer (rather than
+/// borrowing the `PyBytes` content) ensures the byte slice outlives the
+/// Python object for the duration of format parsing, which is important
+/// because some `from_bytes()` implementations store references into the
+/// input data.
+fn read_stream_bytes(py: Python<'_>, stream_obj: &Py<PyAny>) -> PyResult<Vec<u8>> {
+    let bound = stream_obj.bind(py);
+    if !bound.hasattr("read").unwrap_or(false) {
+        return Err(PyTypeError::new_err(
+            "Object is not a valid readable file-like object: missing .read() method",
+        ));
+    }
+
+    let result = bound
+        .call_method0("read")
+        .map_err(|e| PyIOError::new_err(format!("Failed to read from stream: {}", e)))?;
+
+    let py_bytes = result
+        .cast::<PyBytes>()
+        .map_err(|_| PyTypeError::new_err(".read() must return bytes"))?;
+    let data = py_bytes.as_bytes().to_vec();
+
+    if data.is_empty() {
+        return Err(PyValueError::new_err("Stream contained no data"));
+    }
+
+    Ok(data)
+}
+
+/// Dispatches a format string to the appropriate `from_bytes()` constructor.
+///
+/// Shared by [`create_reader_from_stream`] and [`open_multi_stream_with_roles`]
+/// so all format dispatch lives in one place.
+fn reader_from_bytes(format: &str, data: &[u8]) -> PyResult<Box<dyn DatasetReader>> {
+    match format.to_lowercase().as_str() {
+        "nitf" | "nitf21" | "nitf2.1" | "nsif" | "nsif10" | "nsif1.0" | "jbp" => {
+            Ok(Box::new(JBPDatasetReader::from_bytes(data)?))
+        }
+        #[cfg(feature = "libtiff")]
+        "tiff" | "tif" | "gtif" | "gtiff" | "geotiff" => {
+            Ok(Box::new(tiff::TIFFDatasetReader::from_bytes(data)?))
+        }
+        #[cfg(not(feature = "libtiff"))]
+        "tiff" | "tif" | "gtif" | "gtiff" | "geotiff" => Err(CodecError::Unsupported(
+            "TIFF support not enabled (libtiff feature disabled)".to_string(),
+        )
+        .into()),
+        "png" => Ok(Box::new(PNGDatasetReader::from_bytes(data)?)),
+        #[cfg(feature = "openjpeg")]
+        "j2k" | "jp2" | "jpeg2000" => Ok(Box::new(J2KDatasetReader::from_bytes(data)?)),
+        #[cfg(not(feature = "openjpeg"))]
+        "j2k" | "jp2" | "jpeg2000" => Err(CodecError::Unsupported(
+            "JPEG 2000 support not enabled (openjpeg feature disabled)".to_string(),
+        )
+        .into()),
+        #[cfg(feature = "libjpeg-turbo")]
+        "jpg" | "jpeg" => Ok(Box::new(JPEGDatasetReader::from_bytes(data)?)),
+        #[cfg(not(feature = "libjpeg-turbo"))]
+        "jpg" | "jpeg" => Err(CodecError::Unsupported(
+            "JPEG support not enabled (libjpeg-turbo feature disabled)".to_string(),
+        )
+        .into()),
+        _ => Err(CodecError::InvalidFormat(format!("Unsupported format: '{}'", format)).into()),
+    }
+}
+
+/// Creates a `DatasetReader` from a Python stream.
+///
+/// Calls `.read()` on the stream to obtain all bytes, validates the result,
+/// then dispatches to the appropriate format reader's `from_bytes()`.
+///
+/// Note: reading from a stream loads the entire content into memory. For
+/// large files, prefer the file-path code path which uses memory-mapped I/O.
+fn create_reader_from_stream(
+    py: Python<'_>,
+    stream_obj: &Py<PyAny>,
+    format: &str,
+) -> PyResult<PyDatasetReader> {
+    let data = read_stream_bytes(py, stream_obj)?;
+    let reader = reader_from_bytes(format, &data)?;
+    Ok(PyDatasetReader::new(reader))
+}
+
+/// Validates that a Python object has `.write()` and `.flush()` methods.
+fn validate_writable_stream(py: Python<'_>, stream_obj: &Py<PyAny>) -> PyResult<()> {
+    let bound = stream_obj.bind(py);
+    if !bound.hasattr("write").unwrap_or(false) {
+        return Err(PyTypeError::new_err(
+            "Object is not a valid writable file-like object: missing .write() method",
+        ));
+    }
+    if !bound.hasattr("flush").unwrap_or(false) {
+        return Err(PyTypeError::new_err(
+            "Object is not a valid writable file-like object: missing .flush() method",
+        ));
+    }
+    Ok(())
+}
+
+/// Wraps a validated Python stream in `PyWriteStream` → `BufWriter` →
+/// `Box<dyn Write + Send>`.
+fn stream_to_boxed_output(stream_obj: Py<PyAny>) -> Box<dyn Write + Send> {
+    let pws = PyWriteStream::new(stream_obj);
+    let buf_writer = std::io::BufWriter::new(pws);
+    Box::new(buf_writer)
+}
+
+/// Creates a `DatasetWriter` that writes to a Python stream.
+///
+/// Validates the stream has `.write()` and `.flush()` methods, wraps it in
+/// `PyWriteStream` → `BufWriter` → `Box<dyn Write + Send>`, then dispatches
+/// to the format-specific writer via [`create_writer_boxed_from_output`].
+fn create_writer_for_stream(
+    py: Python<'_>,
+    stream_obj: Py<PyAny>,
+    format: &str,
+) -> PyResult<PyDatasetWriter> {
+    validate_writable_stream(py, &stream_obj)?;
+    let output = stream_to_boxed_output(stream_obj);
+    let writer = create_writer_boxed_from_output(output, format)?;
+    Ok(PyDatasetWriter::new(writer))
+}
+
+// =========================================================================
+// Multi-source dispatch with explicit roles
+// =========================================================================
+
+/// Determines the base source index and the overview (level, index) pairs
+/// from a parsed role table.
+///
+/// - Sources with role `"data"` claim the base slot; more than one is an error.
+/// - Sources with role `"overview:N"` are collected as (level, index) pairs.
+/// - Sources with only [`ParsedRole::Other`] or no roles are ignored for
+///   routing in v1 but remain valid.
+/// - If no source is explicitly `"data"`, the first source is treated as
+///   the base.
+fn route_by_roles(roles_per_source: &[Vec<String>]) -> PyResult<(usize, Vec<(u32, usize)>)> {
+    let mut base_idx: Option<usize> = None;
+    let mut overview_entries: Vec<(u32, usize)> = Vec::new();
+
+    for (idx, role_list) in roles_per_source.iter().enumerate() {
+        let parsed: Vec<ParsedRole> = role_list
+            .iter()
+            .map(|r| parse_role(r))
+            .collect::<PyResult<_>>()?;
+
+        if parsed.iter().any(|r| matches!(r, ParsedRole::Data)) {
+            if base_idx.is_some() {
+                return Err(PyValueError::new_err(
+                    "Multiple sources have role 'data'; only one base source is allowed",
+                ));
+            }
+            base_idx = Some(idx);
+        }
+        for r in &parsed {
+            if let ParsedRole::Overview(level) = r {
+                overview_entries.push((*level, idx));
+            }
+        }
+    }
+
+    Ok((base_idx.unwrap_or(0), overview_entries))
+}
+
+/// Opens a list of file-like objects as a multi-source dataset, using
+/// explicit roles to route the base source and overview levels.
+fn open_multi_stream_with_roles(
+    py: Python<'_>,
+    streams: Vec<Py<PyAny>>,
+    mode: &str,
+    format: &str,
+    roles_per_source: &[Vec<String>],
+) -> PyResult<Py<PyAny>> {
+    let (base_idx, overview_entries) = route_by_roles(roles_per_source)?;
+
+    match mode {
+        "r" => {
+            // Read all stream bytes up-front. Copying to owned buffers keeps
+            // the data valid for the lifetime of the format readers.
+            let mut per_source_bytes: Vec<Vec<u8>> = Vec::with_capacity(streams.len());
+            for stream_obj in &streams {
+                let data = read_stream_bytes(py, stream_obj)?;
+                per_source_bytes.push(data);
+            }
+
+            let base_reader = reader_from_bytes(format, &per_source_bytes[base_idx])?;
+
+            let mut overviews: Vec<(u32, Arc<dyn ImageAssetProvider>)> = Vec::new();
+            for (level, src_idx) in overview_entries {
+                let rset_reader = reader_from_bytes(format, &per_source_bytes[src_idx])?;
+                let image = extract_primary_image(rset_reader.as_ref()).ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "Overview source at index {} does not contain an image asset",
+                        src_idx
+                    ))
+                })?;
+                overviews.push((level, image));
+            }
+
+            let composite = CompositeDatasetReader::new(base_reader, overviews);
+            let reader = PyDatasetReader::new(Box::new(composite));
+            Ok(reader.into_pyobject(py)?.into_any().unbind())
+        }
+        "w" => {
+            // Build one writer per stream, then assemble a composite writer
+            // that routes assets by overview role.
+            let mut writers: Vec<Option<Box<dyn DatasetWriter>>> =
+                Vec::with_capacity(streams.len());
+            for stream_obj in streams.into_iter() {
+                validate_writable_stream(py, &stream_obj)?;
+                let output = stream_to_boxed_output(stream_obj);
+                writers.push(Some(create_writer_boxed_from_output(output, format)?));
+            }
+
+            let base_writer = writers[base_idx]
+                .take()
+                .expect("base writer should not have been taken");
+
+            let mut rset_writers: Vec<(u32, Box<dyn DatasetWriter>)> = Vec::new();
+            for (level, src_idx) in overview_entries {
+                let w = writers[src_idx].take().ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "Source at index {} cannot be used for two roles",
+                        src_idx
+                    ))
+                })?;
+                rset_writers.push((level, w));
+            }
+
+            // Single-source case: return the base writer directly so format-specific
+            // writers (e.g. TIFFDatasetWriter) can handle overview assets natively.
+            if rset_writers.is_empty() {
+                let writer = PyDatasetWriter::new(base_writer);
+                return Ok(writer.into_pyobject(py)?.into_any().unbind());
+            }
+
+            let composite = CompositeDatasetWriter::new(base_writer, rset_writers);
+            let writer = PyDatasetWriter::new(Box::new(composite));
+            Ok(writer.into_pyobject(py)?.into_any().unbind())
+        }
+        _ => Err(PyValueError::new_err(format!(
+            "Invalid mode '{}'. Expected 'r' for reading or 'w' for writing.",
+            mode
+        ))),
+    }
+}
+
+/// Opens a list of file paths as a multi-source dataset, using explicit
+/// roles to route the base source and overview levels.
+///
+/// This bypasses the `.rN` filename detection used by
+/// [`create_multi_path_reader`] / [`create_multi_path_writer`] when the
+/// caller supplies roles explicitly.
+fn open_multi_path_with_roles(
+    py: Python<'_>,
+    paths: &[String],
+    mode: &str,
+    format: Option<&str>,
+    roles_per_source: &[Vec<String>],
+) -> PyResult<Py<PyAny>> {
+    let (base_idx, overview_entries) = route_by_roles(roles_per_source)?;
+
+    match mode {
+        "r" => {
+            let base_parsed = ParsedUri::parse(&paths[base_idx]);
+            let base_reader = create_reader_boxed(&base_parsed, format)?;
+
+            let mut overviews: Vec<(u32, Arc<dyn ImageAssetProvider>)> = Vec::new();
+            for (level, src_idx) in overview_entries {
+                let parsed = ParsedUri::parse(&paths[src_idx]);
+                let rset_reader = create_reader_boxed(&parsed, format)?;
+                let image = extract_primary_image(rset_reader.as_ref()).ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "Overview path '{}' does not contain an image asset",
+                        &paths[src_idx]
+                    ))
+                })?;
+                overviews.push((level, image));
+            }
+
+            let composite = CompositeDatasetReader::new(base_reader, overviews);
+            let reader = PyDatasetReader::new(Box::new(composite));
+            Ok(reader.into_pyobject(py)?.into_any().unbind())
+        }
+        "w" => {
+            // Resolve format: explicit > extension-derived from base path.
+            let base_parsed = ParsedUri::parse(&paths[base_idx]);
+            let format_str = match format {
+                Some(f) => f.to_string(),
+                None => detect_write_format(&base_parsed).ok_or_else(|| {
+                    PyValueError::new_err(
+                        "Cannot determine output format: no format specified \
+                         and file extension is not recognized",
+                    )
+                })?,
+            };
+
+            let base_writer = create_writer_boxed(&base_parsed, &format_str)?;
+
+            let mut rset_writers: Vec<(u32, Box<dyn DatasetWriter>)> = Vec::new();
+            for (level, src_idx) in overview_entries {
+                let parsed = ParsedUri::parse(&paths[src_idx]);
+                let writer = create_writer_boxed(&parsed, &format_str)?;
+                rset_writers.push((level, writer));
+            }
+
+            // Single-path case: return the base writer directly so format-specific
+            // writers (e.g. TIFFDatasetWriter) can handle overview assets natively.
+            if rset_writers.is_empty() {
+                let writer = PyDatasetWriter::new(base_writer);
+                return Ok(writer.into_pyobject(py)?.into_any().unbind());
+            }
+
+            let composite = CompositeDatasetWriter::new(base_writer, rset_writers);
+            let writer = PyDatasetWriter::new(Box::new(composite));
+            Ok(writer.into_pyobject(py)?.into_any().unbind())
+        }
+        _ => Err(PyValueError::new_err(format!(
+            "Invalid mode '{}'. Expected 'r' for reading or 'w' for writing.",
+            mode
+        ))),
     }
 }
 
@@ -770,8 +1399,10 @@ mod tests {
             let py_str = "image.ntf".into_pyobject(py).unwrap();
             let any_ref = py_str.as_any();
             let arg = PathsArg::extract(any_ref.as_borrowed()).unwrap();
-            let paths: Vec<String> = arg.into();
-            assert_eq!(paths, vec!["image.ntf".to_string()]);
+            match arg {
+                PathsArg::Single(s) => assert_eq!(s, "image.ntf".to_string()),
+                other => panic!("Expected PathsArg::Single, got: {:?}", other),
+            }
         });
     }
 
@@ -782,8 +1413,12 @@ mod tests {
             let py_list = vec!["a.ntf", "b.ntf"].into_pyobject(py).unwrap();
             let any_ref = py_list.as_any();
             let arg = PathsArg::extract(any_ref.as_borrowed()).unwrap();
-            let paths: Vec<String> = arg.into();
-            assert_eq!(paths, vec!["a.ntf".to_string(), "b.ntf".to_string()]);
+            match arg {
+                PathsArg::Multiple(v) => {
+                    assert_eq!(v, vec!["a.ntf".to_string(), "b.ntf".to_string()]);
+                }
+                other => panic!("Expected PathsArg::Multiple, got: {:?}", other),
+            }
         });
     }
 
@@ -1272,6 +1907,305 @@ mod tests {
     fn test_detect_write_format_no_extension() {
         let parsed = ParsedUri::parse("output");
         assert_eq!(detect_write_format(&parsed), None);
+    }
+
+    // =========================================================================
+    // PathsArg stream variant tests (Task 8.1)
+    // =========================================================================
+
+    /// A Python file-like object (e.g., `io.BytesIO`) is extracted as
+    /// `PathsArg::Stream`.
+    #[test]
+    fn test_paths_arg_extract_stream() {
+        Python::attach(|py| {
+            let io_module = py.import("io").unwrap();
+            let bytesio = io_module.call_method0("BytesIO").unwrap();
+            let any_ref = bytesio.as_any();
+            let arg = PathsArg::extract(any_ref.as_borrowed()).unwrap();
+            assert!(
+                matches!(arg, PathsArg::Stream(_)),
+                "Expected PathsArg::Stream, got: {:?}",
+                arg
+            );
+        });
+    }
+
+    /// A Python list of file-like objects is extracted as
+    /// `PathsArg::StreamList`.
+    #[test]
+    fn test_paths_arg_extract_stream_list() {
+        Python::attach(|py| {
+            let io_module = py.import("io").unwrap();
+            let b1 = io_module.call_method0("BytesIO").unwrap();
+            let b2 = io_module.call_method0("BytesIO").unwrap();
+            let list = pyo3::types::PyList::new(py, &[b1, b2]).unwrap();
+            let any_ref = list.as_any();
+            let arg = PathsArg::extract(any_ref.as_borrowed()).unwrap();
+            match arg {
+                PathsArg::StreamList(v) => assert_eq!(v.len(), 2),
+                other => panic!("Expected PathsArg::StreamList, got: {:?}", other),
+            }
+        });
+    }
+
+    /// A Python `str` is classified as a path even though strings happen to
+    /// have attribute names that could collide with file-like probing.
+    #[test]
+    fn test_paths_arg_prefers_string_over_stream() {
+        Python::attach(|py| {
+            let py_str = "path.ntf".into_pyobject(py).unwrap();
+            let any_ref = py_str.as_any();
+            let arg = PathsArg::extract(any_ref.as_borrowed()).unwrap();
+            assert!(
+                matches!(arg, PathsArg::Single(ref s) if s == "path.ntf"),
+                "Expected PathsArg::Single, got: {:?}",
+                arg
+            );
+        });
+    }
+
+    /// A mixed list of `str` and file-like objects raises a `TypeError`.
+    #[test]
+    fn test_paths_arg_rejects_mixed_list() {
+        Python::attach(|py| {
+            let io_module = py.import("io").unwrap();
+            let bytesio = io_module.call_method0("BytesIO").unwrap();
+            let str_item = "path.ntf".into_pyobject(py).unwrap();
+            let list = pyo3::types::PyList::new(
+                py,
+                &[str_item.as_any().clone(), bytesio.as_any().clone()],
+            )
+            .unwrap();
+            let any_ref = list.as_any();
+            let err = PathsArg::extract(any_ref.as_borrowed()).unwrap_err();
+            let err_str = err.to_string();
+            assert!(
+                err_str.contains("all strings or all file-like"),
+                "unexpected error: {}",
+                err_str
+            );
+            assert!(
+                err.is_instance_of::<PyTypeError>(py),
+                "expected TypeError, got: {}",
+                err_str
+            );
+        });
+    }
+
+    /// A non-str, non-list, non-file-like object (e.g., an int) raises
+    /// `ValueError`.
+    #[test]
+    fn test_paths_arg_invalid_type() {
+        Python::attach(|py| {
+            let py_int = 42i64.into_pyobject(py).unwrap();
+            let any_ref = py_int.as_any();
+            let result = PathsArg::extract(any_ref.as_borrowed());
+            assert!(result.is_err());
+            let err_msg = result.unwrap_err().to_string();
+            assert!(
+                err_msg.contains("paths must be a str or list[str]"),
+                "Expected 'paths must be a str or list[str]' in error, got: {}",
+                err_msg
+            );
+        });
+    }
+
+    // =========================================================================
+    // ParsedRole / parse_role tests (Task 8.2)
+    // =========================================================================
+
+    #[test]
+    fn test_parse_role_data() {
+        let parsed = parse_role("data").unwrap();
+        assert_eq!(parsed, ParsedRole::Data);
+    }
+
+    #[test]
+    fn test_parse_role_overview_valid() {
+        assert_eq!(parse_role("overview:1").unwrap(), ParsedRole::Overview(1));
+        assert_eq!(parse_role("overview:5").unwrap(), ParsedRole::Overview(5));
+        assert_eq!(parse_role("overview:42").unwrap(), ParsedRole::Overview(42));
+    }
+
+    #[test]
+    fn test_parse_role_overview_zero_rejected() {
+        Python::attach(|_py| {
+            let err = parse_role("overview:0").unwrap_err();
+            assert!(
+                err.to_string().contains("overview level must be positive"),
+                "unexpected error: {}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn test_parse_role_overview_malformed_rejected() {
+        Python::attach(|_py| {
+            let err = parse_role("overview:abc").unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid overview level"),
+                "unexpected error: {}",
+                err
+            );
+            let err = parse_role("overview:").unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid overview level"),
+                "unexpected error: {}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn test_parse_role_other() {
+        assert_eq!(
+            parse_role("metadata").unwrap(),
+            ParsedRole::Other("metadata".to_string())
+        );
+        assert_eq!(
+            parse_role("auxiliary").unwrap(),
+            ParsedRole::Other("auxiliary".to_string())
+        );
+    }
+
+    // =========================================================================
+    // normalize_roles tests (Task 8.2)
+    // =========================================================================
+
+    #[test]
+    fn test_normalize_roles_none() {
+        Python::attach(|_py| {
+            let result = normalize_roles(None, 1).unwrap();
+            assert!(result.is_none());
+        });
+    }
+
+    #[test]
+    fn test_normalize_roles_single_flat() {
+        // list[str] form for a single source: ["data"]
+        Python::attach(|py| {
+            let list = vec!["data".to_string(), "metadata".to_string()]
+                .into_pyobject(py)
+                .unwrap();
+            let any = list.as_any();
+            let result = normalize_roles(Some(any), 1).unwrap().unwrap();
+            assert_eq!(result.len(), 1);
+            assert_eq!(result[0], vec!["data".to_string(), "metadata".to_string()]);
+        });
+    }
+
+    #[test]
+    fn test_normalize_roles_multi_nested() {
+        // list[list[str]] form for multiple sources
+        Python::attach(|py| {
+            let inner1 = vec!["data".to_string()];
+            let inner2 = vec!["overview:1".to_string()];
+            let list = vec![inner1.clone(), inner2.clone()]
+                .into_pyobject(py)
+                .unwrap();
+            let any = list.as_any();
+            let result = normalize_roles(Some(any), 2).unwrap().unwrap();
+            assert_eq!(result, vec![inner1, inner2]);
+        });
+    }
+
+    #[test]
+    fn test_normalize_roles_length_mismatch() {
+        Python::attach(|py| {
+            let inner1 = vec!["data".to_string()];
+            let list = vec![inner1].into_pyobject(py).unwrap();
+            let any = list.as_any();
+            let err = normalize_roles(Some(any), 3).unwrap_err();
+            assert!(
+                err.to_string().contains("does not match number of sources"),
+                "unexpected error: {}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn test_normalize_roles_wrong_shape_flat_for_multi() {
+        // list[str] passed when there are multiple sources — error
+        Python::attach(|py| {
+            let list = vec!["data".to_string()].into_pyobject(py).unwrap();
+            let any = list.as_any();
+            let err = normalize_roles(Some(any), 2).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("roles must be list[list[str]] when there are multiple sources"),
+                "unexpected error: {}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn test_normalize_roles_invalid_type() {
+        Python::attach(|py| {
+            let py_int = 42i64.into_pyobject(py).unwrap();
+            let any = py_int.as_any();
+            let err = normalize_roles(Some(any), 1).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("roles must be list[str] or list[list[str]]"),
+                "unexpected error: {}",
+                err
+            );
+        });
+    }
+
+    // =========================================================================
+    // route_by_roles tests (Task 8.6)
+    // =========================================================================
+
+    #[test]
+    fn test_route_by_roles_implicit_base() {
+        // No source has explicit 'data' → first source becomes the base.
+        let roles = vec![vec!["metadata".to_string()], vec!["overview:1".to_string()]];
+        let (base, overviews) = route_by_roles(&roles).unwrap();
+        assert_eq!(base, 0);
+        assert_eq!(overviews, vec![(1, 1)]);
+    }
+
+    #[test]
+    fn test_route_by_roles_explicit_data() {
+        let roles = vec![
+            vec!["overview:2".to_string()],
+            vec!["data".to_string()],
+            vec!["overview:1".to_string()],
+        ];
+        let (base, mut overviews) = route_by_roles(&roles).unwrap();
+        overviews.sort();
+        assert_eq!(base, 1);
+        assert_eq!(overviews, vec![(1, 2), (2, 0)]);
+    }
+
+    #[test]
+    fn test_route_by_roles_duplicate_data_rejected() {
+        Python::attach(|_py| {
+            let roles = vec![vec!["data".to_string()], vec!["data".to_string()]];
+            let err = route_by_roles(&roles).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("Multiple sources have role 'data'"),
+                "unexpected error: {}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn test_route_by_roles_other_role_not_routed() {
+        // ParsedRole::Other values are kept but don't affect routing.
+        let roles = vec![
+            vec!["data".to_string(), "metadata".to_string()],
+            vec!["auxiliary".to_string()],
+        ];
+        let (base, overviews) = route_by_roles(&roles).unwrap();
+        assert_eq!(base, 0);
+        assert!(overviews.is_empty());
     }
 
     // =========================================================================

@@ -8,7 +8,7 @@
 //! 1. Reads all pixel data from the queued provider via `get_block(0, 0, 0, None)`
 //! 2. Converts BSQ pixel data to pixel-interleaved format for libjpeg-turbo
 //! 3. Encodes via `ffi::compress_8bit()` with the configured quality
-//! 4. Writes the resulting JPEG file to disk
+//! 4. Writes the resulting JPEG bytes to the configured output writer
 //!
 //! # Encoding Hints
 //!
@@ -21,8 +21,10 @@
 //! - Only 1 (grayscale) or 3 (RGB) bands are supported
 //! - Only a single image asset per file
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::error::CodecError;
 use crate::traits::{AssetProvider, DatasetWriter, ImageAssetProvider, MetadataProvider};
@@ -40,8 +42,15 @@ struct QueuedJPEGAsset {
 /// Queues a single image asset and optional metadata, then encodes
 /// everything into a JPEG file on `close()`.
 pub struct JPEGDatasetWriter {
-    /// Output file path.
-    path: PathBuf,
+    /// Output target, taken by `close()` when writing.
+    ///
+    /// Wrapped in `Mutex` so the struct is `Sync` (required by the
+    /// `DatasetWriter` trait) even though `Box<dyn Write + Send>` alone is
+    /// only `Send`. The inner `Option` allows `close()` to move the writer
+    /// out via `take()` for a final `write_all` + `flush`. There is no
+    /// runtime contention because the `DatasetWriter` methods only ever take
+    /// `&mut self`.
+    output: Mutex<Option<Box<dyn Write + Send>>>,
     /// Whether an image asset has been queued.
     image_queued: bool,
     /// Dataset-level metadata (encoding hints source).
@@ -55,10 +64,22 @@ pub struct JPEGDatasetWriter {
 impl JPEGDatasetWriter {
     /// Create a new writer targeting the given output path.
     ///
-    /// No file is opened until `close()` is called.
+    /// The file is opened immediately and wrapped in a `BufWriter<File>`,
+    /// then delegated to `new_with_output`.
     pub fn new(path: impl AsRef<Path>) -> Result<Self, CodecError> {
+        let file = File::create(path.as_ref()).map_err(CodecError::Io)?;
+        let buf_writer = BufWriter::new(file);
+        Self::new_with_output(Box::new(buf_writer))
+    }
+
+    /// Create a new writer targeting the given output writer.
+    ///
+    /// Accepts any `Box<dyn Write + Send>`, enabling output to files, Python
+    /// streams (via `PyWriteStream`), in-memory buffers, or any other
+    /// `Write` implementation.
+    pub fn new_with_output(output: Box<dyn Write + Send>) -> Result<Self, CodecError> {
         Ok(Self {
-            path: path.as_ref().to_path_buf(),
+            output: Mutex::new(Some(output)),
             image_queued: false,
             metadata: None,
             closed: false,
@@ -263,8 +284,17 @@ impl DatasetWriter for JPEGDatasetWriter {
         )
         .map_err(|e| CodecError::Encode(format!("JPEG encode error: {}", e)))?;
 
-        // Write JPEG file to disk
-        std::fs::write(&self.path, &jpeg_data).map_err(CodecError::Io)?;
+        // Write JPEG data to the stored output writer
+        let mut output = self
+            .output
+            .lock()
+            .map_err(|_| CodecError::Unsupported("JPEG writer output mutex poisoned".to_string()))?
+            .take()
+            .ok_or_else(|| {
+                CodecError::Unsupported("JPEG writer output is not available".to_string())
+            })?;
+        output.write_all(&jpeg_data).map_err(CodecError::Io)?;
+        output.flush().map_err(CodecError::Io)?;
 
         Ok(())
     }
