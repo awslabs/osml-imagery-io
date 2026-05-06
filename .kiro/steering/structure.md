@@ -1,120 +1,88 @@
 # Project Structure
 
-```
-.
-├── src/                    # Rust source code
-│   ├── lib.rs              # Library entry point, PyO3 module registration
-│   ├── error.rs            # Error types
-│   ├── types.rs            # Common types (AssetType, PixelType)
-│   ├── traits/             # Public Rust API - trait definitions
-│   ├── buffered/           # In-memory implementations of traits
-│   ├── parser/             # Internal parser library for format definitions
-│   ├── jbp/                # JBP/NITF format implementation
-│   └── bindings/           # Python bindings (PyO3)
-├── python/
-│   └── aws/osml/io/        # Python package (namespace package)
-├── tests/                  # Python tests
-│   ├── unit/               # Python unit tests
-│   │   └── test_*.py       # Unit test modules
-│   ├── benchmark/          # Python benchmark tests (pytest-benchmark)
-│   ├── integration/        # Integration tests (manifest-driven)
-│   └── property/           # Property-based tests (hypothesis)
-│       ├── conftest.py     # Shared fixtures, pytest configuration
-│       ├── strategies.py   # Reusable hypothesis strategies
-│       ├── quality.py      # PSNR/SSIM calculation utilities
-│       └── test_*.py       # Property test modules
-├── benches/                # Rust benchmarks (Criterion)
-├── docs/                   # Sphinx documentation site
-│   ├── conf.py             # Sphinx configuration
-│   ├── Makefile            # Build targets (html, pdf, etc.)
-│   ├── index.md            # Documentation root
-│   ├── getting-started.md  # Quick-start guide
-│   ├── api/                # Python API reference (autodoc + hand-written)
-│   ├── design/             # Architecture and design documents
-│   ├── internal/           # Internal working notes (excluded from published site)
-│   ├── roadmap/            # Format implementation roadmaps
-│   ├── user-guide/         # End-user guides (reading/writing imagery, metadata, etc.)
-│   ├── _static/            # Static assets (images, CSS)
-│   └── _build/             # Generated output (gitignored)
-├── data/                   # Test data directory
-│   ├── unit/               # Small synthetic test files (checked in)
-│   ├── integration/        # 3rd party validation data (gitignored)
-│   └── benchmark/          # User-provided benchmark data (gitignored)
-└── reference-materials/    # Reference specifications (gitignored)
-```
+## Anchor Map
 
-## Rust Source Organization
+Only the non-obvious locations are listed. The full tree can be discovered with directory tools.
 
-The `src/` directory follows a modular structure designed for extensibility:
+- `src/` — Rust source (one module per format, plus shared traits and bindings).
+- `python/aws/osml/io/` — Python namespace package. The compiled extension (`_io`) is loaded from here.
+- `tests/` — Python tests, organized by kind: `unit/`, `property/`, `integration/`, `benchmark/`.
+- `benches/` — Rust Criterion benchmarks.
+- `docs/` — Sphinx site, Markdown sources via MyST.
+- `data/` — Test data, three tiers (see below).
+- `reference-materials/` — Format specification PDFs (gitignored except the README).
+- `scripts/` — User-facing example scripts and dev setup.
 
-### Core Modules
+## Rust Source (`src/`)
 
-- `traits/` - Public Rust API defining the core interfaces (`DatasetReader`, `DatasetWriter`, `ImageAssetProvider`, `MetadataProvider`, etc.). These traits are format-agnostic.
+### Shared Modules
 
-- `buffered/` - In-memory implementations of traits for convenience:
-  - `BufferedMetadataProvider` - Mutable metadata storage for encoding hints
-  - `BufferedImageAssetProvider` - In-memory image asset for synthetic images
+- `traits/` — Public Rust API: format-agnostic interfaces (`DatasetReader`, `DatasetWriter`, `ImageAssetProvider`, `MetadataProvider`, etc.).
+- `buffered/` — In-memory implementations of the traits (e.g., `BufferedMetadataProvider`, `BufferedImageAssetProvider`).
+- `parser/` — Internal, data-driven binary parser library used by format implementations to define field structure and (de)serialization for binary records like TREs and DES.
+- `bindings/` — PyO3 Python bindings. One file per exposed type (e.g., `buffered_image.rs` wraps `BufferedImageAssetProvider`).
+- `composite/`, `image/` — Shared infrastructure used across format modules.
+- `error.rs`, `types.rs`, `lib.rs` — Error types, shared types (`AssetType`, `PixelType`), and the PyO3 module entry point.
 
-- `parser/` - Internal parser library used by format implementations. Provides structure definitions, field accessors, and serialization for binary formats.
+### Format Modules
 
-- `bindings/` - PyO3 Python bindings exposing the Rust API to Python. Each binding file wraps corresponding Rust types.
+Each supported format lives in its own module at `src/`:
 
-### Format Implementations
+- `jbp/` — Joint BIIF Profile (NITF 2.1, NSIF 1.0, SICD, SIDD).
+- `tiff/` — TIFF / GeoTIFF / COG.
+- `j2k/` — JPEG 2000 (including HTJ2K) via custom OpenJPEG FFI.
+- `jpeg/` — JPEG DCT via libjpeg-turbo.
+- `png/` — PNG via the pure-Rust `png` crate.
 
-Each supported format has its own module under `src/`:
+### Conventions
 
-- `jbp/` - Joint BIIF Profile (JBP) implementation supporting NITF 2.0, NITF 2.1, and NSIF 1.0 formats
+- Rust files use `snake_case` matching the primary type they contain.
+- Binding files are named for the Python-exposed type they wrap.
+- Rust unit tests live inline with source using `#[cfg(test)]`.
 
-Future formats (e.g., TIFF/GeoTIFF) will be added as additional modules at this level.
+## Python Package (`python/aws/osml/io/`)
 
-### Naming Conventions
+- `__init__.py` — Re-exports the public API (`imread`, `imsave`, `iminfo`, `tiles`, `IO`).
+- `convenience.py` — Convenience wrappers over the low-level `IO` API.
+- `zarr_codecs.py` — Custom Zarr v3 codecs for NITF, TIFF, and JPEG 2000.
+- `virtualizarr_parsers.py` — VirtualiZarr parsers that build multi-resolution tile indexes.
+- `multi_reference_fs.py` — Scatter-gather fsspec filesystem for non-contiguous byte ranges.
+- `jbp/`, `tiff/` — Format-specific Python helpers.
 
-- Rust files use `snake_case` names
-- File names should match the primary type they contain (e.g., `metadata.rs` contains `BufferedMetadataProvider`)
-- Binding files are prefixed to indicate their purpose (e.g., `buffered_image.rs` for `PyBufferedImageAssetProvider`)
+## Tests (`tests/`)
 
-## Test Data
+- `unit/` — Python unit tests (`test_*.py`).
+- `property/` — Hypothesis property-based tests. Shared helpers in `conftest.py`, `strategies.py`, `helpers.py`, `quality.py`. Top-level modules cover cross-cutting properties (`test_api_contracts.py`, `test_io_contracts.py`, `test_strategies.py`, `test_callback_provider.py`, `test_convenience.py`, `test_stream_io.py`) and per-format suites live in subdirectories (`jbp/`, `tiff/`, `png/`, `zarr/`).
+- `integration/` — Manifest-driven tests (`data/integration/manifest.yaml`).
+- `benchmark/` — `pytest-benchmark` tests for end-to-end Python throughput.
 
-Three categories of test data, consolidated under `data/`:
+## Documentation (`docs/`)
 
-1. **Unit test data** (`data/unit/`) - Checked into git. Small synthetic files for unit tests. Both Rust and Python tests reference this location.
+Sphinx site with MyST-Markdown. Top-level sections that new content should fit into:
 
-2. **Integration data** (`data/integration/`) - Gitignored. Third-party validation data with good/bad imagery examples. Override location with `OSML_IO_INTEGRATION_DATA` env var.
+- `user-guide/` — End-user guides (reading/writing, metadata, assets, quick-start, cloud access).
+- `api/` — Python API reference (autodoc plus hand-written context).
+- `design/` — Architecture and design documents.
+- `codecs/` — Per-format/per-codec design notes (`jbp-block.md`, `jpeg.md`, `jpeg2000.md`, `tiff-tile.md`).
+- `roadmap/` — Format implementation roadmaps.
+- `internal/` — Working notes, bug investigations, TODOs. Excluded from the published site via `exclude_patterns` in `conf.py`.
+- `performance.md` — End-to-end performance benchmarks.
 
-3. **Benchmark data** (`data/benchmark/`) - Gitignored. Users place their own imagery here for performance testing. Override location with `OSML_IO_BENCHMARK_DATA` env var.
+## Test Data (`data/`)
 
-## Conventions
+Three tiers:
 
-- Rust unit tests: inline with source in `src/` using `#[cfg(test)]`
-- Python unit tests: in `tests/unit/` directory
-- Python property tests: in `tests/property/` directory
-- Python benchmark tests: in `tests/benchmark/` directory
-- Python integration tests: in `tests/integration/` directory
-- Rust benchmarks: in `benches/` directory, run with Criterion
+1. **`data/unit/`** — Small synthetic files, checked into git. Referenced by both Rust and Python unit tests.
+2. **`data/integration/`** — Third-party validation data, gitignored. Override location with `OSML_IO_INTEGRATION_DATA`.
+3. **`data/benchmark/`** — User-provided benchmark data, gitignored. Override location with `OSML_IO_BENCHMARK_DATA`.
 
-## Property-Based Testing
+## Testing Conventions
 
-Property tests are organized under `tests/property/` and validate universal correctness properties across many generated inputs.
+- Rust unit tests: inline in `src/` (`#[cfg(test)]`).
+- Python unit tests: `tests/unit/`.
+- Property tests: `tests/property/` with the `property` marker.
+- Integration tests: `tests/integration/` with the `integration` marker.
+- Benchmark tests: `tests/benchmark/` with the `benchmark` marker.
+- Rust benchmarks: `benches/` with Criterion.
 
-### Key Files
-
-- `conftest.py` - Shared fixtures (temp file handling) and pytest marker registration
-- `strategies.py` - Reusable hypothesis strategies for generating images, block coordinates, and metadata
-- `quality.py` - PSNR and SSIM calculation for lossy compression validation
-
-### Test Modules
-
-- `test_roundtrip.py` - Lossless/lossy roundtrip and idempotent encoding properties
-- `test_block_access.py` - Block access completeness and reassembly properties
-- `test_metadata.py` - Metadata preservation properties
-- `test_api_contracts.py` - API polymorphism and contract tests
-- `test_io_contracts.py` - IO factory and format auto-detection tests
-- `test_strategies.py` - Strategy validation tests
-
-### Relationship to Unit Tests
-
-- Property tests validate universal properties across many generated inputs (100+ iterations)
-- Unit tests validate specific examples, edge cases, and error conditions
-- Both are complementary and run together with `pytest`
-- Use `pytest -m property` to run only property tests
-- Use `pytest -m "not property"` to run only unit tests
+Property tests validate universal properties across many generated inputs; unit tests validate specific examples and edge cases. Both are run by default via `pytest`; filter with `-m property` or `-m "not property"`.

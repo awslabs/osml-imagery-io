@@ -40,13 +40,22 @@ OpenJPEG (libopenjp2) is BSD-2-Clause licensed, which is compatible. However, so
 ## Key Dependencies
 
 ### Rust
-- pyo3 - Python bindings
+- pyo3 - Python bindings (abi3-py39)
 - numpy - NumPy array interop
 - thiserror - Error handling
-- serde_json - JSON serialization
+- serde, serde_json, serde_yaml - Serialization
+- memmap2 - Memory-mapped file I/O (core to the reader architecture)
+- png - Pure-Rust PNG codec
 - rayon - Work-stealing thread pool for data parallelism
 - proptest - Property-based testing framework (dev dependency)
 - criterion - Rust micro-benchmark framework (dev dependency)
+- tempfile - Temporary files in tests (dev dependency)
+
+Native C libraries linked via custom FFI (for license-compatibility reasons):
+
+- libopenjp2 (OpenJPEG) — JPEG 2000 / HTJ2K
+- libjpeg-turbo — JPEG DCT
+- libtiff — TIFF/GeoTIFF
 
 ### Python
 - pytest - Testing framework
@@ -60,11 +69,16 @@ The project uses several static analysis tools to maintain code quality, enforce
 
 ### Tools
 
-- **cargo clippy** — Rust linter with cognitive complexity checking. Config in `clippy.toml` (cognitive complexity threshold, argument limits, etc.). The `clippy::cognitive_complexity` lint is enabled crate-wide in `src/lib.rs`.
+Tools enforced in CI (hard failures):
+
+- **cargo clippy** — Rust linter with cognitive complexity checking. Config in `clippy.toml`. The `clippy::cognitive_complexity` lint is enabled crate-wide in `src/lib.rs`. CI runs `cargo clippy --lib --tests -- -W warnings -A clippy::approx_constant`.
 - **cargo-deny** — License compliance, security advisories, duplicate/banned crate detection. Config in `deny.toml`.
 - **cargo-machete** — Detects unused dependencies in `Cargo.toml`. Fast, works on stable.
-- **cargo-geiger** — Audits unsafe code usage across the crate and all dependencies. Informational.
-- **cargo-modules** — Visualizes internal module structure and dependency graph. Outputs DOT format.
+
+Informational / local-only:
+
+- **cargo-geiger** — Audits unsafe code usage across the crate and all dependencies. Not enforced in CI.
+- **cargo-modules** — Visualizes internal module structure and dependency graph. Outputs DOT format. Not enforced in CI.
 
 ### Installing Analysis Tools
 
@@ -97,11 +111,12 @@ cargo modules dependencies --lib > target/metrics/module-deps.dot
 
 ### Kiro Hooks
 
-Four hooks are configured in `.kiro/hooks/`:
+Hooks are configured in `.kiro/hooks/`:
 
-- **License & Advisory Check** — Runs `cargo deny check` at agent stop, only if Cargo.toml was modified.
-- **Unused Dependencies Check** — Runs `cargo machete` at agent stop, only if Cargo.toml was modified.
-- **Complexity Review** — After agent stops, runs clippy cognitive complexity check on Rust code.
+- **License & Advisory Check** (`cargo-deny-check.json`) — Runs `cargo deny check` at agent stop, only if Cargo.toml was modified.
+- **Unused Dependencies Check** (`unused-deps-check.json`) — Runs `cargo machete` at agent stop, only if Cargo.toml was modified.
+- **Complexity Review** (`complexity-review.json`) — Runs a clippy cognitive-complexity check on Rust code at agent stop.
+- **Run Tests After Task** (`run-tests-post-task.json`) — After a spec task completes, rebuilds with `maturin develop` and runs `cargo test --lib` and `pytest -x -q`.
 
 
 ### CI Integration
@@ -218,7 +233,7 @@ pytest
 pytest -v
 
 # Run specific test file
-pytest tests/test_reader.py -v
+pytest tests/unit/test_parser.py -v
 
 # Run Rust tests
 cargo test
@@ -393,7 +408,7 @@ Criterion benchmarks live in `benches/` and measure isolated Rust functions (e.g
 cargo bench
 
 # Run a specific benchmark by name
-cargo bench --bench nc_decode
+cargo bench --bench decode_benchmarks
 
 # Compile benchmarks without running (useful for CI)
 cargo bench --no-run

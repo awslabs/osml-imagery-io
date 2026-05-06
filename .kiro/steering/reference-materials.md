@@ -1,4 +1,11 @@
+---
+inclusion: fileMatch
+fileMatchPattern: 'src/jbp/**|src/parser/**|src/tiff/**|src/j2k/**|src/jpeg/**|src/png/**|reference-materials/**|**/tre_*|**/des_*|docs/roadmap/**|docs/codecs/**'
+---
+
 # Working with PDF Reference Materials
+
+This file loads only when you're working in format-implementation or spec-reading areas (NITF/TRE/DES code, format modules, codec design docs, or the PDFs themselves). It is not always-on because the large PDF inventory is irrelevant to most tasks.
 
 This project uses PDF reference materials for NITF/NSIF format implementation. These PDFs are large (often 100-200+ pages) and cannot be read in their entirety. Always use targeted page reads.
 
@@ -8,6 +15,7 @@ PDF reference materials are located in `reference-materials/`:
 
 - `JBP/` - Joint BIIF Profile (NITF format):
   - `Joint-BIIF-Profile-V2024.1_2024-01-18.pdf` - Main JBP format specification (201 pages)
+  - `NITF_MIL_STD_2500a.pdf` - MIL-STD-2500A, legacy NITF 2.0 specification. Useful for understanding NITF 2.0 file structure and backward-compatibility cases.
   - `MIL-STD-188-199.pdf` - Vector Quantization (VQ) decompression standard (35 pages)
   - `NCDRD_18February2010.pdf` - NITF 2.1 Commercial Dataset Requirements Document (78 pages). Defines requirements for commercial imagery datasets from CDPs.
   - `NGA.IP.0002_1.0 HRE.pdf` - High Resolution Elevation (HRE) Products Implementation Profile (148 pages). Specifies data content, structure, and metadata for raster elevation data products.

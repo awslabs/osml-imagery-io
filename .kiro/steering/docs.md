@@ -7,8 +7,10 @@ When building a new feature or making significant changes, update the relevant d
 - `docs/api/` - If new Python classes, methods, or modules are added or changed.
 - `docs/user-guide/` - If user-facing behavior changes or new workflows are introduced.
 - `docs/design/` - If architectural decisions or design patterns are added or modified.
+- `docs/codecs/` - If codec/format internals change (e.g., TIFF tile layout, JPEG 2000 tile-part handling, JBP block decode).
 - `docs/roadmap/` - If a roadmap item is completed or new items are planned.
-- `docs/internal/` - For bug investigations, implementation notes, or TODO tracking.
+- `docs/performance.md` - If end-to-end performance characteristics change meaningfully.
+- `docs/internal/` - For bug investigations, implementation notes, or TODO tracking. Not published.
 
 ## Guidelines
 
