@@ -26,6 +26,7 @@ pub const MAGIC_SIZE: usize = 9;
 /// - `.nitf` - NITF file
 /// - `.nsif` - NSIF file
 /// - `.nsf` - NSIF file (alternate extension)
+/// - `.hr1` through `.hr8` - High Resolution Elevation (HRE) files (NITF-based)
 ///
 /// # Arguments
 /// * `path` - File path to check
@@ -42,6 +43,8 @@ pub const MAGIC_SIZE: usize = 9;
 /// assert!(is_nitf_extension(Path::new("image.NITF")));
 /// assert!(is_nitf_extension(Path::new("data.nsif")));
 /// assert!(is_nitf_extension(Path::new("data.nsf")));
+/// assert!(is_nitf_extension(Path::new("elevation.hr1")));
+/// assert!(is_nitf_extension(Path::new("elevation.hr8")));
 /// assert!(!is_nitf_extension(Path::new("image.jpg")));
 /// ```
 pub fn is_nitf_extension(path: &Path) -> bool {
@@ -49,7 +52,14 @@ pub fn is_nitf_extension(path: &Path) -> bool {
         .and_then(|ext| ext.to_str())
         .map(|ext| {
             let lower = ext.to_lowercase();
-            lower == "ntf" || lower == "nitf" || lower == "nsif" || lower == "nsf"
+            lower == "ntf"
+                || lower == "nitf"
+                || lower == "nsif"
+                || lower == "nsf"
+                || (lower.starts_with("hr")
+                    && lower.len() == 3
+                    && lower.as_bytes()[2] >= b'1'
+                    && lower.as_bytes()[2] <= b'8')
         })
         .unwrap_or(false)
 }
@@ -199,6 +209,46 @@ mod tests {
         assert!(is_nitf_extension(&path));
     }
 
+    #[test]
+    fn is_nitf_extension_hre_levels() {
+        for level in 1..=8 {
+            let filename = format!("elevation.hr{}", level);
+            assert!(
+                is_nitf_extension(Path::new(&filename)),
+                "Expected .hr{} to be recognized as NITF",
+                level
+            );
+        }
+    }
+
+    #[test]
+    fn is_nitf_extension_hre_uppercase() {
+        assert!(is_nitf_extension(Path::new("data.HR1")));
+        assert!(is_nitf_extension(Path::new("data.HR8")));
+    }
+
+    #[test]
+    fn is_nitf_extension_hre_with_path() {
+        assert!(is_nitf_extension(Path::new(
+            "/data/HRE80TV340000N0750000W_a01.hr2"
+        )));
+    }
+
+    #[test]
+    fn is_nitf_extension_hr0_not_valid() {
+        assert!(!is_nitf_extension(Path::new("data.hr0")));
+    }
+
+    #[test]
+    fn is_nitf_extension_hr9_not_valid() {
+        assert!(!is_nitf_extension(Path::new("data.hr9")));
+    }
+
+    #[test]
+    fn is_nitf_extension_hre_no_digit() {
+        assert!(!is_nitf_extension(Path::new("data.hre")));
+    }
+
     // ==================== validate_nitf_magic tests ====================
 
     #[test]
@@ -337,6 +387,11 @@ mod property_tests {
                 Just("nsf".to_string()),
                 Just("NSF".to_string()),
                 Just("Nsf".to_string()),
+                Just("hr1".to_string()),
+                Just("HR1".to_string()),
+                Just("hr4".to_string()),
+                Just("hr8".to_string()),
+                Just("HR8".to_string()),
             ]
         }
 

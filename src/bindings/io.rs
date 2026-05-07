@@ -522,7 +522,8 @@ fn create_multi_path_reader_boxed(
             // Determine format from the stripped path's extension (or explicit format)
             let rset_format = format.or_else(|| {
                 parsed.extension().map(|e| match e.to_lowercase().as_str() {
-                    "ntf" | "nitf" | "nsif" | "nsf" => "nitf",
+                    "ntf" | "nitf" | "nsif" | "nsf" | "hr1" | "hr2" | "hr3" | "hr4" | "hr5"
+                    | "hr6" | "hr7" | "hr8" => "nitf",
                     "tif" | "tiff" | "gtif" | "gtiff" => "tiff",
                     "png" => "png",
                     "j2k" | "jp2" => "j2k",
@@ -601,7 +602,9 @@ fn detect_write_format(parsed: &ParsedUri) -> Option<String> {
     effective_parsed
         .extension()
         .and_then(|ext| match ext.to_lowercase().as_str() {
-            "ntf" | "nitf" => Some("nitf".to_string()),
+            "ntf" | "nitf" | "hr1" | "hr2" | "hr3" | "hr4" | "hr5" | "hr6" | "hr7" | "hr8" => {
+                Some("nitf".to_string())
+            }
             "nsf" | "nsif" => Some("nsif".to_string()),
             "tif" | "tiff" | "gtif" | "gtiff" => Some("tiff".to_string()),
             "png" => Some("png".to_string()),
@@ -726,7 +729,8 @@ fn create_reader_boxed(
     let extension = effective_parsed.extension().map(|e| e.to_lowercase());
 
     match extension.as_deref() {
-        Some("ntf") | Some("nitf") | Some("nsif") | Some("nsf") => {
+        Some("ntf") | Some("nitf") | Some("nsif") | Some("nsf") | Some("hr1") | Some("hr2")
+        | Some("hr3") | Some("hr4") | Some("hr5") | Some("hr6") | Some("hr7") | Some("hr8") => {
             let mmap = mmap_file(&parsed.path)?;
             let reader = JBPDatasetReader::from_bytes(&mmap)?;
             Ok(Box::new(reader))

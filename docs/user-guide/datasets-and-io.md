@@ -148,7 +148,8 @@ imread(io.BytesIO(data), format="png")
 Supported format strings: `"nitf"`, `"tiff"`, `"png"`, `"j2k"`, `"jpeg"`.
 
 When using file paths, `format` remains optional — the library infers it from the
-file extension.
+file extension. Recognized NITF extensions include `.ntf`, `.nitf`, `.nsif`, `.nsf`,
+and `.hr1` through `.hr8` (High Resolution Elevation products).
 
 ### When streams are a good fit
 

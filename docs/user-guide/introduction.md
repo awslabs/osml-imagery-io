@@ -106,6 +106,8 @@ and integrate with the broader cloud-native geospatial ecosystem.
 NITF is the primary container format for defense and intelligence imagery. SICD and SIDD
 (SAR complex and derived data) are supported directly through the NITF implementation —
 the sensor-independent XML metadata is available from the data extension segments.
+High Resolution Elevation (HRE) products (`.hr1` through `.hr8`) are NITF-based raster
+elevation datasets and are auto-detected from their file extensions.
 
 TIFF support includes GeoTIFF metadata (GeoKeys, ModelTiepoint, ModelPixelScale,
 ModelTransformation) and Cloud Optimized GeoTIFF (COG) conventions. These are not
@@ -152,6 +154,7 @@ Maintained by the [NSG Standards Registry (NGA)](https://nsgreg.nga.mil/):
 - **NGA SICD v1.3.0** — Sensor Independent Complex Data (SAR complex imagery)
 - **NGA SIDD v3.0** — Sensor Independent Derived Data (SAR derived products)
 - **MIL-STD-188-199** — Vector Quantization (VQ) decompression for NITF imagery
+- **NGA.IP.0002 v1.1** — Implementation Profile for High Resolution Elevation (HRE) Products
 
 ### TIFF / GeoTIFF
 
