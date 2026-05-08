@@ -1,26 +1,66 @@
 # TIFF Tile Codec
 
-**URI:** `https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile`
+**Version:** 1.0  
+**URI:** `https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile`  
+**Codec type:** array-to-bytes  
 
 Decodes compressed TIFF tiles into NumPy arrays. Supports LZW, JPEG, Deflate,
 Adobe Deflate, PackBits, and uncompressed tiles, including horizontal
 differencing predictors and YCbCr-to-RGB conversion for JPEG tiles.
 
-Individual compressed tiles extracted from a TIFF file cannot be decoded in
-isolation — the decoder needs IFD tag metadata (compression type, predictor,
-photometric interpretation, JPEG tables, etc.) that lives in the file header,
-not in the tile data itself. This codec stores the required IFD tag values in
-its configuration. At decode time it constructs a minimal single-tile TIFF in
-memory from the configuration and the compressed tile bytes, then hands it to
-libtiff for decompression. See the
-[Synthetic Codestream Codec Pattern](../design/zarr-codec-design.md) design
-document for details on this approach.
+## Document Conventions
 
-## Configuration Schema
+The key words "MUST", "MUST NOT", "SHOULD", and "MAY" in this document are to be
+interpreted as described in [RFC 2119][rfc2119].
+
+## Codec Identifier
+
+The value of the `name` member in the codec metadata MUST be
+`https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile`.
+
+## Encoded Representation
+
+The encoded representation MUST be a single compressed TIFF tile as it appears
+in the TIFF file's data area (the bytes referenced by a TileOffsets/TileByteCounts
+entry). The compression format is determined by the `compression` configuration
+parameter and MUST conform to the corresponding algorithm defined in TIFF
+Revision 6.0 or the applicable TIFF Technical Note.
+
+When `compression` is `7` (JPEG), the tile data MAY omit shared quantization and
+Huffman tables, which MUST then be provided via the `jpeg_tables` configuration
+parameter.
+
+## Rationale: Why Compressed TIFF Tiles Need Metadata
+
+Individual compressed tiles extracted from a TIFF file cannot be decoded in
+isolation. The compressed tile bytes are an opaque payload — the decoder needs
+IFD tag metadata (compression algorithm, predictor settings, photometric
+interpretation, JPEG quantization tables, etc.) that lives in the file header,
+not in the tile data itself. Without this metadata, the decoder cannot determine
+how to decompress the bytes or interpret the resulting pixel values.
+
+This codec solves the problem by storing the required IFD tag values in its
+configuration. At decode time it constructs a minimal single-tile TIFF in
+memory from the configuration and the compressed tile bytes, then hands it to
+libtiff for decompression:
+
+```{image} /_static/images/reconstructed-single-tile-tiff.png
+:alt: Reconstruction of a minimal single-tile TIFF from IFD tag configuration + compressed tile bytes.
+:width: 700px
+:align: center
+```
+
+This approach delegates all decompression complexity (LZW, Deflate, JPEG,
+predictor reversal, byte-order conversion, color space conversion) to libtiff
+rather than reimplementing it. See the
+[Synthetic Codestream Codec Pattern](../design/zarr-codec-design.md) design
+document for further details.
+
+## Configuration Parameters
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `compression` | `int` | No | `1` | TIFF compression tag value. Supported: `1` (None), `5` (LZW), `7` (JPEG), `8` (Deflate), `32773` (PackBits), `32946` (Adobe Deflate). |
+| `compression` | `int` | No | `1` | TIFF compression tag value. See table below. |
 | `bits_per_sample` | `int` | No | `8` | Bits per sample per band (`8`, `16`, `32`, or `64`). |
 | `samples_per_pixel` | `int` | No | `1` | Number of bands. |
 | `photometric` | `int` | No | `1` | Photometric interpretation. `0` = MinIsWhite, `1` = MinIsBlack, `2` = RGB, `6` = YCbCr. |
@@ -29,7 +69,7 @@ document for details on this approach.
 | `tile_width` | `int` | No | `256` | Tile width in pixels. |
 | `tile_height` | `int` | No | `256` | Tile height in pixels. |
 | `sample_format` | `int` | No | `1` | Sample format. `1` = unsigned integer, `2` = signed integer, `3` = IEEE floating point. |
-| `jpeg_tables` | `string` or `null` | No | `null` | Base64-encoded shared JPEG quantization and Huffman tables (TIFF tag 347). Required when `compression` is `7` (JPEG). |
+| `jpeg_tables` | `string` or `null` | No | `null` | Base64-encoded shared JPEG quantization and Huffman tables (TIFF tag 347). Required when `compression` is `7`. |
 
 ### Compression Tag Values
 
@@ -42,7 +82,7 @@ document for details on this approach.
 | `32773` | PackBits | Run-length encoding. |
 | `32946` | Adobe Deflate | Equivalent to Deflate; legacy tag value. |
 
-### Sample Format / Bits Per Sample → NumPy dtype Mapping
+### Sample Format / Bits Per Sample to NumPy dtype Mapping
 
 | Sample Format | Bits Per Sample | NumPy dtype |
 |---------------|-----------------|-------------|
@@ -55,7 +95,9 @@ document for details on this approach.
 | `3` (float) | 32 | `float32` |
 | `3` (float) | 64 | `float64` |
 
-## Decoding Behavior
+## Algorithm
+
+### Decoding
 
 1. Construct a minimal single-tile TIFF buffer in memory: an 8-byte TIFF header, an IFD containing the tag values from the codec configuration, and the compressed tile bytes appended after the IFD.
 2. Open the buffer with libtiff's `TIFFClientOpen` using memory-backed I/O callbacks.
@@ -63,9 +105,11 @@ document for details on this approach.
 4. Call `TIFFReadEncodedTile(handle, 0, ...)` to decompress the tile. libtiff handles predictor reversal, byte-order conversion, and color space conversion internally.
 5. If the decoded tile is smaller than the nominal tile dimensions (edge tile), pad with zeros to the full tile shape.
 6. Convert from chunky (pixel-interleaved) to band-sequential (BSQ) format if `planar_config=1` and `samples_per_pixel > 1`.
-7. Return a NumPy ndarray with shape `(samples_per_pixel, tile_height, tile_width)` and the dtype corresponding to the `sample_format`/`bits_per_sample` combination.
+7. Return an array with shape `(samples_per_pixel, tile_height, tile_width)` and the dtype corresponding to the `sample_format`/`bits_per_sample` combination.
 
-Encoding is not supported. Calling `encode()` raises `NotImplementedError`.
+### Encoding
+
+Encoding is not currently specified. See [Implementation Notes](#implementation-notes).
 
 ## Example Configuration
 
@@ -108,6 +152,18 @@ Encoding is not supported. Calling `encode()` raises `NotImplementedError`.
 }
 ```
 
-## Python Class
+## References
+
+- [TIFF Revision 6.0][tiff6] — Tag Image File Format Specification
+- [TIFF Technical Note #2][tiff-tn2] — TIFF Trees (JPEG-in-TIFF)
+- [RFC 2119][rfc2119] — Key words for use in RFCs to Indicate Requirement Levels
+
+[tiff6]: https://www.itu.int/itudoc/itu-t/com16/tiff-fx/docs/tiff6.pdf
+[tiff-tn2]: https://www.awaresystems.be/imaging/tiff/specification/TIFFTechNote2.txt
+[rfc2119]: https://www.rfc-editor.org/rfc/rfc2119
+
+## Implementation Notes
 
 `aws.osml.io.zarr_codecs.TiffTileCodec` — see [API Reference](../api/zarr-codecs.md).
+
+Only the decode path is implemented. Calling `encode()` raises `NotImplementedError`.
