@@ -7,7 +7,7 @@
 mod image;
 mod metadata;
 pub mod reader;
-mod records;
+pub mod records;
 mod writer;
 
 pub use image::DTEDImageAssetProvider;

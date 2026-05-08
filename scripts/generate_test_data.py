@@ -305,6 +305,108 @@ def generate_tiff_tiled(output_path: Path) -> None:
     writer.close()
 
 
+def generate_dted_small(output_path: Path) -> None:
+    """Small synthetic DTED Level 1 file (16x16 grid) for unit tests."""
+    print(f"  {output_path.name} ...")
+
+    metadata = BufferedMetadataProvider()
+    metadata.set_json("dted:origin_longitude", -109.0)
+    metadata.set_json("dted:origin_latitude", 38.0)
+    metadata.set_json("dted:longitude_interval", 30)
+    metadata.set_json("dted:latitude_interval", 30)
+    metadata.set("dted:level", "DTED1")
+    metadata.set("dted:security_code", "U")
+    metadata.set("dted:vertical_datum", "MSL")
+    metadata.set("dted:horizontal_datum", "WGS84")
+    metadata.set("dted:producer_code", "US")
+    metadata.set("dted:edition_number", "01")
+    metadata.set("dted:compilation_date", "0101")
+    metadata.set("dted:partial_cell_indicator", "00")
+    metadata.set("dted:absolute_horizontal_accuracy", "0050")
+    metadata.set("dted:absolute_vertical_accuracy", "0030")
+    metadata.set("dted:relative_vertical_accuracy", "0020")
+    metadata.set_json("dted:vertical_accuracy", 20)
+
+    num_rows = 16
+    num_cols = 16
+
+    provider = BufferedImageAssetProvider.create(
+        key="elevation",
+        num_columns=num_cols,
+        num_rows=num_rows,
+        num_bands=1,
+        block_width=num_cols,
+        block_height=num_rows,
+        pixel_type=PixelType.Int16,
+        metadata=metadata,
+    )
+
+    # Deterministic elevation pattern with some negative values and null sentinel
+    rng = np.random.RandomState(42)
+    array = rng.randint(-500, 4000, (1, num_rows, num_cols), dtype=np.int16)
+    array[0, 0, 0] = -32767  # null sentinel at corner
+    array[0, 7, 7] = -32767  # null sentinel in middle
+    provider.set_full_image(array)
+
+    writer = IO.open([str(output_path)], "w", "dted")
+    writer.metadata = metadata
+    writer.add_asset("elevation", provider, "Elevation", "DTED test data", ["data"])
+    writer.close()
+
+
+def generate_dted_integration(output_path: Path) -> None:
+    """Larger synthetic DTED Level 1 for integration tests (64x64)."""
+    print(f"  {output_path.name} ...")
+
+    metadata = BufferedMetadataProvider()
+    metadata.set_json("dted:origin_longitude", -109.0)
+    metadata.set_json("dted:origin_latitude", 38.0)
+    metadata.set_json("dted:longitude_interval", 30)
+    metadata.set_json("dted:latitude_interval", 30)
+    metadata.set("dted:level", "DTED1")
+    metadata.set("dted:security_code", "U")
+    metadata.set("dted:vertical_datum", "MSL")
+    metadata.set("dted:horizontal_datum", "WGS84")
+    metadata.set("dted:producer_code", "US")
+    metadata.set("dted:edition_number", "01")
+    metadata.set("dted:compilation_date", "2601")
+    metadata.set("dted:partial_cell_indicator", "00")
+    metadata.set("dted:absolute_horizontal_accuracy", "0050")
+    metadata.set("dted:absolute_vertical_accuracy", "0030")
+    metadata.set("dted:relative_vertical_accuracy", "0020")
+    metadata.set_json("dted:vertical_accuracy", 20)
+
+    num_rows = 64
+    num_cols = 64
+
+    provider = BufferedImageAssetProvider.create(
+        key="elevation",
+        num_columns=num_cols,
+        num_rows=num_rows,
+        num_bands=1,
+        block_width=num_cols,
+        block_height=num_rows,
+        pixel_type=PixelType.Int16,
+        metadata=metadata,
+    )
+
+    # Terrain-like elevation: gradient + noise
+    rng = np.random.RandomState(99)
+    x = np.linspace(0, 1, num_cols)
+    y = np.linspace(0, 1, num_rows)
+    xx, yy = np.meshgrid(x, y)
+    base = (xx * 2000 + yy * 1500 - 500).astype(np.int16)
+    noise = rng.randint(-50, 50, (num_rows, num_cols), dtype=np.int16)
+    array = np.clip(base.astype(np.int32) + noise.astype(np.int32), -12000, 9000).astype(np.int16)
+    array = array.reshape(1, num_rows, num_cols)
+    provider.set_full_image(array)
+
+    writer = IO.open([str(output_path)], "w", "dted")
+    writer.metadata = metadata
+    writer.add_asset("elevation", provider, "Elevation", "DTED integration test", ["data"])
+    writer.close()
+
+
 # ── Verification ─────────────────────────────────────────────────────────────
 
 def verify_file(file_path: Path) -> bool:
@@ -332,6 +434,11 @@ FILES = [
     ("nitf21-64x64-3band-8bit-jpeg.ntf", generate_nitf21_jpeg),
     ("nitf21-256x256-3band-8bit-nc.ntf", generate_nitf21_256x256),
     ("tiff-256x256-1band-8bit-tiled-deflate.tif", generate_tiff_tiled),
+    ("dted-16x16-1band-int16.dt1", generate_dted_small),
+]
+
+INTEGRATION_FILES = [
+    ("synth_dted_level1.dt1", generate_dted_integration),
 ]
 
 
@@ -345,6 +452,25 @@ def main():
     ok = True
     for name, gen_fn in FILES:
         path = output_dir / name
+        try:
+            gen_fn(path)
+            if not verify_file(path):
+                ok = False
+        except Exception as e:
+            print(f"    ✗ FAILED: {e}")
+            import traceback
+            traceback.print_exc()
+            ok = False
+
+    # Generate integration test synthetic data
+    integration_dir = project_root / "data" / "integration" / "synthetic"
+    integration_dir.mkdir(parents=True, exist_ok=True)
+
+    print("\nGenerating integration test data files")
+    print("=" * 50)
+
+    for name, gen_fn in INTEGRATION_FILES:
+        path = integration_dir / name
         try:
             gen_fn(path)
             if not verify_file(path):
