@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
 [![Rust](https://img.shields.io/badge/Rust-2021_edition-orange)](https://www.rust-lang.org/)
 
-Flexible read/write for NITF, GeoTIFF, JPEG 2000, and more. Performant cloud-native
+Flexible read/write for NITF, GeoTIFF, JPEG 2000, DTED, and more. Performant cloud-native
 tile access with no complex dependencies. Built in Rust for speed with Python APIs for easy integration
 with the latest ML frameworks and data science environments.
 
@@ -142,6 +142,16 @@ structural alignment makes it straightforward to publish datasets as STAC Items.
 | COG | Cloud Optimized GeoTIFF with overview IFDs and correct NewSubfileType |
 | Pixel types | 8/16/32-bit unsigned, 16/32-bit signed, 32/64-bit float |
 
+### DTED (Digital Terrain Elevation Data)
+
+| Capability | Details |
+|------------|---------|
+| Levels | 0, 1, 2, ... |
+| Pixel type | Single-band Int16 (signed-magnitude encoding) |
+| Extensions | `.dt0`–`.dt5`, `.avg`, `.min`, `.max` |
+| Datum | WGS84 horizontal, MSL (EGM96) vertical |
+| Zarr codec | Overlap-aware edge trimming for seamless multi-cell mosaics |
+
 ### Other Formats
 
 JP2, JPEG, and PNG file formats are also supported for read and write. These lack robust metadata,
@@ -162,8 +172,9 @@ geospatial data:
   multi-resolution tile indexes (Kerchunk JSON/Parquet)
 - **Format-aware Zarr v3 codecs** that handle the decoding problems standard codecs
   cannot — NITF endian swap and interleave conversion, JPEG 2000 tile-part
-  reconstruction from non-contiguous byte ranges, and TIFF predictor reversal using
-  metadata from outside the tile data
+  reconstruction from non-contiguous byte ranges, TIFF predictor reversal using
+  metadata from outside the tile data, and DTED boundary-post trimming for seamless
+  multi-cell elevation mosaics without preprocessing
 - **MultiReferenceFileSystem** — an fsspec extension that adds scatter-gather I/O for
   JPEG 2000 codestreams where a single tile's data is scattered across multiple
   non-contiguous locations in the file (common with RLCP/RPCL progression orders in

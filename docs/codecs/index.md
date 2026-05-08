@@ -10,6 +10,7 @@ schema and decoding behavior.
 | JPEG | `https://awslabs.github.io/osml-imagery-io/codecs/jpeg` |
 | JBP Block | `https://awslabs.github.io/osml-imagery-io/codecs/jbp-block` |
 | TIFF Tile | `https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile` |
+| DTED | `https://awslabs.github.io/osml-imagery-io/codecs/dted` |
 
 ```{toctree}
 :maxdepth: 1
@@ -18,4 +19,5 @@ jpeg2000
 jpeg
 jbp-block
 tiff-tile
+dted
 ```

@@ -101,6 +101,7 @@ and integrate with the broader cloud-native geospatial ecosystem.
 | TIFF | ✅ | ✅ | Tiled and stripped layouts; includes GeoTIFF metadata and COG support |
 | PNG | ✅ | ✅ | Lossless; Deflate compression |
 | JPEG 2000 (.j2k, .jp2) | ✅ | ✅ | Lossless and lossy; multi-resolution decode; via OpenJPEG |
+| DTED (.dt0–.dt5) | ✅ | ✅ | Single-band Int16 elevation; signed-magnitude encoding; WGS84/MSL |
 | JPEG (.jpg, .jpeg) | ✅ | ✅ | Lossy; 8-bit; 1 or 3 bands |
 
 NITF is the primary container format for defense and intelligence imagery. SICD and SIDD
@@ -113,6 +114,14 @@ TIFF support includes GeoTIFF metadata (GeoKeys, ModelTiepoint, ModelPixelScale,
 ModelTransformation) and Cloud Optimized GeoTIFF (COG) conventions. These are not
 separate formats — GeoTIFF adds geospatial tags to a standard TIFF, and COG defines
 a layout convention for efficient range-request access.
+
+DTED (Digital Terrain Elevation Data) is a U.S. DoD standard elevation format
+(MIL-PRF-89020B) commonly found alongside NITF in geospatial workflows. Each file
+contains a single 1-degree cell of signed 16-bit elevation posts in WGS84 geographic
+coordinates with MSL (EGM96) vertical datum. File extensions `.dt0`, `.dt1`, `.dt2`
+correspond to Levels 0–2 (30″, 3″, and 1″ spacing respectively). Higher-resolution
+extensions (`.dt3`–`.dt5`) and auxiliary statistic files (`.avg`, `.min`, `.max`) are
+also recognized. Null/void positions use the sentinel value −32767.
 
 ### NITF Image Compression
 
@@ -161,6 +170,10 @@ Maintained by the [NSG Standards Registry (NGA)](https://nsgreg.nga.mil/):
 - **TIFF Revision 6.0** — Base TIFF file format (Adobe)
 - **OGC GeoTIFF Standard** — Geospatial extensions for TIFF ([OGC](https://www.ogc.org/standards/))
 - **OGC Cloud Optimized GeoTIFF (COG)** — Cloud-native GeoTIFF conventions ([OGC](https://www.ogc.org/standards/))
+
+### Elevation Data
+
+- **MIL-PRF-89020B** — Performance Specification, Digital Terrain Elevation Data (DTED), 23 May 2000
 
 ### Image Compression
 

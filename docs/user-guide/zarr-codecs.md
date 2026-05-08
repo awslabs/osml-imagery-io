@@ -295,7 +295,36 @@ directly.
 :align: center
 ```
 
-All four codecs are registered with the Zarr codec registry via Python entry
+`DtedTileCodec` decodes DTED elevation data sections. DTED stores elevations
+as column-major signed-magnitude big-endian 16-bit integers with per-record
+headers and checksums interleaved in the data stream. The codec strips the
+record framing, converts signed-magnitude to native two's complement, and
+transposes column-major to row-major — producing a standard `(1, rows, cols)`
+Int16 array.
+
+The codec introduces a capability not found in existing Zarr codecs:
+**overlap-aware edge trimming**. DTED cells share boundary posts with their
+neighbors (the easternmost column of one cell duplicates the westernmost column
+of the next). The `trim_*` parameters discard these shared edges during decode,
+so the output chunks tile seamlessly without data duplication. This enables
+representing an entire DTED archive as a single contiguous Zarr array — each
+file becomes one chunk, edges are trimmed at decode time, and consumers see a
+seamless elevation surface with no preprocessing required.
+
+```json
+{
+    "name": "https://awslabs.github.io/osml-imagery-io/codecs/dted",
+    "configuration": {
+        "num_lat_points": 1201,
+        "num_lon_lines": 1201,
+        "record_size": 2414,
+        "trim_bottom": 1,
+        "trim_right": 1
+    }
+}
+```
+
+All five codecs are registered with the Zarr codec registry via Python entry
 points. They use URI-based names per the Zarr v3 specification to avoid
 conflicts with existing codecs:
 
@@ -303,6 +332,7 @@ conflicts with existing codecs:
 - `https://awslabs.github.io/osml-imagery-io/codecs/jpeg`
 - `https://awslabs.github.io/osml-imagery-io/codecs/jbp-block`
 - `https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile`
+- `https://awslabs.github.io/osml-imagery-io/codecs/dted`
 
 The URIs resolve to human-readable documentation. Implementations do not fetch
 them at runtime.
