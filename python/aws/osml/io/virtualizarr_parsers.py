@@ -85,7 +85,7 @@ def _build_codec_instance(asset):
     The mapping logic mirrors ``tile_index.py:_build_zarray()`` but produces
     zarr v3 codec class instances instead of zarr v2 filter dicts.
     """
-    from aws.osml.io.zarr_codecs import JbpBlockCodec, Jpeg2000Codec, JpegCodec, TiffTileCodec
+    from aws.osml.io.zarr_codecs import DtedTileCodec, JbpBlockCodec, Jpeg2000Codec, JpegCodec, TiffTileCodec
 
     codec_config = asset.codec_configuration()
     if codec_config is None:
@@ -182,6 +182,13 @@ def _build_codec_instance(asset):
             tile_height=raw.get("tile_height", block_h),
             sample_format=raw.get("sample_format", 1),
             jpeg_tables=jpeg_tables,
+        )
+    elif "dted_codec" in raw:
+        # DTED tile codec
+        return DtedTileCodec(
+            num_lat_points=raw.get("num_lat_points", block_h),
+            num_lon_lines=raw.get("num_lon_lines", block_w),
+            record_size=raw.get("record_size", 8 + block_h * 2 + 4),
         )
 
     return None

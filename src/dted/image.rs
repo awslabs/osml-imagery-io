@@ -3,6 +3,7 @@
 //! Exposes the elevation grid as a single-band Int16 raster in a single
 //! full-image block (column-major source is transposed to row-major on read).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::dted::metadata::DTEDMetadataProvider;
@@ -208,6 +209,31 @@ impl ImageAssetProvider for DTEDImageAssetProvider {
 
     fn pad_pixel_value(&self) -> f64 {
         -32767.0
+    }
+
+    fn tile_byte_ranges(&self) -> Option<HashMap<(u32, u32), Vec<(u64, u64)>>> {
+        let total_data_len = self.num_lon_lines as u64 * self.record_size as u64;
+        let mut map = HashMap::new();
+        map.insert((0u32, 0u32), vec![(DATA_OFFSET as u64, total_data_len)]);
+        Some(map)
+    }
+
+    fn codec_configuration(&self) -> Option<HashMap<String, Vec<u8>>> {
+        let mut config = HashMap::new();
+        config.insert("dted_codec".to_string(), Vec::new());
+        config.insert(
+            "num_lat_points".to_string(),
+            (self.num_lat_points as u32).to_le_bytes().to_vec(),
+        );
+        config.insert(
+            "num_lon_lines".to_string(),
+            (self.num_lon_lines as u32).to_le_bytes().to_vec(),
+        );
+        config.insert(
+            "record_size".to_string(),
+            (self.record_size as u32).to_le_bytes().to_vec(),
+        );
+        Some(config)
     }
 }
 

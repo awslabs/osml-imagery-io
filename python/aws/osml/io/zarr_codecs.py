@@ -1,4 +1,4 @@
-"""Zarr codec plugins for JPEG 2000, JPEG, and uncompressed JBP/NITF imagery.
+"""Zarr codec plugins for JPEG 2000, JPEG, uncompressed JBP/NITF, TIFF, and DTED imagery.
 
 Codec classes subclass the zarr-python v3 ``BytesBytesCodec`` ABC and are
 registered via entry points in ``pyproject.toml``.  The zarr v3 codec pipeline
@@ -19,17 +19,19 @@ import asyncio
 import base64
 from dataclasses import dataclass
 
-from aws.osml.io._io import decode_jbp_block, decode_jpeg, decode_jpeg2000, decode_tiff_tile
+from aws.osml.io._io import decode_dted_tile, decode_jbp_block, decode_jpeg, decode_jpeg2000, decode_tiff_tile
 
 __all__ = [
     "Jpeg2000Codec",
     "JpegCodec",
     "JbpBlockCodec",
     "TiffTileCodec",
+    "DtedTileCodec",
     "decode_jpeg2000",
     "decode_jpeg",
     "decode_jbp_block",
     "decode_tiff_tile",
+    "decode_dted_tile",
 ]
 
 
@@ -817,6 +819,194 @@ class TiffTileCodec(_import_zarr_bytescodec()):
         )
 
 
+@dataclass(frozen=True)
+class DtedTileCodec(_import_zarr_bytescodec()):
+    """Zarr v3 bytes-to-bytes codec for DTED elevation tile decoding.
+
+    Reads signed-magnitude big-endian i16 columns from source byte ranges,
+    strips per-record headers and checksums, converts to native i16, transposes
+    column-major to row-major, and optionally trims overlapping boundary posts.
+
+    Registered as: https://awslabs.github.io/osml-imagery-io/codecs/dted
+
+    Configuration:
+        num_lat_points: int  — number of elevation posts per column
+        num_lon_lines: int   — number of longitude columns (records)
+        record_size: int     — size of each data record in bytes
+        trim_top: int        — rows to discard from top (default 0)
+        trim_bottom: int     — rows to discard from bottom (default 0)
+        trim_left: int       — columns to discard from left (default 0)
+        trim_right: int      — columns to discard from right (default 0)
+    """
+
+    codec_name = "https://awslabs.github.io/osml-imagery-io/codecs/dted"
+    codec_id = "https://awslabs.github.io/osml-imagery-io/codecs/dted"
+    is_fixed_size = False
+
+    num_lat_points: int = 1201
+    num_lon_lines: int = 1201
+    record_size: int = 2414
+    trim_top: int = 0
+    trim_bottom: int = 0
+    trim_left: int = 0
+    trim_right: int = 0
+
+    def __init__(
+        self,
+        *,
+        num_lat_points: int = 1201,
+        num_lon_lines: int = 1201,
+        record_size: int = 2414,
+        trim_top: int = 0,
+        trim_bottom: int = 0,
+        trim_left: int = 0,
+        trim_right: int = 0,
+    ):
+        object.__setattr__(self, "num_lat_points", num_lat_points)
+        object.__setattr__(self, "num_lon_lines", num_lon_lines)
+        object.__setattr__(self, "record_size", record_size)
+        object.__setattr__(self, "trim_top", trim_top)
+        object.__setattr__(self, "trim_bottom", trim_bottom)
+        object.__setattr__(self, "trim_left", trim_left)
+        object.__setattr__(self, "trim_right", trim_right)
+
+    def _decode_sync(self, chunk_bytes, chunk_spec):
+        """Synchronous decode — delegates to the Rust DTED tile decoder."""
+        from zarr.core.buffer.cpu import as_numpy_array_wrapper
+
+        return as_numpy_array_wrapper(
+            lambda buf: decode_dted_tile(
+                bytes(buf),
+                num_lat_points=self.num_lat_points,
+                num_lon_lines=self.num_lon_lines,
+                record_size=self.record_size,
+                trim_top=self.trim_top,
+                trim_bottom=self.trim_bottom,
+                trim_left=self.trim_left,
+                trim_right=self.trim_right,
+            ).tobytes(),
+            chunk_bytes,
+            chunk_spec.prototype,
+        )
+
+    async def _decode_single(self, chunk_bytes, chunk_spec):
+        """Decode DTED tile chunk bytes into pixel data.
+
+        Args:
+            chunk_bytes: Buffer containing raw DTED data records.
+            chunk_spec: ArraySpec describing the expected output.
+
+        Returns:
+            Buffer with decoded pixel data.
+        """
+        return await asyncio.to_thread(self._decode_sync, chunk_bytes, chunk_spec)
+
+    async def _encode_single(self, chunk_bytes, chunk_spec):
+        """Encoding is not supported.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError("DtedTileCodec: encoding is not supported")
+
+    def compute_encoded_size(self, input_byte_length: int, chunk_spec) -> int:
+        """Return *input_byte_length* — size is not predictable due to trimming."""
+        return input_byte_length
+
+    def evolve_from_array_spec(self, array_spec):
+        """Codec configuration is fixed at construction time."""
+        return self
+
+    def to_dict(self):
+        """Serialize codec configuration to a JSON-compatible dictionary.
+
+        Returns:
+            dict with 'name' and 'configuration' keys.
+        """
+        return {
+            "name": self.codec_name,
+            "configuration": {
+                "num_lat_points": self.num_lat_points,
+                "num_lon_lines": self.num_lon_lines,
+                "record_size": self.record_size,
+                "trim_top": self.trim_top,
+                "trim_bottom": self.trim_bottom,
+                "trim_left": self.trim_left,
+                "trim_right": self.trim_right,
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        """Construct a DtedTileCodec from a serialized configuration dictionary.
+
+        Accepts both ``{"name": ..., "configuration": {...}}`` format and a
+        flat configuration dictionary.
+
+        Args:
+            data: Configuration dictionary.
+
+        Returns:
+            DtedTileCodec instance.
+        """
+        config = data.get("configuration", data)
+        return cls(
+            num_lat_points=config.get("num_lat_points", 1201),
+            num_lon_lines=config.get("num_lon_lines", 1201),
+            record_size=config.get("record_size", 2414),
+            trim_top=config.get("trim_top", 0),
+            trim_bottom=config.get("trim_bottom", 0),
+            trim_left=config.get("trim_left", 0),
+            trim_right=config.get("trim_right", 0),
+        )
+
+    # -- numcodecs compatibility (consumer path) ---------------------------
+
+    def decode(self, buf, out=None):
+        """Synchronous decode for numcodecs filter protocol."""
+        data = bytes(buf) if not isinstance(buf, bytes) else buf
+        return decode_dted_tile(
+            data,
+            num_lat_points=self.num_lat_points,
+            num_lon_lines=self.num_lon_lines,
+            record_size=self.record_size,
+            trim_top=self.trim_top,
+            trim_bottom=self.trim_bottom,
+            trim_left=self.trim_left,
+            trim_right=self.trim_right,
+        )
+
+    def encode(self, buf):
+        """Encoding is not supported."""
+        raise NotImplementedError("DtedTileCodec: encoding is not supported")
+
+    def get_config(self):
+        """Return numcodecs-compatible configuration dict."""
+        return {
+            "id": self.codec_id,
+            "num_lat_points": self.num_lat_points,
+            "num_lon_lines": self.num_lon_lines,
+            "record_size": self.record_size,
+            "trim_top": self.trim_top,
+            "trim_bottom": self.trim_bottom,
+            "trim_left": self.trim_left,
+            "trim_right": self.trim_right,
+        }
+
+    @classmethod
+    def from_config(cls, config):
+        """Construct from a numcodecs configuration dict."""
+        return cls(
+            num_lat_points=config.get("num_lat_points", 1201),
+            num_lon_lines=config.get("num_lon_lines", 1201),
+            record_size=config.get("record_size", 2414),
+            trim_top=config.get("trim_top", 0),
+            trim_bottom=config.get("trim_bottom", 0),
+            trim_left=config.get("trim_left", 0),
+            trim_right=config.get("trim_right", 0),
+        )
+
+
 # ---------------------------------------------------------------------------
 # numcodecs registration (consumer path)
 # ---------------------------------------------------------------------------
@@ -839,6 +1029,7 @@ def _register_numcodecs():
     numcodecs.register_codec(JpegCodec)
     numcodecs.register_codec(JbpBlockCodec)
     numcodecs.register_codec(TiffTileCodec)
+    numcodecs.register_codec(DtedTileCodec)
 
 
 _register_numcodecs()

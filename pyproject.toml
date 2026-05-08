@@ -60,6 +60,7 @@ Repository = "https://github.com/awslabs/osml-imagery-io"
 "https://awslabs.github.io/osml-imagery-io/codecs/jpeg" = "aws.osml.io.zarr_codecs:JpegCodec"
 "https://awslabs.github.io/osml-imagery-io/codecs/jbp-block" = "aws.osml.io.zarr_codecs:JbpBlockCodec"
 "https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile" = "aws.osml.io.zarr_codecs:TiffTileCodec"
+"https://awslabs.github.io/osml-imagery-io/codecs/dted" = "aws.osml.io.zarr_codecs:DtedTileCodec"
 
 [tool.maturin]
 python-source = "python"

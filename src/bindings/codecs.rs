@@ -585,6 +585,114 @@ pub fn decode_tiff_tile(
 }
 
 // =============================================================================
+// DTED Tile Decode
+// =============================================================================
+
+/// Decode a DTED tile from raw data record bytes into a NumPy array.
+///
+/// Accepts the raw bytes of one or more DTED data records (including per-record
+/// sentinel, header, elevation posts, and checksum) and returns a row-major
+/// Int16 array with shape ``(1, output_rows, output_cols)`` after:
+/// 1. Stripping per-record headers (8 bytes) and checksums (4 bytes)
+/// 2. Converting signed-magnitude big-endian i16 to native i16
+/// 3. Transposing column-major (south→north) to row-major (north→south)
+/// 4. Applying optional edge trimming
+///
+/// :param data: Raw bytes covering all data records for this tile.
+/// :param num_lat_points: Number of elevation posts per column (record).
+/// :param num_lon_lines: Number of longitude columns (records).
+/// :param record_size: Size of each data record in bytes.
+/// :param trim_top: Rows to discard from the top (default 0).
+/// :param trim_bottom: Rows to discard from the bottom (default 0).
+/// :param trim_left: Columns to discard from the left (default 0).
+/// :param trim_right: Columns to discard from the right (default 0).
+/// :returns: NumPy ndarray with shape (1, output_rows, output_cols) and dtype int16.
+/// :raises ValueError: If data length doesn't match expected size or trim values are invalid.
+#[pyfunction]
+#[pyo3(signature = (data, num_lat_points, num_lon_lines, record_size,
+                    trim_top=0, trim_bottom=0, trim_left=0, trim_right=0))]
+pub fn decode_dted_tile(
+    py: Python<'_>,
+    data: &[u8],
+    num_lat_points: u32,
+    num_lon_lines: u32,
+    record_size: u32,
+    trim_top: u32,
+    trim_bottom: u32,
+    trim_left: u32,
+    trim_right: u32,
+) -> PyResult<Py<PyAny>> {
+    let rec_size = record_size as usize;
+    let cols = num_lon_lines as usize;
+    let rows = num_lat_points as usize;
+
+    let expected_len = cols * rec_size;
+    if data.len() != expected_len {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Data size mismatch: expected {} bytes ({} records × {} bytes), got {}",
+            expected_len,
+            cols,
+            rec_size,
+            data.len()
+        )));
+    }
+
+    let trim_t = trim_top as usize;
+    let trim_b = trim_bottom as usize;
+    let trim_l = trim_left as usize;
+    let trim_r = trim_right as usize;
+
+    if trim_t + trim_b >= rows {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "trim_top ({}) + trim_bottom ({}) >= num_lat_points ({})",
+            trim_t, trim_b, rows
+        )));
+    }
+    if trim_l + trim_r >= cols {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "trim_left ({}) + trim_right ({}) >= num_lon_lines ({})",
+            trim_l, trim_r, cols
+        )));
+    }
+
+    let out_rows = rows - trim_t - trim_b;
+    let out_cols = cols - trim_l - trim_r;
+    let mut output = vec![0i16; out_rows * out_cols];
+
+    for col_idx in 0..out_cols {
+        let src_col = col_idx + trim_l;
+        let record_offset = src_col * rec_size;
+        let record = &data[record_offset..record_offset + rec_size];
+
+        // Elevation posts start at byte 8.
+        // DTED stores south→north; we output north→south (row 0 = northernmost).
+        let elev_start = 8;
+        for row_idx in 0..out_rows {
+            // Account for trim_top: the trimmed-away top rows correspond to
+            // the northernmost posts, which are at the highest post indices
+            // (since data is stored south→north).
+            let post_index = rows - 1 - (row_idx + trim_t);
+            let byte_offset = elev_start + post_index * 2;
+            let raw = u16::from_be_bytes([record[byte_offset], record[byte_offset + 1]]);
+            let value = if raw == 0xFFFF {
+                -32767i16
+            } else if raw & 0x8000 != 0 {
+                -((raw & 0x7FFF) as i16)
+            } else {
+                raw as i16
+            };
+            output[row_idx * out_cols + col_idx] = value;
+        }
+    }
+
+    // Convert i16 to native-endian bytes
+    let byte_output: Vec<u8> = output.iter().flat_map(|&v| v.to_ne_bytes()).collect();
+
+    let shape = [1u32, out_rows as u32, out_cols as u32];
+    create_numpy_array(py, &byte_output, shape, PixelType::Int16)
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 

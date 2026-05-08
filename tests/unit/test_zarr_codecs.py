@@ -113,12 +113,14 @@ class TestModuleExports:
     """Verify module __all__ and binding accessibility."""
 
     def test_zarr_codecs_all_exports(self):
-        """zarr_codecs module __all__ contains all 8 expected names."""
+        """zarr_codecs module __all__ contains all expected names."""
         import aws.osml.io.zarr_codecs as mod
 
         expected = {
             "Jpeg2000Codec", "JpegCodec", "JbpBlockCodec", "TiffTileCodec",
+            "DtedTileCodec",
             "decode_jpeg2000", "decode_jpeg", "decode_jbp_block", "decode_tiff_tile",
+            "decode_dted_tile",
         }
         assert set(mod.__all__) == expected
 
