@@ -618,6 +618,9 @@ fn detect_write_format(parsed: &ParsedUri) -> Option<String> {
             "png" => Some("png".to_string()),
             "j2k" | "jp2" => Some("j2k".to_string()),
             "jpg" | "jpeg" => Some("jpeg".to_string()),
+            "dt0" | "dt1" | "dt2" | "dt3" | "dt4" | "dt5" | "avg" | "min" | "max" => {
+                Some("dted".to_string())
+            }
             _ => None,
         })
 }
@@ -910,6 +913,10 @@ fn create_writer_boxed_from_output(
             "JPEG format writing requires the 'libjpeg-turbo' feature".to_string(),
         )
         .into()),
+        "dted" | "dt0" | "dt1" | "dt2" | "dt3" | "dt4" | "dt5" | "avg" | "min" | "max" => {
+            let writer = crate::dted::DTEDDatasetWriter::new_with_output(output)?;
+            Ok(Box::new(writer))
+        }
         _ => {
             // Unknown format
             Err(CodecError::InvalidFormat(format!("Unsupported format: '{}'", format)).into())

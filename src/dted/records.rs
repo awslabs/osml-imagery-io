@@ -165,6 +165,25 @@ pub fn decode_elevation(bytes: [u8; 2]) -> i16 {
     }
 }
 
+/// Convert native i16 to DTED signed-magnitude big-endian.
+#[inline]
+pub fn encode_elevation(value: i16) -> [u8; 2] {
+    if value == -32767 {
+        return [0xFF, 0xFF];
+    }
+    if value < 0 {
+        let magnitude = (-value) as u16;
+        (magnitude | 0x8000).to_be_bytes()
+    } else {
+        (value as u16).to_be_bytes()
+    }
+}
+
+/// Compute the checksum for a data record (sum of all bytes as u32).
+pub fn compute_record_checksum(record: &[u8]) -> u32 {
+    record.iter().map(|&b| b as u32).sum()
+}
+
 /// Compute the expected record size for a column of elevation data.
 #[inline]
 pub fn record_size(num_lat_points: u16) -> usize {
@@ -518,5 +537,39 @@ mod tests {
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("Invalid ACC sentinel"));
+    }
+
+    #[test]
+    fn test_encode_elevation_positive() {
+        assert_eq!(encode_elevation(100), [0x00, 0x64]);
+        assert_eq!(encode_elevation(0), [0x00, 0x00]);
+        assert_eq!(encode_elevation(9000), [0x23, 0x28]);
+    }
+
+    #[test]
+    fn test_encode_elevation_negative() {
+        assert_eq!(encode_elevation(-100), [0x80, 0x64]);
+        assert_eq!(encode_elevation(-1), [0x80, 0x01]);
+        assert_eq!(encode_elevation(-12000), [0xAE, 0xE0]);
+    }
+
+    #[test]
+    fn test_encode_elevation_null() {
+        assert_eq!(encode_elevation(-32767), [0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn test_encode_decode_roundtrip() {
+        for value in [-12000i16, -1000, -1, 0, 1, 100, 9000, -32767] {
+            assert_eq!(decode_elevation(encode_elevation(value)), value);
+        }
+    }
+
+    #[test]
+    fn test_compute_record_checksum() {
+        let record = vec![0xAA, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x64];
+        let checksum = compute_record_checksum(&record);
+        let expected: u32 = record.iter().map(|&b| b as u32).sum();
+        assert_eq!(checksum, expected);
     }
 }
