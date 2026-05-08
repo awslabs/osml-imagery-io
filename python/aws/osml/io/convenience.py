@@ -111,6 +111,15 @@ _EXTENSION_TO_FORMAT: dict[str, str] = {
     ".jp2": "j2k",
     ".jpg": "jpeg",
     ".jpeg": "jpeg",
+    ".dt0": "dted",
+    ".dt1": "dted",
+    ".dt2": "dted",
+    ".dt3": "dted",
+    ".dt4": "dted",
+    ".dt5": "dted",
+    ".avg": "dted",
+    ".min": "dted",
+    ".max": "dted",
 }
 
 _SUPPORTED_DTYPES: dict[str, set[str]] = {
@@ -119,6 +128,7 @@ _SUPPORTED_DTYPES: dict[str, set[str]] = {
     "png": {"uint8", "uint16"},
     "j2k": {"uint8", "uint16", "int16"},
     "jpeg": {"uint8"},
+    "dted": {"int16"},
 }
 
 

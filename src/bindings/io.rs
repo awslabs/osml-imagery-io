@@ -100,6 +100,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for PathsArg {
         Err(PyValueError::new_err("paths must be a str or list[str]"))
     }
 }
+use crate::dted::DTEDDatasetReader;
 use crate::error::CodecError;
 #[cfg(feature = "openjpeg")]
 use crate::j2k::{J2KDatasetReader, J2KDatasetWriter};
@@ -528,6 +529,7 @@ fn create_multi_path_reader_boxed(
                     "png" => "png",
                     "j2k" | "jp2" => "j2k",
                     "jpg" | "jpeg" => "jpeg",
+                    "dt0" | "dt1" | "dt2" | "dt3" | "dt4" | "dt5" | "avg" | "min" | "max" => "dted",
                     _ => "",
                 })
             });
@@ -560,6 +562,12 @@ fn create_multi_path_reader_boxed(
                 Some("jpg") | Some("jpeg") => {
                     let mmap = mmap_file(&rset_parsed.path)?;
                     let reader = JPEGDatasetReader::from_bytes(&mmap)?;
+                    Box::new(reader)
+                }
+                Some("dted") | Some("dt0") | Some("dt1") | Some("dt2") | Some("dt3")
+                | Some("dt4") | Some("dt5") => {
+                    let mmap = mmap_file(&rset_parsed.path)?;
+                    let reader = DTEDDatasetReader::from_bytes(&mmap)?;
                     Box::new(reader)
                 }
                 _ => {
@@ -714,6 +722,11 @@ fn create_reader_boxed(
                 let reader = JPEGDatasetReader::from_bytes(&mmap)?;
                 return Ok(Box::new(reader));
             }
+            "dted" | "dt0" | "dt1" | "dt2" | "dt3" | "dt4" | "dt5" => {
+                let mmap = mmap_file(&parsed.path)?;
+                let reader = DTEDDatasetReader::from_bytes(&mmap)?;
+                return Ok(Box::new(reader));
+            }
             _ => {
                 return Err(
                     CodecError::InvalidFormat(format!("Unsupported format: '{}'", fmt)).into(),
@@ -787,6 +800,12 @@ fn create_reader_boxed(
                 ))
                 .into())
             }
+        }
+        Some("dt0") | Some("dt1") | Some("dt2") | Some("dt3") | Some("dt4") | Some("dt5")
+        | Some("avg") | Some("min") | Some("max") => {
+            let mmap = mmap_file(&parsed.path)?;
+            let reader = DTEDDatasetReader::from_bytes(&mmap)?;
+            Ok(Box::new(reader))
         }
         Some(ext) => {
             Err(CodecError::InvalidFormat(format!("Unsupported file format: .{}", ext)).into())
@@ -1073,6 +1092,9 @@ fn reader_from_bytes(format: &str, data: &[u8]) -> PyResult<Box<dyn DatasetReade
             "JPEG support not enabled (libjpeg-turbo feature disabled)".to_string(),
         )
         .into()),
+        "dted" | "dt0" | "dt1" | "dt2" | "dt3" | "dt4" | "dt5" => {
+            Ok(Box::new(DTEDDatasetReader::from_bytes(data)?))
+        }
         _ => Err(CodecError::InvalidFormat(format!("Unsupported format: '{}'", format)).into()),
     }
 }

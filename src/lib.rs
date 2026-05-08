@@ -10,6 +10,7 @@ use pyo3::prelude::*;
 mod bindings;
 pub mod buffered;
 pub mod composite;
+pub mod dted;
 mod error;
 pub mod j2k;
 pub mod jbp;
