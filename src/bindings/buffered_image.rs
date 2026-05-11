@@ -594,6 +594,7 @@ impl PyBufferedImageAssetProvider {
     /// :type resolution_level: int
     /// :returns: ``True`` if the block contains data, ``False`` otherwise.
     /// :rtype: bool
+    #[pyo3(signature = (block_row, block_col, resolution_level=0))]
     fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
         self.inner.has_block(block_row, block_col, resolution_level)
     }
@@ -629,7 +630,7 @@ impl PyBufferedImageAssetProvider {
     /// red_band = provider.get_block(0, 0, 0, bands=[0])
     /// print(red_band.shape)  # (1, 256, 256)
     /// ```
-    #[pyo3(signature = (block_row, block_col, resolution_level, bands=None))]
+    #[pyo3(signature = (block_row, block_col, resolution_level=0, bands=None))]
     fn get_block<'py>(
         &self,
         py: Python<'py>,

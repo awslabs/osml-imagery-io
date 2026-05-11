@@ -229,6 +229,7 @@ impl PyImageAssetProvider {
     ///         if image.has_block(row, col, resolution_level=0):
     ///             block = image.get_block(row, col, resolution_level=0)
     /// ```
+    #[pyo3(signature = (block_row, block_col, resolution_level=0))]
     fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
         self.inner.has_block(block_row, block_col, resolution_level)
     }
@@ -265,7 +266,7 @@ impl PyImageAssetProvider {
     /// # Near-infrared band for vegetation analysis
     /// nir = image.get_block(0, 0, resolution_level=0, bands=[4])
     /// ```
-    #[pyo3(signature = (block_row, block_col, resolution_level, bands=None))]
+    #[pyo3(signature = (block_row, block_col, resolution_level=0, bands=None))]
     fn get_block<'py>(
         &self,
         py: Python<'py>,
