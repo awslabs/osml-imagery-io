@@ -511,22 +511,26 @@ The writer infers the TIFF field type from the JSON value type for common
 cases. For types that can't be inferred, use an explicit type annotation.
 
 ```python
-from aws.osml.io import IO
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 
-metadata = {
-    "256": 512,                    # ImageWidth → inferred as LONG
-    "257": 512,                    # ImageLength → inferred as LONG
-    "259": 1,                      # Compression → inferred as LONG
-    "33550": [0.5, 0.5, 0.0],     # ModelPixelScale → inferred as DOUBLE array
-    "42113": "nan",                # GDALNoData → inferred as ASCII
-}
+metadata = BufferedMetadataProvider()
+metadata.set_json("259", 8)                      # Compression: Deflate
+metadata.set_json("33550", [0.5, 0.5, 0.0])     # ModelPixelScale → DOUBLE array
+metadata.set("42113", "nan")                     # GDALNoData → ASCII
 
 # For field types that can't be inferred (e.g. UNDEFINED), use an annotation:
-metadata["700"] = {"value": [60, 120, 109, 108], "type": 7}  # XMP as UNDEFINED bytes
+metadata.set_json("700", {"value": [60, 120, 109, 108], "type": 7})  # XMP as UNDEFINED bytes
 
-with IO.open(["output.tif"], "w") as writer:
-    writer.metadata = metadata
-    # ... write image data
+# Attach metadata to the provider — the writer sources all IFD tags from here
+provider = BufferedImageAssetProvider.create(
+    key="image:0", num_columns=512, num_rows=512, num_bands=1,
+    block_width=256, block_height=256, pixel_type=PixelType.UInt8,
+    metadata=metadata,
+)
+provider.set_full_image(image_data)
+
+with IO.open(["output.tif"], "w", "tiff") as writer:
+    writer.add_asset("image:0", provider, "Image", "desc", ["data"])
 ```
 
 #### Writing with TagNameResolver
@@ -541,7 +545,7 @@ PlanarConfiguration, SampleFormat, PhotometricInterpretation, Orientation),
 string values are resolved to their numeric equivalents automatically:
 
 ```python
-from aws.osml.io import IO, BufferedMetadataProvider
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 from aws.osml.io.tiff.utils import TagNameResolver
 
 metadata = BufferedMetadataProvider()
@@ -562,9 +566,19 @@ resolver["SampleFormat"] = "Float"        # stored as 3
 # Integer values pass through unchanged
 resolver["Compression"] = 5               # also works
 
-with IO.open(["output.tif"], "w") as writer:
-    writer.metadata = metadata
-    # ... write image data
+# Write resolved keys back then attach to provider
+for key, value in tag_dict.items():
+    metadata.set(key, str(value) if not isinstance(value, str) else value)
+
+provider = BufferedImageAssetProvider.create(
+    key="image:0", num_columns=512, num_rows=512, num_bands=1,
+    block_width=512, block_height=512, pixel_type=PixelType.Float32,
+    metadata=metadata,
+)
+provider.set_full_image(image_data)
+
+with IO.open(["output.tif"], "w", "tiff") as writer:
+    writer.add_asset("image:0", provider, "Image", "desc", ["data"])
 ```
 
 The supported enumerated value names (case-insensitive) are:

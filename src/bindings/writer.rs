@@ -139,7 +139,10 @@ impl PyDatasetWriter {
     /// Set the dataset-level metadata.
     ///
     /// Assign a :class:`MetadataProvider` (or :class:`BufferedMetadataProvider`)
-    /// containing encoding hints and format fields for the output file.
+    /// containing file-level fields for the output file. For NITF, this populates
+    /// the file header (security markings, originator, etc.). For TIFF, this has
+    /// no effect — IFD tags and encoding hints are sourced from each asset
+    /// provider's metadata instead.
     ///
     /// :raises IOError: If the metadata cannot be applied to the dataset.
     #[setter]

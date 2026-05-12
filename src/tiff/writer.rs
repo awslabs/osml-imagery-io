@@ -667,7 +667,10 @@ pub struct TIFFDatasetWriter {
     assets: Vec<QueuedImageAsset>,
     /// Set of asset keys for duplicate detection.
     asset_keys: HashSet<String>,
-    /// Dataset-level metadata (encoding hints source).
+    /// Dataset-level metadata (unused — TIFF IFD tags are sourced from the
+    /// asset provider's metadata, consistent with the JBP writer pattern).
+    /// Retained for `DatasetWriter` trait compliance.
+    #[allow(dead_code)]
     metadata: Option<Arc<dyn MetadataProvider>>,
     /// Whether `close()` has been called.
     closed: bool,
@@ -1131,12 +1134,6 @@ impl DatasetWriter for TIFFDatasetWriter {
         // Sort assets for COG-compliant IFD ordering before writing
         self.sort_assets_for_cog();
 
-        // Parse encoding hints from dataset-level metadata
-        let mut hints = match &self.metadata {
-            Some(meta) => TiffEncodingHints::from_metadata(meta.as_ref())?,
-            None => TiffEncodingHints::default(),
-        };
-
         // Open libtiff in write mode
         let handle = TiffHandle::from_write()?;
 
@@ -1145,6 +1142,12 @@ impl DatasetWriter for TIFFDatasetWriter {
             let image = asset.provider.as_image().ok_or_else(|| {
                 CodecError::InvalidFormat(format!("Asset '{}' is not an Image variant", asset.key))
             })?;
+
+            // Source encoding hints and IFD tags from the asset's metadata,
+            // consistent with the JBP writer pattern where per-segment content
+            // comes from the provider.
+            let asset_metadata = image.metadata();
+            let mut hints = TiffEncodingHints::from_metadata(asset_metadata.as_ref())?;
 
             // Use provider block dimensions as defaults when metadata didn't
             // specify tile sizes (mirrors JBP writer's NPPBH/NPPBV fallback).
@@ -1157,9 +1160,7 @@ impl DatasetWriter for TIFFDatasetWriter {
                 &handle,
                 image.as_ref(),
                 &hints,
-                self.metadata
-                    .as_ref()
-                    .map(|m| m.as_ref() as &dyn MetadataProvider),
+                Some(asset_metadata.as_ref()),
                 &asset.roles,
                 &asset.key,
             )?;
@@ -1703,12 +1704,28 @@ mod tests {
     // GeoTIFF writer integration tests
     // =========================================================================
 
-    /// Helper: write a TIFF with the given metadata and return the file bytes.
+    /// Helper: create a minimal image provider with the given metadata attached.
+    fn make_image_provider_with_metadata(
+        key: &str,
+        meta: &BufferedMetadataProvider,
+    ) -> Arc<BufferedImageAssetProvider> {
+        let config = MemoryImageConfig::new(256, 256)
+            .with_bands(1)
+            .with_block_size(256, 256)
+            .with_pixel_type(PixelType::UInt8);
+        let provider = BufferedImageAssetProvider::new(key, config)
+            .with_metadata(Arc::new(BufferedMetadataProvider::from_provider(meta)));
+        let data = vec![42u8; 256 * 256];
+        provider.set_block(0, 0, &data).unwrap();
+        Arc::new(provider)
+    }
+
+    /// Helper: write a TIFF with the given metadata on the provider and return the file bytes.
     fn write_tiff_with_metadata(meta: &BufferedMetadataProvider) -> Vec<u8> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("geotiff_test.tif");
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
-        let provider = make_image_provider("image:0");
+        let provider = make_image_provider_with_metadata("image:0", meta);
         writer
             .add_asset(
                 "image:0",
@@ -1717,9 +1734,6 @@ mod tests {
                 "desc",
                 &[],
             )
-            .unwrap();
-        writer
-            .set_metadata(Arc::new(BufferedMetadataProvider::from_provider(meta)))
             .unwrap();
         writer.close().unwrap();
         std::fs::read(&path).unwrap()
@@ -1751,6 +1765,104 @@ mod tests {
     }
 
     #[test]
+    fn writer_geotiff_tags_from_provider_without_dataset_metadata() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        // Reproduce the reported bug: GeoTIFF tags on the provider's metadata
+        // should be written even when no dataset-level metadata is set.
+        let meta = BufferedMetadataProvider::new();
+        meta.set_json("33550", serde_json::json!([0.001, 0.001, 0.0]));
+        meta.set_json(
+            "33922",
+            serde_json::json!([0.0, 0.0, 0.0, -77.0, 39.0, 0.0]),
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("provider_geotags.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        let provider = make_image_provider_with_metadata("image:0", &meta);
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Image",
+                "desc",
+                &["data".to_string()],
+            )
+            .unwrap();
+        // No writer.set_metadata() call — tags come from the provider
+        writer.close().unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        assert_eq!(
+            dict.get("33550"),
+            Some(&serde_json::json!([0.001, 0.001, 0])),
+            "ModelPixelScaleTag should be written from provider metadata"
+        );
+        assert_eq!(
+            dict.get("33922"),
+            Some(&serde_json::json!([0, 0, 0, -77, 39, 0])),
+            "ModelTiepointTag should be written from provider metadata"
+        );
+    }
+
+    #[test]
+    fn writer_encoding_hints_from_provider_metadata() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        // Encoding hints (compression, tile size) should be sourced from
+        // the provider's metadata, not dataset-level metadata.
+        let meta = BufferedMetadataProvider::new();
+        meta.set_json("259", serde_json::json!(5)); // LZW compression
+        meta.set_json("322", serde_json::json!(512)); // TileWidth
+        meta.set_json("323", serde_json::json!(512)); // TileLength
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("provider_hints.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        let provider = make_image_provider_with_metadata("image:0", &meta);
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Image",
+                "desc",
+                &["data".to_string()],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
+        let ifd_meta = asset.metadata();
+        let dict = ifd_meta.as_dict(None);
+
+        assert_eq!(
+            dict.get("259"),
+            Some(&serde_json::json!(5)),
+            "Compression should be LZW (5)"
+        );
+        assert_eq!(
+            dict.get("322"),
+            Some(&serde_json::json!(512)),
+            "TileWidth should be 512"
+        );
+        assert_eq!(
+            dict.get("323"),
+            Some(&serde_json::json!(512)),
+            "TileLength should be 512"
+        );
+    }
+
+    #[test]
     fn writer_plain_tiff_no_geo_tags() {
         use crate::tiff::TIFFDatasetReader;
         use crate::traits::DatasetReader;
@@ -1778,7 +1890,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad_epsg.tif");
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
-        let provider = make_image_provider("image:0");
+        let provider = make_image_provider_with_metadata("image:0", &meta);
         writer
             .add_asset(
                 "image:0",
@@ -1787,9 +1899,6 @@ mod tests {
                 "desc",
                 &[],
             )
-            .unwrap();
-        writer
-            .set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta)))
             .unwrap();
         let result = writer.close();
 
@@ -1809,7 +1918,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad_scale.tif");
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
-        let provider = make_image_provider("image:0");
+        let provider = make_image_provider_with_metadata("image:0", &meta);
         writer
             .add_asset(
                 "image:0",
@@ -1818,9 +1927,6 @@ mod tests {
                 "desc",
                 &[],
             )
-            .unwrap();
-        writer
-            .set_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta)))
             .unwrap();
         let result = writer.close();
 
@@ -2083,21 +2189,9 @@ mod tests {
         use crate::tiff::TIFFDatasetReader;
         use crate::traits::DatasetReader;
 
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("overview_no_geo.tif");
-        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
-        let provider = make_image_provider("image:0:overview:1");
-        writer
-            .add_asset(
-                "image:0:overview:1",
-                AssetProvider::Image(provider),
-                "Overview",
-                "desc",
-                &["overview".to_string()],
-            )
-            .unwrap();
-
-        // Set GeoTIFF metadata on the dataset
+        // Set GeoTIFF tags on the overview provider's metadata — they should
+        // be suppressed because overview IFDs (nsft == 1) must not carry
+        // GeoTIFF tags per the OGC COG Standard.
         let meta = BufferedMetadataProvider::new();
         meta.set_json(
             "34735",
@@ -2108,7 +2202,20 @@ mod tests {
             "33922",
             serde_json::json!([0.0, 0.0, 0.0, 500000.0, 4000000.0, 0.0]),
         );
-        writer.set_metadata(Arc::new(meta)).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overview_no_geo.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        let provider = make_image_provider_with_metadata("image:0:overview:1", &meta);
+        writer
+            .add_asset(
+                "image:0:overview:1",
+                AssetProvider::Image(provider),
+                "Overview",
+                "desc",
+                &["overview".to_string()],
+            )
+            .unwrap();
         writer.close().unwrap();
 
         let bytes = std::fs::read(&path).unwrap();

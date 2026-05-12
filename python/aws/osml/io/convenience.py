@@ -1123,8 +1123,10 @@ def imsave(
 
     # 7. Write via IO.open
     with IO.open(path, "w", io_format) as writer:
-        # Set dataset-level metadata for formats that need it
-        if io_format in ("tiff", "j2k", "jpeg"):
+        # Set dataset-level metadata for formats that need it.
+        # TIFF sources all IFD tags from the asset provider's metadata,
+        # so it does not need dataset-level metadata.
+        if io_format in ("j2k", "jpeg"):
             writer.metadata = metadata
 
         writer.add_asset(

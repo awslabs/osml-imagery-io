@@ -178,12 +178,15 @@ pattern for transcoding, chipping, or re-compressing imagery.
 
 The writer needs two kinds of metadata:
 
-- **File metadata** — populates the file header (security markings, originator, etc.).
-  Set this on the writer via `writer.metadata`.
-- **Image metadata** — controls per-image encoding (compression, blocking, etc.).
-  Attach this to the `BufferedImageAssetProvider`.
+- **File metadata** (NITF only) — populates the file header (security markings,
+  originator, etc.). Set this on the writer via `writer.metadata`.
+- **Image metadata** — controls per-image encoding (compression, blocking, GeoTIFF
+  tags, etc.). Attach this to the `BufferedImageAssetProvider`.
 
-Both can be copied from the original file and selectively overridden:
+For TIFF, all IFD content (encoding hints and GeoTIFF tags) comes from the provider's
+metadata — `writer.metadata` is not used. For NITF, file-level metadata and image-level
+metadata are separate. Both can be copied from the original file and selectively
+overridden:
 
 ```python
 from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider
@@ -300,7 +303,7 @@ affect how the writer encodes the asset — most importantly, the TIFF writer us
 to set `NewSubfileType` and control GeoTIFF tag propagation:
 
 - Assets with role `"data"` get `NewSubfileType = 0` (full-resolution image) and
-  receive GeoTIFF tags from the dataset metadata.
+  GeoTIFF tags from the provider's metadata are written to the IFD.
 - Assets with role `"overview"` get `NewSubfileType = 1` (reduced-resolution image)
   and GeoTIFF tags are suppressed on that IFD, per the OGC COG standard.
 
@@ -311,10 +314,11 @@ each overview with role `"overview"`:
 from aws.osml.io import IO, BufferedImageAssetProvider, PixelType
 import numpy as np
 
+# Attach GeoTIFF tags to the full-res provider's metadata.
+# Overview providers should NOT carry GeoTIFF tags — the writer
+# suppresses them automatically for overview IFDs.
 with IO.open(["output_cog.tif"], "w", "tiff") as writer:
-    writer.metadata = geo_metadata  # GeoTIFF tags applied to data IFDs only
-
-    # Full-resolution image
+    # Full-resolution image (GeoTIFF tags come from full_res_provider.metadata)
     writer.add_asset("image:0", full_res_provider,
                      title="Full Resolution", description="Primary image",
                      roles=["data"])
