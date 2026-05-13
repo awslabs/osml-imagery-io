@@ -200,19 +200,65 @@ fn bcs_n_validation_accepts_digits_and_space() {
 }
 
 #[test]
-fn bcs_n_validation_rejects_letters() {
+fn bcs_n_validation_rejects_letters_in_strict_mode() {
     let def = create_definition_with_encoding();
     let mut writer = StructureWriter::new(def);
+    writer.set_strict_encoding(true);
 
     writer.set("bcs_a_field", "TEST").unwrap();
 
-    // Invalid BCS-N: contains letters
+    // Invalid BCS-N: contains letters (rejected in strict mode)
     let result = writer.set("bcs_n_field", "12A34");
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
         WriteError::ValidationError { .. }
     ));
+}
+
+#[test]
+fn bcs_n_validation_accepts_letters_in_permissive_mode() {
+    let def = create_definition_with_encoding();
+    let mut writer = StructureWriter::new(def);
+
+    writer.set("bcs_a_field", "TEST").unwrap();
+
+    // BCS-N with letters: accepted in permissive mode (default)
+    let result = writer.set("bcs_n_field", "1.0E5");
+    assert!(result.is_ok());
+}
+
+#[test]
+fn bcs_npi_accepts_plus_sign_in_permissive_mode() {
+    // Simulates the RPC00B round-trip: reading HEIGHT_SCALE "+0697" and writing it back
+    let def = Arc::new(
+        StructureDefinition::new("rpc_snippet").with_field(
+            FieldDefinition::new("HEIGHT_SCALE", FieldType::String)
+                .with_size(SizeSpec::fixed(5))
+                .with_encoding(Encoding::BcsNPI),
+        ),
+    );
+
+    let mut writer = StructureWriter::new(def);
+    let result = writer.set("HEIGHT_SCALE", "+0697");
+    assert!(result.is_ok());
+    assert_eq!(writer.buffer(), b"+0697");
+}
+
+#[test]
+fn bcs_npi_rejects_plus_sign_in_strict_mode() {
+    let def = Arc::new(
+        StructureDefinition::new("rpc_snippet").with_field(
+            FieldDefinition::new("HEIGHT_SCALE", FieldType::String)
+                .with_size(SizeSpec::fixed(5))
+                .with_encoding(Encoding::BcsNPI),
+        ),
+    );
+
+    let mut writer = StructureWriter::new(def);
+    writer.set_strict_encoding(true);
+    let result = writer.set("HEIGHT_SCALE", "+0697");
+    assert!(result.is_err());
 }
 
 #[test]

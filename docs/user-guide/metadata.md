@@ -358,6 +358,32 @@ image_meta.set_json("ICHIPB", {
 Text fields (BCS-A) are right-padded with spaces if short and rejected if
 too long. Values that cannot fit any field after formatting raise an error.
 
+#### Encoding Tolerance
+
+NITF fields declare a character encoding that constrains what bytes are valid.
+For example, BCS-NPI (Numeric Positive Integer) only permits digits and spaces
+per the JBP specification. In practice, real-world NITF producers frequently
+violate these constraints — the RPC00B TRE's `HEIGHT_SCALE` field is commonly
+written with a leading `+` sign despite being declared BCS-NPI.
+
+By default, the writer uses **permissive** validation: numeric fields (BCS-N
+and BCS-NPI) accept any printable ASCII character (the BCS-A range, 0x20–0x7E).
+This ensures that metadata read from real-world files can be written back
+without error — a round-trip that would otherwise fail on spec-violating values.
+
+If you need output that is strictly compliant with the NITF encoding
+specifications, enable strict mode on the writer:
+
+```python
+with IO.open("output.ntf", "w", "nitf") as writer:
+    writer.strict_encoding = True  # reject values that violate declared encodings
+    writer.add_asset("image:0", provider, "Image", "", ["data"])
+```
+
+In strict mode, writing `"+0697"` to a BCS-NPI field raises a validation error
+because `+` is not in the BCS-NPI character set. This is useful when producing
+files that must pass formal conformance checks.
+
 ### Extending NITF Metadata with Structure Definitions
 
 The metadata you see through `as_dict()` for NITF files is driven by a

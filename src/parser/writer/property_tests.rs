@@ -465,7 +465,7 @@ mod prop_24_write_character_set_validation {
         }
 
         #[test]
-        fn invalid_bcs_n_rejected(
+        fn invalid_bcs_n_rejected_in_strict_mode(
             prefix in valid_bcs_n_string(2),
             invalid_byte in invalid_bcs_n_byte(),
             suffix in valid_bcs_n_string(2)
@@ -480,19 +480,20 @@ mod prop_24_write_character_set_validation {
             );
 
             let mut writer = StructureWriter::new(def);
+            writer.set_strict_encoding(true);
             let mut bytes = prefix.into_bytes();
             bytes.push(invalid_byte);
             bytes.extend(suffix.bytes());
             let invalid_str = String::from_utf8(bytes).unwrap();
 
             let result = writer.set("field", invalid_str);
-            prop_assert!(result.is_err(), "Invalid BCS-N should be rejected");
+            prop_assert!(result.is_err(), "Invalid BCS-N should be rejected in strict mode");
             let is_validation_err = matches!(result.unwrap_err(), WriteError::ValidationError { .. });
             prop_assert!(is_validation_err, "Error should be ValidationError");
         }
 
         #[test]
-        fn letters_in_bcs_n_rejected(letter in prop::char::range('A', 'z')) {
+        fn letters_in_bcs_n_rejected_in_strict_mode(letter in prop::char::range('A', 'z')) {
             let def = Arc::new(
                 StructureDefinition::new("test")
                     .with_field(
@@ -503,9 +504,10 @@ mod prop_24_write_character_set_validation {
             );
 
             let mut writer = StructureWriter::new(def);
+            writer.set_strict_encoding(true);
             let invalid_str = format!("12{}34", letter);
             let result = writer.set("field", invalid_str);
-            prop_assert!(result.is_err(), "Letters in BCS-N should be rejected");
+            prop_assert!(result.is_err(), "Letters in BCS-N should be rejected in strict mode");
         }
     }
 }

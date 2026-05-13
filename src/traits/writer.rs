@@ -76,4 +76,14 @@ pub trait DatasetWriter: Send + Sync {
     /// Returns a `CodecError` if the dataset cannot be finalized or resources
     /// cannot be released cleanly.
     fn close(&mut self) -> Result<(), CodecError>;
+
+    /// Set strict encoding validation mode for metadata writes.
+    ///
+    /// When strict (true), numeric TRE fields are validated against their
+    /// exact declared encoding (e.g. BCS-NPI rejects `+`, `-`, `.`).
+    /// When permissive (false, the default), numeric fields accept any
+    /// printable ASCII character, tolerating real-world spec deviations.
+    ///
+    /// Formats that don't have encoding constraints ignore this setting.
+    fn set_strict_encoding(&mut self, _strict: bool) {}
 }

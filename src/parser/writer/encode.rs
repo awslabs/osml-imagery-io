@@ -17,23 +17,24 @@ pub fn encode_value(
     size: usize,
     endian: Endian,
     path: &str,
+    strict: bool,
 ) -> Result<Vec<u8>, WriteError> {
     match (&field.field_type, value) {
-        (FieldType::String, WriteValue::String(s)) => encode_string(s, field, size, path),
+        (FieldType::String, WriteValue::String(s)) => encode_string(s, field, size, path, strict),
         (FieldType::String, WriteValue::Integer(n)) => {
             // Convert integer to string
             let s = n.to_string();
-            encode_string(&s, field, size, path)
+            encode_string(&s, field, size, path, strict)
         }
         (FieldType::String, WriteValue::Unsigned(n)) => {
             // Convert unsigned to string
             let s = n.to_string();
-            encode_string(&s, field, size, path)
+            encode_string(&s, field, size, path, strict)
         }
         (FieldType::String, WriteValue::Float(f)) => {
             // Convert float to string
             let s = f.to_string();
-            encode_string(&s, field, size, path)
+            encode_string(&s, field, size, path, strict)
         }
         (FieldType::Bytes, WriteValue::Bytes(bytes)) => encode_bytes(bytes, size, path),
         (FieldType::Bytes, WriteValue::String(s)) => encode_bytes(s.as_bytes(), size, path),
@@ -87,6 +88,7 @@ pub fn encode_string(
     field: &FieldDefinition,
     size: usize,
     path: &str,
+    strict: bool,
 ) -> Result<Vec<u8>, WriteError> {
     let is_numeric = matches!(field.encoding, Some(Encoding::BcsN | Encoding::BcsNPI));
 
@@ -110,7 +112,7 @@ pub fn encode_string(
 
     // Validate encoding if specified
     if let Some(encoding) = field.encoding {
-        validate_encoding(bytes, encoding, path)?;
+        validate_encoding(bytes, encoding, path, strict)?;
     }
 
     // Pad: numeric fields left-pad with '0', text fields right-pad with ' '

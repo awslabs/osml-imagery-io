@@ -120,12 +120,17 @@ pub struct StructureWriter {
     next_field_index: usize,
     /// Count of elements written for current repeated field
     current_repeat_written: usize,
+    /// When true, enforce strict spec-compliant encoding validation on write.
+    /// When false (default), numeric fields accept any printable ASCII.
+    strict_encoding: bool,
 }
 
 impl StructureWriter {
     /// Create a new streaming writer.
     ///
-    /// Fields must be written in definition order.
+    /// Fields must be written in definition order. By default, numeric field
+    /// encoding is relaxed to accept any printable ASCII (BCS-A range).
+    /// Call [`Self::set_strict_encoding`] to enforce spec-exact validation.
     pub fn new(definition: Arc<StructureDefinition>) -> Self {
         Self {
             definition,
@@ -136,12 +141,22 @@ impl StructureWriter {
             written_values: HashMap::new(),
             next_field_index: 0,
             current_repeat_written: 0,
+            strict_encoding: false,
         }
     }
 
     /// Create streaming writer (alias for `new` for backward compatibility).
     pub fn new_streaming(definition: Arc<StructureDefinition>) -> Self {
         Self::new(definition)
+    }
+
+    /// Set strict encoding validation mode.
+    ///
+    /// When true, all fields are validated against their declared encoding
+    /// exactly (e.g. BCS-NPI rejects `+`, `-`, `.`). When false (default),
+    /// numeric fields accept any printable ASCII.
+    pub fn set_strict_encoding(&mut self, strict: bool) {
+        self.strict_encoding = strict;
     }
 
     /// Write a value to a field.
@@ -267,7 +282,14 @@ impl StructureWriter {
         let ctx = self.build_eval_context();
         let size = get_streaming_field_size(field, &self.evaluator, &ctx)?;
 
-        let encoded = encode_value(&value, field, size, self.definition.endian, path)?;
+        let encoded = encode_value(
+            &value,
+            field,
+            size,
+            self.definition.endian,
+            path,
+            self.strict_encoding,
+        )?;
 
         let actual_size = encoded.len();
         self.buffer.extend_from_slice(&encoded);

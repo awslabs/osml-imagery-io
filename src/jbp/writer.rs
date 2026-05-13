@@ -322,6 +322,9 @@ pub struct JBPDatasetWriter {
     closed: bool,
     /// Structure registry for TRE definitions (optional)
     registry: Option<Arc<StructureRegistry>>,
+    /// When true, enforce strict spec-compliant encoding validation for TRE fields.
+    /// When false (default), numeric fields accept any printable ASCII.
+    strict_encoding: bool,
 }
 
 impl JBPDatasetWriter {
@@ -372,6 +375,7 @@ impl JBPDatasetWriter {
             file_metadata: None,
             closed: false,
             registry: None,
+            strict_encoding: false,
         })
     }
 
@@ -424,7 +428,17 @@ impl JBPDatasetWriter {
             file_metadata: None,
             closed: false,
             registry: Some(registry),
+            strict_encoding: false,
         })
+    }
+
+    /// Enable strict encoding validation for TRE fields.
+    ///
+    /// When strict, numeric fields are validated against their exact declared
+    /// encoding (BCS-N or BCS-NPI). When permissive (default), they accept
+    /// any printable ASCII, tolerating real-world spec deviations.
+    pub fn set_strict_encoding(&mut self, strict: bool) {
+        self.strict_encoding = strict;
     }
 
     /// Get the output format.
@@ -569,8 +583,9 @@ impl JBPDatasetWriter {
         }
 
         // Serialize TRE groups to envelopes
-        let envelopes = serialize_tre_groups_to_envelopes(registry, &tre_groups)
-            .map_err(|e| CodecError::Encode(e.to_string()))?;
+        let envelopes =
+            serialize_tre_groups_to_envelopes(registry, &tre_groups, self.strict_encoding)
+                .map_err(|e| CodecError::Encode(e.to_string()))?;
         Ok(envelopes)
     }
 
@@ -1798,8 +1813,9 @@ impl JBPDatasetWriter {
         }
 
         // Serialize TRE groups to envelopes
-        let envelopes = serialize_tre_groups_to_envelopes(registry, &tre_groups)
-            .map_err(|e| CodecError::Encode(e.to_string()))?;
+        let envelopes =
+            serialize_tre_groups_to_envelopes(registry, &tre_groups, self.strict_encoding)
+                .map_err(|e| CodecError::Encode(e.to_string()))?;
 
         if envelopes.is_empty() {
             return Ok(Vec::new());
@@ -2499,6 +2515,10 @@ impl DatasetWriter for JBPDatasetWriter {
 
         self.closed = true;
         Ok(())
+    }
+
+    fn set_strict_encoding(&mut self, strict: bool) {
+        self.strict_encoding = strict;
     }
 }
 

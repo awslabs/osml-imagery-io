@@ -172,6 +172,29 @@ impl PyDatasetWriter {
         slf
     }
 
+    /// Enable or disable strict encoding validation for metadata fields.
+    ///
+    /// When *strict* is ``True``, numeric TRE fields are validated against
+    /// their exact declared encoding (e.g. BCS-NPI rejects ``+``, ``-``,
+    /// ``.``). When ``False`` (the default), numeric fields accept any
+    /// printable ASCII, tolerating real-world deviations from the spec.
+    ///
+    /// :param strict: Whether to enforce strict encoding validation.
+    /// :type strict: bool
+    ///
+    /// Example:
+    ///
+    /// ```python
+    /// with IO.open("output.ntf", "w", "nitf") as writer:
+    ///     writer.strict_encoding = True  # enforce spec-exact validation
+    /// ```
+    #[setter]
+    fn strict_encoding(&mut self, strict: bool) -> PyResult<()> {
+        let inner = self.get_inner_mut()?;
+        inner.set_strict_encoding(strict);
+        Ok(())
+    }
+
     /// Context manager exit point.
     ///
     /// Automatically closes the writer when exiting the context.

@@ -129,7 +129,7 @@ pub fn has_definition(registry: &StructureRegistry, tag: &str) -> bool {
 /// group.insert("arv", json!("000360000"));
 /// group.insert("brv", json!("000360000"));
 ///
-/// if let Some(cedata) = serialize_tre_fields(&registry, &group)? {
+/// if let Some(cedata) = serialize_tre_fields(&registry, &group, false)? {
 ///     let envelope = TreEnvelope::new("GEOLOB", cedata)?;
 /// }
 /// ```
@@ -140,6 +140,7 @@ pub fn has_definition(registry: &StructureRegistry, tag: &str) -> bool {
 pub fn serialize_tre_fields(
     registry: &StructureRegistry,
     group: &TreFieldGroup,
+    strict: bool,
 ) -> Result<Option<Vec<u8>>, WriteError> {
     let definition = match lookup_definition(registry, &group.tag) {
         Some(def) => def,
@@ -147,6 +148,7 @@ pub fn serialize_tre_fields(
     };
 
     let mut writer = StructureWriter::new(Arc::clone(&definition));
+    writer.set_strict_encoding(strict);
 
     // Write fields in definition order by iterating the definition's fields
     // and looking up values from the group
@@ -338,9 +340,10 @@ fn serialize_nested_fields(
 pub fn serialize_tre_to_envelope(
     registry: &StructureRegistry,
     group: &TreFieldGroup,
+    strict: bool,
 ) -> Result<Option<TreEnvelope>, SerializeTreError> {
     // Serialize the fields to CEDATA
-    let cedata = match serialize_tre_fields(registry, group)? {
+    let cedata = match serialize_tre_fields(registry, group, strict)? {
         Some(data) => data,
         None => return Ok(None),
     };
@@ -379,11 +382,12 @@ pub fn serialize_tre_to_envelope(
 pub fn serialize_tre_groups_to_envelopes(
     registry: &StructureRegistry,
     groups: &std::collections::HashMap<String, TreFieldGroup>,
+    strict: bool,
 ) -> Result<Vec<TreEnvelope>, SerializeTreError> {
     let mut envelopes = Vec::new();
 
     for group in groups.values() {
-        if let Some(envelope) = serialize_tre_to_envelope(registry, group)? {
+        if let Some(envelope) = serialize_tre_to_envelope(registry, group, strict)? {
             envelopes.push(envelope);
         }
     }
@@ -600,7 +604,7 @@ mod tests {
         group.insert("COEFFS", serde_json::json!(["COEF01", "COEF02", "COEF03"]));
 
         // Serialize
-        let result = serialize_tre_fields(&registry, &group).unwrap();
+        let result = serialize_tre_fields(&registry, &group, false).unwrap();
         assert!(result.is_some());
         let serialized = result.unwrap();
 
@@ -669,7 +673,7 @@ mod tests {
         );
 
         // Serialize
-        let result = serialize_tre_fields(&registry, &group).unwrap();
+        let result = serialize_tre_fields(&registry, &group, false).unwrap();
         assert!(result.is_some());
         let serialized = result.unwrap();
 
@@ -760,7 +764,7 @@ COMMENT002";
         );
 
         // Serialize
-        let result = serialize_tre_fields(&registry, &group).unwrap();
+        let result = serialize_tre_fields(&registry, &group, false).unwrap();
         assert!(result.is_some());
         let serialized = result.unwrap();
 
@@ -775,7 +779,7 @@ COMMENT002";
     fn serialize_unknown_tre_returns_none() {
         let registry = StructureRegistry::new();
         let group = TreFieldGroup::new("UNKNOWN");
-        let result = serialize_tre_fields(&registry, &group).unwrap();
+        let result = serialize_tre_fields(&registry, &group, false).unwrap();
         assert!(result.is_none());
     }
 }
