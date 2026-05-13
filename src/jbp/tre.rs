@@ -235,12 +235,11 @@ pub fn write_tre_envelopes(envelopes: &[TreEnvelope]) -> Vec<u8> {
 /// TRE field values grouped by CETAG.
 ///
 /// This struct holds field values for a single TRE type, organized by field name.
-/// Field names are stored without the CETAG prefix (e.g., "ARV" not "GEOLOB.ARV").
 #[derive(Debug, Clone, Default)]
 pub struct TreFieldGroup {
     /// The CETAG identifying this TRE type
     pub tag: String,
-    /// Field values keyed by field name (without CETAG prefix)
+    /// Field values keyed by field name
     pub fields: std::collections::HashMap<String, serde_json::Value>,
 }
 
@@ -274,21 +273,23 @@ impl TreFieldGroup {
     }
 }
 
-/// Parse TRE field values from metadata with CETAG prefix.
+/// Parse TRE field values from metadata with nested dictionary structure.
 ///
 /// This function extracts TRE field values from a metadata dictionary where
-/// fields are prefixed with their CETAG (e.g., "GEOLOB.ARV", "SENSRB.PLATFORM").
-/// Fields are grouped by their CETAG for subsequent serialization.
+/// each TRE is a top-level key (the CETAG) mapped to a JSON object containing
+/// that TRE's field names and values. This matches the format returned by the
+/// NITF reader's `as_dict()`, enabling clean roundtrips.
 ///
 /// # Arguments
 ///
-/// * `metadata` - A HashMap of field names to JSON values, where TRE fields
-///   are prefixed with "{CETAG}." (e.g., "GEOLOB.ARV")
+/// * `metadata` - A HashMap of field names to JSON values, where TRE entries
+///   are top-level keys mapped to JSON objects (e.g., `{"GEOLOB": {"ARV": "...", "BRV": "..."}}`)
 ///
 /// # Returns
 ///
 /// A HashMap mapping CETAG strings to their corresponding TreFieldGroup.
-/// Only fields with a dot separator are considered TRE fields.
+/// Only entries whose values are JSON objects are considered TRE fields.
+/// Scalar values, arrays, and null entries are ignored.
 ///
 /// # Example
 ///
@@ -298,10 +299,9 @@ impl TreFieldGroup {
 /// use serde_json::json;
 ///
 /// let mut metadata = HashMap::new();
-/// metadata.insert("GEOLOB.ARV".to_string(), json!("000360000"));
-/// metadata.insert("GEOLOB.BRV".to_string(), json!("000360000"));
-/// metadata.insert("SENSRB.PLATFORM".to_string(), json!("AIRCRAFT"));
-/// metadata.insert("IID1".to_string(), json!("TEST")); // Not a TRE field
+/// metadata.insert("GEOLOB".to_string(), json!({"ARV": "000360000", "BRV": "000360000"}));
+/// metadata.insert("SENSRB".to_string(), json!({"PLATFORM": "AIRCRAFT"}));
+/// metadata.insert("IID1".to_string(), json!("TEST")); // Not a TRE field (scalar)
 ///
 /// let groups = parse_tre_fields_from_metadata(&metadata);
 ///
@@ -320,25 +320,18 @@ pub fn parse_tre_fields_from_metadata(
         std::collections::HashMap::new();
 
     for (key, value) in metadata {
-        // Check if this is a TRE field (has CETAG.field format)
-        if let Some(dot_pos) = key.find('.') {
-            let cetag = &key[..dot_pos];
-            let field_name = &key[dot_pos + 1..];
-
-            // Skip empty CETAGs or field names
-            if cetag.is_empty() || field_name.is_empty() {
+        // TRE entries are top-level keys whose values are JSON objects
+        if let serde_json::Value::Object(obj) = value {
+            if obj.is_empty() {
                 continue;
             }
 
-            // Get or create the group for this CETAG
-            let group = groups
-                .entry(cetag.to_string())
-                .or_insert_with(|| TreFieldGroup::new(cetag));
-
-            // Add the field value
-            group.insert(field_name.to_string(), value.clone());
+            let mut group = TreFieldGroup::new(key);
+            for (field_name, field_value) in obj {
+                group.insert(field_name.clone(), field_value.clone());
+            }
+            groups.insert(key.clone(), group);
         }
-        // Non-TRE fields (no dot) are ignored
     }
 
     groups
@@ -749,9 +742,11 @@ mod tests {
     #[test]
     fn parse_tre_fields_single_tre() {
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("GEOLOB.ARV".to_string(), serde_json::json!("000360000"));
-        metadata.insert("GEOLOB.BRV".to_string(), serde_json::json!("000360000"));
-        metadata.insert("IID1".to_string(), serde_json::json!("TEST")); // Not a TRE field
+        metadata.insert(
+            "GEOLOB".to_string(),
+            serde_json::json!({"ARV": "000360000", "BRV": "000360000"}),
+        );
+        metadata.insert("IID1".to_string(), serde_json::json!("TEST")); // Not a TRE (scalar)
 
         let groups = parse_tre_fields_from_metadata(&metadata);
 
@@ -768,10 +763,14 @@ mod tests {
     #[test]
     fn parse_tre_fields_multiple_tres() {
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("GEOLOB.ARV".to_string(), serde_json::json!("000360000"));
-        metadata.insert("GEOLOB.BRV".to_string(), serde_json::json!("000360000"));
-        metadata.insert("SENSRB.PLATFORM".to_string(), serde_json::json!("AIRCRAFT"));
-        metadata.insert("SENSRB.SENSOR".to_string(), serde_json::json!("EO"));
+        metadata.insert(
+            "GEOLOB".to_string(),
+            serde_json::json!({"ARV": "000360000", "BRV": "000360000"}),
+        );
+        metadata.insert(
+            "SENSRB".to_string(),
+            serde_json::json!({"PLATFORM": "AIRCRAFT", "SENSOR": "EO"}),
+        );
 
         let groups = parse_tre_fields_from_metadata(&metadata);
 
@@ -784,52 +783,48 @@ mod tests {
     }
 
     #[test]
-    fn parse_tre_fields_ignores_empty_cetag() {
+    fn parse_tre_fields_ignores_empty_object() {
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert(".ARV".to_string(), serde_json::json!("value")); // Empty CETAG
+        metadata.insert("GEOLOB".to_string(), serde_json::json!({}));
 
         let groups = parse_tre_fields_from_metadata(&metadata);
         assert!(groups.is_empty());
     }
 
     #[test]
-    fn parse_tre_fields_ignores_empty_field_name() {
+    fn parse_tre_fields_ignores_scalar_values() {
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("GEOLOB.".to_string(), serde_json::json!("value")); // Empty field name
+        metadata.insert("IID1".to_string(), serde_json::json!("TEST"));
+        metadata.insert("NBANDS".to_string(), serde_json::json!(3));
+        metadata.insert("COMRAT".to_string(), serde_json::json!(null));
 
         let groups = parse_tre_fields_from_metadata(&metadata);
         assert!(groups.is_empty());
     }
 
     #[test]
-    fn parse_tre_fields_handles_nested_dots() {
+    fn parse_tre_fields_ignores_array_values() {
         let mut metadata = std::collections::HashMap::new();
-        // Only the first dot is used to split CETAG from field name
-        metadata.insert(
-            "GEOLOB.NESTED.FIELD".to_string(),
-            serde_json::json!("value"),
-        );
+        metadata.insert("TAGS".to_string(), serde_json::json!(["a", "b", "c"]));
 
         let groups = parse_tre_fields_from_metadata(&metadata);
-
-        assert_eq!(groups.len(), 1);
-        assert!(groups.contains_key("GEOLOB"));
-        // The field name includes everything after the first dot
-        assert_eq!(
-            groups["GEOLOB"].get("NESTED.FIELD"),
-            Some(&serde_json::json!("value"))
-        );
+        assert!(groups.is_empty());
     }
 
     #[test]
     #[allow(clippy::approx_constant)]
     fn parse_tre_fields_preserves_value_types() {
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("TEST.STRING".to_string(), serde_json::json!("text"));
-        metadata.insert("TEST.NUMBER".to_string(), serde_json::json!(42));
-        metadata.insert("TEST.FLOAT".to_string(), serde_json::json!(3.14));
-        metadata.insert("TEST.BOOL".to_string(), serde_json::json!(true));
-        metadata.insert("TEST.NULL".to_string(), serde_json::Value::Null);
+        metadata.insert(
+            "TEST".to_string(),
+            serde_json::json!({
+                "STRING": "text",
+                "NUMBER": 42,
+                "FLOAT": 3.14,
+                "BOOL": true,
+                "NULL": null
+            }),
+        );
 
         let groups = parse_tre_fields_from_metadata(&metadata);
 

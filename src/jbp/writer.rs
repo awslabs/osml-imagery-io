@@ -3787,6 +3787,69 @@ mod tests {
         }
     }
 
+    #[test]
+    fn writer_round_trip_tre_metadata() {
+        use crate::buffered::{
+            BufferedImageAssetProvider, BufferedMetadataProvider, MemoryImageConfig,
+        };
+        use crate::jbp::reader::JBPDatasetReader;
+        use crate::traits::DatasetReader;
+        use crate::types::AssetType;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tre_round_trip.ntf");
+
+        let config = MemoryImageConfig::new(16, 16)
+            .with_bands(1)
+            .with_block_size(16, 16);
+
+        let metadata = BufferedMetadataProvider::new();
+        metadata.set_json(
+            "GEOLOB",
+            serde_json::json!({
+                "ARV": "000360000",
+                "BRV": "000180000",
+                "LSO": "-077.0000000000",
+                "PSO": "+038.0000000000"
+            }),
+        );
+
+        let provider =
+            BufferedImageAssetProvider::new("test_image", config).with_metadata(Arc::new(metadata));
+        provider.set_full_image(&vec![128u8; 16 * 16]).unwrap();
+
+        let registry = Arc::new(StructureRegistry::new());
+        let mut writer =
+            JBPDatasetWriter::with_registry(&path, NitfFormat::Nitf21, registry).unwrap();
+        writer
+            .add_asset(
+                "test_image",
+                AssetProvider::Image(Arc::new(provider)),
+                "Test",
+                "",
+                &[],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        let data = std::fs::read(&path).unwrap();
+        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
+        let asset = reader.get_asset(&asset_keys[0]).unwrap();
+        let meta = asset.as_image().unwrap().metadata().as_dict(None);
+
+        assert!(
+            meta.contains_key("GEOLOB"),
+            "GEOLOB TRE not found in roundtrip. Keys: {:?}",
+            meta.keys().collect::<Vec<_>>()
+        );
+        let geolob = meta["GEOLOB"].as_object().unwrap();
+        assert_eq!(geolob["ARV"], "000360000");
+        assert_eq!(geolob["BRV"], "000180000");
+        assert_eq!(geolob["LSO"], "-077.0000000000");
+        assert_eq!(geolob["PSO"], "+038.0000000000");
+    }
+
     /// Test collect_provided_blocks returns correct set of blocks
     #[test]
     fn collect_provided_blocks_returns_provided_only() {

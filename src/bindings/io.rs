@@ -107,6 +107,7 @@ use crate::j2k::{J2KDatasetReader, J2KDatasetWriter};
 use crate::jbp::{JBPDatasetReader, JBPDatasetWriter, NitfFormat};
 #[cfg(feature = "libjpeg-turbo")]
 use crate::jpeg::{JPEGDatasetReader, JPEGDatasetWriter};
+use crate::parser::StructureRegistry;
 use crate::png::{PNGDatasetReader, PNGDatasetWriter};
 #[cfg(feature = "libtiff")]
 use crate::tiff;
@@ -872,11 +873,21 @@ fn create_writer_boxed_from_output(
 ) -> PyResult<Box<dyn DatasetWriter>> {
     match format.to_lowercase().as_str() {
         "nitf" | "nitf21" | "nitf2.1" => {
-            let writer = JBPDatasetWriter::new_with_output(output, NitfFormat::Nitf21)?;
+            let registry = Arc::new(StructureRegistry::new());
+            let writer = JBPDatasetWriter::new_with_output_and_registry(
+                output,
+                NitfFormat::Nitf21,
+                registry,
+            )?;
             Ok(Box::new(writer))
         }
         "nsif" | "nsif10" | "nsif1.0" => {
-            let writer = JBPDatasetWriter::new_with_output(output, NitfFormat::Nsif10)?;
+            let registry = Arc::new(StructureRegistry::new());
+            let writer = JBPDatasetWriter::new_with_output_and_registry(
+                output,
+                NitfFormat::Nsif10,
+                registry,
+            )?;
             Ok(Box::new(writer))
         }
         #[cfg(feature = "libtiff")]

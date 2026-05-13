@@ -10,8 +10,8 @@
 //! # TRE Support
 //!
 //! [`JBPSegmentMetadataProvider`] supports TRE (Tagged Record Extension) metadata
-//! through the `with_tres()` constructor. TRE fields are exposed in the dictionary
-//! interface with CETAG-prefixed keys (e.g., "GEOLOB.ARV").
+//! through the `with_tres()` constructor. TRE fields are exposed as nested
+//! dictionaries keyed by CETAG (e.g., `{"GEOLOB": {"ARV": "...", "BRV": "..."}}`).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -135,9 +135,9 @@ unsafe impl Sync for JBPFileMetadataProvider {}
 /// # TRE Support
 ///
 /// When created with `with_tres()`, this provider also exposes TRE fields in the
-/// dictionary interface. TRE fields are prefixed with their CETAG (e.g., "GEOLOB.ARV").
-/// Unknown TREs (those without definitions in the registry) are skipped in metadata
-/// output but preserved for round-trip operations.
+/// dictionary interface as nested dictionaries keyed by CETAG
+/// (e.g., `{"GEOLOB": {"ARV": "...", "BRV": "..."}}`).
+/// Unknown TREs produce a raw representation: `{"_raw": "<hex>", "_length": N}`.
 ///
 /// # Example
 ///
@@ -197,7 +197,7 @@ impl JBPSegmentMetadataProvider {
     /// Create with TRE support.
     ///
     /// This constructor enables TRE field access through the metadata interface.
-    /// TRE fields are exposed with CETAG-prefixed keys (e.g., "GEOLOB.ARV").
+    /// TRE fields are exposed as nested dictionaries keyed by CETAG.
     ///
     /// # Arguments
     /// * `definition` - Structure definition for the segment subheader

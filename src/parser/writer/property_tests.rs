@@ -83,9 +83,8 @@ mod prop_23_streaming_mode_order {
         }
 
         #[test]
-        fn repeated_fields_require_index_order(
+        fn repeated_fields_written_via_array(
             vals in proptest::collection::vec(valid_bcs_a_string(4), 3..=3),
-            wrong_first_index in 1usize..3
         ) {
             let def = Arc::new(
                 StructureDefinition::new("test")
@@ -98,10 +97,11 @@ mod prop_23_streaming_mode_order {
 
             let mut writer = StructureWriter::new(def);
 
-            let result = writer.set(&format!("items_{}", wrong_first_index), vals[0].clone());
-            prop_assert!(result.is_err(), "Writing non-zero index first should fail");
-            let is_out_of_order = matches!(result.unwrap_err(), WriteError::OutOfOrder { .. });
-            prop_assert!(is_out_of_order, "Error should be OutOfOrder");
+            let write_values: Vec<WriteValue> = vals.iter()
+                .map(|v| WriteValue::String(v.clone()))
+                .collect();
+            let result = writer.set("items", WriteValue::Array(write_values));
+            prop_assert!(result.is_ok(), "Writing repeated field via array should succeed");
         }
     }
 }
@@ -575,16 +575,16 @@ mod prop_2_binary_data_round_trip {
                     writer.set(&path, n)?;
                 }
                 Value::Array(elements) => {
-                    // Write each element sequentially with indexed path
-                    for (i, elem) in elements.iter().enumerate() {
-                        let indexed_path = format!("{}_{}", path, i);
-                        match elem {
-                            Value::String(cow) => writer.set(&indexed_path, cow.to_string())?,
-                            Value::Bytes(bytes) => writer.set(&indexed_path, bytes.to_vec())?,
-                            Value::Unsigned(n) => writer.set(&indexed_path, *n)?,
-                            _ => {}
-                        }
-                    }
+                    let write_values: Vec<WriteValue> = elements
+                        .iter()
+                        .filter_map(|elem| match elem {
+                            Value::String(cow) => Some(WriteValue::String(cow.to_string())),
+                            Value::Bytes(bytes) => Some(WriteValue::Bytes(bytes.to_vec())),
+                            Value::Unsigned(n) => Some(WriteValue::Unsigned(*n)),
+                            _ => None,
+                        })
+                        .collect();
+                    writer.set(&path, WriteValue::Array(write_values))?;
                 }
                 Value::Struct(_) => {}
             }

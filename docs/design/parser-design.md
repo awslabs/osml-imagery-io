@@ -234,16 +234,10 @@ let bytes = writer.finish()?;
 let bytes_written = writer.write_to(&mut output_file)?;
 ```
 
-For repeated fields, the writer accepts either a `WriteValue::Array` with all elements at once, or sequential indexed writes:
+For repeated fields, pass a `WriteValue::Array` with all elements:
 
 ```rust
-// Option 1: Array value (preferred)
 writer.set("items", vec!["AAA", "BBB", "CCC"])?;
-
-// Option 2: Sequential indexed writes
-writer.set("items_0", "AAA")?;
-writer.set("items_1", "BBB")?;
-writer.set("items_2", "CCC")?;
 ```
 
 The streaming writer supports expression-based sizes and repeat counts by evaluating them against previously written values. Fields must be written in the order they appear in the definition.
@@ -410,15 +404,9 @@ If `num_segments` is 3:
 - `segment_info_1` — Second entry
 - `segment_info_2` — Third entry
 
-For writing, prefer passing arrays directly:
+For writing, pass arrays directly:
 ```rust
-// Preferred: pass array value
 writer.set("items", vec!["AAA", "BBB", "CCC"])?;
-
-// Also supported: sequential indexed writes
-writer.set("items_0", "AAA")?;
-writer.set("items_1", "BBB")?;
-writer.set("items_2", "CCC")?;
 ```
 
 ## Example: NITF File Header

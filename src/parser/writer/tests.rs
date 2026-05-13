@@ -232,37 +232,10 @@ fn bcs_n_uses_zero_padding() {
 // ==================== Repeated field tests ====================
 
 #[test]
-fn repeated_fields_sequential() {
-    let def = create_definition_with_repeat();
-    let mut writer = StructureWriter::new(def);
-
-    writer.set("items_0", "AAA").unwrap();
-    writer.set("items_1", "BBB").unwrap();
-    writer.set("items_2", "CCC").unwrap();
-
-    let buffer = writer.buffer();
-    assert_eq!(&buffer[0..3], b"AAA");
-    assert_eq!(&buffer[4..7], b"BBB");
-    assert_eq!(&buffer[8..11], b"CCC");
-}
-
-#[test]
-fn repeated_fields_out_of_order_fails() {
-    let def = create_definition_with_repeat();
-    let mut writer = StructureWriter::new(def);
-
-    // Try to write items_1 before items_0
-    let result = writer.set("items_1", "BBB");
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), WriteError::OutOfOrder { .. }));
-}
-
-#[test]
 fn repeated_fields_via_array() {
     let def = create_definition_with_repeat();
     let mut writer = StructureWriter::new(def);
 
-    // Write all elements at once via array
     writer.set("items", vec!["AAA", "BBB", "CCC"]).unwrap();
 
     let result = writer.finish().unwrap();
@@ -275,10 +248,7 @@ fn repeated_fields_via_array() {
 #[test]
 fn finish_fails_if_repeated_field_missing() {
     let def = create_definition_with_repeat();
-    let mut writer = StructureWriter::new(def);
-
-    writer.set("items_0", "AAA").unwrap();
-    // items_1 and items_2 not written — can't skip in streaming mode
+    let writer = StructureWriter::new(def);
 
     let result = writer.finish();
     assert!(result.is_err());

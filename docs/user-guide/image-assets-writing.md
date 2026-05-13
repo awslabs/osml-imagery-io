@@ -698,34 +698,33 @@ with IO.open(["input.ntf"], "r") as reader:
     # The .500 offset places the coordinate at the center of the pixel (grid
     # convention per ICHIPB spec Annex A).
 
-    image_metadata.set("ICHIPB.XFRM_FLAG", "00")                # Non-dewarped imagery
-    image_metadata.set("ICHIPB.SCALE_FACTOR", "0001.00000")      # Full resolution (R0)
-    image_metadata.set("ICHIPB.ANAMRPH_CORR", "00")              # No anamorphic correction
-    image_metadata.set("ICHIPB.SCANBLK_NUM", "00")               # No scan blocks
-
-    # Output product corner coordinates (chip space)
-    image_metadata.set("ICHIPB.OP_ROW_11", "00000000.500")                              # top-left row
-    image_metadata.set("ICHIPB.OP_COL_11", "00000000.500")                              # top-left col
-    image_metadata.set("ICHIPB.OP_ROW_12", "00000000.500")                              # top-right row
-    image_metadata.set("ICHIPB.OP_COL_12", f"{chip_width - 1:08d}.500")                 # top-right col
-    image_metadata.set("ICHIPB.OP_ROW_21", f"{chip_height - 1:08d}.500")                # bottom-left row
-    image_metadata.set("ICHIPB.OP_COL_21", "00000000.500")                              # bottom-left col
-    image_metadata.set("ICHIPB.OP_ROW_22", f"{chip_height - 1:08d}.500")                # bottom-right row
-    image_metadata.set("ICHIPB.OP_COL_22", f"{chip_width - 1:08d}.500")                 # bottom-right col
-
-    # Full image corner coordinates (where the chip came from)
-    image_metadata.set("ICHIPB.FI_ROW_11", f"{y_min:08d}.500")                          # top-left row
-    image_metadata.set("ICHIPB.FI_COL_11", f"{x_min:08d}.500")                          # top-left col
-    image_metadata.set("ICHIPB.FI_ROW_12", f"{y_min:08d}.500")                          # top-right row
-    image_metadata.set("ICHIPB.FI_COL_12", f"{x_max - 1:08d}.500")                      # top-right col
-    image_metadata.set("ICHIPB.FI_ROW_21", f"{y_max - 1:08d}.500")                      # bottom-left row
-    image_metadata.set("ICHIPB.FI_COL_21", f"{x_min:08d}.500")                          # bottom-left col
-    image_metadata.set("ICHIPB.FI_ROW_22", f"{y_max - 1:08d}.500")                      # bottom-right row
-    image_metadata.set("ICHIPB.FI_COL_22", f"{x_max - 1:08d}.500")                      # bottom-right col
-
-    # Full image dimensions
-    image_metadata.set("ICHIPB.FI_ROW", f"{img_height:08d}")
-    image_metadata.set("ICHIPB.FI_COL", f"{img_width:08d}")
+    image_metadata.set_json("ICHIPB", {
+        "XFRM_FLAG": "00",                                          # Non-dewarped imagery
+        "SCALE_FACTOR": "0001.00000",                               # Full resolution (R0)
+        "ANAMRPH_CORR": "00",                                       # No anamorphic correction
+        "SCANBLK_NUM": "00",                                        # No scan blocks
+        # Output product corner coordinates (chip space)
+        "OP_ROW_11": "00000000.500",                                # top-left row
+        "OP_COL_11": "00000000.500",                                # top-left col
+        "OP_ROW_12": "00000000.500",                                # top-right row
+        "OP_COL_12": f"{chip_width - 1:08d}.500",                   # top-right col
+        "OP_ROW_21": f"{chip_height - 1:08d}.500",                  # bottom-left row
+        "OP_COL_21": "00000000.500",                                # bottom-left col
+        "OP_ROW_22": f"{chip_height - 1:08d}.500",                  # bottom-right row
+        "OP_COL_22": f"{chip_width - 1:08d}.500",                   # bottom-right col
+        # Full image corner coordinates (where the chip came from)
+        "FI_ROW_11": f"{y_min:08d}.500",                            # top-left row
+        "FI_COL_11": f"{x_min:08d}.500",                            # top-left col
+        "FI_ROW_12": f"{y_min:08d}.500",                            # top-right row
+        "FI_COL_12": f"{x_max - 1:08d}.500",                        # top-right col
+        "FI_ROW_21": f"{y_max - 1:08d}.500",                        # bottom-left row
+        "FI_COL_21": f"{x_min:08d}.500",                            # bottom-left col
+        "FI_ROW_22": f"{y_max - 1:08d}.500",                        # bottom-right row
+        "FI_COL_22": f"{x_max - 1:08d}.500",                        # bottom-right col
+        # Full image dimensions
+        "FI_ROW": f"{img_height:08d}",
+        "FI_COL": f"{img_width:08d}",
+    })
 
     provider = BufferedImageAssetProvider.create(
         key="chip",
@@ -750,13 +749,13 @@ relationships:
 
 | Field group | Purpose |
 |-------------|---------|
-| `ICHIPB.XFRM_FLAG` | `00` for non-dewarped (linear) imagery. Set to `01` if the image has been dewarped, in which case remaining fields are zero-filled. |
-| `ICHIPB.SCALE_FACTOR` | Scale relative to full resolution R0. `0001.00000` = R0, `0002.00000` = R1, etc. |
-| `ICHIPB.OP_ROW/COL_*` | The four corner grid points in the output chip's coordinate space. |
-| `ICHIPB.FI_ROW/COL_*` | The same four corners mapped to the original full image coordinate space. |
-| `ICHIPB.FI_ROW`, `ICHIPB.FI_COL` | Total rows and columns of the original full image (the extent to which the SDEs apply). |
+| `XFRM_FLAG` | `00` for non-dewarped (linear) imagery. Set to `01` if the image has been dewarped, in which case remaining fields are zero-filled. |
+| `SCALE_FACTOR` | Scale relative to full resolution R0. `0001.00000` = R0, `0002.00000` = R1, etc. |
+| `OP_ROW/COL_*` | The four corner grid points in the output chip's coordinate space. |
+| `FI_ROW/COL_*` | The same four corners mapped to the original full image coordinate space. |
+| `FI_ROW`, `FI_COL` | Total rows and columns of the original full image (the extent to which the SDEs apply). |
 
 The `.500` offset on all coordinates places the point at the center of the pixel,
 following the ICHIPB grid convention (see Annex A of the ICHIPB spec). For a chip
-starting at pixel `(100, 200)` in the full image, `ICHIPB.FI_COL_11` is
-`00000100.500` and `ICHIPB.FI_ROW_11` is `00000200.500`.
+starting at pixel `(100, 200)` in the full image, `FI_COL_11` is
+`00000100.500` and `FI_ROW_11` is `00000200.500`.

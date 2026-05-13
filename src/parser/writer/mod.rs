@@ -146,12 +146,11 @@ impl StructureWriter {
 
     /// Write a value to a field.
     ///
-    /// For repeated fields, pass a `WriteValue::Array` with all elements,
-    /// or write elements one at a time in order.
+    /// For repeated fields, pass a `WriteValue::Array` with all elements.
     pub fn set(&mut self, path: &str, value: impl Into<WriteValue>) -> Result<(), WriteError> {
         let write_value = value.into();
 
-        // Check if this is an array value for a repeated field
+        // Array values for repeated fields: expand internally
         if let WriteValue::Array(ref elements) = write_value {
             let field_name = path.to_string();
             let field = self.find_field(&field_name)?;
@@ -160,11 +159,8 @@ impl StructureWriter {
             }
         }
 
-        // Parse the path to handle indexed fields (e.g., "items_0")
-        let (field_name, index) = self.parse_path(path);
-        let field = self.find_field(&field_name)?;
-
-        self.write_streaming(&field_name, index, &field.clone(), write_value, path)
+        let field = self.find_field(path)?;
+        self.write_streaming(path, None, &field.clone(), write_value, path)
     }
 
     /// Check if a field has been written.
@@ -216,21 +212,6 @@ impl StructureWriter {
     }
 
     // ==================== Private Helper Methods ====================
-
-    /// Parse a field path into (field_name, optional_index).
-    fn parse_path(&self, path: &str) -> (String, Option<usize>) {
-        if let Some(underscore_pos) = path.rfind('_') {
-            let potential_index = &path[underscore_pos + 1..];
-            if let Ok(index) = potential_index.parse::<usize>() {
-                let field_name = path[..underscore_pos].to_string();
-                // Only treat as indexed if the base name is a known field
-                if self.definition.fields.iter().any(|f| f.id == field_name) {
-                    return (field_name, Some(index));
-                }
-            }
-        }
-        (path.to_string(), None)
-    }
 
     /// Find a field definition by name.
     fn find_field(&self, name: &str) -> Result<FieldDefinition, WriteError> {
