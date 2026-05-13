@@ -8,6 +8,7 @@ from aws.osml.io._io import (
     IO,
     AssetProvider,
     AssetType,
+    BufferedDataAssetProvider,
     BufferedImageAssetProvider,
     BufferedMetadataProvider,
     BufferedTextAssetProvider,
@@ -49,6 +50,7 @@ __all__ = [
     "TextAssetProvider",
     "BufferedTextAssetProvider",
     "DataAssetProvider",
+    "BufferedDataAssetProvider",
     "GraphicsAssetProvider",
     # Metadata
     "MetadataProvider",

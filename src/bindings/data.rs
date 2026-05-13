@@ -178,7 +178,10 @@ impl PyDataAssetProvider {
 }
 
 /// Converts a serde_json::Value to a Py<PyAny>.
-fn serde_json_value_to_pyobject(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<PyAny>> {
+pub(crate) fn serde_json_value_to_pyobject(
+    py: Python<'_>,
+    value: &serde_json::Value,
+) -> PyResult<Py<PyAny>> {
     match value {
         serde_json::Value::Null => Ok(py.None()),
         serde_json::Value::Bool(b) => Ok((*b).into_pyobject(py)?.to_owned().into_any().unbind()),

@@ -25,6 +25,7 @@
 //! * :class:`StructureRegistry`, :class:`StructureAccessor`, :class:`StructureWriter` — binary structure parsing and encoding.
 
 pub mod asset;
+pub mod buffered_data;
 pub mod buffered_image;
 pub mod buffered_metadata;
 pub mod buffered_text;
@@ -42,6 +43,7 @@ pub mod text;
 pub mod writer;
 
 pub use asset::PyAssetProvider;
+pub use buffered_data::PyBufferedDataAssetProvider;
 pub use buffered_image::PyBufferedImageAssetProvider;
 pub use buffered_metadata::PyBufferedMetadataProvider;
 pub use buffered_text::PyBufferedTextAssetProvider;

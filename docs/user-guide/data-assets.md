@@ -47,4 +47,70 @@ with IO.open(["image.ntf"], "r") as dataset:
 
 ## Writing Data Assets
 
-<!-- TODO: BufferedDataAssetProvider example for writing data assets -->
+Use `BufferedDataAssetProvider` to create data assets with full control over DES
+subheader fields. Attach a `BufferedMetadataProvider` to set DESID, DESVER, and
+security fields.
+
+### SICD/SIDD XML Metadata
+
+```python
+from aws.osml.io import BufferedDataAssetProvider, BufferedMetadataProvider, IO
+
+# Prepare DES metadata (required for valid SICD/SIDD)
+meta = BufferedMetadataProvider()
+meta.set("DESID", "XML_DATA_CONTENT")
+meta.set("DESVER", "01")
+
+# Load your SICD XML (from file, generation, etc.)
+with open("sicd_metadata.xml", "rb") as f:
+    sicd_xml_bytes = f.read()
+
+# Create the data asset
+data_asset = BufferedDataAssetProvider.create(
+    key="des:0",
+    data=sicd_xml_bytes,
+    mime_type="application/xml",
+    title="SICD Metadata",
+    roles=["metadata"],
+    metadata=meta,
+)
+
+# Write to a NITF file
+with IO.open(["output.ntf"], "w") as writer:
+    writer.add_asset("des:0", data_asset, "SICD Metadata", "", ["metadata"])
+```
+
+### Binary or JSON Payloads
+
+```python
+import json
+from aws.osml.io import BufferedDataAssetProvider, BufferedMetadataProvider, IO
+
+meta = BufferedMetadataProvider()
+meta.set("DESID", "APP_CONFIG")
+meta.set("DESVER", "01")
+
+config = {"processing_level": 3, "sensor_id": "SAR-X1"}
+payload = json.dumps(config).encode("utf-8")
+
+data_asset = BufferedDataAssetProvider.create(
+    key="des:0",
+    data=payload,
+    mime_type="application/json",
+    metadata=meta,
+)
+
+with IO.open(["output.ntf"], "w") as writer:
+    writer.add_asset("des:0", data_asset, "Config", "", ["metadata"])
+```
+
+### Field Validation
+
+DESID must be 1–25 characters and DESVER must be exactly 2 characters. Invalid
+values raise an error at write time:
+
+```python
+meta = BufferedMetadataProvider()
+meta.set("DESID", "A" * 26)  # Too long — will raise at write time
+meta.set("DESVER", "1")      # Must be exactly 2 chars — will raise
+```

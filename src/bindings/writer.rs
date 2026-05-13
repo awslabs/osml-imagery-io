@@ -11,9 +11,9 @@ use crate::bindings::callback_provider::{
     is_duck_typed_image_provider, PyCallbackImageAssetProvider,
 };
 use crate::bindings::{
-    PyAssetProvider, PyBufferedImageAssetProvider, PyBufferedTextAssetProvider,
-    PyDataAssetProvider, PyGraphicsAssetProvider, PyImageAssetProvider, PyMetadataProvider,
-    PyTextAssetProvider,
+    PyAssetProvider, PyBufferedDataAssetProvider, PyBufferedImageAssetProvider,
+    PyBufferedTextAssetProvider, PyDataAssetProvider, PyGraphicsAssetProvider,
+    PyImageAssetProvider, PyMetadataProvider, PyTextAssetProvider,
 };
 use crate::error::CodecError;
 use crate::traits::{AssetProvider, DatasetWriter};
@@ -113,6 +113,8 @@ impl PyDatasetWriter {
             AssetProvider::Text(buf_txt.as_text_provider())
         } else if let Ok(data) = provider.extract::<PyRef<PyDataAssetProvider>>() {
             AssetProvider::Data(data.inner().clone())
+        } else if let Ok(buf_data) = provider.extract::<PyRef<PyBufferedDataAssetProvider>>() {
+            AssetProvider::Data(buf_data.as_data_provider())
         } else if let Ok(gfx) = provider.extract::<PyRef<PyGraphicsAssetProvider>>() {
             AssetProvider::Graphics(gfx.inner().clone())
         } else if let Ok(asset) = provider.extract::<PyRef<PyAssetProvider>>() {
@@ -127,8 +129,9 @@ impl PyDatasetWriter {
                 "provider must be an AssetProvider, ImageAssetProvider, \
                  BufferedImageAssetProvider, TextAssetProvider, \
                  BufferedTextAssetProvider, DataAssetProvider, \
-                 GraphicsAssetProvider, or a duck-typed image provider \
-                 with required methods (get_block, num_rows, etc.)",
+                 BufferedDataAssetProvider, GraphicsAssetProvider, \
+                 or a duck-typed image provider with required methods \
+                 (get_block, num_rows, etc.)",
             ));
         };
 

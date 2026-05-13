@@ -1930,20 +1930,44 @@ impl JBPDatasetWriter {
     }
 
     /// Create a minimal DES subheader.
-    fn create_des_subheader(&self, asset: &QueuedAsset) -> Vec<u8> {
+    fn create_des_subheader(&self, asset: &QueuedAsset) -> Result<Vec<u8>, CodecError> {
         let mut subheader = Vec::new();
 
         // Get metadata for user-settable fields
         let metadata = asset.provider.metadata();
         let metadata_dict = metadata.as_dict(None);
 
+        // DESID: prefer metadata, fall back to asset key
+        let desid_raw = metadata_dict
+            .get("DESID")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&asset.key);
+        if desid_raw.is_empty() || desid_raw.len() > 25 {
+            return Err(CodecError::Encode(format!(
+                "DESID must be 1-25 characters, got {} characters",
+                desid_raw.len()
+            )));
+        }
+
+        // DESVER: from metadata with default "01"
+        let desver_raw = metadata_dict
+            .get("DESVER")
+            .and_then(|v| v.as_str())
+            .unwrap_or("01");
+        if desver_raw.len() != 2 {
+            return Err(CodecError::Encode(format!(
+                "DESVER must be exactly 2 characters, got {} characters",
+                desver_raw.len()
+            )));
+        }
+
         // DE (2) - File Part Type
         subheader.extend_from_slice(b"DE");
         // DESID (25) - DES Identifier
-        let desid = format!("{:25}", truncate_to_bytes(&asset.key, 25));
+        let desid = format!("{:25}", truncate_to_bytes(desid_raw, 25));
         subheader.extend_from_slice(desid.as_bytes());
         // DESVER (2) - DES Version
-        let desver = get_metadata_field(&metadata_dict, "DESVER", "01", 2);
+        let desver = format!("{:2}", truncate_to_bytes(desver_raw, 2));
         subheader.extend_from_slice(desver.as_bytes());
         // Security fields (DECLAS through DESCTLN) — uses "DES" prefix
         // Note: DES security fields use "DE" prefix for DECLAS but "DES" for the rest.
@@ -1995,26 +2019,27 @@ impl JBPDatasetWriter {
         // DESSHL (4) - DES User-Defined Subheader Length
         subheader.extend_from_slice(b"0000");
 
-        subheader
+        Ok(subheader)
     }
 
     /// Create a subheader for the given asset.
     ///
     /// Note: For image segments, use `create_image_subheader_with_overflow` instead
     /// to properly handle TRE overflow and encoding hints.
-    fn create_subheader(&self, asset: &QueuedAsset) -> Vec<u8> {
+    fn create_subheader(&self, asset: &QueuedAsset) -> Result<Vec<u8>, CodecError> {
         match asset.segment_type {
             SegmentType::Image => {
                 // For images, we need to handle encoding hints properly.
                 // This path should not normally be reached as images use
                 // create_image_subheader_with_overflow in the close() method.
                 // Return a basic subheader with default hints for fallback.
-                self.create_image_subheader(asset)
+                Ok(self
+                    .create_image_subheader(asset)
                     .map(|(subheader, _)| subheader)
-                    .unwrap_or_default()
+                    .unwrap_or_default())
             }
-            SegmentType::Text => self.create_text_subheader(asset),
-            SegmentType::Graphic => self.create_graphic_subheader(asset),
+            SegmentType::Text => Ok(self.create_text_subheader(asset)),
+            SegmentType::Graphic => Ok(self.create_graphic_subheader(asset)),
             SegmentType::DataExtension | SegmentType::ReservedExtension => {
                 self.create_des_subheader(asset)
             }
@@ -2366,7 +2391,7 @@ impl DatasetWriter for JBPDatasetWriter {
         let mut graphic_subheaders = Vec::new();
         let mut graphic_data = Vec::new();
         for asset in &graphics {
-            let subheader = self.create_subheader(asset);
+            let subheader = self.create_subheader(asset)?;
             let data = asset.provider.raw_asset()?;
             graphic_info.push((subheader.len(), data.len()));
             graphic_subheaders.push(subheader);
@@ -2377,7 +2402,7 @@ impl DatasetWriter for JBPDatasetWriter {
         let mut text_subheaders = Vec::new();
         let mut text_data = Vec::new();
         for asset in &text {
-            let subheader = self.create_subheader(asset);
+            let subheader = self.create_subheader(asset)?;
             let data = asset.provider.raw_asset()?;
             text_info.push((subheader.len(), data.len()));
             text_subheaders.push(subheader);
@@ -2389,7 +2414,7 @@ impl DatasetWriter for JBPDatasetWriter {
         let mut des_subheaders = Vec::new();
         let mut des_data = Vec::new();
         for asset in &des {
-            let subheader = self.create_subheader(asset);
+            let subheader = self.create_subheader(asset)?;
             let data = asset.provider.raw_asset()?;
             des_info.push((subheader.len(), data.len()));
             des_subheaders.push(subheader);
@@ -5526,7 +5551,7 @@ mod metadata_writing_tests {
         let asset = make_asset("des1", AssetType::Data, meta);
         let writer = make_writer();
 
-        let subheader = writer.create_des_subheader(&asset);
+        let subheader = writer.create_des_subheader(&asset).unwrap();
 
         // DE(2) + DESID(25) + DESVER(2) = 29
         // DECLAS at offset 29
@@ -5550,7 +5575,7 @@ mod metadata_writing_tests {
         let asset = make_asset("des1", AssetType::Data, meta);
         let writer = make_writer();
 
-        let subheader = writer.create_des_subheader(&asset);
+        let subheader = writer.create_des_subheader(&asset).unwrap();
 
         // DESVER at offset: 2 + 25 = 27
         assert_eq!(
@@ -5566,12 +5591,109 @@ mod metadata_writing_tests {
         let asset = make_asset("des1", AssetType::Data, meta);
         let writer = make_writer();
 
-        let subheader = writer.create_des_subheader(&asset);
+        let subheader = writer.create_des_subheader(&asset).unwrap();
 
         // DESVER defaults to "01"
         assert_eq!(extract_str(&subheader, 27, 2), "01");
         // DECLAS defaults to "U"
         assert_eq!(extract_str(&subheader, 29, 1), "U");
+    }
+
+    #[test]
+    fn des_subheader_honors_desid_from_metadata() {
+        let meta = MetaProvider::new().set("DESID", "XML_DATA_CONTENT");
+        let asset = make_asset("des1", AssetType::Data, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_des_subheader(&asset).unwrap();
+
+        // DESID at offset 2, 25 bytes (space-padded)
+        assert_eq!(
+            extract_str(&subheader, 2, 25).trim_end(),
+            "XML_DATA_CONTENT",
+            "DESID should come from metadata"
+        );
+    }
+
+    #[test]
+    fn des_subheader_rejects_desid_too_long() {
+        let meta = MetaProvider::new().set("DESID", "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+        let asset = make_asset("des1", AssetType::Data, meta);
+        let writer = make_writer();
+
+        let result = writer.create_des_subheader(&asset);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("DESID") && err_msg.contains("1-25"),
+            "Error should mention DESID constraint: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn des_subheader_rejects_desid_empty() {
+        let meta = MetaProvider::new().set("DESID", "");
+        let asset = make_asset("des1", AssetType::Data, meta);
+        let writer = make_writer();
+
+        let result = writer.create_des_subheader(&asset);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("DESID") && err_msg.contains("1-25"),
+            "Error should mention DESID constraint: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn des_subheader_rejects_desver_wrong_length() {
+        let meta = MetaProvider::new().set("DESVER", "1");
+        let asset = make_asset("des1", AssetType::Data, meta);
+        let writer = make_writer();
+
+        let result = writer.create_des_subheader(&asset);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("DESVER") && err_msg.contains("exactly 2"),
+            "Error should mention DESVER constraint: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn des_subheader_rejects_desver_too_long() {
+        let meta = MetaProvider::new().set("DESVER", "001");
+        let asset = make_asset("des1", AssetType::Data, meta);
+        let writer = make_writer();
+
+        let result = writer.create_des_subheader(&asset);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("DESVER") && err_msg.contains("exactly 2"),
+            "Error should mention DESVER constraint: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn des_subheader_accepts_valid_desid_and_desver() {
+        let meta = MetaProvider::new()
+            .set("DESID", "XML_DATA_CONTENT")
+            .set("DESVER", "02");
+        let asset = make_asset("des1", AssetType::Data, meta);
+        let writer = make_writer();
+
+        let subheader = writer.create_des_subheader(&asset).unwrap();
+
+        assert_eq!(
+            extract_str(&subheader, 2, 25).trim_end(),
+            "XML_DATA_CONTENT"
+        );
+        assert_eq!(extract_str(&subheader, 27, 2), "02");
     }
 
     // =========================================================================
