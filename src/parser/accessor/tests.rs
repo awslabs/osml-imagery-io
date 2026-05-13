@@ -1537,3 +1537,38 @@ fn accessor_typeref_with_expression_size_no_lut() {
     let (offset, _) = accessor.calculate_field_offset("trailer", None).unwrap();
     assert_eq!(offset, 7); // 4 (header) + 3 (band) = 7
 }
+
+#[test]
+fn accessor_reads_bcs_npi_field_with_plus_sign() {
+    // Simulates the RPC00B HEIGHT_SCALE case: BCS-NPI field containing a leading +
+    let def = Arc::new(
+        StructureDefinition::new("rpc_snippet")
+            .with_field(
+                FieldDefinition::new("LONG_SCALE", FieldType::String)
+                    .with_size(SizeSpec::Fixed(9))
+                    .with_encoding(Encoding::BcsN),
+            )
+            .with_field(
+                FieldDefinition::new("HEIGHT_SCALE", FieldType::String)
+                    .with_size(SizeSpec::Fixed(5))
+                    .with_encoding(Encoding::BcsNPI),
+            )
+            .with_field(
+                FieldDefinition::new("NEXT_FIELD", FieldType::String)
+                    .with_size(SizeSpec::Fixed(12))
+                    .with_encoding(Encoding::BcsA),
+            ),
+    );
+    let data = b"+000.1012+0697+1.00000E+00";
+    let accessor = StructureAccessor::new(def, data).unwrap();
+
+    let height_scale = accessor.get("HEIGHT_SCALE").unwrap();
+    assert_eq!(height_scale.as_str().unwrap(), "+0697");
+
+    let next = accessor.get("NEXT_FIELD").unwrap();
+    assert_eq!(next.as_str().unwrap(), "+1.00000E+00");
+
+    assert!(accessor.has("HEIGHT_SCALE"));
+    let fields: Vec<String> = accessor.fields().collect();
+    assert!(fields.contains(&"HEIGHT_SCALE".to_string()));
+}

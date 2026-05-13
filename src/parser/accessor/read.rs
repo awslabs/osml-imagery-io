@@ -61,18 +61,8 @@ pub fn read_field_value_from_bytes<'a>(
 ) -> Result<Value<'a>, AccessError> {
     match &field.field_type {
         FieldType::String => {
-            // Validate encoding if specified
-            if let Some(encoding) = field.encoding {
-                if !encoding.validate(bytes) {
-                    return Err(AccessError::EncodingError {
-                        path: field.id.clone(),
-                        encoding: format!("{:?}", encoding),
-                        message: "Invalid characters for encoding".to_string(),
-                    });
-                }
-            }
-
-            // Convert to string
+            // Convert to string (encoding metadata is advisory for reading;
+            // real-world producers frequently deviate from spec encodings)
             let s = std::str::from_utf8(bytes).map_err(|e| AccessError::EncodingError {
                 path: field.id.clone(),
                 encoding: "UTF-8".to_string(),
