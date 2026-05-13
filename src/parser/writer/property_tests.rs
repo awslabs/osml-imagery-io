@@ -300,11 +300,13 @@ mod prop_22_padding_application {
             let value = "1".repeat(value_size);
             writer.set("field", value.clone()).unwrap();
 
+            // BCS-N left-pads with '0' (numeric right-justification)
             let buffer = writer.buffer();
-            prop_assert_eq!(&buffer[..value_size], value.as_bytes());
-            for i in value_size..field_size {
+            let pad_len = field_size - value_size;
+            for i in 0..pad_len {
                 prop_assert_eq!(buffer[i], 0x30, "BCS-N padding should be '0' (0x30)");
             }
+            prop_assert_eq!(&buffer[pad_len..field_size], value.as_bytes());
         }
 
         #[test]

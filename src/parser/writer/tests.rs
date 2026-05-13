@@ -223,10 +223,10 @@ fn bcs_n_uses_zero_padding() {
     writer.set("bcs_a_field", "TEST").unwrap();
     writer.set("bcs_n_field", "12").unwrap();
 
-    // BCS-N should pad with '0' (0x30)
+    // BCS-N left-pads with '0' (0x30) — numeric right-justification
     let buffer = writer.buffer();
-    assert_eq!(&buffer[10..12], b"12");
-    assert_eq!(&buffer[12..15], b"000");
+    assert_eq!(&buffer[10..13], b"000");
+    assert_eq!(&buffer[13..15], b"12");
 }
 
 // ==================== Repeated field tests ====================

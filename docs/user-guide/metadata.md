@@ -329,6 +329,35 @@ Some fields are always computed by the writer and cannot be overridden:
 - `ENCRYP` — always `"0"` (unencrypted)
 - Image dimensions, pixel type, blocking parameters — derived from image data
 
+#### Writing TREs
+
+Set TREs as nested dicts via `set_json()`, matching the format returned by
+the reader:
+
+```python
+image_meta.set_json("GEOLOB", {
+    "ARV": "000360000",
+    "BRV": "000180000",
+    "LSO": "-077.0000000000",
+    "PSO": "+038.0000000000",
+})
+```
+
+Numeric fields (BCS-N encoding) are auto-formatted to their defined width —
+short values are left-padded with zeros and overly-precise values are
+reformatted to fit. You can pass natural representations:
+
+```python
+image_meta.set_json("ICHIPB", {
+    "OP_ROW_11": "0.5",     # auto-padded to "0000000000.5" (12 bytes)
+    "FI_ROW": "768",        # auto-padded to "00000768" (8 bytes)
+    # ...
+})
+```
+
+Text fields (BCS-A) are right-padded with spaces if short and rejected if
+too long. Values that cannot fit any field after formatting raise an error.
+
 ### Extending NITF Metadata with Structure Definitions
 
 The metadata you see through `as_dict()` for NITF files is driven by a

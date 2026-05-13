@@ -544,11 +544,18 @@ impl JBPDatasetWriter {
     ///
     /// # Returns
     /// TRE envelopes, or empty vec if no TREs or no registry.
-    fn extract_tre_envelopes_from_asset(&self, asset: &QueuedAsset) -> Vec<TreEnvelope> {
+    ///
+    /// # Errors
+    /// Returns `CodecError` if TRE serialization fails (e.g., field values
+    /// exceed their defined widths).
+    fn extract_tre_envelopes_from_asset(
+        &self,
+        asset: &QueuedAsset,
+    ) -> Result<Vec<TreEnvelope>, CodecError> {
         // Need a registry to serialize TREs
         let registry = match &self.registry {
             Some(r) => r,
-            None => return Vec::new(),
+            None => return Ok(Vec::new()),
         };
 
         // Get metadata from the asset
@@ -558,14 +565,13 @@ impl JBPDatasetWriter {
         // Parse TRE fields from metadata
         let tre_groups = parse_tre_fields_from_metadata(&metadata_dict);
         if tre_groups.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         // Serialize TRE groups to envelopes
-        match serialize_tre_groups_to_envelopes(registry, &tre_groups) {
-            Ok(envs) => envs,
-            Err(_) => Vec::new(), // Silently skip on serialization errors
-        }
+        let envelopes = serialize_tre_groups_to_envelopes(registry, &tre_groups)
+            .map_err(|e| CodecError::Encode(e.to_string()))?;
+        Ok(envelopes)
     }
 
     /// Create an image subheader with TRE data and overflow handling.
@@ -598,7 +604,7 @@ impl JBPDatasetWriter {
         let validated_hints = Self::validate_encoding_hints(&hints, &props)?;
 
         // Extract TRE envelopes from asset metadata
-        let envelopes = self.extract_tre_envelopes_from_asset(asset);
+        let envelopes = self.extract_tre_envelopes_from_asset(asset)?;
 
         if envelopes.is_empty() {
             // No TREs, create subheader without TRE data
@@ -657,7 +663,7 @@ impl JBPDatasetWriter {
         let validated_hints = Self::validate_encoding_hints(&hints, &props)?;
 
         // Extract TRE bytes from asset metadata if registry is available
-        let tre_bytes = self.extract_tre_bytes_from_asset(asset);
+        let tre_bytes = self.extract_tre_bytes_from_asset(asset)?;
         Ok((
             self.create_image_subheader_with_tres(asset, &tre_bytes, None, &validated_hints),
             validated_hints,
@@ -1774,11 +1780,11 @@ impl JBPDatasetWriter {
     ///
     /// # Returns
     /// Serialized TRE envelope bytes, or empty vec if no TREs or no registry.
-    fn extract_tre_bytes_from_asset(&self, asset: &QueuedAsset) -> Vec<u8> {
+    fn extract_tre_bytes_from_asset(&self, asset: &QueuedAsset) -> Result<Vec<u8>, CodecError> {
         // Need a registry to serialize TREs
         let registry = match &self.registry {
             Some(r) => r,
-            None => return Vec::new(),
+            None => return Ok(Vec::new()),
         };
 
         // Get metadata from the asset
@@ -1788,21 +1794,19 @@ impl JBPDatasetWriter {
         // Parse TRE fields from metadata
         let tre_groups = parse_tre_fields_from_metadata(&metadata_dict);
         if tre_groups.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         // Serialize TRE groups to envelopes
-        let envelopes = match serialize_tre_groups_to_envelopes(registry, &tre_groups) {
-            Ok(envs) => envs,
-            Err(_) => return Vec::new(), // Silently skip on serialization errors
-        };
+        let envelopes = serialize_tre_groups_to_envelopes(registry, &tre_groups)
+            .map_err(|e| CodecError::Encode(e.to_string()))?;
 
         if envelopes.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         // Serialize envelopes to bytes
-        write_tre_envelopes(&envelopes)
+        Ok(write_tre_envelopes(&envelopes))
     }
 
     /// Patch the overflow index placeholder in a subheader.
