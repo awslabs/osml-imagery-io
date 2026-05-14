@@ -1211,7 +1211,7 @@ def iminfo(
             ),
             num_resolution_levels=image_asset.num_resolution_levels,
             asset_key=asset_key,
-            metadata=dict(image_asset.get_metadata().as_dict()),
+            metadata=dict(image_asset.metadata.as_dict()),
         )
 
 

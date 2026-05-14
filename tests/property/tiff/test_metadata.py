@@ -101,7 +101,7 @@ class TestTiffMetadataRoundtrip:
 
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image:0")
-            meta = asset.get_metadata().as_dict()
+            meta = asset.metadata.as_dict()
 
             assert meta["256"] == num_cols       # ImageWidth
             assert meta["257"] == num_rows       # ImageLength
@@ -193,7 +193,7 @@ def _read_tiff_metadata(path):
     """Read per-IFD metadata from a TIFF file."""
     reader = IO.open([str(path)], "r")
     asset = reader.get_asset("image:0")
-    return asset.get_metadata().as_dict()
+    return asset.metadata.as_dict()
 
 
 # =============================================================================

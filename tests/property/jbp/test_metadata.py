@@ -163,7 +163,7 @@ class TestMetadataRoundtrip:
             asset = reader.get_asset("image:0")
 
             # Get metadata from decoded asset
-            decoded_metadata = asset.get_metadata()
+            decoded_metadata = asset.metadata
             decoded_dict = decoded_metadata.as_dict()
 
             reader.close()
@@ -247,7 +247,7 @@ class TestMetadataStructure:
 
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image:0")
-            decoded_dict = asset.get_metadata().as_dict()
+            decoded_dict = asset.metadata.as_dict()
             reader.close()
 
             # Verify BAND_INFO is a list (repeated field → array)
@@ -339,7 +339,7 @@ class TestMetadataRawBytes:
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image:0")
 
-            raw_metadata = asset.get_metadata()
+            raw_metadata = asset.metadata
             raw_io = raw_metadata.raw
             raw_bytes = raw_io.read()
 

@@ -102,7 +102,7 @@ def _read_geo_metadata(path):
     """
     reader = IO.open([str(path)], "r")
     asset = reader.get_asset("image:0")
-    full = asset.get_metadata().as_dict()
+    full = asset.metadata.as_dict()
     return {k: v for k, v in full.items() if k in _GEOTIFF_TAGS}
 
 

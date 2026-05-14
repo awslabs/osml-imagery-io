@@ -79,7 +79,7 @@ class TestGraphicSegmentProperties:
             assert asset.media_type == "image/cgm", f"Expected image/cgm, got {asset.media_type}"
 
             # Get raw asset data and verify round-trip
-            raw_data = asset.get_raw_asset().read()
+            raw_data = asset.raw_asset.read()
             assert raw_data == cgm_data, (
                 f"CGM data round-trip failed: "
                 f"original length={len(cgm_data)}, "
@@ -110,8 +110,8 @@ class TestGraphicSegmentProperties:
     def test_python_api_completeness(self, cgm_data, title, description):
         """For any graphic segment accessed via Python's DatasetReader.get_asset(),
         the returned PyGraphicsAssetProvider SHALL expose key, title, description,
-        media_type, roles, asset_type properties, get_raw_asset() returning BytesIO,
-        and get_metadata() returning PyMetadataProvider.
+        media_type, roles, asset_type properties, raw_asset returning BytesIO,
+        and metadata returning PyMetadataProvider.
         """
         with tempfile.NamedTemporaryFile(suffix='.ntf', delete=False) as f:
             path = Path(f.name)
@@ -175,10 +175,10 @@ class TestGraphicSegmentProperties:
             assert hasattr(asset, 'asset_type'), "GraphicsAssetProvider missing 'asset_type' property"
             assert asset.asset_type == AssetType.Graphics, f"Expected AssetType.Graphics, got {asset.asset_type}"
 
-            # Requirement 9.2: Verify get_raw_asset() returns BytesIO
-            assert hasattr(asset, 'get_raw_asset'), "GraphicsAssetProvider missing 'get_raw_asset' method"
-            raw_asset = asset.get_raw_asset()
-            assert isinstance(raw_asset, io.BytesIO), f"get_raw_asset() should return BytesIO, got {type(raw_asset)}"
+            # Requirement 9.2: Verify raw_asset property returns BytesIO
+            assert hasattr(asset, 'raw_asset'), "GraphicsAssetProvider missing 'raw_asset' property"
+            raw_asset = asset.raw_asset
+            assert isinstance(raw_asset, io.BytesIO), f"raw_asset should return BytesIO, got {type(raw_asset)}"
 
             # Verify the raw data matches
             raw_data = raw_asset.read()
@@ -186,10 +186,10 @@ class TestGraphicSegmentProperties:
                 f"CGM data mismatch: original length={len(cgm_data)}, read length={len(raw_data)}"
             )
 
-            # Requirement 9.3: Verify get_metadata() returns MetadataProvider
-            assert hasattr(asset, 'get_metadata'), "GraphicsAssetProvider missing 'get_metadata' method"
-            metadata = asset.get_metadata()
-            assert metadata is not None, "get_metadata() returned None"
+            # Requirement 9.3: Verify metadata property returns MetadataProvider
+            assert hasattr(asset, 'metadata'), "GraphicsAssetProvider missing 'metadata' property"
+            metadata = asset.metadata
+            assert metadata is not None, "metadata returned None"
 
             # Verify metadata provider has expected methods
             assert hasattr(metadata, 'as_dict'), "MetadataProvider missing 'as_dict' method"

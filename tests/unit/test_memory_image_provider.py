@@ -100,7 +100,7 @@ class TestBufferedImageAssetProviderWithMetadata:
         )
 
         # Get metadata back from provider
-        retrieved_metadata = provider.get_metadata()
+        retrieved_metadata = provider.metadata
         meta_dict = retrieved_metadata.as_dict()
 
         # Verify all values are present
@@ -116,7 +116,7 @@ class TestBufferedImageAssetProviderWithMetadata:
             num_rows=256,
         )
 
-        metadata = provider.get_metadata()
+        metadata = provider.metadata
         meta_dict = metadata.as_dict()
 
         assert len(meta_dict) == 0
@@ -137,7 +137,7 @@ class TestBufferedImageAssetProviderWithMetadata:
             metadata=metadata,
         )
 
-        retrieved = provider.get_metadata().as_dict()
+        retrieved = provider.metadata.as_dict()
         assert retrieved.get("IMODE") == "B"
         assert retrieved.get("IC") == "NC"
         assert retrieved.get("NPPBH") == "512"

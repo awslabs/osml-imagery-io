@@ -480,7 +480,8 @@ impl PyBufferedImageAssetProvider {
     }
 
     /// Raw asset bytes as a ``BytesIO`` object.
-    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    #[getter]
+    fn raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let bytes = self.inner.raw_asset()?;
         let py_bytes = PyBytes::new(py, &bytes);
 
@@ -492,7 +493,8 @@ impl PyBufferedImageAssetProvider {
     }
 
     /// Asset-level metadata as a :class:`MetadataProvider`.
-    fn get_metadata(&self) -> PyMetadataProvider {
+    #[getter]
+    fn metadata(&self) -> PyMetadataProvider {
         PyMetadataProvider::new(self.inner.metadata())
     }
 

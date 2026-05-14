@@ -93,7 +93,7 @@ class TestDataSegmentRoundtrip:
             assert len(data_keys) == 1, f"Expected 1 DES, got {len(data_keys)}"
 
             asset = reader.get_asset(data_keys[0])
-            read_bytes = asset.get_raw_asset().read()
+            read_bytes = asset.raw_asset.read()
             assert read_bytes == payload, (
                 f"Payload mismatch: wrote {len(payload)} bytes, "
                 f"read {len(read_bytes)} bytes"
@@ -132,7 +132,7 @@ class TestDataSegmentRoundtrip:
             data_keys = reader.get_asset_keys(asset_type=AssetType.Data)
             asset = reader.get_asset(data_keys[0])
 
-            read_bytes = asset.get_raw_asset().read()
+            read_bytes = asset.raw_asset.read()
             assert read_bytes == xml_data
 
             elem = asset.parse_as_xml()
@@ -174,7 +174,7 @@ class TestDataSegmentRoundtrip:
             data_keys = reader.get_asset_keys(asset_type=AssetType.Data)
             asset = reader.get_asset(data_keys[0])
 
-            asset_meta = asset.get_metadata().as_dict()
+            asset_meta = asset.metadata.as_dict()
             read_desid = asset_meta.get("DESID", "").strip()
             read_desver = asset_meta.get("DESVER", "").strip()
 

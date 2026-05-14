@@ -112,7 +112,7 @@ def describe_image_asset(asset, show_metadata: bool, is_nitf: bool = False) -> N
 
     if show_metadata:
         print("    Metadata:")
-        meta = asset.get_metadata()
+        meta = asset.metadata
         meta_dict = meta.as_dict()
         if _is_tiff(asset):
             print(format_tiff_metadata(meta_dict, indent=6))
@@ -137,7 +137,7 @@ def describe_text_asset(asset, show_metadata: bool, is_nitf: bool = False) -> No
 
     if show_metadata:
         print("    Metadata:")
-        meta = asset.get_metadata()
+        meta = asset.metadata
         meta_dict = meta.as_dict()
         if is_nitf:
             meta_dict = _filter_nitf_metadata(meta_dict)
@@ -160,7 +160,7 @@ def is_sicd_sidd_segment(asset) -> bool:
     ``SICD_XML``, ``SIDD_XML``, or a ``urn:SICD``/``urn:SIDD`` URN.
     """
     try:
-        meta = asset.get_metadata()
+        meta = asset.metadata
         meta_dict = meta.as_dict()
         desid = meta_dict.get("DESID", "").strip()
         sicd_sidd_ids = {"XML_DATA_CONTENT", "SICD_XML", "SIDD_XML"}
@@ -188,7 +188,7 @@ def describe_data_asset(asset, show_metadata: bool, is_nitf: bool = False) -> No
 
     if show_metadata:
         print("    Metadata:")
-        meta = asset.get_metadata()
+        meta = asset.metadata
         meta_dict = meta.as_dict()
         if is_nitf:
             meta_dict = _filter_nitf_metadata(meta_dict)
@@ -203,7 +203,7 @@ def describe_data_asset(asset, show_metadata: bool, is_nitf: bool = False) -> No
                     # Fall back to parsing raw bytes when the asset is
                     # returned as a generic AssetProvider without the
                     # DataAssetProvider interface.
-                    raw_io = asset.get_raw_asset()
+                    raw_io = asset.raw_asset
                     xml_element = ET.fromstring(raw_io.read())
                 print("    XML Content:")
                 print(format_xml(xml_element))
@@ -215,7 +215,7 @@ def describe_generic_asset(asset, show_metadata: bool, is_nitf: bool = False) ->
     """Print details for a generic asset."""
     if show_metadata:
         print("    Metadata:")
-        meta = asset.get_metadata()
+        meta = asset.metadata
         meta_dict = meta.as_dict()
         if is_nitf:
             meta_dict = _filter_nitf_metadata(meta_dict)

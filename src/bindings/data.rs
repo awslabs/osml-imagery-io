@@ -17,7 +17,7 @@ use crate::types::AssetType;
 /// Geospatial datasets can embed structured payloads alongside imagery —
 /// XML metadata (such as SICD/SIDD), JSON configuration, overflow TREs,
 /// and application-specific data. ``DataAssetProvider`` exposes the raw
-/// bytes through :meth:`get_raw_asset` and offers convenience methods to
+/// bytes through :attr:`raw_asset` and offers convenience methods to
 /// parse the content directly as XML (:meth:`parse_as_xml`) or JSON
 /// (:meth:`parse_as_json`). The :attr:`mime_type` property indicates the
 /// content format. Use :meth:`DatasetReader.get_asset` to obtain an
@@ -98,7 +98,8 @@ impl PyDataAssetProvider {
     }
 
     /// The raw asset bytes as a ``BytesIO`` object.
-    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    #[getter]
+    fn raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let bytes = self.inner.raw_asset()?;
         let py_bytes = PyBytes::new(py, &bytes);
 
@@ -110,7 +111,8 @@ impl PyDataAssetProvider {
     }
 
     /// The asset-level :class:`MetadataProvider`.
-    fn get_metadata(&self) -> PyMetadataProvider {
+    #[getter]
+    fn metadata(&self) -> PyMetadataProvider {
         PyMetadataProvider::new(self.inner.metadata())
     }
 

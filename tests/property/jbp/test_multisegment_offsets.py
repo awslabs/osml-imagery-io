@@ -183,7 +183,7 @@ class TestMultiSegmentOffsets:
             for key, original_data, _ in non_image_segments:
                 asset = reader.get_asset(key)
                 assert asset is not None, f"Missing asset: {key}"
-                read_data = asset.get_raw_asset().read()
+                read_data = asset.raw_asset.read()
                 assert read_data == original_data, (
                     f"Data mismatch for {key}: "
                     f"wrote {len(original_data)} bytes, "

@@ -31,7 +31,7 @@ def test_bench_metadata_read(benchmark, dataset_entry):
         image_keys = reader.get_asset_keys(asset_type=AssetType.Image)
         if image_keys:
             asset = reader.get_asset(image_keys[0])
-            asset_meta_dict = asset.get_metadata().as_dict()
+            asset_meta_dict = asset.metadata.as_dict()
             for key in asset_meta_dict:
                 _ = asset_meta_dict[key]
 

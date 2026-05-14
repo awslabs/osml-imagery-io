@@ -9,7 +9,7 @@ adapter. It covers:
 - Missing required attribute rejection
 - Python exception propagation from get_block()
 - Default has_block behavior when method is absent
-- Metadata dispatch (with and without get_metadata)
+- Metadata dispatch (with and without metadata property)
 - Dtype mismatch error reporting
 
 Requirements: 1.1, 1.2, 1.6, 2.4, 3.1, 3.3, 4.3, 5.1, 5.2, 7.1, 7.3, 8.1, 8.2
@@ -211,21 +211,22 @@ class TestNoHasBlockMethod:
 
 
 # =========================================================================
-# Test 6: provider with get_metadata method
+# Test 6: provider with metadata property
 # =========================================================================
 
 
-class TestProviderWithGetMetadata:
-    """Verify that a provider's get_metadata is called and metadata passes through.
+class TestProviderWithMetadata:
+    """Verify that a provider's metadata property is read and passes through.
 
     Requirements: 8.1
     """
 
-    def test_get_metadata_passed_through(self, tmp_path):
-        """Metadata from the provider's get_metadata should be accessible on the asset."""
+    def test_metadata_passed_through(self, tmp_path):
+        """Metadata from the provider's metadata property should be accessible on the asset."""
 
         class MetadataProvider(DuckTypedProvider):
-            def get_metadata(self):
+            @property
+            def metadata(self):
                 meta = BufferedMetadataProvider()
                 meta.set("IREP", "MONO")
                 return meta
@@ -235,27 +236,27 @@ class TestProviderWithGetMetadata:
 
         with IO.open([output_path], "r") as reader:
             asset = reader.get_asset("image:0")
-            meta_dict = asset.get_metadata().as_dict()
+            meta_dict = asset.metadata.as_dict()
 
         # The IREP value from the provider's metadata should be present
         assert meta_dict.get("IREP") == "MONO"
 
 
 # =========================================================================
-# Test 7: provider without get_metadata method
+# Test 7: provider without metadata property
 # =========================================================================
 
 
-class TestProviderWithoutGetMetadata:
-    """Verify that a provider without get_metadata uses empty metadata default.
+class TestProviderWithoutMetadata:
+    """Verify that a provider without metadata uses empty metadata default.
 
     Requirements: 8.2
     """
 
-    def test_no_get_metadata_uses_empty_default(self, tmp_path):
-        """A provider without get_metadata should still write successfully."""
+    def test_no_metadata_uses_empty_default(self, tmp_path):
+        """A provider without metadata should still write successfully."""
         provider = DuckTypedProvider()
-        assert not hasattr(provider, "get_metadata")
+        assert not hasattr(provider, "metadata")
 
         output_path = _write_nitf(tmp_path, provider)
 

@@ -111,7 +111,7 @@ class TestTextSegmentRoundtrip:
             assert asset.asset_type == AssetType.Text, f"Expected Text, got {asset.asset_type}"
 
             # Verify raw bytes roundtrip
-            raw_data = asset.get_raw_asset().read()
+            raw_data = asset.raw_asset.read()
             assert raw_data == text_bytes, (
                 f"Raw bytes mismatch: "
                 f"original length={len(text_bytes)}, "
@@ -146,7 +146,7 @@ class TestTextSegmentRoundtrip:
         )
 
         # Verify raw_asset has CR/LF line endings
-        raw_bytes = text_asset.get_raw_asset().read()
+        raw_bytes = text_asset.raw_asset.read()
         raw_str = raw_bytes.decode('utf-8')
 
         # Check that all line endings are CR/LF (no standalone LF or CR)
@@ -256,17 +256,17 @@ class TestTextSegmentRoundtrip:
             assert hasattr(asset, 'asset_type'), "TextAssetProvider missing 'asset_type' property"
             assert asset.asset_type == AssetType.Text
 
-            # Requirement 8.2: Verify get_raw_asset() returns BytesIO
-            assert hasattr(asset, 'get_raw_asset'), "TextAssetProvider missing 'get_raw_asset' method"
-            raw_asset = asset.get_raw_asset()
+            # Requirement 8.2: Verify raw_asset property returns BytesIO
+            assert hasattr(asset, 'raw_asset'), "TextAssetProvider missing 'raw_asset' property"
+            raw_asset = asset.raw_asset
             assert isinstance(raw_asset, io.BytesIO)
             raw_bytes = raw_asset.read()
             assert isinstance(raw_bytes, bytes)
             assert len(raw_bytes) > 0
 
-            # Requirement 8.3: Verify get_metadata() returns MetadataProvider
-            assert hasattr(asset, 'get_metadata'), "TextAssetProvider missing 'get_metadata' method"
-            metadata = asset.get_metadata()
+            # Requirement 8.3: Verify metadata property returns MetadataProvider
+            assert hasattr(asset, 'metadata'), "TextAssetProvider missing 'metadata' property"
+            metadata = asset.metadata
             assert metadata is not None
             assert hasattr(metadata, 'as_dict')
             metadata_dict = metadata.as_dict()
@@ -345,10 +345,10 @@ class TestTextAssetProviderAPICompleteness:
         encoding=encoding_strategy,
     )
     @pbt_settings
-    def test_buffered_text_asset_provider_get_raw_asset_returns_bytesio(
+    def test_buffered_text_asset_provider_raw_asset_returns_bytesio(
         self, key, text_content, encoding
     ):
-        """For any BufferedTextAssetProvider, get_raw_asset() SHALL return BytesIO."""
+        """For any BufferedTextAssetProvider, raw_asset SHALL return BytesIO."""
         # Skip non-ASCII content for ASCII encoding
         if encoding == "ASCII" and not text_content.isascii():
             return
@@ -359,8 +359,8 @@ class TestTextAssetProviderAPICompleteness:
             encoding=encoding,
         )
 
-        # Requirement 8.2: get_raw_asset() returns BytesIO
-        raw_asset = provider.get_raw_asset()
+        # Requirement 8.2: raw_asset returns BytesIO
+        raw_asset = provider.raw_asset
         assert isinstance(raw_asset, io.BytesIO)
 
         # Verify we can read bytes from it
@@ -378,10 +378,10 @@ class TestTextAssetProviderAPICompleteness:
         encoding=encoding_strategy,
     )
     @pbt_settings
-    def test_buffered_text_asset_provider_get_metadata_returns_metadata_provider(
+    def test_buffered_text_asset_provider_metadata_returns_metadata_provider(
         self, key, text_content, encoding
     ):
-        """For any BufferedTextAssetProvider, get_metadata() SHALL return MetadataProvider."""
+        """For any BufferedTextAssetProvider, metadata SHALL return MetadataProvider."""
         # Skip non-ASCII content for ASCII encoding
         if encoding == "ASCII" and not text_content.isascii():
             return
@@ -392,8 +392,8 @@ class TestTextAssetProviderAPICompleteness:
             encoding=encoding,
         )
 
-        # Requirement 8.3: get_metadata() returns MetadataProvider
-        metadata = provider.get_metadata()
+        # Requirement 8.3: metadata returns MetadataProvider
+        metadata = provider.metadata
         assert metadata is not None
 
         # MetadataProvider should have as_dict method
@@ -640,7 +640,7 @@ class TestTextMetadataAccess:
             assert isinstance(fmt, str), f"format should be str, got {type(fmt)}"
 
             # Verify TXTFMT is in metadata
-            metadata = asset.get_metadata()
+            metadata = asset.metadata
             metadata_dict = metadata.as_dict()
             assert "TXTFMT" in metadata_dict, "TXTFMT not found in metadata"
             assert isinstance(metadata_dict["TXTFMT"], str)
@@ -702,7 +702,7 @@ class TestTextMetadataAccess:
             asset = reader.get_asset(text_keys[0])
 
             # Verify TXTALVL is in metadata
-            metadata = asset.get_metadata()
+            metadata = asset.metadata
             metadata_dict = metadata.as_dict()
             assert "TXTALVL" in metadata_dict, "TXTALVL not found in metadata"
 

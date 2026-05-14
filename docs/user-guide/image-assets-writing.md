@@ -260,7 +260,8 @@ class InvertProvider:
         block = self._source.get_block(block_row, block_col, resolution_level)
         return np.iinfo(block.dtype).max - block  # invert
 
-    def get_metadata(self):
+    @property
+    def metadata(self):
         return self._metadata
 
 with IO.open(["input.ntf"], "r") as reader:
@@ -284,7 +285,7 @@ A few things to keep in mind:
   `pixel_value_type`, etc.) are cached in Rust at construction time and never
   re-acquire the GIL.
 - **Optional methods have safe defaults.** If your object has no `has_block` method,
-  all blocks are assumed present. If it has no `get_metadata` method, empty metadata
+  all blocks are assumed present. If it has no `metadata` property, empty metadata
   is used.
 - **Required attributes.** The object must have all 14 attributes: `key`, `title`,
   `description`, `get_block`, `num_rows`, `num_columns`, `num_bands`,

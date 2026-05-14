@@ -86,7 +86,7 @@ def _check_image_asset(asset, entry: IntegrationEntry) -> None:
     key = asset.key
 
     # Non-empty metadata
-    meta_dict = asset.get_metadata().as_dict()
+    meta_dict = asset.metadata.as_dict()
     assert len(meta_dict) > 0, f"Empty metadata for image asset '{key}' in {entry.path}"
 
     # Positive dimensions
@@ -140,7 +140,7 @@ def run_tiff_checks(reader) -> None:
         return
 
     asset = reader.get_asset(image_keys[0])
-    geo = asset.get_metadata().as_dict("Geo")
+    geo = asset.metadata.as_dict("Geo")
 
     # Check GeoModelType
     if "GeoModelType" in geo:

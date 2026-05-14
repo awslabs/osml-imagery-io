@@ -57,7 +57,7 @@ class TestTiffBlockDimensions:
         try:
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image:0")
-            asset.get_metadata().as_dict()
+            asset.metadata.as_dict()
 
             bw = asset.num_pixels_per_block_horizontal
             bh = asset.num_pixels_per_block_vertical

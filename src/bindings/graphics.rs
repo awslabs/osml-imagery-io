@@ -15,7 +15,7 @@ use crate::types::AssetType;
 /// Python wrapper for GraphicsAssetProvider trait objects.
 ///
 /// This class provides access to graphics asset properties and content.
-/// Graphics data is accessed through the inherited `get_raw_asset()` method.
+/// Graphics data is accessed through the :attr:`raw_asset` property.
 #[pyclass(name = "GraphicsAssetProvider")]
 pub struct PyGraphicsAssetProvider {
     inner: Arc<dyn GraphicsAssetProvider>,
@@ -82,7 +82,8 @@ impl PyGraphicsAssetProvider {
     /// :returns: A seekable stream containing the raw graphics bytes.
     /// :rtype: io.BytesIO
     /// :raises IOError: If the graphics data cannot be read from the dataset.
-    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    #[getter]
+    fn raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let bytes = self.inner.raw_asset()?;
         let py_bytes = PyBytes::new(py, &bytes);
 
@@ -94,7 +95,8 @@ impl PyGraphicsAssetProvider {
     }
 
     /// The asset-level :class:`MetadataProvider`.
-    fn get_metadata(&self) -> PyMetadataProvider {
+    #[getter]
+    fn metadata(&self) -> PyMetadataProvider {
         PyMetadataProvider::new(self.inner.metadata())
     }
 }

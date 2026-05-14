@@ -96,7 +96,7 @@ impl PyAssetProvider {
         self.inner.asset_type()
     }
 
-    /// Return the raw asset bytes wrapped in a ``BytesIO`` object.
+    /// The raw asset bytes as a ``BytesIO`` object.
     ///
     /// :returns: The raw bytes of the asset content.
     /// :rtype: io.BytesIO
@@ -105,10 +105,10 @@ impl PyAssetProvider {
     /// Example:
     ///
     /// ```python
-    /// raw = asset.get_raw_asset()
-    /// data = raw.read()
+    /// data = asset.raw_asset.read()
     /// ```
-    fn get_raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+    #[getter]
+    fn raw_asset<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let bytes = self.inner.raw_asset()?;
         let py_bytes = PyBytes::new(py, &bytes);
 
@@ -120,8 +120,9 @@ impl PyAssetProvider {
         Ok(bytes_io.into())
     }
 
-    /// Return the :class:`MetadataProvider` for this asset's metadata.
-    fn get_metadata(&self) -> PyMetadataProvider {
+    /// The :class:`MetadataProvider` for this asset's metadata.
+    #[getter]
+    fn metadata(&self) -> PyMetadataProvider {
         PyMetadataProvider::new(self.inner.metadata())
     }
 

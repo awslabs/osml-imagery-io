@@ -300,7 +300,7 @@ class TestTiffPerIFDMetadata:
 
         reader = IO.open([str(SMALL_TIF)], "r")
         asset = reader.get_asset("image:0")
-        meta = asset.get_metadata().as_dict()
+        meta = asset.metadata.as_dict()
 
         # Metadata keys are numeric tag ID strings after the metadata refactor
         assert meta["256"] == 256    # ImageWidth
@@ -315,7 +315,7 @@ class TestTiffPerIFDMetadata:
 
         reader = IO.open([str(SMALL_TIF)], "r")
         asset = reader.get_asset("image:0")
-        provider = asset.get_metadata()
+        provider = asset.metadata
 
         assert provider.as_dict("unknown") == {}
         assert provider.as_dict("nitf") == {}
@@ -337,7 +337,7 @@ class TestTiffPerIFDMetadata:
         try:
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image:0")
-            meta = asset.get_metadata().as_dict()
+            meta = asset.metadata.as_dict()
 
             # Metadata keys are numeric tag ID strings
             assert meta["256"] == width, (
@@ -358,7 +358,7 @@ class TestTiffPerIFDMetadata:
                 )
 
             # Unknown section returns empty
-            provider = asset.get_metadata()
+            provider = asset.metadata
             assert provider.as_dict("unknown") == {}
         finally:
             path.unlink(missing_ok=True)
@@ -413,7 +413,7 @@ def _read_tiff_metadata(path):
     """Read per-IFD metadata from a TIFF file."""
     reader = IO.open([str(path)], "r")
     asset = reader.get_asset("image:0")
-    return asset.get_metadata().as_dict()
+    return asset.metadata.as_dict()
 
 
 @st.composite

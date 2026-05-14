@@ -304,7 +304,7 @@ class TestDatasetRoundTripConsistency:
         assert asset.media_type == "application/vnd.nitf.image"
 
         # Verify raw data can be retrieved
-        raw_data = asset.get_raw_asset()
+        raw_data = asset.raw_asset
         data = raw_data.read()
 
         # The sample was created with 64 bytes (8x8 grayscale)
@@ -337,7 +337,7 @@ class TestDatasetRoundTripConsistency:
         assert asset.asset_type == AssetType.Image
 
         # Verify raw data can be retrieved
-        raw_data = asset.get_raw_asset()
+        raw_data = asset.raw_asset
         data = raw_data.read()
 
         # The sample was created with 64 bytes (8x8 grayscale)
@@ -372,12 +372,12 @@ class TestDatasetRoundTripConsistency:
 
         # First image: 16x16 = 256 bytes
         asset0 = reader.get_asset("image:0")
-        data0 = asset0.get_raw_asset().read()
+        data0 = asset0.raw_asset.read()
         assert len(data0) == 256, f"Expected 256 bytes for image:0, got {len(data0)}"
 
         # Second image: 8x8 = 64 bytes
         asset1 = reader.get_asset("image:1")
-        data1 = asset1.get_raw_asset().read()
+        data1 = asset1.raw_asset.read()
         assert len(data1) == 64, f"Expected 64 bytes for image:1, got {len(data1)}"
 
     def test_multi_segment_round_trip_text_data(self):
@@ -393,7 +393,7 @@ class TestDatasetRoundTripConsistency:
         assert asset.asset_type == AssetType.Text
         assert asset.media_type == "text/plain"
 
-        data = asset.get_raw_asset().read()
+        data = asset.raw_asset.read()
         expected_text = b"This is sample text content for testing."
         assert data == expected_text, f"Text data mismatch: {data}"
 
@@ -410,7 +410,7 @@ class TestDatasetRoundTripConsistency:
         assert asset.asset_type == AssetType.Data
         assert asset.media_type == "application/octet-stream"
 
-        data = asset.get_raw_asset().read()
+        data = asset.raw_asset.read()
         expected_data = b"Sample DES data content"
         assert data == expected_data, f"DES data mismatch: {data}"
 
@@ -475,7 +475,7 @@ class TestDatasetRoundTripConsistency:
 
         # Verify text data
         text = reader.get_asset("text:0")
-        text_data_read = text.get_raw_asset().read()
+        text_data_read = text.raw_asset.read()
         assert text_data_read == test_text_data, "Text data mismatch"
 
     def test_round_trip_preserves_asset_order(self, tmp_path):

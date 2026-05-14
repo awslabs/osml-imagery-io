@@ -78,8 +78,8 @@ pub(crate) struct PyCallbackImageAssetProvider {
 
     /// Whether the Python object has a `has_block` method.
     has_has_block: bool,
-    /// Whether the Python object has a `get_metadata` method.
-    has_get_metadata: bool,
+    /// Whether the Python object has a `metadata` property.
+    has_metadata: bool,
 
     /// Stored roles for `AssetMetadata::roles()` return.
     roles: Vec<String>,
@@ -109,7 +109,7 @@ impl PyCallbackImageAssetProvider {
         let pad_pixel_value: f64 = Self::read_property(obj, "pad_pixel_value")?;
 
         let has_has_block = obj.hasattr("has_block").unwrap_or(false);
-        let has_get_metadata = obj.hasattr("get_metadata").unwrap_or(false);
+        let has_metadata = obj.hasattr("metadata").unwrap_or(false);
 
         Ok(Self {
             py_obj: obj.clone().unbind(),
@@ -127,7 +127,7 @@ impl PyCallbackImageAssetProvider {
             num_resolution_levels,
             pad_pixel_value,
             has_has_block,
-            has_get_metadata,
+            has_metadata,
             roles: vec!["data".to_string()],
         })
     }
@@ -187,17 +187,13 @@ impl AssetMetadata for PyCallbackImageAssetProvider {
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
-        if self.has_get_metadata {
+        if self.has_metadata {
             Python::attach(|py| {
-                let result = self
-                    .py_obj
-                    .call_method0(py, "get_metadata")
-                    .ok()
-                    .and_then(|obj| {
-                        obj.extract::<PyRef<'_, PyMetadataProvider>>(py)
-                            .ok()
-                            .map(|meta| Arc::clone(meta.inner()))
-                    });
+                let result = self.py_obj.getattr(py, "metadata").ok().and_then(|obj| {
+                    obj.extract::<PyRef<'_, PyMetadataProvider>>(py)
+                        .ok()
+                        .map(|meta| Arc::clone(meta.inner()))
+                });
                 match result {
                     Some(provider) => provider,
                     None => Arc::new(BufferedMetadataProvider::new()) as Arc<dyn MetadataProvider>,
