@@ -318,10 +318,10 @@ pub fn create_overflow_des(
 /// _Requirements: 6.3, 6.4_
 pub fn get_image_overflow_indices(accessor: &StructureAccessor) -> Result<(u16, u16), JBPError> {
     // UDOFL field - User Defined Overflow (3 digits)
-    let udofl = get_overflow_field(accessor, "udofl")?;
+    let udofl = get_overflow_field(accessor, "UDOFL")?;
 
     // IXSOFL field - Image Extended Subheader Overflow (3 digits)
-    let ixsofl = get_overflow_field(accessor, "ixsofl")?;
+    let ixsofl = get_overflow_field(accessor, "IXSOFL")?;
 
     Ok((udofl, ixsofl))
 }
@@ -347,7 +347,7 @@ pub fn get_image_overflow_indices(accessor: &StructureAccessor) -> Result<(u16, 
 ///
 /// _Requirements: 6.5_
 pub fn get_graphic_overflow_index(accessor: &StructureAccessor) -> Result<u16, JBPError> {
-    get_overflow_field(accessor, "sxsofl")
+    get_overflow_field(accessor, "SXSOFL")
 }
 
 /// Get overflow DES index from a text subheader.
@@ -400,10 +400,10 @@ pub fn get_file_header_overflow_indices(
     accessor: &StructureAccessor,
 ) -> Result<(u16, u16), JBPError> {
     // UDHOFL field - User Defined Header Overflow (3 digits)
-    let udhofl = get_overflow_field(accessor, "udhofl")?;
+    let udhofl = get_overflow_field(accessor, "UDHOFL")?;
 
     // XHDLOFL field - Extended Header Data Overflow (3 digits)
-    let xhdlofl = get_overflow_field(accessor, "xhdlofl")?;
+    let xhdlofl = get_overflow_field(accessor, "XHDLOFL")?;
 
     Ok((udhofl, xhdlofl))
 }
@@ -510,6 +510,7 @@ fn get_overflow_field(accessor: &StructureAccessor, field_name: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn fetch_overflow_tres_returns_empty_for_zero_index() {
@@ -889,6 +890,104 @@ mod tests {
 
         // DESCLAS should be "U" (Unclassified) at offset 29
         assert_eq!(&subheader[29..30], b"U");
+    }
+
+    #[test]
+    fn get_image_overflow_indices_reads_fields_from_accessor() {
+        use crate::parser::{
+            Encoding, ExpressionEvaluator, FieldDefinition, FieldType, SizeSpec,
+            StructureDefinition,
+        };
+
+        // Build a minimal definition mimicking the image subheader overflow fields:
+        // UDIDL (5 bytes BCS-N), UDOFL (3 bytes BCS-N, if UDIDL.to_i > 0),
+        // IXSHDL (5 bytes BCS-N), IXSOFL (3 bytes BCS-N, if IXSHDL.to_i > 0)
+        let udidl_condition = ExpressionEvaluator::parse("UDIDL.to_i > 0").unwrap();
+        let ixshdl_condition = ExpressionEvaluator::parse("IXSHDL.to_i > 0").unwrap();
+
+        let def = Arc::new(
+            StructureDefinition::new("test_image_overflow")
+                .with_field(
+                    FieldDefinition::new("UDIDL", FieldType::String)
+                        .with_size(SizeSpec::Fixed(5))
+                        .with_encoding(Encoding::BcsN),
+                )
+                .with_field(
+                    FieldDefinition::new("UDOFL", FieldType::String)
+                        .with_size(SizeSpec::Fixed(3))
+                        .with_encoding(Encoding::BcsN)
+                        .with_condition(udidl_condition),
+                )
+                .with_field(
+                    FieldDefinition::new("IXSHDL", FieldType::String)
+                        .with_size(SizeSpec::Fixed(5))
+                        .with_encoding(Encoding::BcsN),
+                )
+                .with_field(
+                    FieldDefinition::new("IXSOFL", FieldType::String)
+                        .with_size(SizeSpec::Fixed(3))
+                        .with_encoding(Encoding::BcsN)
+                        .with_condition(ixshdl_condition),
+                ),
+        );
+
+        // Case 1: Both overflow fields present (UDIDL=00003, UDOFL=002, IXSHDL=00003, IXSOFL=001)
+        let data = b"0000300200003001";
+        let accessor = StructureAccessor::new(def.clone(), data.as_slice()).unwrap();
+        let (udofl, ixsofl) = get_image_overflow_indices(&accessor).unwrap();
+        assert_eq!(udofl, 2);
+        assert_eq!(ixsofl, 1);
+
+        // Case 2: No overflow (UDIDL=00000, IXSHDL=00000)
+        let data_no_overflow = b"0000000000";
+        let accessor = StructureAccessor::new(def.clone(), data_no_overflow.as_slice()).unwrap();
+        let (udofl, ixsofl) = get_image_overflow_indices(&accessor).unwrap();
+        assert_eq!(udofl, 0);
+        assert_eq!(ixsofl, 0);
+    }
+
+    #[test]
+    fn get_file_header_overflow_indices_reads_fields_from_accessor() {
+        use crate::parser::{
+            Encoding, ExpressionEvaluator, FieldDefinition, FieldType, SizeSpec,
+            StructureDefinition,
+        };
+
+        let udhdl_condition = ExpressionEvaluator::parse("UDHDL.to_i > 0").unwrap();
+        let xhdl_condition = ExpressionEvaluator::parse("XHDL.to_i > 0").unwrap();
+
+        let def = Arc::new(
+            StructureDefinition::new("test_file_header_overflow")
+                .with_field(
+                    FieldDefinition::new("UDHDL", FieldType::String)
+                        .with_size(SizeSpec::Fixed(5))
+                        .with_encoding(Encoding::BcsN),
+                )
+                .with_field(
+                    FieldDefinition::new("UDHOFL", FieldType::String)
+                        .with_size(SizeSpec::Fixed(3))
+                        .with_encoding(Encoding::BcsN)
+                        .with_condition(udhdl_condition),
+                )
+                .with_field(
+                    FieldDefinition::new("XHDL", FieldType::String)
+                        .with_size(SizeSpec::Fixed(5))
+                        .with_encoding(Encoding::BcsN),
+                )
+                .with_field(
+                    FieldDefinition::new("XHDLOFL", FieldType::String)
+                        .with_size(SizeSpec::Fixed(3))
+                        .with_encoding(Encoding::BcsN)
+                        .with_condition(xhdl_condition),
+                ),
+        );
+
+        // Both overflow fields present
+        let data = b"0000300500003007";
+        let accessor = StructureAccessor::new(def.clone(), data.as_slice()).unwrap();
+        let (udhofl, xhdlofl) = get_file_header_overflow_indices(&accessor).unwrap();
+        assert_eq!(udhofl, 5);
+        assert_eq!(xhdlofl, 7);
     }
 }
 
