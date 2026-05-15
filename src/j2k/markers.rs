@@ -230,7 +230,15 @@ pub fn parse_main_header(codestream: &[u8]) -> Result<MainHeaderInfo, CodecError
             break;
         }
 
-        // All markers in the main header (except SOC which we already passed) have length fields
+        // Delimiter markers have no length field — skip them (2 bytes only).
+        // This covers EPH (0xFF92) and reserved markers 0xFF30–0xFF3F that some
+        // encoders emit before SOT.
+        let second_byte = (marker & 0xFF) as u8;
+        if second_byte == 0x92 || (0x30..=0x3F).contains(&second_byte) {
+            pos += 2;
+            continue;
+        }
+
         if pos + 4 > codestream.len() {
             return Err(CodecError::InvalidFormat(format!(
                 "J2K marker segment at offset {} extends beyond codestream",
@@ -640,14 +648,39 @@ mod tests {
 
     #[test]
     fn test_unknown_markers_preserved() {
-        // Use an unknown marker code 0xFF30
+        // Use an unknown marker code (0xFF60 — not a delimiter, has a length field)
         let unknown_body = [0xAA, 0xBB, 0xCC, 0xDD];
-        let cs = build_codestream(&[(0xFF30, &unknown_body)]);
+        let cs = build_codestream(&[(0xFF60, &unknown_body)]);
         let info = parse_main_header(&cs).unwrap();
         // main_header should include the unknown marker
         assert_eq!(info.main_header, &cs[..info.first_sot_offset as usize]);
         // decode_header should also include it (only TLM is stripped)
         assert_eq!(info.decode_header, info.main_header);
+    }
+
+    #[test]
+    fn test_delimiter_marker_before_sot() {
+        // 0xFF30 is a delimiter marker (no length field) that some encoders emit.
+        // Build a codestream manually: SOC + SIZ + FF30 + SOT
+        let mut cs = Vec::new();
+        cs.extend_from_slice(&marker_codes::SOC.to_be_bytes());
+        cs.extend_from_slice(&marker_codes::SIZ.to_be_bytes());
+        let siz_body = [0u8; 8];
+        let siz_len = (siz_body.len() + 2) as u16;
+        cs.extend_from_slice(&siz_len.to_be_bytes());
+        cs.extend_from_slice(&siz_body);
+        // Delimiter marker (no length field)
+        cs.extend_from_slice(&0xFF30u16.to_be_bytes());
+        // SOT
+        cs.extend_from_slice(&marker_codes::SOT.to_be_bytes());
+        cs.extend_from_slice(&10u16.to_be_bytes());
+        cs.extend_from_slice(&0u16.to_be_bytes());
+        cs.extend_from_slice(&0u32.to_be_bytes());
+        cs.extend_from_slice(&[0u8, 1u8]);
+
+        let info = parse_main_header(&cs).unwrap();
+        // The delimiter marker should be included in main_header bytes
+        assert_eq!(info.main_header, &cs[..info.first_sot_offset as usize]);
     }
 
     #[test]
@@ -1318,7 +1351,7 @@ mod tests {
         fn prop_main_header_extraction_preserves_bytes(
             siz_body in prop::collection::vec(any::<u8>(), 4..20),
             extra_markers in prop::collection::vec(
-                (0xFF30u16..0xFF40u16, prop::collection::vec(any::<u8>(), 0..30)),
+                (0xFF60u16..0xFF70u16, prop::collection::vec(any::<u8>(), 0..30)),
                 0..5usize
             ),
         ) {
@@ -1334,7 +1367,7 @@ mod tests {
             cs.extend_from_slice(&siz_len.to_be_bytes());
             cs.extend_from_slice(&siz_body);
 
-            // Extra random marker segments (using safe codes 0xFF30..0xFF3F)
+            // Extra random marker segments (codes 0xFF60..0xFF6F have length fields)
             for (marker_code, body) in &extra_markers {
                 cs.extend_from_slice(&marker_code.to_be_bytes());
                 let len = (body.len() + 2) as u16;
@@ -1394,7 +1427,7 @@ mod tests {
         fn prop_tlm_stripping_round_trip(
             num_tlm in 0u8..5,
             non_tlm_markers in prop::collection::vec(
-                (prop::sample::select(vec![0xFF30u16, 0xFF31, 0xFF52, 0xFF53, 0xFF5C]),
+                (prop::sample::select(vec![0xFF60u16, 0xFF61, 0xFF52, 0xFF53, 0xFF5C]),
                  prop::collection::vec(any::<u8>(), 2..20)),
                 0..3usize
             ),

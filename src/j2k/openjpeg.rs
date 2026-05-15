@@ -376,18 +376,7 @@ impl J2KCodec for OpenJpegCodec {
                     codestream[pos + 12],
                     codestream[pos + 13],
                 ]);
-                let xosiz = u32::from_be_bytes([
-                    codestream[pos + 14],
-                    codestream[pos + 15],
-                    codestream[pos + 16],
-                    codestream[pos + 17],
-                ]);
-                let yosiz = u32::from_be_bytes([
-                    codestream[pos + 18],
-                    codestream[pos + 19],
-                    codestream[pos + 20],
-                    codestream[pos + 21],
-                ]);
+                // XOsiz/YOsiz at pos+14..pos+21 are not needed for tile count
                 let xtsiz = u32::from_be_bytes([
                     codestream[pos + 22],
                     codestream[pos + 23],
@@ -413,28 +402,34 @@ impl J2KCodec for OpenJpegCodec {
                     codestream[pos + 37],
                 ]);
 
-                // Calculate number of tiles
+                // Calculate number of tiles per ISO 15444-1 Annex B.5:
                 // num_tiles_x = ceil((Xsiz - XTOsiz) / XTsiz)
                 // num_tiles_y = ceil((Ysiz - YTOsiz) / YTsiz)
-                let image_width = xsiz - xosiz;
-                let image_height = ysiz - yosiz;
-                let tile_offset_x = xtosiz - xosiz;
-                let tile_offset_y = ytosiz - yosiz;
-
-                let num_tiles_x = (image_width - tile_offset_x).div_ceil(xtsiz);
-                let num_tiles_y = (image_height - tile_offset_y).div_ceil(ytsiz);
+                let num_tiles_x = (xsiz - xtosiz).div_ceil(xtsiz);
+                let num_tiles_y = (ysiz - ytosiz).div_ceil(ytsiz);
 
                 return Ok((xtsiz, ytsiz, num_tiles_x, num_tiles_y));
             }
 
             // Skip to next marker
             if codestream[pos] == 0xFF {
-                if pos + 4 > codestream.len() {
-                    break;
+                let second = codestream[pos + 1];
+                // Delimiter markers (no length field): SOC, SOD, EOC, EPH, 0xFF30–0xFF3F
+                if second == 0x4F
+                    || second == 0x93
+                    || second == 0xD9
+                    || second == 0x92
+                    || (0x30..=0x3F).contains(&second)
+                {
+                    pos += 2;
+                } else {
+                    if pos + 4 > codestream.len() {
+                        break;
+                    }
+                    let marker_len =
+                        u16::from_be_bytes([codestream[pos + 2], codestream[pos + 3]]) as usize;
+                    pos += 2 + marker_len;
                 }
-                let marker_len =
-                    u16::from_be_bytes([codestream[pos + 2], codestream[pos + 3]]) as usize;
-                pos += 2 + marker_len;
             } else {
                 pos += 1;
             }
@@ -1148,5 +1143,75 @@ mod tests {
         // Verify data matches (lossless)
         assert_eq!(result.data.len(), data.len());
         assert_eq!(result.data, data);
+    }
+
+    /// Build a minimal codestream with only SOC + SIZ (enough for get_tile_info).
+    fn build_siz_codestream(
+        xsiz: u32,
+        ysiz: u32,
+        xosiz: u32,
+        yosiz: u32,
+        xtsiz: u32,
+        ytsiz: u32,
+        xtosiz: u32,
+        ytosiz: u32,
+    ) -> Vec<u8> {
+        let mut cs = Vec::new();
+        cs.extend_from_slice(&[0xFF, 0x4F]); // SOC
+        cs.extend_from_slice(&[0xFF, 0x51]); // SIZ marker
+                                             // Lsiz = 41 (minimum: covers through Csiz + one component)
+        cs.extend_from_slice(&41u16.to_be_bytes());
+        cs.extend_from_slice(&0u16.to_be_bytes()); // Rsiz
+        cs.extend_from_slice(&xsiz.to_be_bytes());
+        cs.extend_from_slice(&ysiz.to_be_bytes());
+        cs.extend_from_slice(&xosiz.to_be_bytes());
+        cs.extend_from_slice(&yosiz.to_be_bytes());
+        cs.extend_from_slice(&xtsiz.to_be_bytes());
+        cs.extend_from_slice(&ytsiz.to_be_bytes());
+        cs.extend_from_slice(&xtosiz.to_be_bytes());
+        cs.extend_from_slice(&ytosiz.to_be_bytes());
+        cs.extend_from_slice(&1u16.to_be_bytes()); // Csiz = 1 component
+        cs.push(0x07); // Ssiz: unsigned 8-bit
+        cs
+    }
+
+    #[test]
+    fn test_get_tile_info_xtosiz_less_than_xosiz() {
+        // Reproduces the case from p1_01.j2k: XTOsiz=1 < XOsiz=5
+        let cs = build_siz_codestream(127, 227, 5, 128, 127, 126, 1, 101);
+        let codec = OpenJpegCodec::new();
+        let (tw, th, ntx, nty) = codec.get_tile_info(&cs).unwrap();
+        assert_eq!(tw, 127);
+        assert_eq!(th, 126);
+        // ceil((127 - 1) / 127) = ceil(126/127) = 1
+        assert_eq!(ntx, 1);
+        // ceil((227 - 101) / 126) = ceil(126/126) = 1
+        assert_eq!(nty, 1);
+    }
+
+    #[test]
+    fn test_get_tile_info_multiple_tiles_with_offset() {
+        // Reproduces the case from p1_05.j2k: XTOsiz=8 < XOsiz=17
+        let cs = build_siz_codestream(529, 524, 17, 12, 37, 37, 8, 2);
+        let codec = OpenJpegCodec::new();
+        let (tw, th, ntx, nty) = codec.get_tile_info(&cs).unwrap();
+        assert_eq!(tw, 37);
+        assert_eq!(th, 37);
+        // ceil((529 - 8) / 37) = ceil(521/37) = 15
+        assert_eq!(ntx, 15);
+        // ceil((524 - 2) / 37) = ceil(522/37) = 15 (14*37=518, remainder 4)
+        assert_eq!(nty, 15);
+    }
+
+    #[test]
+    fn test_get_tile_info_zero_offsets() {
+        // Common case: both offsets are zero
+        let cs = build_siz_codestream(256, 256, 0, 0, 128, 128, 0, 0);
+        let codec = OpenJpegCodec::new();
+        let (tw, th, ntx, nty) = codec.get_tile_info(&cs).unwrap();
+        assert_eq!(tw, 128);
+        assert_eq!(th, 128);
+        assert_eq!(ntx, 2);
+        assert_eq!(nty, 2);
     }
 }
