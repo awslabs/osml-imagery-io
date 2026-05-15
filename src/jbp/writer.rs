@@ -574,7 +574,7 @@ impl JBPDatasetWriter {
 
         // Get metadata from the asset
         let metadata = asset.provider.metadata();
-        let metadata_dict = metadata.as_dict(None);
+        let metadata_dict = metadata.entries(None);
 
         // Parse TRE fields from metadata
         let tre_groups = parse_tre_fields_from_metadata(&metadata_dict);
@@ -800,7 +800,7 @@ impl JBPDatasetWriter {
         use crate::j2k::comrat::{J2KComrat, J2KEncodingHints};
 
         let metadata = asset.provider.metadata();
-        let dict = metadata.as_dict(None);
+        let dict = metadata.entries(None);
 
         // Extract imode - default to "B" if not present
         // Field names use uppercase to match .ksy parser output
@@ -949,7 +949,7 @@ impl JBPDatasetWriter {
         image_props: &ImageProperties,
     ) -> Vec<String> {
         let metadata = asset.provider.metadata();
-        let dict = metadata.as_dict(None);
+        let dict = metadata.entries(None);
         let mut warnings = Vec::new();
 
         // Check for NBANDS conflict
@@ -1611,7 +1611,7 @@ impl JBPDatasetWriter {
 
         // Get metadata for user-settable fields
         let metadata = asset.provider.metadata();
-        let metadata_dict = metadata.as_dict(None);
+        let metadata_dict = metadata.entries(None);
 
         // Helper to get metadata value or default
         let get_field = |key: &str, default: &str, max_len: usize| -> String {
@@ -1804,7 +1804,7 @@ impl JBPDatasetWriter {
 
         // Get metadata from the asset
         let metadata = asset.provider.metadata();
-        let metadata_dict = metadata.as_dict(None);
+        let metadata_dict = metadata.entries(None);
 
         // Parse TRE fields from metadata
         let tre_groups = parse_tre_fields_from_metadata(&metadata_dict);
@@ -1852,7 +1852,7 @@ impl JBPDatasetWriter {
 
         // Get metadata for user-settable fields
         let metadata = asset.provider.metadata();
-        let metadata_dict = metadata.as_dict(None);
+        let metadata_dict = metadata.entries(None);
 
         // TE (2) - File Part Type
         subheader.extend_from_slice(b"TE");
@@ -1884,7 +1884,7 @@ impl JBPDatasetWriter {
 
         // Get metadata for user-settable fields
         let metadata = asset.provider.metadata();
-        let metadata_dict = metadata.as_dict(None);
+        let metadata_dict = metadata.entries(None);
 
         // SY (2) - File Part Type
         subheader.extend_from_slice(b"SY");
@@ -1935,7 +1935,7 @@ impl JBPDatasetWriter {
 
         // Get metadata for user-settable fields
         let metadata = asset.provider.metadata();
-        let metadata_dict = metadata.as_dict(None);
+        let metadata_dict = metadata.entries(None);
 
         // DESID: prefer metadata, fall back to asset key
         let desid_raw = metadata_dict
@@ -2124,7 +2124,7 @@ impl JBPDatasetWriter {
         let metadata_dict = self
             .file_metadata
             .as_ref()
-            .map(|m| m.as_dict(None))
+            .map(|m| m.entries(None))
             .unwrap_or_else(|| empty_map.clone());
 
         // Magic number
@@ -2667,7 +2667,7 @@ mod tests {
             &[]
         }
 
-        fn as_dict(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
+        fn entries(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
             HashMap::new()
         }
     }
@@ -3271,7 +3271,7 @@ mod tests {
             &[]
         }
 
-        fn as_dict(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
+        fn entries(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
             self.data.clone()
         }
     }
@@ -3853,7 +3853,7 @@ mod tests {
             .with_block_size(16, 16);
 
         let metadata = BufferedMetadataProvider::new();
-        metadata.set_json(
+        metadata.set(
             "GEOLOB",
             serde_json::json!({
                 "ARV": "000360000",
@@ -3885,7 +3885,7 @@ mod tests {
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
         let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
         let asset = reader.get_asset(&asset_keys[0]).unwrap();
-        let meta = asset.as_image().unwrap().metadata().as_dict(None);
+        let meta = asset.as_image().unwrap().metadata().entries(None);
 
         assert!(
             meta.contains_key("GEOLOB"),
@@ -4204,7 +4204,7 @@ mod property_tests {
             &[]
         }
 
-        fn as_dict(
+        fn entries(
             &self,
             _name: Option<&str>,
         ) -> std::collections::HashMap<String, serde_json::Value> {
@@ -4699,7 +4699,7 @@ mod bugfix_tests {
             &[]
         }
 
-        fn as_dict(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
+        fn entries(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
             self.data.clone()
         }
     }
@@ -5055,7 +5055,7 @@ mod metadata_writing_tests {
         fn raw(&self) -> &[u8] {
             &[]
         }
-        fn as_dict(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
+        fn entries(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
             self.data.clone()
         }
     }

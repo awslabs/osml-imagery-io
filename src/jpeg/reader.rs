@@ -274,7 +274,7 @@ mod tests {
 
         // Check metadata
         let meta = reader.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
         assert_eq!(dict.get("width").and_then(|v| v.as_u64()), Some(16));
         assert_eq!(dict.get("height").and_then(|v| v.as_u64()), Some(16));
         assert_eq!(dict.get("num_components").and_then(|v| v.as_u64()), Some(1));
@@ -306,7 +306,7 @@ mod tests {
         let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
 
         let meta = reader.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
         assert_eq!(dict.get("num_components").and_then(|v| v.as_u64()), Some(3));
         assert_eq!(
             dict.get("color_space").and_then(|v| v.as_str()),

@@ -18,7 +18,7 @@ struct EmptyMetadataProvider {
 }
 
 impl MetadataProvider for EmptyMetadataProvider {
-    fn as_dict(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
+    fn entries(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
         HashMap::new()
     }
 
@@ -275,12 +275,12 @@ mod tests {
     #[test]
     fn test_with_metadata() {
         let metadata = BufferedMetadataProvider::new();
-        metadata.set("custom_key", "custom_value");
+        metadata.set("custom_key", serde_json::json!("custom_value"));
 
         let provider = BufferedTextAssetProvider::new("text_0", "Hello".to_string(), "UTF-8")
             .with_metadata(Arc::new(metadata));
 
-        let dict = provider.metadata().as_dict(None);
+        let dict = provider.metadata().entries(None);
         assert_eq!(
             dict.get("custom_key"),
             Some(&serde_json::json!("custom_value"))
@@ -376,7 +376,7 @@ mod tests {
     fn test_default_metadata_is_empty() {
         let provider = BufferedTextAssetProvider::new("text_0", "Hello".to_string(), "UTF-8");
 
-        let dict = provider.metadata().as_dict(None);
+        let dict = provider.metadata().entries(None);
         assert!(dict.is_empty());
     }
 

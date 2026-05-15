@@ -115,7 +115,7 @@ pub fn parse_asset_key(key: &str) -> Option<(SegmentType, usize)> {
 ///
 /// // Access image metadata
 /// let metadata = asset.metadata();
-/// let fields = metadata.as_dict(None);
+/// let fields = metadata.entries(None);
 /// ```
 pub struct JBPImageAssetProvider {
     /// Unique key identifying this asset
@@ -1441,7 +1441,7 @@ mod tests {
         .unwrap();
 
         let meta = provider.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
         assert!(dict.contains_key("ID"));
         assert!(dict.contains_key("TITLE"));
     }

@@ -5,8 +5,8 @@ utilities convert between raw NITF string representations and structured Python
 objects.
 
 ```{note}
-These adapters work with the string values returned by
-{meth}`MetadataProvider.as_dict <aws.osml.io.MetadataProvider.as_dict>`. They
+These adapters work with the values accessible from
+{class}`~aws.osml.io.MetadataProvider` (via dict-style access or `entries()`). They
 do not read files directly — use {class}`~aws.osml.io.IO` to open a dataset
 first, then pass metadata values to the appropriate adapter.
 ```

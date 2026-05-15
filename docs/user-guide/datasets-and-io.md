@@ -440,5 +440,5 @@ Every dataset exposes a `metadata` property with file-level fields. See the
 
 ```python
 with IO.open(["image.ntf"], "r") as dataset:
-    file_metadata = dataset.metadata.as_dict()
+    file_metadata = dataset.metadata.entries()
 ```

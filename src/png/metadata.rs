@@ -4,8 +4,8 @@
 //! zTXt, tIME, gAMA, pHYs, PLTE) and dataset-level metadata (width, height,
 //! bit_depth, color_type). Entries are stored as `HashMap<String, serde_json::Value>`.
 //!
-//! - `as_dict(None)` → all entries
-//! - `as_dict(Some(prefix))` → entries whose key starts with `prefix`
+//! - `entries(None)` → all entries
+//! - `entries(Some(prefix))` → entries whose key starts with `prefix`
 //! - `raw()` → empty slice (PNG has no single raw binary representation)
 
 use std::collections::HashMap;
@@ -44,7 +44,7 @@ impl MetadataProvider for PNGMetadataProvider {
         &[]
     }
 
-    fn as_dict(&self, name: Option<&str>) -> HashMap<String, Value> {
+    fn entries(&self, name: Option<&str>) -> HashMap<String, Value> {
         match name {
             None => self.entries.clone(),
             Some(prefix) => self
@@ -85,13 +85,13 @@ mod tests {
     }
 
     // =========================================================================
-    // as_dict(None) tests (Req 4.9)
+    // entries(None) tests (Req 4.9)
     // =========================================================================
 
     #[test]
-    fn test_as_dict_none_returns_all_entries() {
+    fn test_entries_none_returns_all_entries() {
         let provider = sample_provider();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert_eq!(dict.len(), 10);
         assert_eq!(dict.get("width").and_then(|v| v.as_u64()), Some(256));
         assert_eq!(dict.get("height").and_then(|v| v.as_u64()), Some(128));
@@ -108,35 +108,35 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_as_dict_prefix_filters_correctly() {
+    fn test_entries_prefix_filters_correctly() {
         let provider = sample_provider();
         // "t" prefix should match "tIME" only (not "width", "height", etc.)
-        let filtered = provider.as_dict(Some("t"));
+        let filtered = provider.entries(Some("t"));
         assert!(filtered.contains_key("tIME"));
         assert!(!filtered.contains_key("width"));
         assert!(!filtered.contains_key("Author"));
     }
 
     #[test]
-    fn test_as_dict_prefix_matches_dataset_level() {
+    fn test_entries_prefix_matches_dataset_level() {
         let provider = sample_provider();
         // "bit" prefix should match "bit_depth"
-        let filtered = provider.as_dict(Some("bit"));
+        let filtered = provider.entries(Some("bit"));
         assert_eq!(filtered.len(), 1);
         assert!(filtered.contains_key("bit_depth"));
     }
 
     #[test]
-    fn test_as_dict_empty_prefix_returns_all() {
+    fn test_entries_empty_prefix_returns_all() {
         let provider = sample_provider();
-        assert_eq!(provider.as_dict(Some("")), provider.as_dict(None));
+        assert_eq!(provider.entries(Some("")), provider.entries(None));
     }
 
     #[test]
-    fn test_as_dict_unknown_prefix_returns_empty() {
+    fn test_entries_unknown_prefix_returns_empty() {
         let provider = sample_provider();
-        assert!(provider.as_dict(Some("zzz")).is_empty());
-        assert!(provider.as_dict(Some("nonexistent")).is_empty());
+        assert!(provider.entries(Some("zzz")).is_empty());
+        assert!(provider.entries(Some("nonexistent")).is_empty());
     }
 
     // =========================================================================
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn test_dataset_level_metadata_present() {
         let provider = sample_provider();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert!(dict.contains_key("width"));
         assert!(dict.contains_key("height"));
         assert!(dict.contains_key("bit_depth"));
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn test_text_chunks_in_dict() {
         let provider = sample_provider();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert_eq!(
             dict.get("Author").and_then(|v| v.as_str()),
             Some("Test User")
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn test_time_chunk() {
         let provider = sample_provider();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert_eq!(
             dict.get("tIME").and_then(|v| v.as_str()),
             Some("2025-01-15T12:30:00Z")
@@ -188,14 +188,14 @@ mod tests {
     #[test]
     fn test_gama_chunk() {
         let provider = sample_provider();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert_eq!(dict.get("gAMA").and_then(|v| v.as_f64()), Some(2.2));
     }
 
     #[test]
     fn test_phys_chunk() {
         let provider = sample_provider();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         let phys = dict.get("pHYs").unwrap();
         assert_eq!(phys.get("x").and_then(|v| v.as_u64()), Some(3780));
         assert_eq!(phys.get("y").and_then(|v| v.as_u64()), Some(3780));
@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn test_plte_chunk() {
         let provider = sample_provider();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         let plte = dict.get("PLTE").unwrap();
         let arr = plte.as_array().unwrap();
         assert_eq!(arr.len(), 3);
@@ -231,8 +231,8 @@ mod tests {
     #[test]
     fn test_empty_provider() {
         let provider = PNGMetadataProvider::new(HashMap::new());
-        assert!(provider.as_dict(None).is_empty());
-        assert!(provider.as_dict(Some("any")).is_empty());
+        assert!(provider.entries(None).is_empty());
+        assert!(provider.entries(Some("any")).is_empty());
         assert!(provider.raw().is_empty());
     }
 
@@ -248,7 +248,7 @@ mod tests {
         // Overwrite with second value (HashMap semantics)
         entries.insert("Author".to_string(), json!("Second"));
         let provider = PNGMetadataProvider::new(entries);
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert_eq!(dict.get("Author").and_then(|v| v.as_str()), Some("Second"));
     }
 }

@@ -4,8 +4,8 @@
 //! width, height, num_components, bits_per_pixel (always 8), and color_space.
 //! Entries are stored as `HashMap<String, serde_json::Value>`.
 //!
-//! - `as_dict(None)` → all entries
-//! - `as_dict(Some(prefix))` → entries whose key starts with `prefix`
+//! - `entries(None)` → all entries
+//! - `entries(Some(prefix))` → entries whose key starts with `prefix`
 //! - `raw()` → empty slice (no single raw binary representation)
 
 use std::collections::HashMap;
@@ -43,7 +43,7 @@ impl MetadataProvider for JPEGMetadataProvider {
         &[]
     }
 
-    fn as_dict(&self, name: Option<&str>) -> HashMap<String, Value> {
+    fn entries(&self, name: Option<&str>) -> HashMap<String, Value> {
         match name {
             None => self.entries.clone(),
             Some(prefix) => self
@@ -72,9 +72,9 @@ mod tests {
     }
 
     #[test]
-    fn test_as_dict_none_returns_all_entries() {
+    fn test_entries_none_returns_all_entries() {
         let provider = sample_provider();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert_eq!(dict.len(), 5);
         assert_eq!(dict.get("width").and_then(|v| v.as_u64()), Some(1024));
         assert_eq!(dict.get("height").and_then(|v| v.as_u64()), Some(768));
@@ -87,31 +87,31 @@ mod tests {
     }
 
     #[test]
-    fn test_as_dict_prefix_filters_correctly() {
+    fn test_entries_prefix_filters_correctly() {
         let provider = sample_provider();
-        let filtered = provider.as_dict(Some("num_"));
+        let filtered = provider.entries(Some("num_"));
         assert_eq!(filtered.len(), 1);
         assert!(filtered.contains_key("num_components"));
     }
 
     #[test]
-    fn test_as_dict_prefix_bits() {
+    fn test_entries_prefix_bits() {
         let provider = sample_provider();
-        let filtered = provider.as_dict(Some("bits"));
+        let filtered = provider.entries(Some("bits"));
         assert_eq!(filtered.len(), 1);
         assert!(filtered.contains_key("bits_per_pixel"));
     }
 
     #[test]
-    fn test_as_dict_empty_prefix_returns_all() {
+    fn test_entries_empty_prefix_returns_all() {
         let provider = sample_provider();
-        assert_eq!(provider.as_dict(Some("")), provider.as_dict(None));
+        assert_eq!(provider.entries(Some("")), provider.entries(None));
     }
 
     #[test]
-    fn test_as_dict_unknown_prefix_returns_empty() {
+    fn test_entries_unknown_prefix_returns_empty() {
         let provider = sample_provider();
-        assert!(provider.as_dict(Some("zzz")).is_empty());
+        assert!(provider.entries(Some("zzz")).is_empty());
     }
 
     #[test]
@@ -123,8 +123,8 @@ mod tests {
     #[test]
     fn test_empty_provider() {
         let provider = JPEGMetadataProvider::new(HashMap::new());
-        assert!(provider.as_dict(None).is_empty());
-        assert!(provider.as_dict(Some("any")).is_empty());
+        assert!(provider.entries(None).is_empty());
+        assert!(provider.entries(Some("any")).is_empty());
         assert!(provider.raw().is_empty());
     }
 
@@ -133,7 +133,7 @@ mod tests {
         let mut entries = HashMap::new();
         entries.insert("color_space".to_string(), json!("Grayscale"));
         let provider = JPEGMetadataProvider::new(entries);
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert_eq!(
             dict.get("color_space").and_then(|v| v.as_str()),
             Some("Grayscale")

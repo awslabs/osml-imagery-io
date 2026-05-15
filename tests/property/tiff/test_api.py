@@ -251,7 +251,7 @@ class TestTiffDatasetMetadata:
             pytest.skip("Test data not available")
 
         reader = IO.open([str(SMALL_TIF)], "r")
-        meta = reader.metadata.as_dict()
+        meta = reader.metadata.entries()
 
         assert set(meta.keys()) == {"ByteOrder", "NumberOfDirectories", "NumberOfImageSegments"}
         assert meta["ByteOrder"] in ("LittleEndian", "BigEndian")
@@ -269,7 +269,7 @@ class TestTiffDatasetMetadata:
 
         try:
             reader = IO.open([str(path)], "r")
-            meta = reader.metadata.as_dict()
+            meta = reader.metadata.entries()
 
             assert set(meta.keys()) == {"ByteOrder", "NumberOfDirectories", "NumberOfImageSegments"}
             assert meta["ByteOrder"] in ("LittleEndian", "BigEndian")
@@ -289,7 +289,7 @@ class TestTiffPerIFDMetadata:
     """Per-IFD metadata completeness.
 
     Per-segment metadata contains ImageWidth, ImageLength, BitsPerSample,
-    SamplesPerPixel with correct values. as_dict(None) and as_dict("tiff")
+    SamplesPerPixel with correct values. entries(None) and entries("tiff")
     return identical results.
     """
 
@@ -300,7 +300,7 @@ class TestTiffPerIFDMetadata:
 
         reader = IO.open([str(SMALL_TIF)], "r")
         asset = reader.get_asset("image:0")
-        meta = asset.metadata.as_dict()
+        meta = asset.metadata.entries()
 
         # Metadata keys are numeric tag ID strings after the metadata refactor
         assert meta["256"] == 256    # ImageWidth
@@ -309,7 +309,7 @@ class TestTiffPerIFDMetadata:
         assert meta["277"] == 1      # SamplesPerPixel
 
     def test_unknown_section_returns_empty(self):
-        """as_dict with unrecognized section returns empty dict."""
+        """entries() with unrecognized section returns empty dict."""
         if not SMALL_TIF.exists():
             pytest.skip("Test data not available")
 
@@ -317,8 +317,8 @@ class TestTiffPerIFDMetadata:
         asset = reader.get_asset("image:0")
         provider = asset.metadata
 
-        assert provider.as_dict("unknown") == {}
-        assert provider.as_dict("nitf") == {}
+        assert provider.entries("unknown") == {}
+        assert provider.entries("nitf") == {}
 
     @given(config=tiff_image_config(min_size=16, max_size=48))
     @pbt_settings
@@ -337,7 +337,7 @@ class TestTiffPerIFDMetadata:
         try:
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image:0")
-            meta = asset.metadata.as_dict()
+            meta = asset.metadata.entries()
 
             # Metadata keys are numeric tag ID strings
             assert meta["256"] == width, (
@@ -359,7 +359,7 @@ class TestTiffPerIFDMetadata:
 
             # Unknown section returns empty
             provider = asset.metadata
-            assert provider.as_dict("unknown") == {}
+            assert provider.entries("unknown") == {}
         finally:
             path.unlink(missing_ok=True)
 
@@ -376,13 +376,13 @@ _CUSTOM_TAG_MAX = 65499
 def _write_tiff_with_metadata(path, metadata_dict):
     """Write a minimal 16x16 TIFF with the given metadata tags."""
     meta = BufferedMetadataProvider()
-    meta.set("322", "256")   # TileWidth
-    meta.set("323", "256")   # TileLength
-    meta.set_json("259", 1)  # Compression (None)
-    meta.set_json("284", 1)  # PlanarConfiguration (Chunky)
+    meta["322"] = "256"      # TileWidth
+    meta["323"] = "256"      # TileLength
+    meta["259"] = 1          # Compression (None)
+    meta["284"] = 1          # PlanarConfiguration (Chunky)
 
     for k, v in metadata_dict.items():
-        meta.set_json(k, v)
+        meta[k] = v
 
     array = np.zeros((1, 16, 16), dtype=np.uint8)
     provider = BufferedImageAssetProvider.create(
@@ -413,7 +413,7 @@ def _read_tiff_metadata(path):
     """Read per-IFD metadata from a TIFF file."""
     reader = IO.open([str(path)], "r")
     asset = reader.get_asset("image:0")
-    return asset.metadata.as_dict()
+    return asset.metadata.entries()
 
 
 @st.composite

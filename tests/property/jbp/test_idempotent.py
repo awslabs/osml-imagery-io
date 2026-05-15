@@ -41,7 +41,7 @@ class TestIdempotentEncoding:
         try:
             # First encoding: encode(image) -> path1
             metadata = BufferedMetadataProvider()
-            metadata.set("IC", "NC")
+            metadata["IC"] = "NC"
 
             provider = BufferedImageAssetProvider.create(
                 key="image:0",
@@ -76,7 +76,7 @@ class TestIdempotentEncoding:
 
             # Re-encode: encode(decode(encode(image))) -> path2
             metadata2 = BufferedMetadataProvider()
-            metadata2.set("IC", "NC")
+            metadata2["IC"] = "NC"
 
             provider2 = BufferedImageAssetProvider.create(
                 key="image:0",

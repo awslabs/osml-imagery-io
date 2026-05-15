@@ -44,31 +44,37 @@ gives you access to everything in the file.
 ## The MetadataProvider Interface
 
 All assets and datasets expose metadata through the `MetadataProvider` interface,
-regardless of the underlying file format. There are two methods:
-
-- `as_dict()` — returns all metadata as a Python dictionary
-- `as_dict(prefix)` — returns only keys that start with the given prefix
+regardless of the underlying file format. `MetadataProvider` implements the standard
+Python `collections.abc.Mapping` protocol, so you access metadata fields the same
+way you access items in a dictionary:
 
 ```python
 from aws.osml.io import IO
 
 with IO.open(["image.ntf"], "r") as dataset:
-    # Dataset-level metadata
-    all_meta = dataset.metadata.as_dict()
+    # Dataset-level metadata — dict-style access
+    dataset.metadata["FTITLE"]              # KeyError if missing
+    dataset.metadata.get("FTITLE")          # None if missing
+    "FTITLE" in dataset.metadata            # membership test
+    len(dataset.metadata)                   # number of fields
+
+    # Bulk export
+    all_meta = dataset.metadata.entries()   # full dict (single call, fast path)
+    filtered = dataset.metadata.entries("FS")  # keys starting with "FS"
 
     # Asset-level metadata
     image = dataset.get_asset("image:0")
-    image_meta = image.metadata.as_dict()
+    image_meta = image.metadata.entries()
 ```
 
-When writing, use `BufferedMetadataProvider` to build metadata dictionaries
-that the writer reads during serialization:
+When writing, use `BufferedMetadataProvider` to build metadata. It implements
+`collections.abc.MutableMapping`, so you write fields with dictionary syntax:
 
 ```python
 from aws.osml.io import BufferedMetadataProvider
 
 meta = BufferedMetadataProvider()
-meta.set("FTITLE", "My File Title")
+meta["FTITLE"] = "My File Title"
 ```
 
 The dictionary keys and value types are format-specific. A NITF file uses
@@ -84,7 +90,7 @@ The rest of this page covers each format's metadata conventions in detail.
 
 NITF files carry metadata in fixed-width ASCII header fields, security
 classification blocks, and Tagged Record Extensions (TREs). The library
-exposes all of these through `as_dict()` using the standard NITF field names.
+exposes all of these through the Mapping interface using the standard NITF field names.
 
 ### Reading NITF Metadata
 
@@ -98,30 +104,29 @@ as Python `int` directly.
 from aws.osml.io import IO
 
 with IO.open(["image.ntf"], "r") as dataset:
-    # File header fields
-    file_meta = dataset.metadata.as_dict()
-    title = file_meta["FTITLE"]
-    classification = file_meta["FSCLAS"]       # "U", "C", "S", "TS", etc.
+    # File header fields — dict-style access
+    title = dataset.metadata["FTITLE"]
+    classification = dataset.metadata["FSCLAS"]       # "U", "C", "S", "TS", etc.
 
     # Image subheader fields
     image = dataset.get_asset("image:0")
-    image_meta = image.metadata.as_dict()
+    meta = image.metadata
 
-    image_id = image_meta["IID1"]              # "IMG_00001"
-    compression = image_meta["IC"]             # "C8"
-    date_time = image_meta["IDATIM"]           # "20231215103045"
+    image_id = meta["IID1"]              # "IMG_00001"
+    compression = meta["IC"]             # "C8"
+    date_time = meta["IDATIM"]           # "20231215103045"
 
     # Numeric fields are ASCII strings — cast as needed
-    num_rows = int(image_meta["NROWS"])         # 2048
-    num_cols = int(image_meta["NCOLS"])         # 2048
-    num_bands = int(image_meta["NBANDS"])       # 3
+    num_rows = int(meta["NROWS"])         # 2048
+    num_cols = int(meta["NCOLS"])         # 2048
+    num_bands = int(meta["NBANDS"])       # 3
 
     # Coordinate strings — NITF packs 4 corners into a single field
-    if "IGEOLO" in image_meta:
-        geo = image_meta["IGEOLO"]              # 60-char geographic location string
+    if "IGEOLO" in meta:
+        geo = meta["IGEOLO"]              # 60-char geographic location string
 
     # Safe access for conditional fields
-    comrat = image_meta.get("COMRAT")           # None if IC is "NC" or "NM"
+    comrat = meta.get("COMRAT")           # None if IC is "NC" or "NM"
 ```
 
 #### TRE Fields as Nested Dictionaries
@@ -132,17 +137,17 @@ appears as a top-level key mapped to a dict of its fields:
 
 ```python
 # Access TRE fields through nested dictionaries
-geolob = image_meta["GEOLOB"]              # dict
-arv = geolob["ARV"]                        # "000360000"
-brv = geolob["BRV"]                        # "000360000"
+geolob = meta["GEOLOB"]              # dict
+arv = geolob["ARV"]                  # "000360000"
+brv = geolob["BRV"]                  # "000360000"
 
 # Or access in one step
-arv = image_meta["GEOLOB"]["ARV"]
+arv = meta["GEOLOB"]["ARV"]
 
 # TREs with repeated fields contain arrays
-j2klra = image_meta["J2KLRA"]              # dict
-layers = j2klra["LAYERS"]                  # list of dicts
-first_layer = layers[0]                    # {"LAYER_ID": "000", "BITRATE": "0.031250"}
+j2klra = meta["J2KLRA"]              # dict
+layers = j2klra["LAYERS"]            # list of dicts
+first_layer = layers[0]              # {"LAYER_ID": "000", "BITRATE": "0.031250"}
 ```
 
 Unknown TREs (those without a definition in the registry) appear with their
@@ -150,7 +155,7 @@ raw data preserved:
 
 ```python
 # Unknown TRE — raw hex data and byte length
-unknown = image_meta["UNKNWN"]             # {"_raw": "0102030405", "_length": 5}
+unknown = meta["UNKNWN"]             # {"_raw": "0102030405", "_length": 5}
 raw_hex = unknown["_raw"]
 byte_count = unknown["_length"]
 ```
@@ -165,27 +170,27 @@ instead of individual indexed entries:
 
 ```python
 # Band info is a list of dicts, one per band
-bands = image_meta["BAND_INFO"]            # list of dicts
+bands = meta["BAND_INFO"]            # list of dicts
 for i, band in enumerate(bands):
     print(f"Band {i}: IREPBAND={band['IREPBAND']}, NLUTS={band['NLUTS']}")
 
 # Access a specific band directly
-first_band = image_meta["BAND_INFO"][0]
+first_band = meta["BAND_INFO"][0]
 irepband = first_band["IREPBAND"]          # "R"
 ```
 
 #### Prefix Filtering
 
-Use `as_dict(prefix)` to retrieve a subset of metadata. For subheader fields,
+Use `entries(prefix)` to retrieve a subset of metadata. For subheader fields,
 the prefix matches field names. For TREs, the prefix matches the CETAG:
 
 ```python
 # Get all fields starting with "FS" (file security fields)
 # Returns: FSCLAS, FSCLSY, FSCODE, FSCTLH, FSREL, FSDCTP, ...
-security = dataset.metadata.as_dict("FS")
+security = dataset.metadata.entries("FS")
 
 # Get a specific TRE by CETAG
-geolob_only = image.metadata.as_dict("GEOLOB")
+geolob_only = image.metadata.entries("GEOLOB")
 # Returns: {"GEOLOB": {"ARV": "...", "BRV": "...", ...}}
 ```
 
@@ -218,22 +223,22 @@ writer's `metadata` property:
 from aws.osml.io import IO, BufferedMetadataProvider
 
 file_meta = BufferedMetadataProvider()
-file_meta.set("FTITLE", "Reconnaissance Mission 2026-03-15")
-file_meta.set("ONAME", "Sensor Operator")
-file_meta.set("OPHONE", "555-0100")
-file_meta.set("FDT", "20260315120000")
-file_meta.set("OSTAID", "STATION1")
-file_meta.set("CLEVEL", "05")
+file_meta["FTITLE"] = "Reconnaissance Mission 2026-03-15"
+file_meta["ONAME"] = "Sensor Operator"
+file_meta["OPHONE"] = "555-0100"
+file_meta["FDT"] = "20260315120000"
+file_meta["OSTAID"] = "STATION1"
+file_meta["CLEVEL"] = "05"
 
 # Security classification fields use the FS prefix
-file_meta.set("FSCLAS", "S")
-file_meta.set("FSCLSY", "US")
-file_meta.set("FSCODE", "SECRET")
-file_meta.set("FSREL", "USA GBR")
+file_meta["FSCLAS"] = "S"
+file_meta["FSCLSY"] = "US"
+file_meta["FSCODE"] = "SECRET"
+file_meta["FSREL"] = "USA GBR"
 
 # FBKGC is a 3-byte binary field (RGB background color)
-# Set it as a JSON array of integers
-file_meta.set("FBKGC", [255, 255, 255])
+# Set it as a list of integers
+file_meta["FBKGC"] = [255, 255, 255]
 
 writer = IO.open(["output.ntf"], "w", "nitf")
 writer.metadata = file_meta
@@ -254,18 +259,18 @@ also metadata-driven:
 image_meta = BufferedMetadataProvider()
 
 # Identification fields
-image_meta.set("IID1", "IMG_00001")
-image_meta.set("IDATIM", "20260315103045")
-image_meta.set("ISORCE", "Satellite XYZ")
+image_meta["IID1"] = "IMG_00001"
+image_meta["IDATIM"] = "20260315103045"
+image_meta["ISORCE"] = "Satellite XYZ"
 
 # Security fields use the IS prefix
-image_meta.set("ISCLAS", "S")
-image_meta.set("ISCLSY", "US")
-image_meta.set("ISREL", "USA")
+image_meta["ISCLAS"] = "S"
+image_meta["ISCLSY"] = "US"
+image_meta["ISREL"] = "USA"
 
 # Image category and coordinate representation
-image_meta.set("ICAT", "SAR")
-image_meta.set("ICORDS", "G")
+image_meta["ICAT"] = "SAR"
+image_meta["ICORDS"] = "G"
 ```
 
 Fields derived from the image data itself — `NROWS`, `NCOLS`, `PVTYPE`,
@@ -281,22 +286,22 @@ Set fields on the asset's metadata provider before adding it to the writer:
 ```python
 # Text asset metadata (TS prefix for security fields)
 text_meta = BufferedMetadataProvider()
-text_meta.set("TXTDT", "20260315120000")
-text_meta.set("TXTFMT", "STA")
-text_meta.set("TSCLAS", "C")
+text_meta["TXTDT"] = "20260315120000"
+text_meta["TXTFMT"] = "STA"
+text_meta["TSCLAS"] = "C"
 
 # Graphic asset metadata (SS prefix for security fields)
 graphic_meta = BufferedMetadataProvider()
-graphic_meta.set("SFMT", "C")
-graphic_meta.set("SDLVL", "002")
-graphic_meta.set("SLOC", "0050000100")
-graphic_meta.set("SSCLAS", "U")
+graphic_meta["SFMT"] = "C"
+graphic_meta["SDLVL"] = "002"
+graphic_meta["SLOC"] = "0050000100"
+graphic_meta["SSCLAS"] = "U"
 
 # DES metadata (DES prefix for security fields, but DECLAS for classification)
 des_meta = BufferedMetadataProvider()
-des_meta.set("DESVER", "02")
-des_meta.set("DECLAS", "U")
-des_meta.set("DESCLSY", "US")
+des_meta["DESVER"] = "02"
+des_meta["DECLAS"] = "U"
+des_meta["DESCLSY"] = "US"
 ```
 
 #### Security Classification Fields
@@ -331,16 +336,16 @@ Some fields are always computed by the writer and cannot be overridden:
 
 #### Writing TREs
 
-Set TREs as nested dicts via `set_json()`, matching the format returned by
+Set TREs as nested dicts using dictionary syntax, matching the format returned by
 the reader:
 
 ```python
-image_meta.set_json("GEOLOB", {
+image_meta["GEOLOB"] = {
     "ARV": "000360000",
     "BRV": "000180000",
     "LSO": "-077.0000000000",
     "PSO": "+038.0000000000",
-})
+}
 ```
 
 Numeric fields (BCS-N encoding) are auto-formatted to their defined width —
@@ -348,11 +353,11 @@ short values are left-padded with zeros and overly-precise values are
 reformatted to fit. You can pass natural representations:
 
 ```python
-image_meta.set_json("ICHIPB", {
+image_meta["ICHIPB"] = {
     "OP_ROW_11": "0.5",     # auto-padded to "0000000000.5" (12 bytes)
     "FI_ROW": "768",        # auto-padded to "00000768" (8 bytes)
     # ...
-})
+}
 ```
 
 Text fields (BCS-A) are right-padded with spaces if short and rejected if
@@ -386,7 +391,7 @@ files that must pass formal conformance checks.
 
 ### Extending NITF Metadata with Structure Definitions
 
-The metadata you see through `as_dict()` for NITF files is driven by a
+The metadata you access from NITF files is driven by a
 data-driven parsing framework. The library uses declarative YAML-based
 structure definition files (`.ksy` format, inspired by
 [Kaitai Struct](https://kaitai.io/)) to describe binary layouts. These
@@ -483,7 +488,7 @@ interpretation or transformation applied.
 from aws.osml.io import IO
 
 with IO.open(["image.tif"], "r") as dataset:
-    meta = dataset.metadata.as_dict()
+    meta = dataset.metadata
 
     # Tags are keyed by their numeric ID as a string
     width = meta["256"]           # ImageWidth
@@ -501,7 +506,7 @@ with IO.open(["image.tif"], "r") as dataset:
     num_dirs = meta["NumberOfDirectories"]       # 3
 
     # Prefix filtering works on the numeric key strings
-    tags_3xx = dataset.metadata.as_dict("3")
+    tags_3xx = dataset.metadata.entries("3")
     # Returns "322" (TileWidth), "323" (TileLength), "339" (SampleFormat),
     # "33550" (ModelPixelScale), "34735" (GeoKeyDirectory), etc.
 ```
@@ -517,7 +522,7 @@ from aws.osml.io import IO
 from aws.osml.io.tiff.utils import TagNameResolver
 
 with IO.open(["image.tif"], "r") as dataset:
-    meta = dataset.metadata.as_dict()
+    meta = dataset.metadata.entries()
     tags = TagNameResolver(meta)
 
     # Look up by name — same value as meta["256"]
@@ -569,12 +574,12 @@ cases. For types that can't be inferred, use an explicit type annotation.
 from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 
 metadata = BufferedMetadataProvider()
-metadata.set_json("259", 8)                      # Compression: Deflate
-metadata.set_json("33550", [0.5, 0.5, 0.0])     # ModelPixelScale → DOUBLE array
-metadata.set("42113", "nan")                     # GDALNoData → ASCII
+metadata["259"] = 8                              # Compression: Deflate
+metadata["33550"] = [0.5, 0.5, 0.0]             # ModelPixelScale → DOUBLE array
+metadata["42113"] = "nan"                        # GDALNoData → ASCII
 
 # For field types that can't be inferred (e.g. UNDEFINED), use an annotation:
-metadata.set_json("700", {"value": [60, 120, 109, 108], "type": 7})  # XMP as UNDEFINED bytes
+metadata["700"] = {"value": [60, 120, 109, 108], "type": 7}  # XMP as UNDEFINED bytes
 
 # Attach metadata to the provider — the writer sources all IFD tags from here
 provider = BufferedImageAssetProvider.create(
@@ -604,7 +609,7 @@ from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider
 from aws.osml.io.tiff.utils import TagNameResolver
 
 metadata = BufferedMetadataProvider()
-tag_dict = metadata.as_dict()
+tag_dict = metadata.entries()
 resolver = TagNameResolver(tag_dict)
 
 # Set tags by name — stored under the correct numeric key
@@ -621,9 +626,9 @@ resolver["SampleFormat"] = "Float"        # stored as 3
 # Integer values pass through unchanged
 resolver["Compression"] = 5               # also works
 
-# Write resolved keys back then attach to provider
+# Write resolved keys back to the metadata provider
 for key, value in tag_dict.items():
-    metadata.set(key, str(value) if not isinstance(value, str) else value)
+    metadata[key] = value
 
 provider = BufferedImageAssetProvider.create(
     key="image:0", num_columns=512, num_rows=512, num_bands=1,

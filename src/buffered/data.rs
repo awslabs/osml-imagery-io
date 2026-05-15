@@ -10,7 +10,7 @@ struct EmptyMetadataProvider {
 }
 
 impl MetadataProvider for EmptyMetadataProvider {
-    fn as_dict(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
+    fn entries(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
         HashMap::new()
     }
 
@@ -159,13 +159,13 @@ mod tests {
     #[test]
     fn test_with_metadata() {
         let metadata = BufferedMetadataProvider::new();
-        metadata.set("DESID", "XML_DATA_CONTENT");
-        metadata.set("DESVER", "01");
+        metadata.set("DESID", serde_json::json!("XML_DATA_CONTENT"));
+        metadata.set("DESVER", serde_json::json!("01"));
 
         let provider = BufferedDataAssetProvider::new("des_0", vec![], "application/xml")
             .with_metadata(Arc::new(metadata));
 
-        let dict = provider.metadata().as_dict(None);
+        let dict = provider.metadata().entries(None);
         assert_eq!(
             dict.get("DESID"),
             Some(&serde_json::json!("XML_DATA_CONTENT"))
@@ -222,7 +222,7 @@ mod tests {
     fn test_default_metadata_is_empty() {
         let provider = BufferedDataAssetProvider::new("des_0", vec![], "application/octet-stream");
 
-        let dict = provider.metadata().as_dict(None);
+        let dict = provider.metadata().entries(None);
         assert!(dict.is_empty());
     }
 

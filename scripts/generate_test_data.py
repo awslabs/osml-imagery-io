@@ -61,12 +61,12 @@ from aws.osml.io import (  # noqa: E402
 def _nitf_file_metadata(ftitle: str) -> BufferedMetadataProvider:
     """Create a BufferedMetadataProvider with standard NITF file-level fields."""
     meta = BufferedMetadataProvider()
-    meta.set("FTITLE", ftitle)
-    meta.set("ONAME", "OSML Test Generator")
-    meta.set("OPHONE", "555-000-0000")
-    meta.set("OSTAID", "OSML_IO")
-    meta.set("FDT", "20260101120000")
-    meta.set("FSCLAS", "U")
+    meta["FTITLE"] = ftitle
+    meta["ONAME"] = "OSML Test Generator"
+    meta["OPHONE"] = "555-000-0000"
+    meta["OSTAID"] = "OSML_IO"
+    meta["FDT"] = "20260101120000"
+    meta["FSCLAS"] = "U"
     return meta
 
 
@@ -74,9 +74,9 @@ def _nitf_image_metadata(*, ic: str = "NC", imode: str = "B",
                           icat: str = "VIS") -> BufferedMetadataProvider:
     """Create a BufferedMetadataProvider with NITF image-segment fields."""
     meta = BufferedMetadataProvider()
-    meta.set("IC", ic)
-    meta.set("IMODE", imode)
-    meta.set("ICAT", icat)
+    meta["IC"] = ic
+    meta["IMODE"] = imode
+    meta["ICAT"] = icat
     return meta
 
 
@@ -277,9 +277,9 @@ def generate_tiff_tiled(output_path: Path) -> None:
     print(f"  {output_path.name} ...")
 
     metadata = BufferedMetadataProvider()
-    metadata.set_json("322", 128)   # TileWidth
-    metadata.set_json("323", 128)   # TileLength
-    metadata.set_json("259", 8)     # Compression = Deflate
+    metadata["322"] = 128   # TileWidth
+    metadata["323"] = 128   # TileLength
+    metadata["259"] = 8     # Compression = Deflate
 
     provider = BufferedImageAssetProvider.create(
         key="image:0",
@@ -310,22 +310,22 @@ def generate_dted_small(output_path: Path) -> None:
     print(f"  {output_path.name} ...")
 
     metadata = BufferedMetadataProvider()
-    metadata.set_json("dted:origin_longitude", -109.0)
-    metadata.set_json("dted:origin_latitude", 38.0)
-    metadata.set_json("dted:longitude_interval", 30)
-    metadata.set_json("dted:latitude_interval", 30)
-    metadata.set("dted:level", "DTED1")
-    metadata.set("dted:security_code", "U")
-    metadata.set("dted:vertical_datum", "MSL")
-    metadata.set("dted:horizontal_datum", "WGS84")
-    metadata.set("dted:producer_code", "US")
-    metadata.set("dted:edition_number", "01")
-    metadata.set("dted:compilation_date", "0101")
-    metadata.set("dted:partial_cell_indicator", "00")
-    metadata.set("dted:absolute_horizontal_accuracy", "0050")
-    metadata.set("dted:absolute_vertical_accuracy", "0030")
-    metadata.set("dted:relative_vertical_accuracy", "0020")
-    metadata.set_json("dted:vertical_accuracy", 20)
+    metadata["dted:origin_longitude"] = -109.0
+    metadata["dted:origin_latitude"] = 38.0
+    metadata["dted:longitude_interval"] = 30
+    metadata["dted:latitude_interval"] = 30
+    metadata["dted:level"] = "DTED1"
+    metadata["dted:security_code"] = "U"
+    metadata["dted:vertical_datum"] = "MSL"
+    metadata["dted:horizontal_datum"] = "WGS84"
+    metadata["dted:producer_code"] = "US"
+    metadata["dted:edition_number"] = "01"
+    metadata["dted:compilation_date"] = "0101"
+    metadata["dted:partial_cell_indicator"] = "00"
+    metadata["dted:absolute_horizontal_accuracy"] = "0050"
+    metadata["dted:absolute_vertical_accuracy"] = "0030"
+    metadata["dted:relative_vertical_accuracy"] = "0020"
+    metadata["dted:vertical_accuracy"] = 20
 
     num_rows = 16
     num_cols = 16
@@ -359,22 +359,22 @@ def generate_dted_integration(output_path: Path) -> None:
     print(f"  {output_path.name} ...")
 
     metadata = BufferedMetadataProvider()
-    metadata.set_json("dted:origin_longitude", -109.0)
-    metadata.set_json("dted:origin_latitude", 38.0)
-    metadata.set_json("dted:longitude_interval", 30)
-    metadata.set_json("dted:latitude_interval", 30)
-    metadata.set("dted:level", "DTED1")
-    metadata.set("dted:security_code", "U")
-    metadata.set("dted:vertical_datum", "MSL")
-    metadata.set("dted:horizontal_datum", "WGS84")
-    metadata.set("dted:producer_code", "US")
-    metadata.set("dted:edition_number", "01")
-    metadata.set("dted:compilation_date", "2601")
-    metadata.set("dted:partial_cell_indicator", "00")
-    metadata.set("dted:absolute_horizontal_accuracy", "0050")
-    metadata.set("dted:absolute_vertical_accuracy", "0030")
-    metadata.set("dted:relative_vertical_accuracy", "0020")
-    metadata.set_json("dted:vertical_accuracy", 20)
+    metadata["dted:origin_longitude"] = -109.0
+    metadata["dted:origin_latitude"] = 38.0
+    metadata["dted:longitude_interval"] = 30
+    metadata["dted:latitude_interval"] = 30
+    metadata["dted:level"] = "DTED1"
+    metadata["dted:security_code"] = "U"
+    metadata["dted:vertical_datum"] = "MSL"
+    metadata["dted:horizontal_datum"] = "WGS84"
+    metadata["dted:producer_code"] = "US"
+    metadata["dted:edition_number"] = "01"
+    metadata["dted:compilation_date"] = "2601"
+    metadata["dted:partial_cell_indicator"] = "00"
+    metadata["dted:absolute_horizontal_accuracy"] = "0050"
+    metadata["dted:absolute_vertical_accuracy"] = "0030"
+    metadata["dted:relative_vertical_accuracy"] = "0020"
+    metadata["dted:vertical_accuracy"] = 20
 
     num_rows = 64
     num_cols = 64

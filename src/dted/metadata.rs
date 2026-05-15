@@ -95,8 +95,24 @@ impl MetadataProvider for DTEDMetadataProvider {
         &self.raw_bytes
     }
 
-    fn as_dict(&self, name: Option<&str>) -> HashMap<String, Value> {
-        match name {
+    fn get_value(&self, key: &str) -> Option<Value> {
+        self.entries.get(key).cloned()
+    }
+
+    fn contains_key(&self, key: &str) -> bool {
+        self.entries.contains_key(key)
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn keys(&self) -> Vec<String> {
+        self.entries.keys().cloned().collect()
+    }
+
+    fn entries(&self, prefix: Option<&str>) -> HashMap<String, Value> {
+        match prefix {
             None => self.entries.clone(),
             Some(prefix) => self
                 .entries
@@ -150,7 +166,7 @@ mod tests {
     #[test]
     fn test_metadata_keys_present() {
         let provider = DTEDMetadataProvider::new(&sample_uhl(), &sample_dsi(), &sample_acc(), &[]);
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
 
         assert_eq!(
             dict.get("dted:origin_longitude").and_then(|v| v.as_f64()),
@@ -183,7 +199,7 @@ mod tests {
     #[test]
     fn test_metadata_prefix_filter() {
         let provider = DTEDMetadataProvider::new(&sample_uhl(), &sample_dsi(), &sample_acc(), &[]);
-        let filtered = provider.as_dict(Some("dted:origin"));
+        let filtered = provider.entries(Some("dted:origin"));
         assert_eq!(filtered.len(), 2);
         assert!(filtered.contains_key("dted:origin_longitude"));
         assert!(filtered.contains_key("dted:origin_latitude"));

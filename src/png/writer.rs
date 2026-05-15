@@ -100,7 +100,7 @@ impl PNGDatasetWriter {
         pixel_type: PixelType,
         metadata: Option<&dyn MetadataProvider>,
     ) -> Result<(png::ColorType, png::BitDepth), CodecError> {
-        let meta_dict = metadata.map(|m| m.as_dict(None));
+        let meta_dict = metadata.map(|m| m.entries(None));
 
         // Check for indexed palette mode
         if num_bands == 1 && pixel_type == PixelType::UInt8 {
@@ -377,7 +377,7 @@ impl DatasetWriter for PNGDatasetWriter {
         // Set palette for indexed images
         if color_type == png::ColorType::Indexed {
             if let Some(ref meta) = self.metadata {
-                let dict = meta.as_dict(None);
+                let dict = meta.entries(None);
                 if let Some(plte_val) = dict.get("PLTE") {
                     if let Some(arr) = plte_val.as_array() {
                         let mut palette = Vec::with_capacity(arr.len() * 3);
@@ -397,7 +397,7 @@ impl DatasetWriter for PNGDatasetWriter {
         // Write tEXt chunks from metadata
         let skip_keys: HashSet<&str> = SKIP_TEXT_KEYS.iter().copied().collect();
         if let Some(ref meta) = self.metadata {
-            let dict = meta.as_dict(None);
+            let dict = meta.entries(None);
             for (key, value) in &dict {
                 if skip_keys.contains(key.as_str()) {
                     continue;

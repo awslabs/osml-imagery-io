@@ -84,7 +84,7 @@ def _write_nitf(tmp_path, provider):
     """Write a NITF file using the given provider and return the output path."""
     output_path = str(tmp_path / "output.ntf")
     metadata = BufferedMetadataProvider()
-    metadata.set("IC", "NC")
+    metadata["IC"] = "NC"
 
     with IO.open([output_path], "w", "nitf") as writer:
         writer.metadata = metadata
@@ -228,7 +228,7 @@ class TestProviderWithMetadata:
             @property
             def metadata(self):
                 meta = BufferedMetadataProvider()
-                meta.set("IREP", "MONO")
+                meta["IREP"] = "MONO"
                 return meta
 
         provider = MetadataProvider()
@@ -236,7 +236,7 @@ class TestProviderWithMetadata:
 
         with IO.open([output_path], "r") as reader:
             asset = reader.get_asset("image:0")
-            meta_dict = asset.metadata.as_dict()
+            meta_dict = asset.metadata.entries()
 
         # The IREP value from the provider's metadata should be present
         assert meta_dict.get("IREP") == "MONO"

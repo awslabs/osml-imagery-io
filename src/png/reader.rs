@@ -729,7 +729,7 @@ mod tests {
         let data = make_gray_2x2();
         let reader = PNGDatasetReader::from_bytes(&data).unwrap();
         let meta = reader.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
 
         assert_eq!(dict.get("width").and_then(|v| v.as_u64()), Some(2));
         assert_eq!(dict.get("height").and_then(|v| v.as_u64()), Some(2));
@@ -776,7 +776,7 @@ mod tests {
 
         // PLTE should be in metadata
         let meta = reader.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
         assert!(dict.contains_key("PLTE"));
     }
 }

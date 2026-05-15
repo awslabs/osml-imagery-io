@@ -91,18 +91,18 @@ from aws.osml.io import BufferedMetadataProvider
 
 # Create from scratch
 metadata = BufferedMetadataProvider()
-metadata.set("IMODE", "B")
-metadata.set("IC", "NC")
+metadata["IMODE"] = "B"
+metadata["IC"] = "NC"
 
 # Copy from an existing provider and modify
 copied = BufferedMetadataProvider(source=existing_provider)
-copied.set("IC", "C8")         # Switch to JPEG 2000
-copied.set("COMRAT", "N001.0") # Lossless
+copied["IC"] = "C8"           # Switch to JPEG 2000
+copied["COMRAT"] = "N001.0"   # Lossless
 
 # Query
-value = metadata.get("IMODE")       # "B" or None
-all_pairs = metadata.as_dict()
-filtered = metadata.as_dict("NPP")  # {"NPPBH": "256", "NPPBV": "256"}
+value = metadata.get("IMODE")          # "B" or None
+all_pairs = metadata.entries()
+filtered = metadata.entries("NPP")     # {"NPPBH": "256", "NPPBV": "256"}
 ```
 
 ## Basic Write Workflow
@@ -122,7 +122,7 @@ import numpy as np
 
 # Set up TIFF encoding hints using TagNameResolver for readable names
 metadata = BufferedMetadataProvider()
-tag_dict = metadata.as_dict()
+tag_dict = metadata.entries()
 resolver = TagNameResolver(tag_dict)
 resolver["Compression"] = "Deflate"      # Tag 259: Deflate compression (LZW, None also supported)
 resolver["TileWidth"] = "256"            # Tag 322: 256-pixel tile width
@@ -130,18 +130,18 @@ resolver["TileLength"] = "256"           # Tag 323: 256-pixel tile height
 resolver["Predictor"] = "Horizontal"     # Tag 317: Horizontal differencing predictor
 # Write resolved numeric keys back into the metadata provider
 for key, value in tag_dict.items():
-    metadata.set(key, str(value) if not isinstance(value, str) else value)
+    metadata[key] = value
 
 # GeoTIFF coordinate reference system (EPSG:32618 = WGS 84 / UTM zone 18N)
-metadata.set("GeoModelType", "Projected")
-metadata.set("GeoRasterType", "PixelIsArea")
-metadata.set("GeoProjectedCRS", "32618")
+metadata["GeoModelType"] = "Projected"
+metadata["GeoRasterType"] = "PixelIsArea"
+metadata["GeoProjectedCRS"] = "32618"
 
 # Pixel-to-model coordinate transformation
 # ModelPixelScaleTag: [scale_x, scale_y, scale_z] in CRS units (meters for UTM)
-metadata.set("GeoPixelScale", "[0.5, 0.5, 0.0]")
+metadata["GeoPixelScale"] = "[0.5, 0.5, 0.0]"
 # ModelTiepointTag: [pixel_x, pixel_y, pixel_z, geo_x, geo_y, geo_z]
-metadata.set("GeoTiepoints", "[0, 0, 0, 300000.0, 4500000.0, 0.0]")
+metadata["GeoTiepoints"] = "[0, 0, 0, 300000.0, 4500000.0, 0.0]"
 
 # Create a tiled image asset
 image_data = np.random.randint(0, 255, (3, 512, 512), dtype=np.uint8)
@@ -200,11 +200,11 @@ with IO.open(["input.ntf"], "r") as reader:
 
     # Copy image-level metadata and override encoding hints
     image_metadata = BufferedMetadataProvider(source=image.metadata)
-    image_metadata.set("IC", "C8")
-    image_metadata.set("COMRAT", "00.5")
-    image_metadata.set("J2K_DECOMPOSITION_LEVELS", "5")
-    image_metadata.set("NPPBH", "1024")
-    image_metadata.set("NPPBV", "1024")
+    image_metadata["IC"] = "C8"
+    image_metadata["COMRAT"] = "00.5"
+    image_metadata["J2K_DECOMPOSITION_LEVELS"] = "5"
+    image_metadata["NPPBH"] = "1024"
+    image_metadata["NPPBV"] = "1024"
 
     provider = BufferedImageAssetProvider.create(
         key="compressed",
@@ -269,7 +269,7 @@ with IO.open(["input.ntf"], "r") as reader:
 
     # Copy source metadata and set encoding hints
     metadata = BufferedMetadataProvider(source=source.metadata)
-    metadata.set("IC", "NC")
+    metadata["IC"] = "NC"
 
     provider = InvertProvider(source, metadata)
 
@@ -439,10 +439,10 @@ where some blocks contain no data.
 
 ```python
 metadata = BufferedMetadataProvider()
-metadata.set("IC", "NC")
-metadata.set("IMODE", "B")
-metadata.set("NPPBH", "256")
-metadata.set("NPPBV", "256")
+metadata["IC"] = "NC"
+metadata["IMODE"] = "B"
+metadata["NPPBH"] = "256"
+metadata["NPPBV"] = "256"
 ```
 
 For sparse images, use `NM` and only set the blocks that contain data. Missing blocks
@@ -450,7 +450,7 @@ are treated as masked:
 
 ```python
 metadata = BufferedMetadataProvider()
-metadata.set("IC", "NM")
+metadata["IC"] = "NM"
 
 provider = BufferedImageAssetProvider.create(
     key="sparse",
@@ -501,30 +501,30 @@ lossless at the given bpp, and `nn.n` selects lossy at the target bpp.
 ```python
 # Lossless JPEG 2000
 metadata = BufferedMetadataProvider()
-metadata.set("IC", "C8")
-metadata.set("IMODE", "B")
-metadata.set("COMRAT", "N001.0")
-metadata.set("J2K_DECOMPOSITION_LEVELS", "5")
-metadata.set("NPPBH", "1024")
-metadata.set("NPPBV", "1024")
+metadata["IC"] = "C8"
+metadata["IMODE"] = "B"
+metadata["COMRAT"] = "N001.0"
+metadata["J2K_DECOMPOSITION_LEVELS"] = "5"
+metadata["NPPBH"] = "1024"
+metadata["NPPBV"] = "1024"
 
 # Lossy JPEG 2000 at ~1.0 bpp (approximately 8:1 compression)
 metadata = BufferedMetadataProvider()
-metadata.set("IC", "C8")
-metadata.set("IMODE", "B")
-metadata.set("COMRAT", "01.0")
-metadata.set("J2K_DECOMPOSITION_LEVELS", "5")
-metadata.set("J2K_QUALITY_LAYERS", "1")
-metadata.set("NPPBH", "1024")
-metadata.set("NPPBV", "1024")
+metadata["IC"] = "C8"
+metadata["IMODE"] = "B"
+metadata["COMRAT"] = "01.0"
+metadata["J2K_DECOMPOSITION_LEVELS"] = "5"
+metadata["J2K_QUALITY_LAYERS"] = "1"
+metadata["NPPBH"] = "1024"
+metadata["NPPBV"] = "1024"
 
 # HTJ2K (faster encode/decode)
 metadata = BufferedMetadataProvider()
-metadata.set("IC", "CD")
-metadata.set("IMODE", "B")
-metadata.set("COMRAT", "01.0")
-metadata.set("NPPBH", "1024")
-metadata.set("NPPBV", "1024")
+metadata["IC"] = "CD"
+metadata["IMODE"] = "B"
+metadata["COMRAT"] = "01.0"
+metadata["NPPBH"] = "1024"
+metadata["NPPBV"] = "1024"
 ```
 
 #### JPEG DCT (IC=C3, M3)
@@ -544,11 +544,11 @@ downsampled JPEG with a 2048×2048 dimension limit.
 ```python
 # JPEG at quality 85
 metadata = BufferedMetadataProvider()
-metadata.set("IC", "C3")
-metadata.set("IMODE", "B")
-metadata.set("COMRAT", "85.0")
-metadata.set("NPPBH", "256")
-metadata.set("NPPBV", "256")
+metadata["IC"] = "C3"
+metadata["IMODE"] = "B"
+metadata["COMRAT"] = "85.0"
+metadata["NPPBH"] = "256"
+metadata["NPPBV"] = "256"
 ```
 
 ### GeoTIFF
@@ -588,18 +588,18 @@ These control the georeferencing of the image:
 from aws.osml.io.tiff.utils import TagNameResolver
 
 metadata = BufferedMetadataProvider()
-tag_dict = metadata.as_dict()
+tag_dict = metadata.entries()
 resolver = TagNameResolver(tag_dict)
 resolver["Compression"] = "Deflate"   # Tag 259
 resolver["TileWidth"] = "256"         # Tag 322
 resolver["TileLength"] = "256"        # Tag 323
 for key, value in tag_dict.items():
-    metadata.set(key, str(value) if not isinstance(value, str) else value)
-metadata.set("GeoModelType", "Projected")
-metadata.set("GeoRasterType", "PixelIsArea")
-metadata.set("GeoProjectedCRS", "32618")
-metadata.set("GeoPixelScale", "[0.5, 0.5, 0.0]")
-metadata.set("GeoTiepoints", "[0, 0, 0, 300000.0, 4500000.0, 0.0]")
+    metadata[key] = value
+metadata["GeoModelType"] = "Projected"
+metadata["GeoRasterType"] = "PixelIsArea"
+metadata["GeoProjectedCRS"] = "32618"
+metadata["GeoPixelScale"] = "[0.5, 0.5, 0.0]"
+metadata["GeoTiepoints"] = "[0, 0, 0, 300000.0, 4500000.0, 0.0]"
 ```
 
 ## Example: NITF Chip with TRE Preservation
@@ -685,8 +685,8 @@ with IO.open(["input.ntf"], "r") as reader:
 
     # Preserve image-level metadata (TREs, etc.) and set chip encoding
     image_metadata = BufferedMetadataProvider(source=image.metadata)
-    image_metadata.set("IC", "NC")
-    image_metadata.set("IMODE", "B")
+    image_metadata["IC"] = "NC"
+    image_metadata["IMODE"] = "B"
 
     # Add ICHIPB TRE to record the chip's origin in the full image.
     # This is required by STDI-0002 Vol 1 App B so that mensuration and
@@ -701,7 +701,7 @@ with IO.open(["input.ntf"], "r") as reader:
     # The .500 offset places the coordinate at the center of the pixel (grid
     # convention per ICHIPB spec Annex A).
 
-    image_metadata.set_json("ICHIPB", {
+    image_metadata["ICHIPB"] = {
         "XFRM_FLAG": "00",                                          # Non-dewarped imagery
         "SCALE_FACTOR": "0001.00000",                               # Full resolution (R0)
         "ANAMRPH_CORR": "00",                                       # No anamorphic correction
@@ -727,7 +727,7 @@ with IO.open(["input.ntf"], "r") as reader:
         # Full image dimensions
         "FI_ROW": f"{img_height:08d}",
         "FI_COL": f"{img_width:08d}",
-    })
+    }
 
     provider = BufferedImageAssetProvider.create(
         key="chip",

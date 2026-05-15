@@ -23,7 +23,7 @@ def test_bench_metadata_read(benchmark, dataset_entry):
         reader = IO.open([path], "r")
 
         # File-level metadata — iterate all keys to force lazy parsing
-        file_meta_dict = reader.metadata.as_dict()
+        file_meta_dict = reader.metadata.entries()
         for key in file_meta_dict:
             _ = file_meta_dict[key]
 
@@ -31,7 +31,7 @@ def test_bench_metadata_read(benchmark, dataset_entry):
         image_keys = reader.get_asset_keys(asset_type=AssetType.Image)
         if image_keys:
             asset = reader.get_asset(image_keys[0])
-            asset_meta_dict = asset.metadata.as_dict()
+            asset_meta_dict = asset.metadata.entries()
             for key in asset_meta_dict:
                 _ = asset_meta_dict[key]
 

@@ -126,11 +126,11 @@ class TestMetadataRoundtrip:
             metadata = BufferedMetadataProvider()
 
             # Set required encoding hint (IC=NC for uncompressed)
-            metadata.set("IC", "NC")
+            metadata["IC"] = "NC"
 
             # Set user-provided NITF fields
             for key, value in user_metadata.items():
-                metadata.set(key, value)
+                metadata[key] = value
 
             # Create image provider
             provider = BufferedImageAssetProvider.create(
@@ -164,7 +164,7 @@ class TestMetadataRoundtrip:
 
             # Get metadata from decoded asset
             decoded_metadata = asset.metadata
-            decoded_dict = decoded_metadata.as_dict()
+            decoded_dict = decoded_metadata.entries()
 
             reader.close()
 
@@ -219,9 +219,9 @@ class TestMetadataStructure:
 
         try:
             metadata = BufferedMetadataProvider()
-            metadata.set("IC", "NC")
+            metadata["IC"] = "NC"
             for key, value in user_metadata.items():
-                metadata.set(key, value)
+                metadata[key] = value
 
             provider = BufferedImageAssetProvider.create(
                 key="image:0",
@@ -247,7 +247,7 @@ class TestMetadataStructure:
 
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image:0")
-            decoded_dict = asset.metadata.as_dict()
+            decoded_dict = asset.metadata.entries()
             reader.close()
 
             # Verify BAND_INFO is a list (repeated field → array)
@@ -312,7 +312,7 @@ class TestMetadataRawBytes:
 
         try:
             metadata = BufferedMetadataProvider()
-            metadata.set("IC", "NC")
+            metadata["IC"] = "NC"
 
             provider = BufferedImageAssetProvider.create(
                 key="image:0",

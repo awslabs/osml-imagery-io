@@ -223,8 +223,8 @@ class TestProperty7EndToEndDecodeEquivalence:
 
         # Write as uncompressed NITF
         metadata = BufferedMetadataProvider()
-        metadata.set("IC", "NC")
-        metadata.set("IMODE", "B")
+        metadata["IC"] = "NC"
+        metadata["IMODE"] = "B"
 
         provider = BufferedImageAssetProvider.create(
             key="image:0",

@@ -34,7 +34,7 @@ def detect_format(reader) -> str:
     Returns:
         'nitf', 'tiff', or 'unknown'
     """
-    meta = reader.metadata.as_dict()
+    meta = reader.metadata.entries()
     fhdr = meta.get("FHDR", "")
     if isinstance(fhdr, str) and fhdr.startswith(("NITF", "NSIF")):
         return "nitf"
@@ -72,7 +72,7 @@ def run_agnostic_checks(reader, base_path: Path, entry: IntegrationEntry) -> Non
         assert asset is not None, f"get_asset('{key}') returned None for {entry.path}"
 
     # Dataset-level metadata should be non-empty
-    file_meta = reader.metadata.as_dict()
+    file_meta = reader.metadata.entries()
     assert len(file_meta) > 0, f"Empty dataset metadata for {entry.path}"
 
     # Run image-specific checks only when image segments exist
@@ -86,7 +86,7 @@ def _check_image_asset(asset, entry: IntegrationEntry) -> None:
     key = asset.key
 
     # Non-empty metadata
-    meta_dict = asset.metadata.as_dict()
+    meta_dict = asset.metadata.entries()
     assert len(meta_dict) > 0, f"Empty metadata for image asset '{key}' in {entry.path}"
 
     # Positive dimensions
@@ -140,7 +140,7 @@ def run_tiff_checks(reader) -> None:
         return
 
     asset = reader.get_asset(image_keys[0])
-    geo = asset.metadata.as_dict("Geo")
+    geo = asset.metadata.entries("Geo")
 
     # Check GeoModelType
     if "GeoModelType" in geo:

@@ -116,7 +116,7 @@ struct EmptyMetadataProvider {
 }
 
 impl MetadataProvider for EmptyMetadataProvider {
-    fn as_dict(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
+    fn entries(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
         HashMap::new()
     }
 
@@ -219,8 +219,8 @@ impl BufferedImageAssetProvider {
     /// use osml_imagery_io::BufferedMetadataProvider;
     ///
     /// let metadata = BufferedMetadataProvider::new();
-    /// metadata.set("imode", "P");
-    /// metadata.set("nppbh", "256");
+    /// metadata.set("imode", serde_json::json!("P"));
+    /// metadata.set("nppbh", serde_json::json!("256"));
     ///
     /// let config = MemoryImageConfig::new(512, 512);
     /// let provider = BufferedImageAssetProvider::new("image_0", config)
@@ -713,8 +713,8 @@ mod tests {
 
         // Create a metadata provider with encoding hints
         let metadata = BufferedMetadataProvider::new();
-        metadata.set("imode", "P");
-        metadata.set("nppbh", "256");
+        metadata.set("imode", serde_json::json!("P"));
+        metadata.set("nppbh", serde_json::json!("256"));
 
         let config = MemoryImageConfig::new(512, 512);
         let provider =
@@ -722,7 +722,7 @@ mod tests {
 
         // Verify metadata is accessible
         let meta = provider.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
         assert_eq!(dict.get("imode"), Some(&serde_json::json!("P")));
         assert_eq!(dict.get("nppbh"), Some(&serde_json::json!("256")));
     }
@@ -734,7 +734,7 @@ mod tests {
 
         // Default metadata should be empty
         let meta = provider.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
         assert!(dict.is_empty());
     }
 }
@@ -763,8 +763,8 @@ mod property_tests {
         ///
         /// For any BufferedMetadataProvider M with key-value pairs, if a
         /// BufferedImageAssetProvider is created with M, then calling
-        /// metadata().as_dict(None) on the provider SHALL return the same
-        /// key-value pairs as M.as_dict(None).
+        /// metadata().entries(None) on the provider SHALL return the same
+        /// key-value pairs as M.entries(None).
         ///
         /// **Validates: Requirements 2.2**
         #[test]
@@ -774,11 +774,11 @@ mod property_tests {
             // Create metadata provider with random key-value pairs
             let metadata = BufferedMetadataProvider::new();
             for (key, value) in &pairs {
-                metadata.set(key, value);
+                metadata.set(key, serde_json::json!(value));
             }
 
             // Get the original dict before attaching to provider
-            let original_dict = metadata.as_dict(None);
+            let original_dict = metadata.entries(None);
 
             // Create BufferedImageAssetProvider with the metadata
             let config = MemoryImageConfig::new(256, 256);
@@ -786,7 +786,7 @@ mod property_tests {
                 .with_metadata(Arc::new(metadata));
 
             // Get metadata back from provider
-            let retrieved_dict = provider.metadata().as_dict(None);
+            let retrieved_dict = provider.metadata().entries(None);
 
             // Verify all key-value pairs are preserved
             prop_assert_eq!(
@@ -820,16 +820,16 @@ mod property_tests {
             // Create first metadata provider
             let metadata1 = BufferedMetadataProvider::new();
             for (key, value) in &pairs1 {
-                metadata1.set(key, value);
+                metadata1.set(key, serde_json::json!(value));
             }
-            let original_dict1 = metadata1.as_dict(None);
+            let original_dict1 = metadata1.entries(None);
 
             // Create second metadata provider
             let metadata2 = BufferedMetadataProvider::new();
             for (key, value) in &pairs2 {
-                metadata2.set(key, value);
+                metadata2.set(key, serde_json::json!(value));
             }
-            let original_dict2 = metadata2.as_dict(None);
+            let original_dict2 = metadata2.entries(None);
 
             // Create two providers with different metadata
             let config = MemoryImageConfig::new(256, 256);
@@ -839,8 +839,8 @@ mod property_tests {
                 .with_metadata(Arc::new(metadata2));
 
             // Verify each provider has its own metadata
-            let retrieved1 = provider1.metadata().as_dict(None);
-            let retrieved2 = provider2.metadata().as_dict(None);
+            let retrieved1 = provider1.metadata().entries(None);
+            let retrieved2 = provider2.metadata().entries(None);
 
             prop_assert_eq!(
                 original_dict1.len(),

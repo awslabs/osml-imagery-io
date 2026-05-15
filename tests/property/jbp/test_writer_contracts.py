@@ -36,7 +36,7 @@ def _make_provider(array, pixel_type, num_bands, num_rows, num_cols, key, hints)
     """Create a BufferedImageAssetProvider populated with the given array."""
     metadata = BufferedMetadataProvider()
     for k, v in hints.items():
-        metadata.set(k, v)
+        metadata[k] = v
 
     provider = BufferedImageAssetProvider.create(
         key=key,
@@ -202,7 +202,7 @@ class TestMultiImageOrdering:
         try:
             metadata = BufferedMetadataProvider()
             for k, v in hints.items():
-                metadata.set(k, v)
+                metadata[k] = v
 
             writer = IO.open([str(path)], "w", fmt)
             writer.metadata = metadata

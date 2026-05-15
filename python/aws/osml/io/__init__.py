@@ -4,6 +4,8 @@ This package provides high-performance image format decoders and encoders
 for geospatial imagery formats including NITF and GeoTIFF.
 """
 
+import collections.abc
+
 from aws.osml.io._io import (
     IO,
     AssetProvider,
@@ -28,6 +30,9 @@ from aws.osml.io._io import (
     __version__,
 )
 from aws.osml.io.convenience import ImageInfo, Tile, iminfo, imread, imsave, tiles
+
+collections.abc.Mapping.register(MetadataProvider)
+collections.abc.MutableMapping.register(BufferedMetadataProvider)
 
 # Convenience alias for IO.open
 open = IO.open

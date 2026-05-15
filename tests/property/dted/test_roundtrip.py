@@ -124,9 +124,9 @@ def write_and_read_dted(array: np.ndarray, metadata: dict) -> np.ndarray:
         meta = BufferedMetadataProvider()
         for k, v in metadata.items():
             if isinstance(v, (int, float)):
-                meta.set_json(k, v)
+                meta[k] = v
             else:
-                meta.set(k, str(v))
+                meta[k] = str(v)
 
         provider = BufferedImageAssetProvider.create(
             key="elevation",
@@ -259,9 +259,9 @@ class TestDtedChecksumValidity:
             meta = BufferedMetadataProvider()
             for k, v in metadata.items():
                 if isinstance(v, (int, float)):
-                    meta.set_json(k, v)
+                    meta[k] = v
                 else:
-                    meta.set(k, str(v))
+                    meta[k] = str(v)
 
             provider = BufferedImageAssetProvider.create(
                 key="elevation",

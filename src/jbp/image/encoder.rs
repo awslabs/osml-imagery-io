@@ -1229,7 +1229,7 @@ mod property_tests {
 
     struct EmptyMetadataProvider;
     impl crate::traits::MetadataProvider for EmptyMetadataProvider {
-        fn as_dict(
+        fn entries(
             &self,
             _prefix: Option<&str>,
         ) -> std::collections::HashMap<String, serde_json::Value> {
@@ -1771,8 +1771,8 @@ mod round_trip_property_tests {
 
             // Create metadata with output block size hints
             let metadata = BufferedMetadataProvider::new();
-            metadata.set("nppbh", &out_block_w.to_string());
-            metadata.set("nppbv", &out_block_h.to_string());
+            metadata.set("nppbh", serde_json::json!(out_block_w.to_string()));
+            metadata.set("nppbv", serde_json::json!(out_block_h.to_string()));
 
             let provider_with_meta = BufferedImageAssetProvider::new("test_image",
                 MemoryImageConfig::new(ncols, nrows)

@@ -268,8 +268,8 @@ class TestTextSegmentRoundtrip:
             assert hasattr(asset, 'metadata'), "TextAssetProvider missing 'metadata' property"
             metadata = asset.metadata
             assert metadata is not None
-            assert hasattr(metadata, 'as_dict')
-            metadata_dict = metadata.as_dict()
+            assert hasattr(metadata, 'entries')
+            metadata_dict = metadata.entries()
             assert isinstance(metadata_dict, dict)
 
             # Requirement 8.4: Verify text property
@@ -396,8 +396,8 @@ class TestTextAssetProviderAPICompleteness:
         metadata = provider.metadata
         assert metadata is not None
 
-        # MetadataProvider should have as_dict method
-        metadata_dict = metadata.as_dict()
+        # MetadataProvider should have entries method
+        metadata_dict = metadata.entries()
         assert isinstance(metadata_dict, dict)
 
     @given(
@@ -597,7 +597,7 @@ class TestTextMetadataAccess:
         """Format code is accessible via metadata.
 
         For any text segment, the TXTFMT field SHALL be accessible via
-        metadata.as_dict()["TXTFMT"].
+        metadata.entries()["TXTFMT"].
         """
         from aws.osml.io import AssetProvider
 
@@ -641,7 +641,7 @@ class TestTextMetadataAccess:
 
             # Verify TXTFMT is in metadata
             metadata = asset.metadata
-            metadata_dict = metadata.as_dict()
+            metadata_dict = metadata.entries()
             assert "TXTFMT" in metadata_dict, "TXTFMT not found in metadata"
             assert isinstance(metadata_dict["TXTFMT"], str)
 
@@ -663,7 +663,7 @@ class TestTextMetadataAccess:
         """Attachment level is accessible via metadata.
 
         For any text segment, the TXTALVL field SHALL be accessible via
-        metadata.as_dict()["TXTALVL"], and parsing SHALL succeed regardless
+        metadata.entries()["TXTALVL"], and parsing SHALL succeed regardless
         of whether the referenced display level exists.
         """
         from aws.osml.io import AssetProvider
@@ -703,7 +703,7 @@ class TestTextMetadataAccess:
 
             # Verify TXTALVL is in metadata
             metadata = asset.metadata
-            metadata_dict = metadata.as_dict()
+            metadata_dict = metadata.entries()
             assert "TXTALVL" in metadata_dict, "TXTALVL not found in metadata"
 
             # TXTALVL should be a string representation of the attachment level

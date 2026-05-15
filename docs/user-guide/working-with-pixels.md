@@ -95,8 +95,8 @@ from aws.osml.io import BufferedImageAssetProvider, BufferedMetadataProvider, Pi
 import numpy as np
 
 metadata = BufferedMetadataProvider()
-metadata.set("IC", "NC")
-metadata.set("IMODE", "B")
+metadata["IC"] = "NC"
+metadata["IMODE"] = "B"
 
 image_data = np.random.randint(0, 255, (3, 512, 512), dtype=np.uint8)
 
@@ -164,8 +164,8 @@ import numpy as np
 
 # Write a JPEG-compressed TIFF
 metadata = BufferedMetadataProvider()
-metadata.set_json("259", 7)       # JPEG compression
-metadata.set_json("65537", 85)    # Quality 85
+metadata["259"] = 7               # JPEG compression
+metadata["65537"] = 85            # Quality 85
 
 image_data = np.random.randint(0, 255, (3, 256, 256), dtype=np.uint8)
 provider = BufferedImageAssetProvider.create(

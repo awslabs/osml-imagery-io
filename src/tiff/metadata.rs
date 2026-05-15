@@ -22,8 +22,8 @@ use crate::traits::metadata::MetadataProvider;
 ///   image segment count) under descriptive string keys
 ///
 /// Section filtering:
-/// - `as_dict(None)` → all entries
-/// - `as_dict(Some(prefix))` → entries whose key starts with `prefix`
+/// - `entries(None)` → all entries
+/// - `entries(Some(prefix))` → entries whose key starts with `prefix`
 pub(crate) struct TIFFMetadataProvider {
     tags: HashMap<String, Value>,
     raw_bytes: Vec<u8>,
@@ -95,8 +95,24 @@ impl MetadataProvider for TIFFMetadataProvider {
         &self.raw_bytes
     }
 
-    fn as_dict(&self, name: Option<&str>) -> HashMap<String, Value> {
-        match name {
+    fn get_value(&self, key: &str) -> Option<Value> {
+        self.tags.get(key).cloned()
+    }
+
+    fn contains_key(&self, key: &str) -> bool {
+        self.tags.contains_key(key)
+    }
+
+    fn len(&self) -> usize {
+        self.tags.len()
+    }
+
+    fn keys(&self) -> Vec<String> {
+        self.tags.keys().cloned().collect()
+    }
+
+    fn entries(&self, prefix: Option<&str>) -> HashMap<String, Value> {
+        match prefix {
             None => self.tags.clone(),
             Some(prefix) => self
                 .tags
@@ -257,11 +273,11 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_as_dict_none_returns_all_tags_with_numeric_keys() {
+    fn test_entries_none_returns_all_tags_with_numeric_keys() {
         let data = make_minimal_tiff();
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
 
         assert_eq!(dict.get("256").and_then(|v| v.as_u64()), Some(4));
         assert_eq!(dict.get("257").and_then(|v| v.as_u64()), Some(4));
@@ -282,7 +298,7 @@ mod tests {
         let data = make_minimal_tiff();
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
 
         for key in dict.keys() {
             assert!(
@@ -298,12 +314,12 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_as_dict_prefix_filters_by_key_start() {
+    fn test_entries_prefix_filters_by_key_start() {
         let data = make_minimal_tiff();
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
 
-        let filtered = provider.as_dict(Some("25"));
+        let filtered = provider.entries(Some("25"));
         assert!(filtered.contains_key("256"));
         assert!(filtered.contains_key("257"));
         assert!(filtered.contains_key("258"));
@@ -313,12 +329,12 @@ mod tests {
     }
 
     #[test]
-    fn test_as_dict_prefix_27_matches_strip_and_sample_tags() {
+    fn test_entries_prefix_27_matches_strip_and_sample_tags() {
         let data = make_minimal_tiff();
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
 
-        let filtered = provider.as_dict(Some("27"));
+        let filtered = provider.entries(Some("27"));
         assert!(filtered.contains_key("273"));
         assert!(filtered.contains_key("277"));
         assert!(filtered.contains_key("278"));
@@ -327,34 +343,34 @@ mod tests {
     }
 
     #[test]
-    fn test_as_dict_no_special_case_for_tiff() {
+    fn test_entries_no_special_case_for_tiff() {
         let data = make_minimal_tiff();
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
 
         // "tiff" is just a prefix -- no numeric keys start with "tiff", so empty
-        let tiff = provider.as_dict(Some("tiff"));
+        let tiff = provider.entries(Some("tiff"));
         assert!(tiff.is_empty());
     }
 
     #[test]
-    fn test_as_dict_unknown_prefix_returns_empty() {
+    fn test_entries_unknown_prefix_returns_empty() {
         let data = make_minimal_tiff();
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
 
-        assert!(provider.as_dict(Some("unknown")).is_empty());
-        assert!(provider.as_dict(Some("nitf")).is_empty());
-        assert!(provider.as_dict(Some("99999")).is_empty());
+        assert!(provider.entries(Some("unknown")).is_empty());
+        assert!(provider.entries(Some("nitf")).is_empty());
+        assert!(provider.entries(Some("99999")).is_empty());
     }
 
     #[test]
-    fn test_as_dict_empty_prefix_returns_all() {
+    fn test_entries_empty_prefix_returns_all() {
         let data = make_minimal_tiff();
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
 
-        assert_eq!(provider.as_dict(Some("")), provider.as_dict(None));
+        assert_eq!(provider.entries(Some("")), provider.entries(None));
     }
 
     // =========================================================================
@@ -364,7 +380,7 @@ mod tests {
     #[test]
     fn test_dataset_level_metadata() {
         let provider = TIFFMetadataProvider::dataset_level("LittleEndian", 3, 2);
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
 
         assert_eq!(dict.len(), 3);
         assert_eq!(
@@ -384,7 +400,7 @@ mod tests {
     #[test]
     fn test_dataset_level_big_endian() {
         let provider = TIFFMetadataProvider::dataset_level("BigEndian", 1, 1);
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert_eq!(
             dict.get("ByteOrder").and_then(|v| v.as_str()),
             Some("BigEndian")
@@ -394,7 +410,7 @@ mod tests {
     #[test]
     fn test_dataset_level_keys_are_descriptive_strings() {
         let provider = TIFFMetadataProvider::dataset_level("LittleEndian", 1, 1);
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert!(dict.contains_key("ByteOrder"));
         assert!(dict.contains_key("NumberOfDirectories"));
         assert!(dict.contains_key("NumberOfImageSegments"));
@@ -418,7 +434,7 @@ mod tests {
             tags: HashMap::new(),
             raw_bytes: Vec::new(),
         };
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert!(
             dict.is_empty(),
             "Empty IFD should produce empty Tag_Dictionary"
@@ -434,7 +450,7 @@ mod tests {
         let data = make_private_tags_tiff();
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
 
         assert!(
             dict.contains_key("33000"),
@@ -457,7 +473,7 @@ mod tests {
         let data = make_minimal_tiff();
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
-        let all = provider.as_dict(None);
+        let all = provider.entries(None);
 
         assert!(
             !all.keys().any(|k| k.starts_with("Geo")),
@@ -474,7 +490,7 @@ mod tests {
         let data = make_geotiff(Some(&dir), None, None, Some(&ps), Some(&tp), None);
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
-        let all = provider.as_dict(None);
+        let all = provider.entries(None);
 
         assert!(
             all.contains_key("34735"),
@@ -507,7 +523,7 @@ mod tests {
         let data = make_geotiff(Some(&dir), None, None, None, None, None);
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
-        let all = provider.as_dict(None);
+        let all = provider.entries(None);
 
         assert!(all.contains_key("256"));
         assert!(all.contains_key("34735"));
@@ -522,7 +538,7 @@ mod tests {
         let data = make_geotiff(None, None, None, None, None, Some(&tf));
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
-        let all = provider.as_dict(None);
+        let all = provider.entries(None);
 
         assert!(
             all.contains_key("34264"),
@@ -539,12 +555,12 @@ mod tests {
         let handle = TiffHandle::from_bytes(&data).unwrap();
         let provider = TIFFMetadataProvider::from_handle(&handle, 0).unwrap();
 
-        let filtered = provider.as_dict(Some("3"));
+        let filtered = provider.entries(Some("3"));
         for key in filtered.keys() {
             assert!(key.starts_with("3"), "Key '{}' should start with '3'", key);
         }
 
-        let filtered_34 = provider.as_dict(Some("34"));
+        let filtered_34 = provider.entries(Some("34"));
         for key in filtered_34.keys() {
             assert!(
                 key.starts_with("34"),
@@ -552,7 +568,7 @@ mod tests {
                 key
             );
         }
-        if provider.as_dict(None).contains_key("34735") {
+        if provider.entries(None).contains_key("34735") {
             assert!(filtered_34.contains_key("34735"));
         }
     }

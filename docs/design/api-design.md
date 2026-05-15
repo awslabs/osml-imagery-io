@@ -73,7 +73,11 @@ direction TB
 
     class MetadataProvider {
         +raw BytesIO
-	    +as_dict(name: Optional[str]) Dict[str, Any]
+	    +entries(prefix: Optional[str]) Dict[str, Any]
+	    +get(key: str, default=None) Any
+	    +keys() list[str]
+	    +values() list[Any]
+	    +items() list[tuple[str, Any]]
     }
 
     class ImageAssetProvider {
@@ -195,7 +199,7 @@ The `GraphicsAssetProvider` interface provides access to vector graphics data wi
 The `GraphicsAssetProvider` trait extends `AssetProvider` without adding additional methods. This minimal design reflects that:
 
 1. Raw CGM data is accessed through the inherited `raw_asset()` method
-2. Graphic-specific metadata (display level, attachment level, location, bounds) is accessed via `metadata().as_dict()`
+2. Graphic-specific metadata (display level, attachment level, location, bounds) is accessed via the `metadata()` Mapping interface
 3. The library extracts raw CGM bytes but does not parse CGM content—users provide their own CGM parsing libraries
 
 ```mermaid

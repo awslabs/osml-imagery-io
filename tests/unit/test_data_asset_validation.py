@@ -10,9 +10,9 @@ def _write_des(desid=None, desver=None):
     """Helper to write a DES segment with given DESID/DESVER metadata."""
     meta = BufferedMetadataProvider()
     if desid is not None:
-        meta.set("DESID", desid)
+        meta["DESID"] = desid
     if desver is not None:
-        meta.set("DESVER", desver)
+        meta["DESVER"] = desver
 
     provider = BufferedDataAssetProvider.create(
         key="des:0",

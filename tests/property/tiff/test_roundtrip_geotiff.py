@@ -46,22 +46,19 @@ def _write_geotiff(path, hints):
     """Write a minimal GeoTIFF with the given metadata hints.
 
     Creates a small 64x64 single-band UInt8 image with the GeoTIFF
-    encoding hints applied via BufferedMetadataProvider.set_json.
+    encoding hints applied via BufferedMetadataProvider subscript assignment.
     All keys are raw numeric tag IDs (e.g. "34735", "33550").
     """
     metadata = BufferedMetadataProvider()
 
     # TIFF encoding hints (tile layout) — use numeric tag IDs
-    metadata.set("322", "64")    # TileWidth
-    metadata.set("323", "64")    # TileLength
-    metadata.set_json("259", 1)  # Compression (None)
+    metadata["322"] = "64"       # TileWidth
+    metadata["323"] = "64"       # TileLength
+    metadata["259"] = 1          # Compression (None)
 
     # GeoTIFF encoding hints (raw numeric tags)
     for key, value in hints.items():
-        if isinstance(value, str):
-            metadata.set(key, value)
-        else:
-            metadata.set_json(key, value)
+        metadata[key] = value
 
     num_rows, num_cols, num_bands = 64, 64, 1
     array = np.zeros((num_bands, num_rows, num_cols), dtype=np.uint8)
@@ -102,7 +99,7 @@ def _read_geo_metadata(path):
     """
     reader = IO.open([str(path)], "r")
     asset = reader.get_asset("image:0")
-    full = asset.metadata.as_dict()
+    full = asset.metadata.entries()
     return {k: v for k, v in full.items() if k in _GEOTIFF_TAGS}
 
 

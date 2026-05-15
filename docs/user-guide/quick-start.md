@@ -174,17 +174,14 @@ data = np.random.randint(0, 255, (3, 512, 512), dtype=np.uint8)
 
 # Set up encoding hints
 metadata = BufferedMetadataProvider()
-tag_dict = metadata.as_dict()
+tag_dict = metadata.entries()
 resolver = TagNameResolver(tag_dict)
 resolver["Compression"] = "Deflate"
 resolver["TileWidth"] = 256
 resolver["TileLength"] = 256
 resolver["Predictor"] = 2
 for key, value in tag_dict.items():
-    if isinstance(value, str):
-        metadata.set(key, value)
-    else:
-        metadata.set_json(key, value)
+    metadata[key] = value
 
 # Create the image asset
 provider = BufferedImageAssetProvider.create(

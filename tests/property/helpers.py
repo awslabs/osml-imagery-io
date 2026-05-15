@@ -116,10 +116,10 @@ def write_tiff_native(cfg: dict, array_chw: np.ndarray) -> Path:
     tile_h = (rps + 15) & ~15
 
     metadata = BufferedMetadataProvider()
-    metadata.set("322", str(tile_w))         # TileWidth
-    metadata.set("323", str(tile_h))         # TileLength
-    metadata.set_json("259", comp_tag)       # Compression
-    metadata.set_json("284", 1)              # PlanarConfiguration = Chunky
+    metadata["322"] = str(tile_w)            # TileWidth
+    metadata["323"] = str(tile_h)            # TileLength
+    metadata["259"] = comp_tag               # Compression
+    metadata["284"] = 1                      # PlanarConfiguration = Chunky
 
     provider = BufferedImageAssetProvider.create(
         key="image:0",
@@ -213,7 +213,7 @@ def write_and_read_jbp(
     try:
         metadata = BufferedMetadataProvider()
         for k, v in metadata_hints.items():
-            metadata.set(k, v)
+            metadata[k] = v
 
         provider = BufferedImageAssetProvider.create(
             key="image:0",
@@ -264,8 +264,7 @@ def write_and_read_tiff(
         num_bands: Number of bands.
         num_rows: Number of rows.
         num_cols: Number of columns.
-        hints: Dict of encoding hints. String values are set via ``set()``,
-            non-string values (ints) via ``set_json()``.
+        hints: Dict of encoding hints (key/value pairs set on the metadata provider).
 
     Returns:
         Decoded image array in BSQ format (bands, rows, cols).
@@ -276,10 +275,7 @@ def write_and_read_tiff(
     try:
         metadata = BufferedMetadataProvider()
         for k, v in hints.items():
-            if isinstance(v, str):
-                metadata.set(k, v)
-            else:
-                metadata.set_json(k, v)
+            metadata[k] = v
 
         tile_w = int(hints.get("322", "256"))   # TileWidth
         tile_h = int(hints.get("323", "256"))   # TileLength
@@ -429,7 +425,7 @@ def write_masked_jbp(
 
     metadata = BufferedMetadataProvider()
     for k, v in metadata_hints.items():
-        metadata.set(k, v)
+        metadata[k] = v
 
     provider = BufferedImageAssetProvider.create(
         key="image:0",
@@ -532,7 +528,7 @@ def write_and_read_jpeg(
 
     try:
         metadata = BufferedMetadataProvider()
-        metadata.set("JPEG_QUALITY", str(quality))
+        metadata["JPEG_QUALITY"] = str(quality)
 
         provider = BufferedImageAssetProvider.create(
             key="image:0",
@@ -599,10 +595,7 @@ def write_and_read_png(
         metadata = BufferedMetadataProvider()
         if metadata_hints:
             for k, v in metadata_hints.items():
-                if isinstance(v, str):
-                    metadata.set(k, v)
-                else:
-                    metadata.set_json(k, v)
+                metadata[k] = v
 
         provider = BufferedImageAssetProvider.create(
             key="image:0",

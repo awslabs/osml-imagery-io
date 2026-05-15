@@ -282,7 +282,7 @@ mod tests {
         let data = make_valid_dted(3, 4);
         let reader = DTEDDatasetReader::from_bytes(&data).unwrap();
         let meta = reader.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
         assert!(dict.contains_key("dted:origin_longitude"));
         assert!(dict.contains_key("dted:level"));
     }

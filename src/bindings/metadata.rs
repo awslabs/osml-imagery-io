@@ -1,24 +1,21 @@
 //! Python bindings for MetadataProvider.
 //!
 //! This module provides the PyMetadataProvider wrapper that exposes the
-//! MetadataProvider trait to Python.
+//! MetadataProvider trait to Python via the `collections.abc.Mapping` protocol.
 
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 use crate::traits::MetadataProvider;
 
-/// Provides access to key-value metadata associated with a dataset or asset.
+/// A read-only metadata provider implementing the ``collections.abc.Mapping`` protocol.
 ///
-/// Every dataset and asset exposes metadata through a ``MetadataProvider``.
-/// You can retrieve metadata as a Python dictionary via :meth:`as_dict`, with
-/// an optional prefix filter to select a group of related fields, or obtain
-/// the underlying bytes in their original binary format via the :attr:`raw`
-/// property. The dictionary values are native Python types — ``str``, ``int``,
-/// ``list``, or nested ``dict`` — depending on how the field is defined in the
-/// format's structure definition.
+/// ``MetadataProvider`` exposes metadata as a dictionary-like object. You can
+/// access individual fields with bracket notation (``metadata["IC"]``), iterate
+/// keys, check membership with ``in``, and convert to a plain ``dict`` via
+/// :meth:`entries` or ``dict(metadata)``.
 ///
 /// You typically obtain a ``MetadataProvider`` from a
 /// :class:`DatasetReader` or an :class:`AssetProvider` rather than creating
@@ -30,11 +27,13 @@ use crate::traits::MetadataProvider;
 /// from aws.osml.io import IO
 ///
 /// with IO.open(["image.ntf"], "r") as dataset:
-///     # All dataset-level metadata
-///     all_meta = dataset.metadata.as_dict()
-///
-///     # Only fields whose key starts with "FS" (file security)
-///     security = dataset.metadata.as_dict("FS")
+///     meta = dataset.metadata
+///     ic = meta["IC"]                      # KeyError if missing
+///     ic = meta.get("IC", "NC")            # default if missing
+///     all_meta = meta.entries()            # full dict (single Rust call)
+///     security = meta.entries("FS")        # prefix filter
+///     for key in meta:
+///         print(key, meta[key])
 /// ```
 #[pyclass(name = "MetadataProvider", subclass)]
 pub struct PyMetadataProvider {
@@ -61,7 +60,6 @@ impl PyMetadataProvider {
         let bytes = self.inner.raw();
         let py_bytes = PyBytes::new(py, bytes);
 
-        // Import io.BytesIO and create instance
         let io_module = py.import("io")?;
         let bytes_io_class = io_module.getattr("BytesIO")?;
         let bytes_io = bytes_io_class.call1((py_bytes,))?;
@@ -69,26 +67,118 @@ impl PyMetadataProvider {
         Ok(bytes_io.into())
     }
 
+    fn __getitem__<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Py<PyAny>> {
+        match self.inner.get_value(key) {
+            Some(value) => json_value_to_py(py, &value),
+            None => Err(pyo3::exceptions::PyKeyError::new_err(key.to_string())),
+        }
+    }
+
+    fn __contains__(&self, key: &str) -> bool {
+        self.inner.contains_key(key)
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+        let keys = self.inner.keys();
+        let py_list = PyList::new(py, &keys)?;
+        let iter = py_list.call_method0("__iter__")?;
+        Ok(iter.into())
+    }
+
+    fn __bool__(&self) -> bool {
+        !self.inner.is_empty()
+    }
+
+    fn __repr__<'py>(&self, py: Python<'py>) -> PyResult<String> {
+        let total = self.inner.len();
+        let keys = self.inner.keys();
+        let preview_count = keys.len().min(5);
+        let mut parts = Vec::with_capacity(preview_count);
+        for key in keys.iter().take(preview_count) {
+            if let Some(value) = self.inner.get_value(key) {
+                let py_val = json_value_to_py(py, &value)?;
+                let repr: String = py_val.bind(py).repr()?.extract()?;
+                parts.push(format!("'{}': {}", key, repr));
+            }
+        }
+        let ellipsis = if total > preview_count { ", ..." } else { "" };
+        Ok(format!(
+            "MetadataProvider({{{}{}}}, {} fields)",
+            parts.join(", "),
+            ellipsis,
+            total
+        ))
+    }
+
+    /// Retrieve the value for the given key, or a default if absent.
+    ///
+    /// :param key: The metadata field name.
+    /// :type key: str
+    /// :param default: Value to return if key is not present (default: None).
+    /// :returns: The value for the key, or the default.
+    #[pyo3(signature = (key, default=None))]
+    fn get<'py>(
+        &self,
+        py: Python<'py>,
+        key: &str,
+        default: Option<Py<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        match self.inner.get_value(key) {
+            Some(value) => json_value_to_py(py, &value),
+            None => Ok(default.unwrap_or_else(|| py.None())),
+        }
+    }
+
+    /// Return a list of all metadata keys.
+    fn keys<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+        let keys = self.inner.keys();
+        let py_list = PyList::new(py, &keys)?;
+        Ok(py_list.into())
+    }
+
+    /// Return a list of all metadata values.
+    fn values<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+        let keys = self.inner.keys();
+        let py_list = PyList::empty(py);
+        for key in &keys {
+            if let Some(value) = self.inner.get_value(key) {
+                py_list.append(json_value_to_py(py, &value)?)?;
+            }
+        }
+        Ok(py_list.into())
+    }
+
+    /// Return a list of (key, value) tuples.
+    fn items<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+        let keys = self.inner.keys();
+        let py_list = PyList::empty(py);
+        for key in &keys {
+            if let Some(value) = self.inner.get_value(key) {
+                let py_val = json_value_to_py(py, &value)?;
+                let tuple = PyTuple::new(py, &[key.into_pyobject(py)?.into_any(), py_val.bind(py).clone()])?;
+                py_list.append(tuple)?;
+            }
+        }
+        Ok(py_list.into())
+    }
+
     /// Return metadata as a Python dictionary, optionally filtered by key prefix.
     ///
     /// When *name* is provided, only keys that start with that prefix are
-    /// included. When omitted, all metadata fields are returned.
+    /// included. When omitted, all metadata fields are returned. This is the
+    /// fast path for bulk export (single Rust→Python crossing).
     ///
     /// :param name: Key prefix used to filter the returned fields.
     /// :type name: str, optional
-    /// :returns: Metadata fields as a dictionary mapping string keys to
-    ///     native Python values (``str``, ``int``, ``list``, or ``dict``).
+    /// :returns: Metadata fields as a dictionary.
     /// :rtype: dict
-    ///
-    /// Example:
-    ///
-    /// ```python
-    /// all_meta = provider.as_dict()
-    /// security = provider.as_dict("FS")
-    /// ```
     #[pyo3(signature = (name=None))]
-    fn as_dict<'py>(&self, py: Python<'py>, name: Option<&str>) -> PyResult<Py<PyAny>> {
-        let metadata = self.inner.as_dict(name);
+    fn entries<'py>(&self, py: Python<'py>, name: Option<&str>) -> PyResult<Py<PyAny>> {
+        let metadata = self.inner.entries(name);
         let dict = PyDict::new(py);
 
         for (key, value) in metadata {
@@ -101,7 +191,7 @@ impl PyMetadataProvider {
 }
 
 /// Converts a serde_json::Value to a Python object.
-fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<PyAny>> {
+pub(crate) fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<PyAny>> {
     match value {
         serde_json::Value::Null => Ok(py.None()),
         serde_json::Value::Bool(b) => Ok((*b).into_pyobject(py)?.to_owned().into_any().unbind()),
@@ -113,7 +203,6 @@ fn json_value_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<Py
             } else if let Some(f) = n.as_f64() {
                 Ok(f.into_pyobject(py)?.into_any().unbind())
             } else {
-                // Fallback: convert to string
                 Ok(n.to_string().into_pyobject(py)?.into_any().unbind())
             }
         }

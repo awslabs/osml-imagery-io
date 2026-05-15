@@ -66,7 +66,7 @@ class TestBlockAccessCompleteness:
         try:
             # Create metadata for uncompressed (IC=NC) - simplest case for block access
             metadata = BufferedMetadataProvider()
-            metadata.set("IC", "NC")
+            metadata["IC"] = "NC"
 
             # Create image provider with specified block size
             provider = BufferedImageAssetProvider.create(
@@ -193,7 +193,7 @@ class TestBlockReassembly:
         try:
             # Create metadata for uncompressed (IC=NC) - simplest case for block access
             metadata = BufferedMetadataProvider()
-            metadata.set("IC", "NC")
+            metadata["IC"] = "NC"
 
             # Create image provider with specified block size
             provider = BufferedImageAssetProvider.create(
@@ -311,7 +311,7 @@ class TestInvalidBlockCoordinates:
         try:
             # Create metadata for uncompressed (IC=NC) - simplest case for block access
             metadata = BufferedMetadataProvider()
-            metadata.set("IC", "NC")
+            metadata["IC"] = "NC"
 
             # Create image provider with specified block size
             provider = BufferedImageAssetProvider.create(
@@ -428,9 +428,9 @@ class TestResolutionLevels:
 
             # Create metadata for J2K lossless compression with multiple decomposition levels
             metadata = BufferedMetadataProvider()
-            metadata.set("IC", "C8")  # JPEG 2000
-            metadata.set("COMRAT", "N1.0")  # Lossless
-            metadata.set("J2K_DECOMPOSITION_LEVELS", str(decomp_levels))
+            metadata["IC"] = "C8"  # JPEG 2000
+            metadata["COMRAT"] = "N1.0"  # Lossless
+            metadata["J2K_DECOMPOSITION_LEVELS"] = str(decomp_levels)
 
             # Use block size equal to image size (single tile)
             block_width = num_cols
@@ -603,9 +603,9 @@ class TestBandSelection:
 
         try:
             metadata = BufferedMetadataProvider()
-            metadata.set("IC", ic_code)
+            metadata["IC"] = ic_code
             for k, v in extra_hints.items():
-                metadata.set(k, v)
+                metadata[k] = v
 
             provider = BufferedImageAssetProvider.create(
                 key="image:0",
@@ -698,9 +698,9 @@ class TestBandSelection:
 
         try:
             metadata = BufferedMetadataProvider()
-            metadata.set("IC", ic_code)
+            metadata["IC"] = ic_code
             for k, v in extra_hints.items():
-                metadata.set(k, v)
+                metadata[k] = v
 
             block_w = min(num_cols, 64)
             block_h = min(num_rows, 64)

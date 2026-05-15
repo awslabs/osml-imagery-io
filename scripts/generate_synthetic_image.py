@@ -600,19 +600,19 @@ class ImageWriter:
 
         # NITF-specific metadata (IMODE, IC, COMRAT)
         if config.io_format == "nitf":
-            metadata.set("IMODE", config.imode)
-            metadata.set("IC", config.effective_ic)
+            metadata["IMODE"] = config.imode
+            metadata["IC"] = config.effective_ic
             if config.compression == "j2k" and config.comrat:
-                metadata.set("COMRAT", config.comrat)
+                metadata["COMRAT"] = config.comrat
             if config.compression == "jpeg" and config.comrat:
-                metadata.set("COMRAT", config.comrat)
+                metadata["COMRAT"] = config.comrat
 
         # TIFF-specific metadata: use TagNameResolver to convert human-readable
         # tag names to the numeric string keys the writer expects.
         if config.io_format == "tiff":
             from aws.osml.io.tiff.utils import TagNameResolver
 
-            tag_dict = metadata.as_dict()
+            tag_dict = metadata.entries()
             resolver = TagNameResolver(tag_dict)
             resolver["TileWidth"] = config.tile_width
             resolver["TileLength"] = config.tile_height
@@ -621,22 +621,18 @@ class ImageWriter:
             resolver["Compression"] = config.compression.capitalize() if config.compression != "none" else "None"
             # Write resolved numeric keys back into the metadata provider.
             # Integer values must stay as integers — the Rust writer expects
-            # numeric types for tags like Compression (259).  Use set_json()
-            # for non-string values so the type is preserved.
+            # numeric types for tags like Compression (259).
             for key, value in tag_dict.items():
-                if isinstance(value, str):
-                    metadata.set(key, value)
-                else:
-                    metadata.set_json(key, value)
+                metadata[key] = value
 
         # J2K-specific metadata (lossless flag)
         if config.io_format == "j2k":
             # J2K format always uses j2k compression; lossless is the default
-            metadata.set("J2K_LOSSLESS", "true")
+            metadata["J2K_LOSSLESS"] = "true"
 
         # JPEG-specific metadata (quality)
         if config.io_format == "jpeg":
-            metadata.set("JPEG_QUALITY", "85")
+            metadata["JPEG_QUALITY"] = "85"
 
         # Build description string
         if config.io_format == "nitf":

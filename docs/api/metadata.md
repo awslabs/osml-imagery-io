@@ -20,11 +20,10 @@
 
 ## TIFF Tag Dictionary Key Format
 
-For TIFF/GeoTIFF files, the dictionary returned by `as_dict()` uses numeric
-tag ID strings as keys. Each key is the string representation of the TIFF tag
-number as defined in the TIFF 6.0 specification. For example, `ImageWidth`
-(tag 256) appears under the key `"256"`, and `Compression` (tag 259) appears
-under `"259"`.
+For TIFF/GeoTIFF files, metadata uses numeric tag ID strings as keys. Each key
+is the string representation of the TIFF tag number as defined in the TIFF 6.0
+specification. For example, `ImageWidth` (tag 256) appears under the key
+`"256"`, and `Compression` (tag 259) appears under `"259"`.
 
 This applies to all IFD-level tags, including GeoTIFF tags such as
 `GeoKeyDirectory` (tag 34735), `ModelPixelScale` (tag 33550), and private-use
@@ -38,7 +37,7 @@ Dataset-level entries that are not TIFF tags (e.g. `"ByteOrder"`,
 from aws.osml.io import IO
 
 with IO.open(["image.tif"], "r") as dataset:
-    meta = dataset.metadata.as_dict()
+    meta = dataset.metadata
 
     width = meta["256"]          # ImageWidth
     height = meta["257"]         # ImageLength
@@ -46,7 +45,7 @@ with IO.open(["image.tif"], "r") as dataset:
     byte_order = meta["ByteOrder"]  # dataset-level, not a tag
 
     # Prefix filtering works on numeric keys
-    tags_starting_with_3 = dataset.metadata.as_dict("3")
+    tags_starting_with_3 = dataset.metadata.entries("3")
     # Returns keys like "322" (TileWidth), "339" (SampleFormat),
     # "34735" (GeoKeyDirectory), etc.
 ```
@@ -73,7 +72,7 @@ from aws.osml.io import IO
 from aws.osml.io.tiff.utils import TagNameResolver
 
 with IO.open(["image.tif"], "r") as dataset:
-    meta = dataset.metadata.as_dict()
+    meta = dataset.metadata.entries()
     tags = TagNameResolver(meta)
 
     # Name-based lookup

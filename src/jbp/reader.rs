@@ -1491,7 +1491,7 @@ mod tests {
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
 
         let metadata = reader.metadata();
-        let dict = metadata.as_dict(None);
+        let dict = metadata.entries(None);
 
         // Should have file header fields
         assert!(dict.contains_key("FHDR"));
@@ -1505,7 +1505,7 @@ mod tests {
         let reader = JBPDatasetReader::from_bytes(&data).unwrap();
 
         let metadata = reader.metadata();
-        let dict = metadata.as_dict(Some("FS"));
+        let dict = metadata.entries(Some("FS"));
 
         // Should only have security fields
         for key in dict.keys() {
@@ -1659,7 +1659,7 @@ mod property_tests {
 
                 // Verify metadata is accessible
                 let metadata = asset.metadata();
-                let dict = metadata.as_dict(None);
+                let dict = metadata.entries(None);
                 // Should have at least the IM field (uppercase per .ksy convention)
                 prop_assert!(
                     dict.contains_key("IM"),
@@ -1688,7 +1688,7 @@ mod property_tests {
                 );
 
                 let metadata = asset.metadata();
-                let dict = metadata.as_dict(None);
+                let dict = metadata.entries(None);
                 prop_assert!(
                     dict.contains_key("SY"),
                     "Graphic segment {} metadata missing SY field",
@@ -1717,7 +1717,7 @@ mod property_tests {
                 );
 
                 let metadata = asset.metadata();
-                let dict = metadata.as_dict(None);
+                let dict = metadata.entries(None);
                 prop_assert!(
                     dict.contains_key("TE"),
                     "Text segment {} metadata missing TE field",
@@ -1745,7 +1745,7 @@ mod property_tests {
                 );
 
                 let metadata = asset.metadata();
-                let dict = metadata.as_dict(None);
+                let dict = metadata.entries(None);
                 prop_assert!(
                     dict.contains_key("DE"),
                     "DES segment {} metadata missing DE field",
@@ -2033,7 +2033,7 @@ mod tre_property_tests {
                 // Verify metadata is accessible
                 let asset = asset.unwrap();
                 let metadata = asset.metadata();
-                let dict = metadata.as_dict(None);
+                let dict = metadata.entries(None);
 
                 // Should have at least the IM field from subheader (uppercase per .ksy convention)
                 prop_assert!(
@@ -2084,7 +2084,7 @@ mod tre_property_tests {
             let metadata = asset.metadata();
 
             // Get all metadata fields
-            let dict = metadata.as_dict(None);
+            let dict = metadata.entries(None);
 
             // Verify subheader fields are present (uppercase per .ksy convention)
             prop_assert!(
@@ -2127,12 +2127,12 @@ mod tre_property_tests {
         let asset = reader.get_asset("image:0").unwrap();
         let metadata = asset.metadata();
 
-        // Verify we can call as_dict without errors
-        let dict = metadata.as_dict(None);
+        // Verify we can call entries without errors
+        let dict = metadata.entries(None);
         assert!(!dict.is_empty(), "Metadata should have fields");
 
         // Verify prefix filtering works
-        let _filtered = metadata.as_dict(Some("IM"));
+        let _filtered = metadata.entries(Some("IM"));
         // IM field should be present (or filtered results may be empty if no match)
         // The important thing is that it doesn't error
     }
@@ -2245,7 +2245,7 @@ mod nitf_integration_tests {
                 files_tested += 1;
 
                 let metadata = asset.metadata();
-                let dict = metadata.as_dict(None);
+                let dict = metadata.entries(None);
 
                 // Check for UDIDL field (TRE length field after band_info)
                 if dict.contains_key("UDIDL") {
@@ -2356,7 +2356,7 @@ mod nitf_integration_tests {
                 files_tested += 1;
 
                 let metadata = asset.metadata();
-                let dict = metadata.as_dict(None);
+                let dict = metadata.entries(None);
 
                 // Verify that we have fields from different parts of the subheader
                 // Early fields (before BAND_INFO) - uppercase per .ksy convention

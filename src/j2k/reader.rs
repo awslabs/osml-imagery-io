@@ -642,7 +642,7 @@ mod tests {
 
         // Check metadata
         let meta = reader.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
         assert_eq!(dict.get("width").and_then(|v| v.as_u64()), Some(64));
         assert_eq!(dict.get("height").and_then(|v| v.as_u64()), Some(64));
         assert_eq!(dict.get("num_components").and_then(|v| v.as_u64()), Some(1));
@@ -807,7 +807,7 @@ mod tests {
         let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
 
         let meta = reader.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
         assert_eq!(
             dict.get("bits_per_component").and_then(|v| v.as_u64()),
             Some(16)

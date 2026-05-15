@@ -66,7 +66,7 @@ with IO.open("satellite_scene.ntf", "r") as dataset:
         print(key)  # "image:0", "image:1", "text:0", "data:0", ...
 
     image = dataset.get_asset("image:0")
-    meta = image.metadata.as_dict()
+    meta = image.metadata.entries()
 
     # Rational polynomial coefficients for geopositioning
     rpc = meta["RPC00B"]

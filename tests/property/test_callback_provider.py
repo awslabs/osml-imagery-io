@@ -88,7 +88,7 @@ def write_and_read_callback(array, pixel_type, num_bands, num_rows, num_cols, bl
         path = Path(f.name)
     try:
         metadata = BufferedMetadataProvider()
-        metadata.set("IC", "NC")
+        metadata["IC"] = "NC"
 
         provider = DuckTypedProvider(
             num_rows=num_rows,
@@ -214,7 +214,7 @@ class TestPythonExceptionPropagation:
             path = Path(f.name)
         try:
             metadata = BufferedMetadataProvider()
-            metadata.set("IC", "NC")
+            metadata["IC"] = "NC"
 
             writer = IO.open([str(path)], "w", "nitf")
             writer.metadata = metadata

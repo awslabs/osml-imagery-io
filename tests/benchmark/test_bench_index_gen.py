@@ -53,7 +53,7 @@ def test_bench_index_generation(benchmark, dataset_entry, tmp_path):
             total_tiles += grid_rows * grid_cols
             # Try to extract compression from asset metadata
             try:
-                meta = asset.metadata.as_dict()
+                meta = asset.metadata.entries()
                 if "IC" in meta:
                     compression = meta["IC"]
             except Exception:

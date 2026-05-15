@@ -77,7 +77,7 @@ def survey_file(filepath: Path) -> dict | None:
             if not hasattr(asset, "num_columns"):
                 return None
 
-            meta = asset.metadata.as_dict()
+            meta = asset.metadata.entries()
             media = getattr(asset, "media_type", "")
 
             # Format-specific fields

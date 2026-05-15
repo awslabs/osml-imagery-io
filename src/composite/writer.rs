@@ -167,7 +167,7 @@ mod tests {
             &[]
         }
 
-        fn as_dict(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
+        fn entries(&self, _name: Option<&str>) -> HashMap<String, serde_json::Value> {
             HashMap::new()
         }
     }

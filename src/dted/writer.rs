@@ -51,7 +51,7 @@ impl DTEDDatasetWriter {
 
     fn get_metadata_str(&self, key: &str) -> Option<String> {
         self.metadata.as_ref().and_then(|m| {
-            let dict = m.as_dict(None);
+            let dict = m.entries(None);
             dict.get(key).and_then(|v| {
                 v.as_str()
                     .map(|s| s.to_string())
@@ -62,14 +62,14 @@ impl DTEDDatasetWriter {
 
     fn get_metadata_u16(&self, key: &str) -> Option<u16> {
         self.metadata.as_ref().and_then(|m| {
-            let dict = m.as_dict(None);
+            let dict = m.entries(None);
             dict.get(key).and_then(|v| v.as_u64().map(|n| n as u16))
         })
     }
 
     fn get_metadata_f64(&self, key: &str) -> Option<f64> {
         self.metadata.as_ref().and_then(|m| {
-            let dict = m.as_dict(None);
+            let dict = m.entries(None);
             dict.get(key).and_then(|v| v.as_f64())
         })
     }
@@ -459,22 +459,22 @@ mod tests {
         lat_interval: u16,
     ) -> Arc<BufferedMetadataProvider> {
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("dted:origin_longitude", json!(origin_lon));
-        meta.set_json("dted:origin_latitude", json!(origin_lat));
-        meta.set_json("dted:longitude_interval", json!(lon_interval));
-        meta.set_json("dted:latitude_interval", json!(lat_interval));
-        meta.set("dted:level", "DTED1");
-        meta.set("dted:security_code", "U");
-        meta.set("dted:vertical_datum", "MSL");
-        meta.set("dted:horizontal_datum", "WGS84");
-        meta.set("dted:producer_code", "US");
-        meta.set("dted:edition_number", "01");
-        meta.set("dted:compilation_date", "0101");
-        meta.set("dted:partial_cell_indicator", "00");
-        meta.set("dted:absolute_horizontal_accuracy", "0050");
-        meta.set("dted:absolute_vertical_accuracy", "0030");
-        meta.set("dted:relative_vertical_accuracy", "0020");
-        meta.set_json("dted:vertical_accuracy", json!(20));
+        meta.set("dted:origin_longitude", json!(origin_lon));
+        meta.set("dted:origin_latitude", json!(origin_lat));
+        meta.set("dted:longitude_interval", json!(lon_interval));
+        meta.set("dted:latitude_interval", json!(lat_interval));
+        meta.set("dted:level", serde_json::json!("DTED1"));
+        meta.set("dted:security_code", serde_json::json!("U"));
+        meta.set("dted:vertical_datum", serde_json::json!("MSL"));
+        meta.set("dted:horizontal_datum", serde_json::json!("WGS84"));
+        meta.set("dted:producer_code", serde_json::json!("US"));
+        meta.set("dted:edition_number", serde_json::json!("01"));
+        meta.set("dted:compilation_date", serde_json::json!("0101"));
+        meta.set("dted:partial_cell_indicator", serde_json::json!("00"));
+        meta.set("dted:absolute_horizontal_accuracy", serde_json::json!("0050"));
+        meta.set("dted:absolute_vertical_accuracy", serde_json::json!("0030"));
+        meta.set("dted:relative_vertical_accuracy", serde_json::json!("0020"));
+        meta.set("dted:vertical_accuracy", json!(20));
         Arc::new(meta)
     }
 
@@ -743,7 +743,7 @@ mod tests {
         // Read back and check metadata
         let reader = DTEDDatasetReader::from_bytes(&written).unwrap();
         let meta = reader.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
         assert_eq!(
             dict.get("dted:horizontal_datum").unwrap().as_str(),
             Some("WGS84")

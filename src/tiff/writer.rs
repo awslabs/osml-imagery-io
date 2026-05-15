@@ -87,7 +87,7 @@ impl TiffEncodingHints {
     /// `CodecError::InvalidFormat`. Use the Python `TagNameResolver` to
     /// convert human-readable names to numeric values before reaching Rust.
     fn from_metadata(metadata: &dyn MetadataProvider) -> Result<Self, CodecError> {
-        let dict = metadata.as_dict(None);
+        let dict = metadata.entries(None);
         let mut hints = TiffEncodingHints::default();
 
         // Tag 322: TileWidth
@@ -967,7 +967,7 @@ impl TIFFDatasetWriter {
         // Write GeoTIFF tags from metadata encoding hints.
         // Overview IFDs (nsft == 1) do NOT get GeoTIFF tags per OGC COG Standard.
         if let Some(meta) = metadata {
-            let dict = meta.as_dict(None);
+            let dict = meta.entries(None);
 
             if nsft == 0 {
                 // Build and write GeoKey directory (tags 34735, 34736, 34737)
@@ -1347,15 +1347,15 @@ mod tests {
         let mut writer = TIFFDatasetWriter::new("/tmp/test.tif").unwrap();
 
         let meta1 = BufferedMetadataProvider::new();
-        meta1.set("Compression", "LZW");
+        meta1.set("Compression", serde_json::json!("LZW"));
         writer.set_metadata(Arc::new(meta1)).unwrap();
 
         let meta2 = BufferedMetadataProvider::new();
-        meta2.set("Compression", "None");
+        meta2.set("Compression", serde_json::json!("None"));
         writer.set_metadata(Arc::new(meta2)).unwrap();
 
         // The latest metadata should be used
-        let dict = writer.metadata.as_ref().unwrap().as_dict(None);
+        let dict = writer.metadata.as_ref().unwrap().entries(None);
         assert_eq!(dict.get("Compression"), Some(&serde_json::json!("None")));
     }
 
@@ -1376,7 +1376,7 @@ mod tests {
     #[test]
     fn writer_parse_compression_none() {
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("259", serde_json::json!(1)); // Tag 259 = Compression
+        meta.set("259", serde_json::json!(1)); // Tag 259 = Compression
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.compression, tags::COMPRESSION_NONE);
     }
@@ -1384,7 +1384,7 @@ mod tests {
     #[test]
     fn writer_parse_compression_lzw() {
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("259", serde_json::json!(5)); // Tag 259 = Compression
+        meta.set("259", serde_json::json!(5)); // Tag 259 = Compression
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.compression, tags::COMPRESSION_LZW);
     }
@@ -1392,7 +1392,7 @@ mod tests {
     #[test]
     fn writer_parse_compression_deflate() {
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("259", serde_json::json!(8)); // Tag 259 = Compression
+        meta.set("259", serde_json::json!(8)); // Tag 259 = Compression
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.compression, tags::COMPRESSION_DEFLATE);
     }
@@ -1400,7 +1400,7 @@ mod tests {
     #[test]
     fn writer_parse_predictor_horizontal() {
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("317", serde_json::json!(2)); // Tag 317 = Predictor
+        meta.set("317", serde_json::json!(2)); // Tag 317 = Predictor
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 2);
     }
@@ -1408,7 +1408,7 @@ mod tests {
     #[test]
     fn writer_parse_predictor_none() {
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("317", serde_json::json!(1)); // Tag 317 = Predictor
+        meta.set("317", serde_json::json!(1)); // Tag 317 = Predictor
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 1);
     }
@@ -1416,7 +1416,7 @@ mod tests {
     #[test]
     fn writer_predictor_default_with_lzw_compression() {
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("259", serde_json::json!(5)); // Tag 259 = LZW
+        meta.set("259", serde_json::json!(5)); // Tag 259 = LZW
                                                     // No explicit Predictor → should default to Horizontal (2)
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 2);
@@ -1425,7 +1425,7 @@ mod tests {
     #[test]
     fn writer_predictor_default_with_deflate_compression() {
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("259", serde_json::json!(8)); // Tag 259 = Deflate
+        meta.set("259", serde_json::json!(8)); // Tag 259 = Deflate
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 2);
     }
@@ -1433,7 +1433,7 @@ mod tests {
     #[test]
     fn writer_predictor_default_without_compression() {
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("259", serde_json::json!(1)); // Tag 259 = None
+        meta.set("259", serde_json::json!(1)); // Tag 259 = None
                                                     // No explicit Predictor + no compression → should default to None (1)
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 1);
@@ -1442,8 +1442,8 @@ mod tests {
     #[test]
     fn writer_parse_tile_dimensions() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("322", "512"); // Tag 322 = TileWidth
-        meta.set("323", "128"); // Tag 323 = TileLength
+        meta.set("322", serde_json::json!("512")); // Tag 322 = TileWidth
+        meta.set("323", serde_json::json!("128")); // Tag 323 = TileLength
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.tile_width, 512);
         assert_eq!(hints.tile_height, 128);
@@ -1452,7 +1452,7 @@ mod tests {
     #[test]
     fn writer_parse_planar_configuration_chunky() {
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("284", serde_json::json!(1)); // Tag 284 = PlanarConfiguration
+        meta.set("284", serde_json::json!(1)); // Tag 284 = PlanarConfiguration
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.planar_config, tags::PLANAR_CONFIG_CONTIG);
     }
@@ -1460,7 +1460,7 @@ mod tests {
     #[test]
     fn writer_parse_planar_configuration_planar() {
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("284", serde_json::json!(2)); // Tag 284 = PlanarConfiguration
+        meta.set("284", serde_json::json!(2)); // Tag 284 = PlanarConfiguration
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.planar_config, tags::PLANAR_CONFIG_SEPARATE);
     }
@@ -1468,7 +1468,7 @@ mod tests {
     #[test]
     fn writer_parse_invalid_compression_returns_error() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("259", "JPEG"); // String values should be rejected
+        meta.set("259", serde_json::json!("JPEG")); // String values should be rejected
         let result = TiffEncodingHints::from_metadata(&meta);
         assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
     }
@@ -1476,7 +1476,7 @@ mod tests {
     #[test]
     fn writer_parse_invalid_predictor_returns_error() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("317", "FloatingPoint"); // String values should be rejected
+        meta.set("317", serde_json::json!("FloatingPoint")); // String values should be rejected
         let result = TiffEncodingHints::from_metadata(&meta);
         assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
     }
@@ -1484,7 +1484,7 @@ mod tests {
     #[test]
     fn writer_parse_string_compression_rejected() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("259", "Deflate"); // String "Deflate" should be rejected
+        meta.set("259", serde_json::json!("Deflate")); // String "Deflate" should be rejected
         let result = TiffEncodingHints::from_metadata(&meta);
         assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
     }
@@ -1492,7 +1492,7 @@ mod tests {
     #[test]
     fn writer_parse_string_predictor_rejected() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("317", "Horizontal"); // String "Horizontal" should be rejected
+        meta.set("317", serde_json::json!("Horizontal")); // String "Horizontal" should be rejected
         let result = TiffEncodingHints::from_metadata(&meta);
         assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
     }
@@ -1500,7 +1500,7 @@ mod tests {
     #[test]
     fn writer_parse_string_planar_config_rejected() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("284", "Chunky"); // String "Chunky" should be rejected
+        meta.set("284", serde_json::json!("Chunky")); // String "Chunky" should be rejected
         let result = TiffEncodingHints::from_metadata(&meta);
         assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
     }
@@ -1509,9 +1509,9 @@ mod tests {
     fn writer_ignores_non_numeric_metadata_keys() {
         // Human-readable names like "TileWidth" should be ignored
         let meta = BufferedMetadataProvider::new();
-        meta.set("TileWidth", "512");
-        meta.set("TileHeight", "128");
-        meta.set("Compression", "LZW");
+        meta.set("TileWidth", serde_json::json!("512"));
+        meta.set("TileHeight", serde_json::json!("128"));
+        meta.set("Compression", serde_json::json!("LZW"));
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         // Should all be defaults since non-numeric keys are ignored
         assert_eq!(hints.tile_width, DEFAULT_TILE_WIDTH);
@@ -1530,8 +1530,8 @@ mod tests {
     #[test]
     fn writer_metadata_overrides_provider_defaults() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("322", "512"); // Tag 322 = TileWidth
-        meta.set("323", "512"); // Tag 323 = TileLength
+        meta.set("322", serde_json::json!("512")); // Tag 322 = TileWidth
+        meta.set("323", serde_json::json!("512")); // Tag 323 = TileLength
         let mut hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         // Provider defaults should NOT override explicit metadata values
         hints.apply_provider_defaults(128, 64);
@@ -1746,17 +1746,17 @@ mod tests {
 
         let meta = BufferedMetadataProvider::new();
         // Build raw GeoKey directory: header + 2 keys (ModelType=Projected, ProjectedCRS=32618)
-        meta.set_json(
+        meta.set(
             "34735",
             serde_json::json!([1, 1, 1, 2, 1024, 0, 1, 1, 3072, 0, 1, 32618]),
         );
-        meta.set_json("33550", serde_json::json!([0.5, 0.5, 0.0]));
+        meta.set("33550", serde_json::json!([0.5, 0.5, 0.0]));
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         // Check GeoKey directory is present under numeric key
         assert!(dict.contains_key("34735"));
@@ -1772,8 +1772,8 @@ mod tests {
         // Reproduce the reported bug: GeoTIFF tags on the provider's metadata
         // should be written even when no dataset-level metadata is set.
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("33550", serde_json::json!([0.001, 0.001, 0.0]));
-        meta.set_json(
+        meta.set("33550", serde_json::json!([0.001, 0.001, 0.0]));
+        meta.set(
             "33922",
             serde_json::json!([0.0, 0.0, 0.0, -77.0, 39.0, 0.0]),
         );
@@ -1798,7 +1798,7 @@ mod tests {
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         assert_eq!(
             dict.get("33550"),
@@ -1820,9 +1820,9 @@ mod tests {
         // Encoding hints (compression, tile size) should be sourced from
         // the provider's metadata, not dataset-level metadata.
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("259", serde_json::json!(5)); // LZW compression
-        meta.set_json("322", serde_json::json!(512)); // TileWidth
-        meta.set_json("323", serde_json::json!(512)); // TileLength
+        meta.set("259", serde_json::json!(5)); // LZW compression
+        meta.set("322", serde_json::json!(512)); // TileWidth
+        meta.set("323", serde_json::json!(512)); // TileLength
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("provider_hints.tif");
@@ -1843,7 +1843,7 @@ mod tests {
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         assert_eq!(
             dict.get("259"),
@@ -1869,13 +1869,13 @@ mod tests {
 
         // No GeoTIFF numeric keys → plain TIFF
         let meta = BufferedMetadataProvider::new();
-        meta.set("Compression", "None");
+        meta.set("Compression", serde_json::json!("None"));
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         assert!(!dict.contains_key("34735"));
         assert!(!dict.contains_key("33550"));
@@ -1885,7 +1885,7 @@ mod tests {
     fn writer_geotiff_invalid_epsg_returns_encode_error() {
         let meta = BufferedMetadataProvider::new();
         // Non-array value for "34735" should cause an encode error
-        meta.set_json("34735", serde_json::json!("not an array"));
+        meta.set("34735", serde_json::json!("not an array"));
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad_epsg.tif");
@@ -1913,7 +1913,7 @@ mod tests {
     fn writer_geotiff_invalid_pixel_scale_returns_encode_error() {
         let meta = BufferedMetadataProvider::new();
         // ModelPixelScaleTag (33550) must be exactly 3 numbers
-        meta.set_json("33550", serde_json::json!([0.5, 0.5]));
+        meta.set("33550", serde_json::json!([0.5, 0.5]));
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad_scale.tif");
@@ -2051,13 +2051,13 @@ mod tests {
         use crate::traits::DatasetReader;
 
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("42113", serde_json::json!("nan"));
+        meta.set("42113", serde_json::json!("nan"));
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         assert_eq!(dict.get("42113"), Some(&serde_json::json!("nan")));
     }
@@ -2068,13 +2068,13 @@ mod tests {
         use crate::traits::DatasetReader;
 
         let meta = BufferedMetadataProvider::new();
-        meta.set_json("65000", serde_json::json!(42));
+        meta.set("65000", serde_json::json!(42));
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         assert!(dict.contains_key("65000"));
     }
@@ -2085,14 +2085,14 @@ mod tests {
         use crate::traits::DatasetReader;
 
         let meta = BufferedMetadataProvider::new();
-        meta.set("ByteOrder", "LittleEndian");
-        meta.set_json("42113", serde_json::json!("test"));
+        meta.set("ByteOrder", serde_json::json!("LittleEndian"));
+        meta.set("42113", serde_json::json!("test"));
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         // Numeric key should be present
         assert_eq!(dict.get("42113"), Some(&serde_json::json!("test")));
@@ -2111,7 +2111,7 @@ mod tests {
         use crate::traits::DatasetReader;
 
         let meta = BufferedMetadataProvider::new();
-        meta.set_json(
+        meta.set(
             "42113",
             serde_json::json!({"value": [72, 101, 108], "type": 7}),
         );
@@ -2120,7 +2120,7 @@ mod tests {
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         // Tag should be present — UNDEFINED type is read back as a byte array
         assert!(dict.contains_key("42113"));
@@ -2138,13 +2138,13 @@ mod tests {
 
         let meta = BufferedMetadataProvider::new();
         // Try to override ImageWidth (tag 256) — should be ignored
-        meta.set_json("256", serde_json::json!(9999));
+        meta.set("256", serde_json::json!(9999));
 
         let bytes = write_tiff_with_metadata(&meta);
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         // ImageWidth should be 256 (from the image provider), not 9999
         assert_eq!(dict.get("256"), Some(&serde_json::json!(256)));
@@ -2178,7 +2178,7 @@ mod tests {
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         // Tag 254 = NewSubfileType should be 1 (reduced-resolution image)
         assert_eq!(dict.get("254"), Some(&serde_json::json!(1)));
@@ -2193,12 +2193,12 @@ mod tests {
         // be suppressed because overview IFDs (nsft == 1) must not carry
         // GeoTIFF tags per the OGC COG Standard.
         let meta = BufferedMetadataProvider::new();
-        meta.set_json(
+        meta.set(
             "34735",
             serde_json::json!([1, 1, 1, 2, 1024, 0, 1, 1, 3072, 0, 1, 32618]),
         );
-        meta.set_json("33550", serde_json::json!([0.5, 0.5, 0.0]));
-        meta.set_json(
+        meta.set("33550", serde_json::json!([0.5, 0.5, 0.0]));
+        meta.set(
             "33922",
             serde_json::json!([0.0, 0.0, 0.0, 500000.0, 4000000.0, 0.0]),
         );
@@ -2223,7 +2223,7 @@ mod tests {
         // Single-IFD file → reader assigns key "image:0" regardless of NewSubfileType
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         // Overview IFD should NOT have any GeoTIFF tags
         assert!(
@@ -2276,7 +2276,7 @@ mod tests {
         let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
-        let dict = ifd_meta.as_dict(None);
+        let dict = ifd_meta.entries(None);
 
         // Tag 254 = NewSubfileType should be 0 (full-resolution image)
         assert_eq!(dict.get("254"), Some(&serde_json::json!(0)));
@@ -2606,13 +2606,13 @@ mod tests {
                 };
 
                 let meta = BufferedMetadataProvider::new();
-                meta.set_json(&tag_key, tag_value);
+                meta.set(&tag_key, tag_value);
 
                 let bytes = write_tiff_with_metadata(&meta);
                 let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
                 let asset = reader.get_asset("image:0").unwrap();
                 let ifd_meta = asset.metadata();
-                let dict = ifd_meta.as_dict(None);
+                let dict = ifd_meta.entries(None);
 
                 prop_assert!(
                     dict.contains_key(&tag_key),

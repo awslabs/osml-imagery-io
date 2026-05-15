@@ -4,8 +4,8 @@
 //! width, height, num_components, bits_per_component, is_signed, tile dimensions,
 //! and compression_type. Entries are stored as `HashMap<String, serde_json::Value>`.
 //!
-//! - `as_dict(None)` → all entries
-//! - `as_dict(Some(prefix))` → entries whose key starts with `prefix`
+//! - `entries(None)` → all entries
+//! - `entries(Some(prefix))` → entries whose key starts with `prefix`
 //! - `raw()` → empty slice (no single raw binary representation)
 
 use std::collections::HashMap;
@@ -48,8 +48,24 @@ impl MetadataProvider for J2KMetadataProvider {
         &[]
     }
 
-    fn as_dict(&self, name: Option<&str>) -> HashMap<String, Value> {
-        match name {
+    fn get_value(&self, key: &str) -> Option<Value> {
+        self.entries.get(key).cloned()
+    }
+
+    fn contains_key(&self, key: &str) -> bool {
+        self.entries.contains_key(key)
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn keys(&self) -> Vec<String> {
+        self.entries.keys().cloned().collect()
+    }
+
+    fn entries(&self, prefix: Option<&str>) -> HashMap<String, Value> {
+        match prefix {
             None => self.entries.clone(),
             Some(prefix) => self
                 .entries
@@ -83,9 +99,9 @@ mod tests {
     }
 
     #[test]
-    fn test_as_dict_none_returns_all_entries() {
+    fn test_entries_none_returns_all_entries() {
         let provider = sample_provider();
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert_eq!(dict.len(), 10);
         assert_eq!(dict.get("width").and_then(|v| v.as_u64()), Some(1024));
         assert_eq!(dict.get("height").and_then(|v| v.as_u64()), Some(768));
@@ -102,18 +118,18 @@ mod tests {
     }
 
     #[test]
-    fn test_as_dict_prefix_filters_correctly() {
+    fn test_entries_prefix_filters_correctly() {
         let provider = sample_provider();
-        let filtered = provider.as_dict(Some("tile"));
+        let filtered = provider.entries(Some("tile"));
         assert_eq!(filtered.len(), 2);
         assert!(filtered.contains_key("tile_width"));
         assert!(filtered.contains_key("tile_height"));
     }
 
     #[test]
-    fn test_as_dict_prefix_num() {
+    fn test_entries_prefix_num() {
         let provider = sample_provider();
-        let filtered = provider.as_dict(Some("num_"));
+        let filtered = provider.entries(Some("num_"));
         assert_eq!(filtered.len(), 3);
         assert!(filtered.contains_key("num_components"));
         assert!(filtered.contains_key("num_tiles_x"));
@@ -121,15 +137,15 @@ mod tests {
     }
 
     #[test]
-    fn test_as_dict_empty_prefix_returns_all() {
+    fn test_entries_empty_prefix_returns_all() {
         let provider = sample_provider();
-        assert_eq!(provider.as_dict(Some("")), provider.as_dict(None));
+        assert_eq!(provider.entries(Some("")), provider.entries(None));
     }
 
     #[test]
-    fn test_as_dict_unknown_prefix_returns_empty() {
+    fn test_entries_unknown_prefix_returns_empty() {
         let provider = sample_provider();
-        assert!(provider.as_dict(Some("zzz")).is_empty());
+        assert!(provider.entries(Some("zzz")).is_empty());
     }
 
     #[test]
@@ -141,8 +157,8 @@ mod tests {
     #[test]
     fn test_empty_provider() {
         let provider = J2KMetadataProvider::new(HashMap::new());
-        assert!(provider.as_dict(None).is_empty());
-        assert!(provider.as_dict(Some("any")).is_empty());
+        assert!(provider.entries(None).is_empty());
+        assert!(provider.entries(Some("any")).is_empty());
         assert!(provider.raw().is_empty());
     }
 
@@ -151,7 +167,7 @@ mod tests {
         let mut entries = HashMap::new();
         entries.insert("compression_type".to_string(), json!("jp2"));
         let provider = J2KMetadataProvider::new(entries);
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
         assert_eq!(
             dict.get("compression_type").and_then(|v| v.as_str()),
             Some("jp2")

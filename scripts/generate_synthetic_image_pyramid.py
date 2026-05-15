@@ -271,8 +271,8 @@ def write_rset(config: PyramidConfig) -> None:
             title = f"Overview {level}"
 
         metadata = BufferedMetadataProvider()
-        metadata.set("IC", "NC")
-        metadata.set("IMODE", "B")
+        metadata["IC"] = "NC"
+        metadata["IMODE"] = "B"
 
         provider = BufferedImageAssetProvider.create(
             key="image:0",

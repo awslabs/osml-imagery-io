@@ -252,8 +252,8 @@ class TestDecodeCorrectness:
         pixel_data = np.random.randint(0, 256, (bands, rows, cols), dtype=np.uint8)
 
         metadata = BufferedMetadataProvider()
-        metadata.set("IC", "C3")
-        metadata.set("IMODE", "P")
+        metadata["IC"] = "C3"
+        metadata["IMODE"] = "P"
 
         provider = BufferedImageAssetProvider.create(
             key="image:0",

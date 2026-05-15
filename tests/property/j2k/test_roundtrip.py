@@ -44,9 +44,9 @@ def _write_j2k(
         path = Path(f.name)
 
     metadata = BufferedMetadataProvider()
-    metadata.set_json("J2K_LOSSLESS", lossless)
+    metadata["J2K_LOSSLESS"] = lossless
     if not lossless:
-        metadata.set_json("J2K_COMPRESSION_RATIO", compression_ratio)
+        metadata["J2K_COMPRESSION_RATIO"] = compression_ratio
 
     provider = BufferedImageAssetProvider.create(
         key="image:0",

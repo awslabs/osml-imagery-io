@@ -90,7 +90,7 @@ impl JPEGDatasetWriter {
     /// Extract JPEG quality from metadata hints, defaulting to 75.
     fn quality_from_metadata(metadata: Option<&dyn MetadataProvider>) -> u8 {
         metadata
-            .map(|m| m.as_dict(None))
+            .map(|m| m.entries(None))
             .and_then(|d| d.get("JPEG_QUALITY").cloned())
             .and_then(|v| v.as_u64())
             .map(|v| (v as u8).clamp(1, 100))

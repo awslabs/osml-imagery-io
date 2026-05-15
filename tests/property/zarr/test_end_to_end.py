@@ -65,7 +65,7 @@ def _write_nitf(
 
     metadata = BufferedMetadataProvider()
     for k, v in metadata_hints.items():
-        metadata.set(k, v)
+        metadata[k] = v
 
     provider = BufferedImageAssetProvider.create(
         key="image:0",
@@ -106,9 +106,9 @@ def _write_tiff(
     metadata = BufferedMetadataProvider()
     for k, v in hints.items():
         if isinstance(v, str):
-            metadata.set(k, v)
+            metadata[k] = v
         else:
-            metadata.set_json(k, v)
+            metadata[k] = v
 
     tile_w = int(hints.get("322", "256"))
     tile_h = int(hints.get("323", "256"))

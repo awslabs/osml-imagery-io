@@ -141,7 +141,7 @@ Use `TagNameResolver` to convert human-readable names to numeric keys:
 
 ```python
 from aws.osml.io.tiff.utils import TagNameResolver
-tag_dict = metadata.as_dict()
+tag_dict = metadata.entries()
 resolver = TagNameResolver(tag_dict)
 resolver["TileWidth"] = "256"       # stores under key "322"
 resolver["Compression"] = "Deflate" # stores under key "259"
@@ -181,7 +181,7 @@ resolver["Compression"] = "Deflate" # stores under key "259"
 **Metadata mapping example**:
 ```python
 with IO.open(["image.tif"], "r") as reader:
-    meta = reader.metadata.as_dict()
+    meta = reader.metadata.entries()
     # Standard TIFF tags
     meta["ImageWidth"]       # "1024"
     meta["ImageLength"]      # "1024"

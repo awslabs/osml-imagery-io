@@ -113,7 +113,7 @@ def describe_image_asset(asset, show_metadata: bool, is_nitf: bool = False) -> N
     if show_metadata:
         print("    Metadata:")
         meta = asset.metadata
-        meta_dict = meta.as_dict()
+        meta_dict = meta.entries()
         if _is_tiff(asset):
             print(format_tiff_metadata(meta_dict, indent=6))
         else:
@@ -138,7 +138,7 @@ def describe_text_asset(asset, show_metadata: bool, is_nitf: bool = False) -> No
     if show_metadata:
         print("    Metadata:")
         meta = asset.metadata
-        meta_dict = meta.as_dict()
+        meta_dict = meta.entries()
         if is_nitf:
             meta_dict = _filter_nitf_metadata(meta_dict)
         print(format_metadata(meta_dict, indent=6))
@@ -161,8 +161,8 @@ def is_sicd_sidd_segment(asset) -> bool:
     """
     try:
         meta = asset.metadata
-        meta_dict = meta.as_dict()
-        desid = meta_dict.get("DESID", "").strip()
+        meta_dict = meta.entries()
+        desid = (meta_dict.get("DESID") or "").strip()
         sicd_sidd_ids = {"XML_DATA_CONTENT", "SICD_XML", "SIDD_XML"}
         if desid in sicd_sidd_ids or "SICD" in desid or "SIDD" in desid:
             return True
@@ -189,7 +189,7 @@ def describe_data_asset(asset, show_metadata: bool, is_nitf: bool = False) -> No
     if show_metadata:
         print("    Metadata:")
         meta = asset.metadata
-        meta_dict = meta.as_dict()
+        meta_dict = meta.entries()
         if is_nitf:
             meta_dict = _filter_nitf_metadata(meta_dict)
         print(format_metadata(meta_dict, indent=6))
@@ -216,7 +216,7 @@ def describe_generic_asset(asset, show_metadata: bool, is_nitf: bool = False) ->
     if show_metadata:
         print("    Metadata:")
         meta = asset.metadata
-        meta_dict = meta.as_dict()
+        meta_dict = meta.entries()
         if is_nitf:
             meta_dict = _filter_nitf_metadata(meta_dict)
         print(format_metadata(meta_dict, indent=6))
@@ -251,7 +251,7 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
                 print("File Metadata:")
                 print("-" * 40)
                 file_meta = reader.metadata
-                meta_dict = file_meta.as_dict()
+                meta_dict = file_meta.entries()
                 if is_nitf:
                     meta_dict = _filter_nitf_metadata(meta_dict)
                 print(format_metadata(meta_dict))

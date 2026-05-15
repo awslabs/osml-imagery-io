@@ -124,7 +124,7 @@ impl J2KDatasetWriter {
     fn encoding_hints_from_metadata(
         metadata: Option<&dyn MetadataProvider>,
     ) -> (bool, Option<f64>, u8, u8, bool) {
-        let dict = metadata.map(|m| m.as_dict(None));
+        let dict = metadata.map(|m| m.entries(None));
 
         let lossless = dict
             .as_ref()

@@ -192,9 +192,9 @@ class TestGraphicSegmentProperties:
             assert metadata is not None, "metadata returned None"
 
             # Verify metadata provider has expected methods
-            assert hasattr(metadata, 'as_dict'), "MetadataProvider missing 'as_dict' method"
-            metadata_dict = metadata.as_dict()
-            assert isinstance(metadata_dict, dict), f"as_dict() should return dict, got {type(metadata_dict)}"
+            assert hasattr(metadata, 'entries'), "MetadataProvider missing 'entries' method"
+            metadata_dict = metadata.entries()
+            assert isinstance(metadata_dict, dict), f"entries() should return dict, got {type(metadata_dict)}"
 
             reader.close()
 

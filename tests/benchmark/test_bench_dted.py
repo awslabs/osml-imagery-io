@@ -27,22 +27,22 @@ def dted_test_file():
     num_cols = 1201
 
     metadata = BufferedMetadataProvider()
-    metadata.set_json("dted:origin_longitude", -109.0)
-    metadata.set_json("dted:origin_latitude", 38.0)
-    metadata.set_json("dted:longitude_interval", 30)
-    metadata.set_json("dted:latitude_interval", 30)
-    metadata.set("dted:level", "DTED1")
-    metadata.set("dted:security_code", "U")
-    metadata.set("dted:vertical_datum", "MSL")
-    metadata.set("dted:horizontal_datum", "WGS84")
-    metadata.set("dted:producer_code", "US")
-    metadata.set("dted:edition_number", "01")
-    metadata.set("dted:compilation_date", "2601")
-    metadata.set("dted:partial_cell_indicator", "00")
-    metadata.set("dted:absolute_horizontal_accuracy", "0050")
-    metadata.set("dted:absolute_vertical_accuracy", "0030")
-    metadata.set("dted:relative_vertical_accuracy", "0020")
-    metadata.set_json("dted:vertical_accuracy", 20)
+    metadata["dted:origin_longitude"] = -109.0
+    metadata["dted:origin_latitude"] = 38.0
+    metadata["dted:longitude_interval"] = 30
+    metadata["dted:latitude_interval"] = 30
+    metadata["dted:level"] = "DTED1"
+    metadata["dted:security_code"] = "U"
+    metadata["dted:vertical_datum"] = "MSL"
+    metadata["dted:horizontal_datum"] = "WGS84"
+    metadata["dted:producer_code"] = "US"
+    metadata["dted:edition_number"] = "01"
+    metadata["dted:compilation_date"] = "2601"
+    metadata["dted:partial_cell_indicator"] = "00"
+    metadata["dted:absolute_horizontal_accuracy"] = "0050"
+    metadata["dted:absolute_vertical_accuracy"] = "0030"
+    metadata["dted:relative_vertical_accuracy"] = "0020"
+    metadata["dted:vertical_accuracy"] = 20
 
     provider = BufferedImageAssetProvider.create(
         key="elevation",

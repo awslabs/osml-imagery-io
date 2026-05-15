@@ -4,11 +4,11 @@
 
 use std::collections::HashMap;
 
-/// Provides access to raw and structured metadata.
+/// Provides access to raw and structured metadata via a dictionary interface.
 ///
-/// This trait defines the interface for accessing metadata in both raw byte form
-/// and as structured dictionaries. Implementations may support multiple named
-/// metadata sections.
+/// Implementations store metadata as key-value pairs where values are JSON-compatible
+/// types. The trait supports single-key lookup (`get_value`), existence checks
+/// (`contains_key`), key enumeration (`keys`), and bulk export (`entries`).
 ///
 /// # Thread Safety
 ///
@@ -21,17 +21,34 @@ pub trait MetadataProvider: Send + Sync {
     /// which may be useful for format-specific processing or debugging.
     fn raw(&self) -> &[u8];
 
-    /// Returns metadata as a dictionary, optionally filtered by section name.
+    /// Returns the value for a single key, or `None` if absent.
+    fn get_value(&self, key: &str) -> Option<serde_json::Value> {
+        self.entries(None).remove(key)
+    }
+
+    /// Returns `true` if the given key exists in the metadata.
+    fn contains_key(&self, key: &str) -> bool {
+        self.entries(None).contains_key(key)
+    }
+
+    /// Returns the number of metadata entries.
+    fn len(&self) -> usize {
+        self.entries(None).len()
+    }
+
+    /// Returns `true` if there are no metadata entries.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns a list of all metadata keys.
+    fn keys(&self) -> Vec<String> {
+        self.entries(None).into_keys().collect()
+    }
+
+    /// Returns metadata entries, optionally filtered by key prefix.
     ///
-    /// # Arguments
-    ///
-    /// * `name` - Optional section name to filter the returned metadata.
-    ///   - If `Some(name)`, returns only the named metadata section.
-    ///   - If `None`, returns all metadata sections.
-    ///
-    /// # Returns
-    ///
-    /// A `HashMap` where keys are metadata field names and values are JSON-compatible
-    /// values that can represent strings, numbers, booleans, arrays, or nested objects.
-    fn as_dict(&self, name: Option<&str>) -> HashMap<String, serde_json::Value>;
+    /// - `entries(None)` returns all key-value pairs.
+    /// - `entries(Some(prefix))` returns only entries whose key starts with `prefix`.
+    fn entries(&self, prefix: Option<&str>) -> HashMap<String, serde_json::Value>;
 }

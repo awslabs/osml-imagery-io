@@ -42,10 +42,7 @@ def _write_tiff(path, array, pixel_type, num_bands, num_rows, num_cols, hints):
     """Write a TIFF file using TIFFDatasetWriter via IO.open."""
     metadata = BufferedMetadataProvider()
     for k, v in hints.items():
-        if isinstance(v, str):
-            metadata.set(k, v)
-        else:
-            metadata.set_json(k, v)
+        metadata[k] = v
 
     tile_w = int(hints.get("322", "256"))   # TileWidth
     tile_h = int(hints.get("323", "256"))   # TileLength
@@ -101,7 +98,7 @@ class TestTiffMetadataRoundtrip:
 
             reader = IO.open([str(path)], "r")
             asset = reader.get_asset("image:0")
-            meta = asset.metadata.as_dict()
+            meta = asset.metadata.entries()
 
             assert meta["256"] == num_cols       # ImageWidth
             assert meta["257"] == num_rows       # ImageLength
@@ -156,13 +153,13 @@ CUSTOM_TAG_MAX = 65499
 def _write_tiff_with_metadata(path, metadata_dict):
     """Write a minimal 16x16 TIFF with the given metadata tags."""
     meta = BufferedMetadataProvider()
-    meta.set("322", "256")   # TileWidth
-    meta.set("323", "256")   # TileLength
-    meta.set_json("259", 1)  # Compression (None)
-    meta.set_json("284", 1)  # PlanarConfiguration (Chunky)
+    meta["322"] = "256"      # TileWidth
+    meta["323"] = "256"      # TileLength
+    meta["259"] = 1          # Compression (None)
+    meta["284"] = 1          # PlanarConfiguration (Chunky)
 
     for k, v in metadata_dict.items():
-        meta.set_json(k, v)
+        meta[k] = v
 
     array = np.zeros((1, 16, 16), dtype=np.uint8)
     provider = BufferedImageAssetProvider.create(
@@ -193,7 +190,7 @@ def _read_tiff_metadata(path):
     """Read per-IFD metadata from a TIFF file."""
     reader = IO.open([str(path)], "r")
     asset = reader.get_asset("image:0")
-    return asset.metadata.as_dict()
+    return asset.metadata.entries()
 
 
 # =============================================================================

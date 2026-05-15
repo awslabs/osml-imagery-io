@@ -67,9 +67,9 @@ class TestBufferedImageAssetProviderWithMetadata:
         """Test creating a BufferedImageAssetProvider with metadata."""
         # Create metadata with encoding hints
         metadata = BufferedMetadataProvider()
-        metadata.set("IMODE", "P")
-        metadata.set("NPPBH", "256")
-        metadata.set("NPPBV", "256")
+        metadata["IMODE"] = "P"
+        metadata["NPPBH"] = "256"
+        metadata["NPPBV"] = "256"
 
         provider = BufferedImageAssetProvider.create(
             key="test_image",
@@ -88,9 +88,9 @@ class TestBufferedImageAssetProviderWithMetadata:
         """
         # Create metadata with encoding hints
         metadata = BufferedMetadataProvider()
-        metadata.set("IMODE", "P")
-        metadata.set("IC", "NC")
-        metadata.set("NPPBH", "256")
+        metadata["IMODE"] = "P"
+        metadata["IC"] = "NC"
+        metadata["NPPBH"] = "256"
 
         provider = BufferedImageAssetProvider.create(
             key="test_image",
@@ -101,7 +101,7 @@ class TestBufferedImageAssetProviderWithMetadata:
 
         # Get metadata back from provider
         retrieved_metadata = provider.metadata
-        meta_dict = retrieved_metadata.as_dict()
+        meta_dict = retrieved_metadata.entries()
 
         # Verify all values are present
         assert meta_dict.get("IMODE") == "P"
@@ -117,18 +117,18 @@ class TestBufferedImageAssetProviderWithMetadata:
         )
 
         metadata = provider.metadata
-        meta_dict = metadata.as_dict()
+        meta_dict = metadata.entries()
 
         assert len(meta_dict) == 0
 
     def test_metadata_with_all_encoding_hints(self):
         """Test metadata with all supported encoding hints."""
         metadata = BufferedMetadataProvider()
-        metadata.set("IMODE", "B")
-        metadata.set("IC", "NC")
-        metadata.set("NPPBH", "512")
-        metadata.set("NPPBV", "512")
-        metadata.set("COMRAT", "01.0")
+        metadata["IMODE"] = "B"
+        metadata["IC"] = "NC"
+        metadata["NPPBH"] = "512"
+        metadata["NPPBV"] = "512"
+        metadata["COMRAT"] = "01.0"
 
         provider = BufferedImageAssetProvider.create(
             key="test_image",
@@ -137,7 +137,7 @@ class TestBufferedImageAssetProviderWithMetadata:
             metadata=metadata,
         )
 
-        retrieved = provider.metadata.as_dict()
+        retrieved = provider.metadata.entries()
         assert retrieved.get("IMODE") == "B"
         assert retrieved.get("IC") == "NC"
         assert retrieved.get("NPPBH") == "512"

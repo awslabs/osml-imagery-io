@@ -70,8 +70,8 @@ class TestDataSegmentRoundtrip:
         produce identical bytes.
         """
         meta = BufferedMetadataProvider()
-        meta.set("DESID", "TESTDATA")
-        meta.set("DESVER", "01")
+        meta["DESID"] = "TESTDATA"
+        meta["DESVER"] = "01"
 
         provider = BufferedDataAssetProvider.create(
             key="des:0",
@@ -110,8 +110,8 @@ class TestDataSegmentRoundtrip:
         SHALL produce identical bytes and parse_as_xml() SHALL succeed.
         """
         meta = BufferedMetadataProvider()
-        meta.set("DESID", "XML_DATA_CONTENT")
-        meta.set("DESVER", "01")
+        meta["DESID"] = "XML_DATA_CONTENT"
+        meta["DESVER"] = "01"
 
         provider = BufferedDataAssetProvider.create(
             key="des:0",
@@ -152,8 +152,8 @@ class TestDataSegmentRoundtrip:
         preserve both values in the asset metadata.
         """
         meta = BufferedMetadataProvider()
-        meta.set("DESID", desid)
-        meta.set("DESVER", desver)
+        meta["DESID"] = desid
+        meta["DESVER"] = desver
 
         provider = BufferedDataAssetProvider.create(
             key="des:0",
@@ -174,7 +174,7 @@ class TestDataSegmentRoundtrip:
             data_keys = reader.get_asset_keys(asset_type=AssetType.Data)
             asset = reader.get_asset(data_keys[0])
 
-            asset_meta = asset.metadata.as_dict()
+            asset_meta = asset.metadata.entries()
             read_desid = asset_meta.get("DESID", "").strip()
             read_desver = asset_meta.get("DESVER", "").strip()
 

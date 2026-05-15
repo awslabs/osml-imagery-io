@@ -27,8 +27,8 @@ def _write_nitf(path: Path, num_cols: int, num_rows: int, num_bands: int = 1,
                 ic: str = "NC") -> None:
     """Write a minimal NITF file with the given dimensions."""
     metadata = BufferedMetadataProvider()
-    metadata.set("IC", ic)
-    metadata.set("IMODE", "B")
+    metadata["IC"] = ic
+    metadata["IMODE"] = "B"
 
     provider = BufferedImageAssetProvider.create(
         key="image:0",
@@ -961,8 +961,8 @@ class TestEndToEndPyramidRoundTrip:
 
         # Write base image (256×256) with random data
         metadata_base = BufferedMetadataProvider()
-        metadata_base.set("IC", "NC")
-        metadata_base.set("IMODE", "B")
+        metadata_base["IC"] = "NC"
+        metadata_base["IMODE"] = "B"
         provider_base = BufferedImageAssetProvider.create(
             key="image:0",
             num_columns=256,
@@ -980,8 +980,8 @@ class TestEndToEndPyramidRoundTrip:
 
         # Write R1 image (128×128) with random data
         metadata_r1 = BufferedMetadataProvider()
-        metadata_r1.set("IC", "NC")
-        metadata_r1.set("IMODE", "B")
+        metadata_r1["IC"] = "NC"
+        metadata_r1["IMODE"] = "B"
         provider_r1 = BufferedImageAssetProvider.create(
             key="image:0",
             num_columns=128,
@@ -1099,8 +1099,8 @@ class TestEndToEndPyramidRoundTrip:
 
         # Write base image (256×256)
         metadata_base = BufferedMetadataProvider()
-        metadata_base.set("IC", "NC")
-        metadata_base.set("IMODE", "B")
+        metadata_base["IC"] = "NC"
+        metadata_base["IMODE"] = "B"
         provider_base = BufferedImageAssetProvider.create(
             key="image:0",
             num_columns=256,
@@ -1118,8 +1118,8 @@ class TestEndToEndPyramidRoundTrip:
 
         # Write R1 image (128×128)
         metadata_r1 = BufferedMetadataProvider()
-        metadata_r1.set("IC", "NC")
-        metadata_r1.set("IMODE", "B")
+        metadata_r1["IC"] = "NC"
+        metadata_r1["IMODE"] = "B"
         provider_r1 = BufferedImageAssetProvider.create(
             key="image:0",
             num_columns=128,
@@ -1335,8 +1335,8 @@ class TestPortableIndex:
         rng = np.random.default_rng(42)
         path = tmp_dir / "image.ntf"
         metadata = BufferedMetadataProvider()
-        metadata.set("IC", "NC")
-        metadata.set("IMODE", "B")
+        metadata["IC"] = "NC"
+        metadata["IMODE"] = "B"
         provider = BufferedImageAssetProvider.create(
             key="image:0",
             num_columns=128,

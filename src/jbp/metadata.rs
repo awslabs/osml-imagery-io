@@ -25,8 +25,8 @@ use super::tre_fields;
 /// Metadata provider for NITF file header fields.
 ///
 /// Provides access to file-level metadata from the NITF header through the
-/// [`MetadataProvider`] trait. Fields can be accessed as a dictionary with
-/// optional prefix-based filtering.
+/// [`MetadataProvider`] trait. Fields are eagerly parsed at construction into a
+/// cached HashMap for O(1) access.
 ///
 /// # Example
 ///
@@ -34,320 +34,233 @@ use super::tre_fields;
 /// let provider = JBPFileMetadataProvider::new(accessor, raw_bytes);
 ///
 /// // Get all fields
-/// let all_fields = provider.as_dict(None);
+/// let all_fields = provider.entries(None);
 ///
 /// // Get only security fields (starting with "FS")
-/// let security_fields = provider.as_dict(Some("FS"));
+/// let security_fields = provider.entries(Some("FS"));
 /// ```
 pub struct JBPFileMetadataProvider {
-    /// Structure definition for field enumeration
-    definition: Arc<StructureDefinition>,
-    /// Raw header bytes
+    tags: HashMap<String, serde_json::Value>,
     raw_bytes: Arc<[u8]>,
 }
 
 impl JBPFileMetadataProvider {
     /// Create a new file metadata provider.
     ///
-    /// # Arguments
-    /// * `accessor` - Structure accessor for the parsed file header
-    /// * `raw_bytes` - Raw bytes of the file header
+    /// Eagerly parses all fields from the accessor into a cached HashMap.
+    /// The definition is consumed during construction and not retained.
     pub fn new(accessor: &StructureAccessor, raw_bytes: Arc<[u8]>) -> Self {
-        Self {
-            definition: accessor.definition.clone(),
-            raw_bytes,
-        }
+        let tags = parse_fields_from_definition(&accessor.definition, &raw_bytes, None);
+        Self { tags, raw_bytes }
     }
 
     /// Create from definition and raw bytes directly.
     ///
-    /// This is useful when you have the definition but don't need to keep
-    /// the accessor around.
+    /// Eagerly parses all fields into a cached HashMap. The definition is consumed
+    /// during construction and not retained.
     pub fn from_definition(definition: Arc<StructureDefinition>, raw_bytes: Arc<[u8]>) -> Self {
-        Self {
-            definition,
-            raw_bytes,
-        }
+        let tags = parse_fields_from_definition(&definition, &raw_bytes, None);
+        Self { tags, raw_bytes }
     }
 }
 
 impl MetadataProvider for JBPFileMetadataProvider {
-    /// Returns the raw file header bytes.
     fn raw(&self) -> &[u8] {
         &self.raw_bytes
     }
 
-    /// Returns file header fields as a dictionary.
-    ///
-    /// # Arguments
-    /// * `name` - Optional prefix to filter fields. If `Some(prefix)`, only fields
-    ///   whose names start with the prefix are returned. If `None`, all fields
-    ///   are returned.
-    ///
-    /// # Returns
-    /// A HashMap of field names to JSON values.
-    fn as_dict(&self, name: Option<&str>) -> HashMap<String, serde_json::Value> {
-        let mut result = HashMap::new();
+    fn get_value(&self, key: &str) -> Option<serde_json::Value> {
+        self.tags.get(key).cloned()
+    }
 
-        // Create a temporary accessor to read values
-        if let Ok(accessor) = StructureAccessor::new(self.definition.clone(), &self.raw_bytes) {
-            // Iterate definition fields directly for proper repeated field handling
-            for field in &self.definition.fields {
-                let field_id = &field.id;
+    fn contains_key(&self, key: &str) -> bool {
+        self.tags.contains_key(key)
+    }
 
-                // Apply prefix filter if specified
-                if let Some(prefix) = name {
-                    if !field_id.starts_with(prefix) {
-                        continue;
-                    }
-                }
+    fn len(&self) -> usize {
+        self.tags.len()
+    }
 
-                // Check field condition — skip if not present
-                if field.condition.is_some() && !accessor.has(field_id) {
-                    continue;
-                }
+    fn keys(&self) -> Vec<String> {
+        self.tags.keys().cloned().collect()
+    }
 
-                // Get the field value: repeated fields return Value::Array,
-                // scalar fields return their scalar Value variant
-                if let Ok(value) = accessor.get(field_id) {
-                    if let Some(json_value) = value_to_json(&value, None, Some(&self.definition)) {
-                        result.insert(field_id.clone(), json_value);
-                    }
-                }
-            }
+    fn entries(&self, prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
+        match prefix {
+            None => self.tags.clone(),
+            Some(prefix) => self
+                .tags
+                .iter()
+                .filter(|(k, _)| k.starts_with(prefix))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
         }
-
-        result
     }
 }
-
-// Ensure JBPFileMetadataProvider is Send + Sync
-// Arc<[u8]> and Arc<StructureDefinition> are both Send + Sync
-unsafe impl Send for JBPFileMetadataProvider {}
-unsafe impl Sync for JBPFileMetadataProvider {}
 
 /// Metadata provider for NITF segment subheader fields.
 ///
 /// Provides access to segment-level metadata from subheaders through the
-/// [`MetadataProvider`] trait. Works identically to [`JBPFileMetadataProvider`]
-/// but for segment subheaders instead of file headers.
+/// [`MetadataProvider`] trait. Fields (including TRE entries) are eagerly parsed
+/// at construction into a cached HashMap for O(1) access.
 ///
 /// # TRE Support
 ///
-/// When created with `with_tres()`, this provider also exposes TRE fields in the
-/// dictionary interface as nested dictionaries keyed by CETAG
-/// (e.g., `{"GEOLOB": {"ARV": "...", "BRV": "..."}}`).
+/// When created with `with_tres()`, TRE fields are parsed eagerly and stored as
+/// top-level keys (CETAG) mapped to nested dictionaries.
 /// Unknown TREs produce a raw representation: `{"_raw": "<hex>", "_length": N}`.
 ///
 /// # Example
 ///
 /// ```ignore
-/// let provider = JBPSegmentMetadataProvider::new(accessor, raw_bytes);
-///
-/// // Get all subheader fields
-/// let all_fields = provider.as_dict(None);
-///
-/// // Get only image-specific fields (starting with "I")
-/// let image_fields = provider.as_dict(Some("I"));
-///
-/// // With TRE support:
 /// let provider = JBPSegmentMetadataProvider::with_tres(
 ///     definition, raw_bytes, tre_envelopes, registry
 /// );
 ///
+/// // Get all fields (O(n) clone)
+/// let all_fields = provider.entries(None);
+///
 /// // Get only GEOLOB TRE fields
-/// let geolob_fields = provider.as_dict(Some("GEOLOB"));
+/// let geolob_fields = provider.entries(Some("GEOLOB"));
 /// ```
 pub struct JBPSegmentMetadataProvider {
-    /// Structure definition for field enumeration
-    definition: Arc<StructureDefinition>,
-    /// Raw subheader bytes
+    tags: HashMap<String, serde_json::Value>,
     raw_bytes: Arc<[u8]>,
-    /// TRE envelopes from this segment (inline + overflow)
-    tre_envelopes: Vec<TreEnvelope>,
-    /// Structure registry for TRE definitions
-    registry: Option<Arc<StructureRegistry>>,
 }
 
 impl JBPSegmentMetadataProvider {
     /// Create a new segment metadata provider.
     ///
-    /// # Arguments
-    /// * `accessor` - Structure accessor for the parsed segment subheader
-    /// * `raw_bytes` - Raw bytes of the segment subheader
+    /// Eagerly parses all subheader fields into a cached HashMap.
     pub fn new(accessor: &StructureAccessor, raw_bytes: Arc<[u8]>) -> Self {
-        Self {
-            definition: accessor.definition.clone(),
-            raw_bytes,
-            tre_envelopes: Vec::new(),
-            registry: None,
-        }
+        let tags = parse_fields_from_definition(&accessor.definition, &raw_bytes, None);
+        Self { tags, raw_bytes }
     }
 
     /// Create from definition and raw bytes directly.
+    ///
+    /// Eagerly parses all subheader fields into a cached HashMap.
     pub fn from_definition(definition: Arc<StructureDefinition>, raw_bytes: Arc<[u8]>) -> Self {
-        Self {
-            definition,
-            raw_bytes,
-            tre_envelopes: Vec::new(),
-            registry: None,
-        }
+        let tags = parse_fields_from_definition(&definition, &raw_bytes, None);
+        Self { tags, raw_bytes }
     }
 
     /// Create with TRE support.
     ///
-    /// This constructor enables TRE field access through the metadata interface.
-    /// TRE fields are exposed as nested dictionaries keyed by CETAG.
-    ///
-    /// # Arguments
-    /// * `definition` - Structure definition for the segment subheader
-    /// * `raw_bytes` - Raw bytes of the segment subheader
-    /// * `tre_envelopes` - TRE envelopes from this segment (inline + overflow)
-    /// * `registry` - Structure registry for TRE definitions
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let provider = JBPSegmentMetadataProvider::with_tres(
-    ///     definition,
-    ///     raw_bytes,
-    ///     tre_envelopes,
-    ///     registry,
-    /// );
-    ///
-    /// // Access TRE fields
-    /// let dict = provider.as_dict(Some("GEOLOB"));
-    /// ```
+    /// Eagerly parses all subheader fields and TRE entries into a cached HashMap.
+    /// The definition, registry, and TRE envelopes are consumed during construction
+    /// and not retained.
     pub fn with_tres(
         definition: Arc<StructureDefinition>,
         raw_bytes: Arc<[u8]>,
         tre_envelopes: Vec<TreEnvelope>,
         registry: Arc<StructureRegistry>,
     ) -> Self {
-        Self {
-            definition,
-            raw_bytes,
-            tre_envelopes,
-            registry: Some(registry),
-        }
+        let mut tags = parse_fields_from_definition(&definition, &raw_bytes, Some(&registry));
+        parse_tre_entries(&mut tags, &tre_envelopes, &registry);
+        Self { tags, raw_bytes }
     }
 }
 
 impl MetadataProvider for JBPSegmentMetadataProvider {
-    /// Returns the raw subheader bytes.
     fn raw(&self) -> &[u8] {
         &self.raw_bytes
     }
 
-    /// Returns subheader fields as a dictionary.
-    ///
-    /// # Arguments
-    /// * `name` - Optional prefix to filter fields. If `Some(prefix)`, only fields
-    ///   whose names start with the prefix are returned. If `None`, all fields
-    ///   are returned.
-    ///
-    /// # TRE Fields
-    ///
-    /// When TRE support is enabled (via `with_tres()`), each TRE is included as
-    /// a top-level key (the CETAG) mapped to a nested dictionary of that TRE's
-    /// fields. For example, `{"GEOLOB": {"ARV": "...", "BRV": "..."}}`.
-    ///
-    /// The prefix filter includes a CETAG entry if `tag.starts_with(prefix)` or
-    /// `prefix.starts_with(tag)`. For example, `as_dict(Some("GEOLOB"))` returns
-    /// the `"GEOLOB"` key with its nested dictionary.
-    ///
-    /// Unknown TREs (those without definitions in the registry) produce a raw
-    /// representation: `{"_raw": "<hex>", "_length": N}`.
-    ///
-    /// # Returns
-    /// A HashMap of field names to JSON values.
-    fn as_dict(&self, name: Option<&str>) -> HashMap<String, serde_json::Value> {
-        let mut result = HashMap::new();
+    fn get_value(&self, key: &str) -> Option<serde_json::Value> {
+        self.tags.get(key).cloned()
+    }
 
-        // Create a temporary accessor to read subheader values
-        if let Ok(accessor) = StructureAccessor::new(self.definition.clone(), &self.raw_bytes) {
-            // Iterate definition fields directly for proper repeated field handling
-            for field in &self.definition.fields {
-                let field_id = &field.id;
+    fn contains_key(&self, key: &str) -> bool {
+        self.tags.contains_key(key)
+    }
 
-                // Apply prefix filter if specified
-                if let Some(prefix) = name {
-                    if !field_id.starts_with(prefix) {
-                        continue;
-                    }
-                }
+    fn len(&self) -> usize {
+        self.tags.len()
+    }
 
-                // Check field condition — skip if not present
-                if field.condition.is_some() && !accessor.has(field_id) {
-                    continue;
-                }
+    fn keys(&self) -> Vec<String> {
+        self.tags.keys().cloned().collect()
+    }
 
-                // Get the field value: repeated fields return Value::Array,
-                // scalar fields return their scalar Value variant
-                if let Ok(value) = accessor.get(field_id) {
-                    if let Some(json_value) =
-                        value_to_json(&value, self.registry.as_deref(), Some(&self.definition))
-                    {
-                        result.insert(field_id.clone(), json_value);
-                    }
-                }
-            }
+    fn entries(&self, prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
+        match prefix {
+            None => self.tags.clone(),
+            Some(prefix) => self
+                .tags
+                .iter()
+                .filter(|(k, _)| k.starts_with(prefix))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
         }
-
-        // Add TRE fields if registry is available
-        if let Some(ref registry) = self.registry {
-            for envelope in &self.tre_envelopes {
-                // Normalize the tag (trim whitespace)
-                let tag = envelope.tag.trim();
-
-                // Skip if prefix filter doesn't match the CETAG
-                if let Some(prefix) = name {
-                    if !tag.starts_with(prefix) && !prefix.starts_with(tag) {
-                        continue;
-                    }
-                }
-
-                // Try to create an accessor for this TRE
-                match tre_fields::create_accessor(registry, tag, &envelope.data) {
-                    Ok(Some(tre_accessor)) => {
-                        // Build a nested dict for this CETAG
-                        let tre_def = tre_accessor.definition.clone();
-                        let mut tre_dict = serde_json::Map::new();
-                        for field_path in tre_accessor.fields() {
-                            if let Ok(value) = tre_accessor.get(&field_path) {
-                                if let Some(json_value) =
-                                    value_to_json(&value, self.registry.as_deref(), Some(&tre_def))
-                                {
-                                    tre_dict.insert(field_path, json_value);
-                                }
-                            }
-                        }
-                        result.insert(tag.to_string(), serde_json::Value::Object(tre_dict));
-                    }
-                    Ok(None) | Err(_) => {
-                        // Unknown TRE (no definition in registry) or accessor creation
-                        // failed — produce raw representation
-                        let mut raw_dict = serde_json::Map::new();
-                        let hex: String =
-                            envelope.data.iter().map(|b| format!("{:02x}", b)).collect();
-                        raw_dict.insert("_raw".to_string(), serde_json::Value::String(hex));
-                        raw_dict.insert(
-                            "_length".to_string(),
-                            serde_json::Value::Number(envelope.data.len().into()),
-                        );
-                        result.insert(tag.to_string(), serde_json::Value::Object(raw_dict));
-                    }
-                }
-            }
-        }
-
-        result
     }
 }
 
-// Ensure JBPSegmentMetadataProvider is Send + Sync
-unsafe impl Send for JBPSegmentMetadataProvider {}
-unsafe impl Sync for JBPSegmentMetadataProvider {}
+/// Eagerly parse all fields from a structure definition into a HashMap.
+///
+/// Creates a `StructureAccessor` from the definition and raw bytes, then iterates
+/// all fields (respecting conditions and repeated fields) to build the cached map.
+fn parse_fields_from_definition(
+    definition: &StructureDefinition,
+    raw_bytes: &[u8],
+    registry: Option<&StructureRegistry>,
+) -> HashMap<String, serde_json::Value> {
+    let mut result = HashMap::new();
+    if let Ok(accessor) = StructureAccessor::new(Arc::new(definition.clone()), raw_bytes) {
+        for field in &definition.fields {
+            let field_id = &field.id;
+            if field.condition.is_some() && !accessor.has(field_id) {
+                continue;
+            }
+            if let Ok(value) = accessor.get(field_id) {
+                if let Some(json_value) = value_to_json(&value, registry, Some(definition)) {
+                    result.insert(field_id.clone(), json_value);
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Parse TRE envelopes into an existing tags HashMap.
+///
+/// Each TRE is stored as a top-level key (trimmed CETAG) mapped to either a nested
+/// dictionary of parsed fields, or a raw representation if the TRE definition is unknown.
+fn parse_tre_entries(
+    tags: &mut HashMap<String, serde_json::Value>,
+    tre_envelopes: &[TreEnvelope],
+    registry: &StructureRegistry,
+) {
+    for envelope in tre_envelopes {
+        let tag = envelope.tag.trim();
+        match tre_fields::create_accessor(registry, tag, &envelope.data) {
+            Ok(Some(tre_accessor)) => {
+                let tre_def = tre_accessor.definition.clone();
+                let mut tre_dict = serde_json::Map::new();
+                for field_path in tre_accessor.fields() {
+                    if let Ok(value) = tre_accessor.get(&field_path) {
+                        if let Some(json_value) =
+                            value_to_json(&value, Some(registry), Some(&tre_def))
+                        {
+                            tre_dict.insert(field_path, json_value);
+                        }
+                    }
+                }
+                tags.insert(tag.to_string(), serde_json::Value::Object(tre_dict));
+            }
+            Ok(None) | Err(_) => {
+                let mut raw_dict = serde_json::Map::new();
+                let hex: String = envelope.data.iter().map(|b| format!("{:02x}", b)).collect();
+                raw_dict.insert("_raw".to_string(), serde_json::Value::String(hex));
+                raw_dict.insert(
+                    "_length".to_string(),
+                    serde_json::Value::Number(envelope.data.len().into()),
+                );
+                tags.insert(tag.to_string(), serde_json::Value::Object(raw_dict));
+            }
+        }
+    }
+}
 
 /// Convert a parsed Value to a serde_json::Value.
 ///
@@ -491,12 +404,12 @@ mod tests {
     }
 
     #[test]
-    fn file_metadata_provider_as_dict_all_fields() {
+    fn file_metadata_provider_entries_all_fields() {
         let definition = create_test_definition();
         let raw_bytes = create_test_data();
         let provider = JBPFileMetadataProvider::from_definition(definition, raw_bytes);
 
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
 
         // Should have all 4 fields
         assert!(dict.contains_key("FHDR"));
@@ -511,13 +424,13 @@ mod tests {
     }
 
     #[test]
-    fn file_metadata_provider_as_dict_with_prefix() {
+    fn file_metadata_provider_entries_with_prefix() {
         let definition = create_test_definition();
         let raw_bytes = create_test_data();
         let provider = JBPFileMetadataProvider::from_definition(definition, raw_bytes);
 
         // Filter by "FS" prefix (security fields)
-        let dict = provider.as_dict(Some("FS"));
+        let dict = provider.entries(Some("FS"));
 
         // Should only have security fields
         assert!(dict.contains_key("FSCLAS"));
@@ -527,13 +440,13 @@ mod tests {
     }
 
     #[test]
-    fn file_metadata_provider_as_dict_with_nonmatching_prefix() {
+    fn file_metadata_provider_entries_with_nonmatching_prefix() {
         let definition = create_test_definition();
         let raw_bytes = create_test_data();
         let provider = JBPFileMetadataProvider::from_definition(definition, raw_bytes);
 
         // Filter by prefix that matches nothing
-        let dict = provider.as_dict(Some("XYZ"));
+        let dict = provider.entries(Some("XYZ"));
 
         assert!(dict.is_empty());
     }
@@ -548,12 +461,12 @@ mod tests {
     }
 
     #[test]
-    fn segment_metadata_provider_as_dict_all_fields() {
+    fn segment_metadata_provider_entries_all_fields() {
         let definition = create_test_definition();
         let raw_bytes = create_test_data();
         let provider = JBPSegmentMetadataProvider::from_definition(definition, raw_bytes);
 
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
 
         // Should have all 4 fields
         assert!(dict.contains_key("FHDR"));
@@ -563,13 +476,13 @@ mod tests {
     }
 
     #[test]
-    fn segment_metadata_provider_as_dict_with_prefix() {
+    fn segment_metadata_provider_entries_with_prefix() {
         let definition = create_test_definition();
         let raw_bytes = create_test_data();
         let provider = JBPSegmentMetadataProvider::from_definition(definition, raw_bytes);
 
         // Filter by "F" prefix
-        let dict = provider.as_dict(Some("F"));
+        let dict = provider.entries(Some("F"));
 
         // All fields start with F in our test
         assert_eq!(dict.len(), 4);
@@ -737,7 +650,7 @@ mod tests {
             Arc::new(registry),
         );
 
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
 
         // Should have subheader fields
         assert!(dict.contains_key("FHDR"));
@@ -772,7 +685,7 @@ mod tests {
         );
 
         // Filter by GEOLOB prefix - should only get TRE entry
-        let dict = provider.as_dict(Some("GEOLOB"));
+        let dict = provider.entries(Some("GEOLOB"));
 
         assert!(dict.contains_key("GEOLOB"));
         let geolob = dict.get("GEOLOB").unwrap().as_object().unwrap();
@@ -804,7 +717,7 @@ mod tests {
             Arc::new(registry),
         );
 
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
 
         // Should have subheader fields
         assert!(dict.contains_key("FHDR"));
@@ -824,7 +737,7 @@ mod tests {
         // Create provider without TRE support
         let provider = JBPSegmentMetadataProvider::from_definition(definition, raw_bytes);
 
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
 
         // Should only have subheader fields
         assert!(dict.contains_key("FHDR"));
@@ -863,7 +776,7 @@ mod tests {
             Arc::new(registry),
         );
 
-        let dict = provider.as_dict(None);
+        let dict = provider.entries(None);
 
         // Should have nested dicts for both TREs
         assert!(dict.contains_key("GEOLOB"));
@@ -913,8 +826,8 @@ mod property_tests {
     }
 
     /// Property 8: Metadata Prefix Filtering
-    /// For any MetadataProvider and any prefix string, `as_dict(Some(prefix))` SHALL
-    /// return only entries whose keys start with the given prefix, and `as_dict(None)`
+    /// For any MetadataProvider and any prefix string, `entries(Some(prefix))` SHALL
+    /// return only entries whose keys start with the given prefix, and `entries(None)`
     /// SHALL return all entries. TRE entries appear as nested dicts under their CETAG
     /// key, and repeated fields appear as JSON arrays.
     /// **Validates: Requirements 9.3, 9.4**
@@ -925,9 +838,9 @@ mod property_tests {
         proptest! {
             #![proptest_config(ProptestConfig::with_cases(100))]
 
-            /// as_dict(None) returns all fields
+            /// entries(None) returns all fields
             #[test]
-            fn as_dict_none_returns_all_fields(
+            fn entries_none_returns_all_fields(
                 num_fields in 1usize..5,
             ) {
                 // Generate unique field names
@@ -942,7 +855,7 @@ mod property_tests {
                 let raw_bytes = create_raw_bytes(&field_values);
                 let provider = JBPFileMetadataProvider::from_definition(definition, raw_bytes);
 
-                let dict = provider.as_dict(None);
+                let dict = provider.entries(None);
 
                 // Should have all fields
                 prop_assert_eq!(dict.len(), num_fields,
@@ -954,9 +867,9 @@ mod property_tests {
                 }
             }
 
-            /// as_dict(Some(prefix)) returns only matching fields
+            /// entries(Some(prefix)) returns only matching fields
             #[test]
-            fn as_dict_with_prefix_filters_correctly(
+            fn entries_with_prefix_filters_correctly(
                 num_matching in 1usize..4,
                 num_nonmatching in 1usize..4,
             ) {
@@ -978,7 +891,7 @@ mod property_tests {
                 let provider = JBPFileMetadataProvider::from_definition(definition, raw_bytes);
 
                 // Filter by "FS" prefix
-                let dict = provider.as_dict(Some("FS"));
+                let dict = provider.entries(Some("FS"));
 
                 // Should only have matching fields
                 prop_assert_eq!(dict.len(), num_matching,
@@ -990,9 +903,9 @@ mod property_tests {
                 }
             }
 
-            /// as_dict with non-matching prefix returns empty
+            /// entries with non-matching prefix returns empty
             #[test]
-            fn as_dict_nonmatching_prefix_returns_empty(
+            fn entries_nonmatching_prefix_returns_empty(
                 num_fields in 1usize..5,
             ) {
                 let field_names: Vec<String> = (0..num_fields)
@@ -1007,7 +920,7 @@ mod property_tests {
                 let provider = JBPFileMetadataProvider::from_definition(definition, raw_bytes);
 
                 // Filter by prefix that matches nothing
-                let dict = provider.as_dict(Some("XYZ"));
+                let dict = provider.entries(Some("XYZ"));
 
                 prop_assert!(dict.is_empty(),
                     "Expected empty dict, got {} entries", dict.len());
@@ -1039,11 +952,11 @@ mod property_tests {
                 let provider = JBPFileMetadataProvider::from_definition(definition, raw_bytes);
 
                 // Filter by "ABC" should only get uppercase
-                let dict = provider.as_dict(Some("ABC"));
+                let dict = provider.entries(Some("ABC"));
                 prop_assert_eq!(dict.len(), num_upper);
 
                 // Filter by "abc" should get nothing (case-sensitive)
-                let dict_lower = provider.as_dict(Some("abc"));
+                let dict_lower = provider.entries(Some("abc"));
                 prop_assert!(dict_lower.is_empty());
             }
 
@@ -1070,7 +983,7 @@ mod property_tests {
                 let provider = JBPSegmentMetadataProvider::from_definition(definition, raw_bytes);
 
                 // Filter by "IM" prefix
-                let dict = provider.as_dict(Some("IM"));
+                let dict = provider.entries(Some("IM"));
 
                 prop_assert_eq!(dict.len(), num_matching);
                 for name in dict.keys() {
@@ -1136,7 +1049,7 @@ mod property_tests {
                 );
 
                 // Filter by "GEOLOB" — should return only the nested TRE dict
-                let dict = provider.as_dict(Some("GEOLOB"));
+                let dict = provider.entries(Some("GEOLOB"));
 
                 prop_assert_eq!(dict.len(), 1,
                     "Should have exactly 1 entry for GEOLOB. Keys: {:?}",
@@ -1215,7 +1128,7 @@ mod property_tests {
                 let provider = JBPSegmentMetadataProvider::from_definition(def, raw);
 
                 // Filter by "ITEMS" prefix — should return only the ITEMS array
-                let dict = provider.as_dict(Some("ITEMS"));
+                let dict = provider.entries(Some("ITEMS"));
 
                 prop_assert_eq!(dict.len(), 1,
                     "Should have exactly 1 entry for ITEMS. Keys: {:?}",
@@ -1341,9 +1254,9 @@ mod property_tests {
     }
 
     /// Property 7: Metadata Interface TRE Access
-    /// For any segment with TREs, calling `as_dict(None)` SHALL return each CETAG
+    /// For any segment with TREs, calling `entries(None)` SHALL return each CETAG
     /// as a top-level key mapped to a nested dictionary of that TRE's fields.
-    /// Calling `as_dict("GEOLOB")` SHALL return only the `"GEOLOB"` key with its
+    /// Calling `entries("GEOLOB")` SHALL return only the `"GEOLOB"` key with its
     /// nested dictionary. Unknown TREs SHALL get raw representation.
     /// **Validates: Requirements 9.3, 9.4**
     mod prop_7_metadata_interface_tre_access {
@@ -1387,11 +1300,11 @@ mod property_tests {
 
             /// Feature: metadata-restructure, Property 7: Metadata Interface TRE Access
             ///
-            /// as_dict(None) returns TRE as nested dictionary under CETAG key
+            /// entries(None) returns TRE as nested dictionary under CETAG key
             ///
             /// **Validates: Requirements 9.3, 9.4**
             #[test]
-            fn as_dict_none_includes_tre_as_nested_dict(
+            fn entries_none_includes_tre_as_nested_dict(
                 field1_value in field_value_strategy(8),
                 field2_value in field_value_strategy(6),
             ) {
@@ -1422,7 +1335,7 @@ mod property_tests {
                     Arc::new(registry),
                 );
 
-                let dict = provider.as_dict(None);
+                let dict = provider.entries(None);
 
                 // Should have subheader field
                 prop_assert!(dict.contains_key("HEADER"),
@@ -1459,11 +1372,11 @@ mod property_tests {
 
             /// Feature: metadata-restructure, Property 7: Metadata Interface TRE Access
             ///
-            /// as_dict(Some("CETAG")) returns only that CETAG's nested dict
+            /// entries(Some("CETAG")) returns only that CETAG's nested dict
             ///
             /// **Validates: Requirements 9.3, 9.4**
             #[test]
-            fn as_dict_with_cetag_prefix_filters_to_nested_dict(
+            fn entries_with_cetag_prefix_filters_to_nested_dict(
                 field1_value in field_value_strategy(8),
                 field2_value in field_value_strategy(6),
             ) {
@@ -1495,7 +1408,7 @@ mod property_tests {
                 );
 
                 // Filter by GEOLOB prefix
-                let dict = provider.as_dict(Some("GEOLOB"));
+                let dict = provider.entries(Some("GEOLOB"));
 
                 // Should NOT have subheader field
                 prop_assert!(!dict.contains_key("HEADER"),
@@ -1568,8 +1481,8 @@ mod property_tests {
                     Arc::new(registry),
                 );
 
-                // as_dict(None) should return subheader + 2 TRE nested dicts
-                let all_dict = provider.as_dict(None);
+                // entries(None) should return subheader + 2 TRE nested dicts
+                let all_dict = provider.entries(None);
                 prop_assert!(all_dict.contains_key("HEADER"));
                 prop_assert!(all_dict.contains_key("GEOLOB"));
                 prop_assert!(all_dict.contains_key("SENSRB"));
@@ -1585,13 +1498,13 @@ mod property_tests {
                 prop_assert_eq!(sensrb.get("field1"), Some(&serde_json::json!(tre2_field1)));
                 prop_assert_eq!(sensrb.get("field2"), Some(&serde_json::json!(tre2_field2)));
 
-                // as_dict(Some("GEOLOB")) should return only GEOLOB nested dict
-                let geolob_dict = provider.as_dict(Some("GEOLOB"));
+                // entries(Some("GEOLOB")) should return only GEOLOB nested dict
+                let geolob_dict = provider.entries(Some("GEOLOB"));
                 prop_assert_eq!(geolob_dict.len(), 1);
                 prop_assert!(geolob_dict.contains_key("GEOLOB"));
 
-                // as_dict(Some("SENSRB")) should return only SENSRB nested dict
-                let sensrb_dict = provider.as_dict(Some("SENSRB"));
+                // entries(Some("SENSRB")) should return only SENSRB nested dict
+                let sensrb_dict = provider.entries(Some("SENSRB"));
                 prop_assert_eq!(sensrb_dict.len(), 1);
                 prop_assert!(sensrb_dict.contains_key("SENSRB"));
             }
@@ -1638,7 +1551,7 @@ mod property_tests {
                     Arc::new(registry),
                 );
 
-                let dict = provider.as_dict(None);
+                let dict = provider.entries(None);
 
                 // Should have known TRE as nested dict
                 prop_assert!(dict.contains_key("GEOLOB"));
@@ -1666,7 +1579,7 @@ mod property_tests {
     /// Feature: metadata-restructure, Property 1: TRE Fields Appear as Nested Dictionaries
     ///
     /// For any JBPSegmentMetadataProvider with one or more TREs that have definitions
-    /// in the StructureRegistry, calling as_dict(None) shall produce a dictionary where
+    /// in the StructureRegistry, calling entries(None) shall produce a dictionary where
     /// each CETAG is a top-level key mapped to a nested dictionary containing that TRE's
     /// field names as keys and their parsed values as values. No dot-separated
     /// "CETAG.field" keys shall appear.
@@ -1808,7 +1721,7 @@ mod property_tests {
                     Arc::new(registry),
                 );
 
-                let dict = provider.as_dict(None);
+                let dict = provider.entries(None);
 
                 // 1. Each CETAG is a top-level key
                 for tre in &tres {
@@ -1873,7 +1786,7 @@ mod property_tests {
     /// Feature: metadata-restructure, Property 2: Unknown TREs Get Raw Representation
     ///
     /// For any JBPSegmentMetadataProvider with TREs that have no definition in the
-    /// StructureRegistry, calling as_dict(None) shall produce a dictionary where each
+    /// StructureRegistry, calling entries(None) shall produce a dictionary where each
     /// unknown CETAG is a top-level key mapped to an object containing "_raw"
     /// (hex-encoded bytes) and "_length" (byte count) fields, and _length shall equal
     /// the actual byte length of the TRE data.
@@ -1944,7 +1857,7 @@ mod property_tests {
                     Arc::new(registry),
                 );
 
-                let dict = provider.as_dict(None);
+                let dict = provider.entries(None);
 
                 for (tag, data) in &tres {
                     // 1. Each unknown CETAG is a top-level key
@@ -2007,7 +1920,7 @@ mod property_tests {
     /// Feature: metadata-restructure, Property 3: Repeated Fields Appear as JSON Arrays
     ///
     /// For any MetadataProvider whose underlying structure definition contains repeated
-    /// fields, calling as_dict() shall produce a dictionary where each repeated field
+    /// fields, calling entries() shall produce a dictionary where each repeated field
     /// appears under its base name mapped to a JSON array of element values. No
     /// _N-suffixed keys shall appear for repeated fields.
     ///
@@ -2142,7 +2055,7 @@ mod property_tests {
                 let raw = build_subheader_bytes("TESTHEAD", count, &values, elem_size);
 
                 let provider = JBPSegmentMetadataProvider::from_definition(def, raw);
-                let dict = provider.as_dict(None);
+                let dict = provider.entries(None);
 
                 // 1. The repeated field appears under its base name
                 prop_assert!(
@@ -2207,7 +2120,7 @@ mod property_tests {
                 let raw = build_subheader_bytes("TESTHEAD", count, &values, elem_size);
 
                 let provider = JBPFileMetadataProvider::from_definition(def, raw);
-                let dict = provider.as_dict(None);
+                let dict = provider.entries(None);
 
                 // 1. The repeated field appears under its base name as a JSON array
                 prop_assert!(
@@ -2285,7 +2198,7 @@ mod property_tests {
                     Arc::new(registry),
                 );
 
-                let dict = provider.as_dict(None);
+                let dict = provider.entries(None);
 
                 // 1. The CETAG is a top-level key mapped to a nested dict
                 prop_assert!(
@@ -2362,7 +2275,7 @@ mod property_tests {
 
     /// Feature: metadata-restructure, Property 4: Prefix Filter Returns Only Matching Entries
     ///
-    /// For any JBPSegmentMetadataProvider and any prefix string, as_dict(Some(prefix))
+    /// For any JBPSegmentMetadataProvider and any prefix string, entries(Some(prefix))
     /// shall return only entries whose top-level keys start with the given prefix. For
     /// TRE entries, the CETAG itself is the top-level key. For subheader fields, the
     /// field name is the top-level key. A non-matching prefix shall produce an empty
@@ -2490,7 +2403,7 @@ mod property_tests {
                 let provider = build_provider(&gf1, &gf2, &sf1, &sf2);
 
                 // Filter by exact CETAG "GEOLOB"
-                let dict = provider.as_dict(Some("GEOLOB"));
+                let dict = provider.entries(Some("GEOLOB"));
 
                 // Should contain the GEOLOB key with nested dict
                 prop_assert!(
@@ -2536,7 +2449,7 @@ mod property_tests {
                 let provider = build_provider(&gf1, &gf2, &sf1, &sf2);
 
                 // Filter by "FS" prefix — matches FSCLAS and FSCLSY
-                let dict = provider.as_dict(Some("FS"));
+                let dict = provider.entries(Some("FS"));
 
                 // Should contain only subheader fields starting with "FS"
                 prop_assert!(
@@ -2589,7 +2502,7 @@ mod property_tests {
                 let provider = build_provider(&gf1, &gf2, &sf1, &sf2);
 
                 // Filter by prefix that matches nothing
-                let dict = provider.as_dict(Some("ZZZZZ"));
+                let dict = provider.entries(Some("ZZZZZ"));
 
                 prop_assert!(
                     dict.is_empty(),
@@ -2615,7 +2528,7 @@ mod property_tests {
                 let provider = build_provider(&gf1, &gf2, &sf1, &sf2);
 
                 // "GEO" is a prefix of "GEOLOB" — tag.starts_with(prefix) is true
-                let dict = provider.as_dict(Some("GEO"));
+                let dict = provider.entries(Some("GEO"));
 
                 prop_assert!(
                     dict.contains_key("GEOLOB"),
@@ -2639,9 +2552,8 @@ mod property_tests {
 
             /// Feature: metadata-restructure, Property 4: Prefix Filter Returns Only Matching Entries
             ///
-            /// For any random prefix, all returned top-level keys satisfy the filter:
-            /// subheader fields start with the prefix, and TRE CETAGs satisfy
-            /// tag.starts_with(prefix) || prefix.starts_with(tag).
+            /// For any random prefix, all returned top-level keys satisfy simple
+            /// `key.starts_with(prefix)` matching (no bidirectional TRE matching).
             ///
             /// **Validates: Requirements 1.4, 7.1, 7.2, 7.3**
             #[test]
@@ -2654,29 +2566,15 @@ mod property_tests {
             ) {
                 let provider = build_provider(&gf1, &gf2, &sf1, &sf2);
 
-                let dict = provider.as_dict(Some(&prefix));
-
-                // Known CETAGs in this provider
-                let cetags = ["GEOLOB", "SENSRB"];
+                let dict = provider.entries(Some(&prefix));
 
                 for key in dict.keys() {
-                    if cetags.contains(&key.as_str()) {
-                        // TRE key: must satisfy tag.starts_with(prefix) || prefix.starts_with(tag)
-                        prop_assert!(
-                            key.starts_with(&prefix) || prefix.starts_with(key.as_str()),
-                            "TRE key '{}' does not satisfy prefix filter for '{}'",
-                            key,
-                            prefix
-                        );
-                    } else {
-                        // Subheader field: must start with prefix
-                        prop_assert!(
-                            key.starts_with(&prefix),
-                            "Subheader key '{}' should start with prefix '{}'",
-                            key,
-                            prefix
-                        );
-                    }
+                    prop_assert!(
+                        key.starts_with(&prefix),
+                        "Key '{}' should start with prefix '{}'",
+                        key,
+                        prefix
+                    );
                 }
             }
         }

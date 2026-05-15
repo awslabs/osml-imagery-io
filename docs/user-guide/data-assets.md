@@ -58,8 +58,8 @@ from aws.osml.io import BufferedDataAssetProvider, BufferedMetadataProvider, IO
 
 # Prepare DES metadata (required for valid SICD/SIDD)
 meta = BufferedMetadataProvider()
-meta.set("DESID", "XML_DATA_CONTENT")
-meta.set("DESVER", "01")
+meta["DESID"] = "XML_DATA_CONTENT")
+meta["DESVER"] = "01")
 
 # Load your SICD XML (from file, generation, etc.)
 with open("sicd_metadata.xml", "rb") as f:
@@ -87,8 +87,8 @@ import json
 from aws.osml.io import BufferedDataAssetProvider, BufferedMetadataProvider, IO
 
 meta = BufferedMetadataProvider()
-meta.set("DESID", "APP_CONFIG")
-meta.set("DESVER", "01")
+meta["DESID"] = "APP_CONFIG")
+meta["DESVER"] = "01")
 
 config = {"processing_level": 3, "sensor_id": "SAR-X1"}
 payload = json.dumps(config).encode("utf-8")
@@ -111,6 +111,6 @@ values raise an error at write time:
 
 ```python
 meta = BufferedMetadataProvider()
-meta.set("DESID", "A" * 26)  # Too long — will raise at write time
-meta.set("DESVER", "1")      # Must be exactly 2 chars — will raise
+meta["DESID"] = "A" * 26)  # Too long — will raise at write time
+meta["DESVER"] = "1")      # Must be exactly 2 chars — will raise
 ```

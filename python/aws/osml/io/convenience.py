@@ -591,23 +591,23 @@ def _apply_nitf_defaults(
     # Note: COMRAT is intentionally omitted for the default case — the
     # writer applies lossless J2K encoding when COMRAT is absent.
     if compression is None:
-        metadata.set("IC", "C8")
+        metadata["IC"] = "C8"
     else:
         comp_lower = compression.lower()
         if comp_lower in ("jpeg2000", "j2k", "c8"):
-            metadata.set("IC", "C8")
+            metadata["IC"] = "C8"
             if quality is not None:
-                metadata.set("COMRAT", f"N{quality:05.1f}")
+                metadata["COMRAT"] = f"N{quality:05.1f}"
         elif comp_lower in ("jpeg", "c3"):
-            metadata.set("IC", "C3")
+            metadata["IC"] = "C3"
             if quality is not None:
-                metadata.set("COMRAT", f"{quality:04.1f}")
+                metadata["COMRAT"] = f"{quality:04.1f}"
         elif comp_lower in ("none", "nc"):
-            metadata.set("IC", "NC")
+            metadata["IC"] = "NC"
         else:
-            metadata.set("IC", compression)
+            metadata["IC"] = compression
 
-    metadata.set("IMODE", "B")
+    metadata["IMODE"] = "B"
 
     # Block size: default 1024×1024 for NITF
     if block_size is not None:
@@ -628,7 +628,7 @@ def _apply_geotiff_defaults(
     """Apply GeoTIFF-specific encoding defaults."""
     from aws.osml.io.tiff.utils import TagNameResolver
 
-    tag_dict = metadata.as_dict()
+    tag_dict = metadata.entries()
     resolver = TagNameResolver(tag_dict)
 
     # Block size: default 256×256 for GeoTIFF
@@ -659,10 +659,7 @@ def _apply_geotiff_defaults(
 
     # Write resolved numeric keys back into the metadata provider
     for key, value in tag_dict.items():
-        if isinstance(value, str):
-            metadata.set(key, value)
-        else:
-            metadata.set_json(key, value)
+        metadata[key] = value
 
     return (bw, bh)
 
@@ -694,12 +691,12 @@ def _apply_j2k_defaults(
     """Apply JPEG 2000 codestream encoding defaults."""
     # Default: lossless
     if compression is None or compression.lower() in ("lossless", "none"):
-        metadata.set("J2K_LOSSLESS", "true")
+        metadata["J2K_LOSSLESS"] = "true"
     else:
-        metadata.set("J2K_LOSSLESS", "false")
+        metadata["J2K_LOSSLESS"] = "false"
 
     if quality is not None:
-        metadata.set("J2K_QUALITY", str(quality))
+        metadata["J2K_QUALITY"] = str(quality)
 
     # Block size: default 1024×1024
     if block_size is not None:
@@ -720,7 +717,7 @@ def _apply_jpeg_defaults(
     """Apply JPEG encoding defaults."""
     # Default quality: 75
     jpeg_quality = quality if quality is not None else 75
-    metadata.set("JPEG_QUALITY", str(int(jpeg_quality)))
+    metadata["JPEG_QUALITY"] = str(int(jpeg_quality))
 
     # JPEG: full image as a single block
     if block_size is not None:
@@ -793,18 +790,18 @@ def _apply_nitf_georef(
     from aws.osml.io.jbp.utils import IGEOLOAdapter
 
     icords = _crs_to_icords(crs)
-    metadata.set("ICORDS", icords)
+    metadata["ICORDS"] = icords
 
     if icords == "G":
         # Geographic: corners are (lon, lat), IGEOLO expects (lat, lon)
         latlon_corners = [(lat, lon) for lon, lat in corners]
         igeolo = IGEOLOAdapter.format(latlon_corners, "G")
-        metadata.set("IGEOLO", igeolo)
+        metadata["IGEOLO"] = igeolo
     elif icords == "D":
         # Decimal degrees: corners are (lon, lat), IGEOLO expects (lat, lon)
         latlon_corners = [(lat, lon) for lon, lat in corners]
         igeolo = IGEOLOAdapter.format(latlon_corners, "D")
-        metadata.set("IGEOLO", igeolo)
+        metadata["IGEOLO"] = igeolo
 
 
 def _crs_to_icords(crs: str) -> str:
@@ -882,11 +879,11 @@ def _apply_geotiff_georef(
         pixel_height = (ul_lat - ll_lat) / height
 
         # ModelPixelScaleTag (33550): [scale_x, scale_y, scale_z]
-        metadata.set_json("33550", [abs(pixel_width), abs(pixel_height), 0.0])
+        metadata["33550"] = [abs(pixel_width), abs(pixel_height), 0.0]
 
         # ModelTiepointTag (33922): [pixel_x, pixel_y, pixel_z, geo_x, geo_y, geo_z]
         # Pixel (0, 0) maps to the UL corner
-        metadata.set_json("33922", [0.0, 0.0, 0.0, ul_lon, ul_lat, 0.0])
+        metadata["33922"] = [0.0, 0.0, 0.0, ul_lon, ul_lat, 0.0]
     else:
         # Rotated/skewed: use ModelTransformation (4×4 affine matrix)
         # The affine maps pixel (col, row) to geographic (x, y):
@@ -915,7 +912,7 @@ def _apply_geotiff_georef(
             0.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 1.0,
         ]
-        metadata.set_json("34264", transform)
+        metadata["34264"] = transform
 
     # Build GeoKey directory
     _build_geokey_directory(metadata, crs)
@@ -986,7 +983,7 @@ def _build_geokey_directory(metadata, crs: str) -> None:
     header = [1, 1, 1, num_keys]
     directory = header + keys
 
-    metadata.set_json("34735", directory)
+    metadata["34735"] = directory
 
 
 # ---------------------------------------------------------------------------
@@ -1211,7 +1208,7 @@ def iminfo(
             ),
             num_resolution_levels=image_asset.num_resolution_levels,
             asset_key=asset_key,
-            metadata=dict(image_asset.metadata.as_dict()),
+            metadata=image_asset.metadata.entries(),
         )
 
 

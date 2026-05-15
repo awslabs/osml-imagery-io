@@ -441,7 +441,7 @@ mod tests {
         let data = make_single_ifd_tiff();
         let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
         let meta = reader.metadata();
-        let dict = meta.as_dict(None);
+        let dict = meta.entries(None);
 
         assert_eq!(
             dict.get("ByteOrder").and_then(|v| v.as_str()),

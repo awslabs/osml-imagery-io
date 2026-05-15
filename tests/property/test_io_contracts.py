@@ -630,7 +630,7 @@ def _write_j2k_test_file(path: Path) -> None:
     """Write a minimal valid J2K file at *path* for read-mode tests."""
     array = np.zeros((1, 32, 32), dtype=np.uint8)
     metadata = BufferedMetadataProvider()
-    metadata.set("J2K_LOSSLESS", "true")
+    metadata["J2K_LOSSLESS"] = "true"
 
     provider = BufferedImageAssetProvider.create(
         key="image:0",

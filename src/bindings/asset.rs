@@ -242,7 +242,7 @@ struct EmptyMetadataProvider {
 }
 
 impl MetadataProvider for EmptyMetadataProvider {
-    fn as_dict(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
+    fn entries(&self, _prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
         HashMap::new()
     }
 

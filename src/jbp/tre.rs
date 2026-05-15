@@ -278,7 +278,7 @@ impl TreFieldGroup {
 /// This function extracts TRE field values from a metadata dictionary where
 /// each TRE is a top-level key (the CETAG) mapped to a JSON object containing
 /// that TRE's field names and values. This matches the format returned by the
-/// NITF reader's `as_dict()`, enabling clean roundtrips.
+/// NITF reader's `entries()`, enabling clean roundtrips.
 ///
 /// # Arguments
 ///
@@ -339,7 +339,7 @@ pub fn parse_tre_fields_from_metadata(
 
 /// Extract TRE field groups from a MetadataProvider.
 ///
-/// This is a convenience function that calls `as_dict(None)` on the provider
+/// This is a convenience function that calls `entries(None)` on the provider
 /// and then parses the TRE fields from the resulting metadata.
 ///
 /// # Arguments
@@ -363,7 +363,7 @@ pub fn parse_tre_fields_from_metadata(
 pub fn extract_tre_fields_from_provider(
     provider: &dyn crate::traits::MetadataProvider,
 ) -> std::collections::HashMap<String, TreFieldGroup> {
-    let metadata = provider.as_dict(None);
+    let metadata = provider.entries(None);
     parse_tre_fields_from_metadata(&metadata)
 }
 

@@ -12,7 +12,7 @@ from typing import Any, Dict, Iterator, Optional, Tuple
 class TagNameResolver:
     """Resolve TIFF tag names to numeric IDs for convenient metadata access.
 
-    Wraps a Tag_Dictionary (from MetadataProvider.as_dict()) and provides
+    Wraps a Tag_Dictionary (from MetadataProvider.entries()) and provides
     lookup by human-readable tag name via a configurable name-to-number mapping.
 
     Keys that are not present in the mapping are passed through unchanged,
@@ -21,7 +21,7 @@ class TagNameResolver:
 
     Example::
 
-        meta = reader.metadata().as_dict()
+        meta = reader.metadata.entries()
         resolver = TagNameResolver(meta)
         width = resolver["ImageWidth"]       # looks up key "256"
         crs = resolver.by_number(34735)      # direct numeric access
