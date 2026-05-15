@@ -24,6 +24,23 @@ from aws.osml.io.tiff.utils import TagNameResolver  # noqa: E402
 # File extensions to scan
 EXTENSIONS = {".ntf", ".nitf", ".nsf", ".jp2", ".j2k", ".j2c", ".tif", ".tiff", ".png"}
 
+# Standard NITF image subheader fields (not TREs)
+_NITF_SUBHEADER_FIELDS = {
+    "IM", "IID1", "IID2", "IDATIM", "TGTID", "ISORCE",
+    "IREP", "ICAT", "ISCLAS", "ISCLSY", "ISCODE", "ISCTLH", "ISREL",
+    "ISDCTP", "ISDCDT", "ISDCXM", "ISDG", "ISDGDT", "ISCLTX", "ISCATP",
+    "ISCAUT", "ISCRSN", "ISSRDT", "ISCTLN",
+    "ENCRYP", "IGEOLO", "ICORDS",
+    "NICOM", "ICOM",
+    "IC", "COMRAT",
+    "NBANDS", "XBANDS", "BAND_INFO", "BAND_INFO_EXTENDED",
+    "ISYNC", "IMODE", "NBPR", "NBPC", "NPPBH", "NPPBV",
+    "NBPP", "ABPP", "PVTYPE", "PJUST",
+    "IDLVL", "IALVL", "ILOC", "IMAG",
+    "UDIDL", "UDOFL", "IXSHDL", "IXSOFL", "IXSHD",
+    "NROWS", "NCOLS",
+}
+
 # TIFF compression code to name mapping (common values)
 TIFF_COMPRESSION = {
     "1": "None",
@@ -64,6 +81,7 @@ def survey_file(filepath: Path) -> dict | None:
             media = getattr(asset, "media_type", "")
 
             # Format-specific fields
+            tres = ""
             if media == "image/tiff":
                 resolver = TagNameResolver(meta)
                 comp_code = resolver.get("Compression", "1")
@@ -87,6 +105,9 @@ def survey_file(filepath: Path) -> dict | None:
                     "M8": "JPEG2000 (masked)",
                 }.get(ic, ic)
                 imode = meta.get("IMODE", "?")
+                tres = ", ".join(sorted(
+                    k for k in meta if k not in _NITF_SUBHEADER_FIELDS
+                ))
 
             return {
                 "filename": filepath.name,
@@ -97,17 +118,19 @@ def survey_file(filepath: Path) -> dict | None:
                 "compression": compression,
                 "ic": ic,
                 "imode": imode,
+                "tres": tres,
             }
-    except Exception:
+    except BaseException:
         return {
             "filename": filepath.name,
-            "disk_size": "ERROR",
-            "pixels": "N/A",
+            "disk_size": _human_size(filepath.stat().st_size),
+            "pixels": "ERROR",
             "bands": "N/A",
             "pixel_type": "N/A",
             "compression": "N/A",
             "ic": "N/A",
             "imode": "N/A",
+            "tres": "",
         }
 
 
@@ -126,6 +149,7 @@ def print_table(rows: list[dict]) -> None:
         "compression": "Compression",
         "ic": "IC",
         "imode": "IMODE",
+        "tres": "TREs",
     }
 
     # Calculate column widths
