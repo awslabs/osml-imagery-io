@@ -87,18 +87,29 @@ def generate_nitf21_8x8(output_path: Path) -> None:
     print(f"  {output_path.name} ...")
 
     file_meta = _nitf_file_metadata("Minimal 8x8 grayscale NITF 2.1")
-    writer = IO.open([str(output_path)], "w", "nitf")
-    writer.metadata = file_meta
+    img_meta = _nitf_image_metadata(ic="NC", imode="B")
 
-    image_data = bytes([(x + y) % 256 for y in range(8) for x in range(8)])
-    asset = AssetProvider.from_bytes(
+    provider = BufferedImageAssetProvider.create(
         key="image:0",
-        data=image_data,
-        asset_type=AssetType.Image,
+        num_columns=8,
+        num_rows=8,
+        num_bands=1,
+        block_width=8,
+        block_height=8,
+        pixel_type=PixelType.UInt8,
+        metadata=img_meta,
         title="8x8 Grayscale",
         description="Minimal test image",
     )
-    writer.add_asset("image:0", asset, "8x8 Grayscale",
+
+    array = np.array(
+        [[(x + y) % 256 for x in range(8)] for y in range(8)], dtype=np.uint8
+    ).reshape(1, 8, 8)
+    provider.set_full_image(array)
+
+    writer = IO.open([str(output_path)], "w", "nitf")
+    writer.metadata = file_meta
+    writer.add_asset("image:0", provider, "8x8 Grayscale",
                      "Minimal test image", ["data"])
     writer.close()
 
@@ -108,18 +119,29 @@ def generate_nsif10_8x8(output_path: Path) -> None:
     print(f"  {output_path.name} ...")
 
     file_meta = _nitf_file_metadata("Minimal 8x8 grayscale NSIF 1.0")
-    writer = IO.open([str(output_path)], "w", "nsif")
-    writer.metadata = file_meta
+    img_meta = _nitf_image_metadata(ic="NC", imode="B")
 
-    image_data = bytes([(x + y) % 256 for y in range(8) for x in range(8)])
-    asset = AssetProvider.from_bytes(
+    provider = BufferedImageAssetProvider.create(
         key="image:0",
-        data=image_data,
-        asset_type=AssetType.Image,
+        num_columns=8,
+        num_rows=8,
+        num_bands=1,
+        block_width=8,
+        block_height=8,
+        pixel_type=PixelType.UInt8,
+        metadata=img_meta,
         title="8x8 Grayscale",
         description="Minimal test image",
     )
-    writer.add_asset("image:0", asset, "8x8 Grayscale",
+
+    array = np.array(
+        [[(x + y) % 256 for x in range(8)] for y in range(8)], dtype=np.uint8
+    ).reshape(1, 8, 8)
+    provider.set_full_image(array)
+
+    writer = IO.open([str(output_path)], "w", "nsif")
+    writer.metadata = file_meta
+    writer.add_asset("image:0", provider, "8x8 Grayscale",
                      "Minimal test image", ["data"])
     writer.close()
 
@@ -129,26 +151,51 @@ def generate_multisegment(output_path: Path) -> None:
     print(f"  {output_path.name} ...")
 
     file_meta = _nitf_file_metadata("Multi-segment NITF 2.1 test file")
+    img_meta = _nitf_image_metadata(ic="NC", imode="B")
+
+    # Image 1: 16x16
+    provider1 = BufferedImageAssetProvider.create(
+        key="image:0",
+        num_columns=16,
+        num_rows=16,
+        num_bands=1,
+        block_width=16,
+        block_height=16,
+        pixel_type=PixelType.UInt8,
+        metadata=img_meta,
+        title="First Image",
+        description="16x16 grayscale",
+    )
+    array1 = np.array(
+        [[(x + y) % 256 for x in range(16)] for y in range(16)], dtype=np.uint8
+    ).reshape(1, 16, 16)
+    provider1.set_full_image(array1)
+
+    # Image 2: 8x8
+    provider2 = BufferedImageAssetProvider.create(
+        key="image:1",
+        num_columns=8,
+        num_rows=8,
+        num_bands=1,
+        block_width=8,
+        block_height=8,
+        pixel_type=PixelType.UInt8,
+        metadata=img_meta,
+        title="Second Image",
+        description="8x8 grayscale",
+    )
+    array2 = np.array(
+        [[(x * y) % 256 for x in range(8)] for y in range(8)], dtype=np.uint8
+    ).reshape(1, 8, 8)
+    provider2.set_full_image(array2)
+
     writer = IO.open([str(output_path)], "w", "nitf")
     writer.metadata = file_meta
 
-    # Image 1: 16x16
-    img1 = bytes([(x + y) % 256 for y in range(16) for x in range(16)])
-    writer.add_asset(
-        "image:0",
-        AssetProvider.from_bytes("image:0", img1, AssetType.Image,
-                                "First Image", "16x16 grayscale"),
-        "First Image", "16x16 grayscale", ["data"],
-    )
-
-    # Image 2: 8x8
-    img2 = bytes([(x * y) % 256 for y in range(8) for x in range(8)])
-    writer.add_asset(
-        "image:1",
-        AssetProvider.from_bytes("image:1", img2, AssetType.Image,
-                                "Second Image", "8x8 grayscale"),
-        "Second Image", "8x8 grayscale", ["data"],
-    )
+    writer.add_asset("image:0", provider1, "First Image",
+                     "16x16 grayscale", ["data"])
+    writer.add_asset("image:1", provider2, "Second Image",
+                     "8x8 grayscale", ["data"])
 
     # Text segment
     writer.add_asset(
