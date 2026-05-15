@@ -21,8 +21,7 @@ impl MetadataProvider for EmptyMetadataProvider {
 
 /// In-memory data asset provider for creating DES segments programmatically.
 ///
-/// This provider stores arbitrary bytes in memory with an associated MIME type,
-/// supporting XML and JSON parsing for structured payloads.
+/// This provider stores arbitrary bytes in memory with an associated MIME type.
 pub struct BufferedDataAssetProvider {
     key: String,
     title: String,
@@ -101,16 +100,6 @@ impl DataAssetProvider for BufferedDataAssetProvider {
     fn mime_type(&self) -> &str {
         &self.mime_type
     }
-
-    fn parse_as_xml(&self) -> Result<String, CodecError> {
-        String::from_utf8(self.data.clone())
-            .map_err(|e| CodecError::Parse(format!("Data is not valid UTF-8 for XML: {}", e)))
-    }
-
-    fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
-        serde_json::from_slice(&self.data)
-            .map_err(|e| CodecError::Parse(format!("Data is not valid JSON: {}", e)))
-    }
 }
 
 unsafe impl Send for BufferedDataAssetProvider {}
@@ -171,42 +160,6 @@ mod tests {
             Some(&serde_json::json!("XML_DATA_CONTENT"))
         );
         assert_eq!(dict.get("DESVER"), Some(&serde_json::json!("01")));
-    }
-
-    #[test]
-    fn test_parse_as_xml_valid() {
-        let xml = b"<root><child>value</child></root>".to_vec();
-        let provider = BufferedDataAssetProvider::new("des_0", xml, "application/xml");
-
-        let result = provider.parse_as_xml().unwrap();
-        assert_eq!(result, "<root><child>value</child></root>");
-    }
-
-    #[test]
-    fn test_parse_as_xml_invalid_utf8() {
-        let binary = vec![0xFF, 0xFE, 0x00, 0x01];
-        let provider = BufferedDataAssetProvider::new("des_0", binary, "application/octet-stream");
-
-        assert!(provider.parse_as_xml().is_err());
-    }
-
-    #[test]
-    fn test_parse_as_json_valid() {
-        let json = br#"{"key": "value", "num": 42}"#.to_vec();
-        let provider = BufferedDataAssetProvider::new("des_0", json, "application/json");
-
-        let result = provider.parse_as_json().unwrap();
-        assert_eq!(result["key"], "value");
-        assert_eq!(result["num"], 42);
-    }
-
-    #[test]
-    fn test_parse_as_json_invalid() {
-        let not_json = b"this is not json".to_vec();
-        let provider =
-            BufferedDataAssetProvider::new("des_0", not_json, "application/octet-stream");
-
-        assert!(provider.parse_as_json().is_err());
     }
 
     #[test]

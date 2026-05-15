@@ -3,7 +3,6 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use crate::bindings::data::serde_json_value_to_pyobject;
 use crate::bindings::PyMetadataProvider;
 use crate::buffered::BufferedDataAssetProvider;
 use crate::traits::{AssetMetadata, DataAssetProvider};
@@ -181,30 +180,5 @@ impl PyBufferedDataAssetProvider {
     #[getter]
     fn mime_type(&self) -> &str {
         self.inner.mime_type()
-    }
-
-    /// Parse the data content as XML and return an ``ElementTree`` ``Element``.
-    ///
-    /// :returns: The root element of the parsed XML document.
-    /// :rtype: xml.etree.ElementTree.Element
-    /// :raises ValueError: If the content is not valid XML.
-    fn parse_as_xml(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let xml_string = self.inner.parse_as_xml()?;
-
-        let et_module = py.import("xml.etree.ElementTree")?;
-        let fromstring = et_module.getattr("fromstring")?;
-        let element = fromstring.call1((xml_string,))?;
-
-        Ok(element.into())
-    }
-
-    /// Parse the data content as JSON and return a Python object.
-    ///
-    /// :returns: The parsed JSON content as a native Python object.
-    /// :rtype: dict or list
-    /// :raises ValueError: If the content is not valid JSON.
-    fn parse_as_json(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let json_value = self.inner.parse_as_json()?;
-        serde_json_value_to_pyobject(py, &json_value)
     }
 }

@@ -107,7 +107,7 @@ class TestDataSegmentRoundtrip:
     @pbt_settings
     def test_xml_payload_roundtrip(self, xml_data):
         """For any valid XML content, writing to a DES and reading back
-        SHALL produce identical bytes and parse_as_xml() SHALL succeed.
+        SHALL produce identical bytes and parse as valid XML.
         """
         meta = BufferedMetadataProvider()
         meta["DESID"] = "XML_DATA_CONTENT"
@@ -135,7 +135,9 @@ class TestDataSegmentRoundtrip:
             read_bytes = asset.raw_asset.read()
             assert read_bytes == xml_data
 
-            elem = asset.parse_as_xml()
+            import xml.etree.ElementTree as ET
+
+            elem = ET.fromstring(read_bytes)
             assert elem.tag == "root"
             reader.close()
         finally:

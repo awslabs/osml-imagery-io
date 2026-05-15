@@ -16,18 +16,18 @@ with IO.open(["image.ntf"], "r") as dataset:
 
 ## SICD/SIDD XML Example
 
-SAR imagery standards store complex XML metadata in data assets. The library can parse
-these directly:
+SAR imagery standards store complex XML metadata in data assets. Use `raw_asset` to
+get the bytes, then decode with your preferred XML library:
 
 ```python
+import xml.etree.ElementTree as ET
 from aws.osml.io import IO, AssetType
 
 with IO.open(["sicd_image.ntf"], "r") as dataset:
     for key in dataset.get_asset_keys(asset_type=AssetType.Data):
         data = dataset.get_asset(key)
         if data.mime_type == "application/xml":
-            xml_tree = data.parse_as_xml()
-            root = xml_tree.getroot()
+            root = ET.fromstring(data.raw_asset.read())
             print(f"XML root tag: {root.tag}")
 
             # Navigate the XML tree
@@ -37,7 +37,7 @@ with IO.open(["sicd_image.ntf"], "r") as dataset:
 
 ## Reading Raw Data
 
-For non-XML payloads, access the raw bytes:
+Access the raw bytes directly:
 
 ```python
 with IO.open(["image.ntf"], "r") as dataset:

@@ -159,7 +159,10 @@ impl PyMetadataProvider {
         for key in &keys {
             if let Some(value) = self.inner.get_value(key) {
                 let py_val = json_value_to_py(py, &value)?;
-                let tuple = PyTuple::new(py, &[key.into_pyobject(py)?.into_any(), py_val.bind(py).clone()])?;
+                let tuple = PyTuple::new(
+                    py,
+                    &[key.into_pyobject(py)?.into_any(), py_val.bind(py).clone()],
+                )?;
                 py_list.append(tuple)?;
             }
         }

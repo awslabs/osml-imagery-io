@@ -197,14 +197,7 @@ def describe_data_asset(asset, show_metadata: bool, is_nitf: bool = False) -> No
         # Display the XML content for SICD/SIDD segments
         if sicd_sidd:
             try:
-                if hasattr(asset, 'parse_as_xml'):
-                    xml_element = asset.parse_as_xml()
-                else:
-                    # Fall back to parsing raw bytes when the asset is
-                    # returned as a generic AssetProvider without the
-                    # DataAssetProvider interface.
-                    raw_io = asset.raw_asset
-                    xml_element = ET.fromstring(raw_io.read())
+                xml_element = ET.fromstring(asset.raw_asset.read())
                 print("    XML Content:")
                 print(format_xml(xml_element))
             except Exception as e:

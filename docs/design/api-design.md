@@ -109,8 +109,6 @@ direction TB
     class DataAssetProvider {
         <<abstract>>
         +mime_type str
-        +parse_as_xml() ElementTree
-        +parse_as_json() Dict[str, Any]
     }
 
     class GraphicsAssetProvider {

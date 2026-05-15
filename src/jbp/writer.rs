@@ -2807,12 +2807,6 @@ mod tests {
         fn mime_type(&self) -> &str {
             "application/octet-stream"
         }
-        fn parse_as_xml(&self) -> Result<String, CodecError> {
-            Err(CodecError::Decode("Not XML".to_string()))
-        }
-        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
-            Err(CodecError::Decode("Not JSON".to_string()))
-        }
     }
 
     #[test]
@@ -4189,12 +4183,6 @@ mod property_tests {
         fn mime_type(&self) -> &str {
             "application/octet-stream"
         }
-        fn parse_as_xml(&self) -> Result<String, CodecError> {
-            Err(CodecError::Decode("Not XML".to_string()))
-        }
-        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
-            Err(CodecError::Decode("Not JSON".to_string()))
-        }
     }
 
     struct PropTestMetadataProvider;
@@ -5167,12 +5155,6 @@ mod metadata_writing_tests {
     impl crate::traits::DataAssetProvider for MetaAssetProvider {
         fn mime_type(&self) -> &str {
             "application/octet-stream"
-        }
-        fn parse_as_xml(&self) -> Result<String, CodecError> {
-            Err(CodecError::Decode("Not XML".to_string()))
-        }
-        fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
-            Err(CodecError::Decode("Not JSON".to_string()))
         }
     }
 

@@ -358,16 +358,6 @@ impl DataAssetProvider for BytesDataAssetProvider {
     fn mime_type(&self) -> &str {
         &self.media_type
     }
-
-    fn parse_as_xml(&self) -> Result<String, CodecError> {
-        String::from_utf8(self.data.clone())
-            .map_err(|e| CodecError::Parse(format!("Invalid UTF-8 in data asset XML: {}", e)))
-    }
-
-    fn parse_as_json(&self) -> Result<serde_json::Value, CodecError> {
-        serde_json::from_slice(&self.data)
-            .map_err(|e| CodecError::Parse(format!("Invalid JSON in data asset: {}", e)))
-    }
 }
 
 // =============================================================================

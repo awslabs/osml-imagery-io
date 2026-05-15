@@ -1417,7 +1417,7 @@ mod tests {
     fn writer_predictor_default_with_lzw_compression() {
         let meta = BufferedMetadataProvider::new();
         meta.set("259", serde_json::json!(5)); // Tag 259 = LZW
-                                                    // No explicit Predictor → should default to Horizontal (2)
+                                               // No explicit Predictor → should default to Horizontal (2)
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 2);
     }
@@ -1434,7 +1434,7 @@ mod tests {
     fn writer_predictor_default_without_compression() {
         let meta = BufferedMetadataProvider::new();
         meta.set("259", serde_json::json!(1)); // Tag 259 = None
-                                                    // No explicit Predictor + no compression → should default to None (1)
+                                               // No explicit Predictor + no compression → should default to None (1)
         let hints = TiffEncodingHints::from_metadata(&meta).unwrap();
         assert_eq!(hints.predictor, 1);
     }

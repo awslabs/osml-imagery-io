@@ -471,7 +471,10 @@ mod tests {
         meta.set("dted:edition_number", serde_json::json!("01"));
         meta.set("dted:compilation_date", serde_json::json!("0101"));
         meta.set("dted:partial_cell_indicator", serde_json::json!("00"));
-        meta.set("dted:absolute_horizontal_accuracy", serde_json::json!("0050"));
+        meta.set(
+            "dted:absolute_horizontal_accuracy",
+            serde_json::json!("0050"),
+        );
         meta.set("dted:absolute_vertical_accuracy", serde_json::json!("0030"));
         meta.set("dted:relative_vertical_accuracy", serde_json::json!("0020"));
         meta.set("dted:vertical_accuracy", json!(20));
