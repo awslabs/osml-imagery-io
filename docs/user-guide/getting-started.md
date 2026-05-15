@@ -129,11 +129,11 @@ pixels = imread("image.ntf")
 **Low-level equivalent:**
 
 ```python
-from aws.osml.io import IO
+from aws.osml.io import IO, AssetType
 import numpy as np
 
 with IO.open("image.ntf", "r") as dataset:
-    keys = dataset.get_asset_keys(asset_type="image", roles=["data"])
+    keys = dataset.get_asset_keys(asset_type=AssetType.Image, roles=["data"])
     image = dataset.get_asset(keys[0])
 
     bw = image.num_pixels_per_block_horizontal or image.num_columns

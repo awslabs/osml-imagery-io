@@ -6,10 +6,10 @@ processing notes, and similar human-readable data.
 ## Reading Text Assets
 
 ```python
-from aws.osml.io import IO
+from aws.osml.io import IO, AssetType
 
 with IO.open(["image.ntf"], "r") as dataset:
-    for key in dataset.get_asset_keys(asset_type="text"):
+    for key in dataset.get_asset_keys(asset_type=AssetType.Text):
         text = dataset.get_asset(key)
         print(f"Text '{key}': {text.text[:200]}...")
 ```
@@ -19,11 +19,12 @@ with IO.open(["image.ntf"], "r") as dataset:
 ```python
 from aws.osml.io import IO, BufferedTextAssetProvider
 
-text_asset = BufferedTextAssetProvider(
+text_asset = BufferedTextAssetProvider.create(
     key="text:0",
     text_content="Mission report content...",
     encoding="UTF-8",
-).with_title("Mission Report")
+    title="Mission Report",
+)
 
 with IO.open(["output.ntf"], "w", "nitf") as writer:
     writer.add_asset("text:0", text_asset,

@@ -246,10 +246,10 @@ Overview keys follow the pattern `image:{parent}:overview:{level}`, where `{pare
 is the index of the full-resolution image and `{level}` is the overview number:
 
 ```python
-from aws.osml.io import IO
+from aws.osml.io import IO, AssetType
 
 with IO.open(["cog.tif"], "r") as dataset:
-    for key in dataset.get_asset_keys(asset_type="image"):
+    for key in dataset.get_asset_keys(asset_type=AssetType.Image):
         asset = dataset.get_asset(key)
         print(f"{key}: {asset.num_columns}x{asset.num_rows}, roles={asset.roles}")
     # image:0: 4096x4096, roles=['data']
@@ -262,8 +262,8 @@ and access metadata just like a full-resolution image:
 
 ```python
     # Use roles to separate full-res from overviews
-    data_keys = dataset.get_asset_keys(asset_type="image", roles=["data"])
-    overview_keys = dataset.get_asset_keys(asset_type="image", roles=["overview"])
+    data_keys = dataset.get_asset_keys(asset_type=AssetType.Image, roles=["data"])
+    overview_keys = dataset.get_asset_keys(asset_type=AssetType.Image, roles=["overview"])
 
     # Read a block from an overview
     overview = dataset.get_asset("image:0:overview:1")
@@ -285,7 +285,7 @@ as embedded overviews:
 
 ```python
 with IO.open(["image.ntf", "image.ntf.r1", "image.ntf.r2"], "r") as dataset:
-    for key in dataset.get_asset_keys(asset_type="image"):
+    for key in dataset.get_asset_keys(asset_type=AssetType.Image):
         asset = dataset.get_asset(key)
         print(f"{key}: {asset.num_columns}x{asset.num_rows}, roles={asset.roles}")
     # image:0: 4096x4096, roles=['data']
@@ -332,7 +332,7 @@ explicitly:
 
 ```python
 import io
-from aws.osml.io import IO
+from aws.osml.io import IO, AssetType
 
 base_stream = io.BytesIO(base_bytes)
 overview1_stream = io.BytesIO(overview1_bytes)
@@ -345,7 +345,7 @@ with IO.open(
     roles=[["data"], ["overview:1"], ["overview:2"]],
 ) as dataset:
     # Same asset key structure as file-path R-sets
-    for key in dataset.get_asset_keys(asset_type="image"):
+    for key in dataset.get_asset_keys(asset_type=AssetType.Image):
         asset = dataset.get_asset(key)
         print(f"{key}: {asset.num_columns}x{asset.num_rows}")
     # image:0: 4096x4096
@@ -388,14 +388,14 @@ Use `get_asset_keys()` to list available assets, then `get_asset()` to retrieve
 a specific one. You can filter by asset type, by role, or both:
 
 ```python
-from aws.osml.io import IO
+from aws.osml.io import IO, AssetType
 
 with IO.open(["complex_dataset.ntf"], "r") as dataset:
     # List keys by asset type
-    image_keys = dataset.get_asset_keys(asset_type="image")
-    text_keys = dataset.get_asset_keys(asset_type="text")
-    data_keys = dataset.get_asset_keys(asset_type="data")
-    graphics_keys = dataset.get_asset_keys(asset_type="graphics")
+    image_keys = dataset.get_asset_keys(asset_type=AssetType.Image)
+    text_keys = dataset.get_asset_keys(asset_type=AssetType.Text)
+    data_keys = dataset.get_asset_keys(asset_type=AssetType.Data)
+    graphics_keys = dataset.get_asset_keys(asset_type=AssetType.Graphics)
 
     print(f"Images: {len(image_keys)}, Text: {len(text_keys)}, "
           f"Data: {len(data_keys)}, Graphics: {len(graphics_keys)}")
@@ -413,13 +413,13 @@ overviews:
 ```python
 with IO.open(["cog.tif"], "r") as dataset:
     # Only full-resolution images
-    data_keys = dataset.get_asset_keys(asset_type="image", roles=["data"])
+    data_keys = dataset.get_asset_keys(asset_type=AssetType.Image, roles=["data"])
 
     # Only overview images
-    overview_keys = dataset.get_asset_keys(asset_type="image", roles=["overview"])
+    overview_keys = dataset.get_asset_keys(asset_type=AssetType.Image, roles=["overview"])
 
     # All image assets (no role filter)
-    all_keys = dataset.get_asset_keys(asset_type="image")
+    all_keys = dataset.get_asset_keys(asset_type=AssetType.Image)
 ```
 
 When `roles` is omitted or `None`, all assets matching the `asset_type` filter are

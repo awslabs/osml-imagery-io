@@ -395,10 +395,12 @@ contains a standard single-image dataset.
 Reading the pyramid back uses the same multi-path pattern:
 
 ```python
+from aws.osml.io import IO, AssetType
+
 with IO.open(
     ["output.ntf", "output.ntf.r1", "output.ntf.r2"], "r"
 ) as dataset:
-    for key in dataset.get_asset_keys(asset_type="image"):
+    for key in dataset.get_asset_keys(asset_type=AssetType.Image):
         asset = dataset.get_asset(key)
         print(f"{key}: {asset.num_columns}x{asset.num_rows}")
     # image:0: 1024x1024

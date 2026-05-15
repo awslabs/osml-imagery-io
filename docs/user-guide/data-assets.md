@@ -6,10 +6,10 @@ metadata (SICD/SIDD), overflow TREs, and application-specific data.
 ## Reading Data Assets
 
 ```python
-from aws.osml.io import IO
+from aws.osml.io import IO, AssetType
 
 with IO.open(["image.ntf"], "r") as dataset:
-    for key in dataset.get_asset_keys(asset_type="data"):
+    for key in dataset.get_asset_keys(asset_type=AssetType.Data):
         data = dataset.get_asset(key)
         print(f"Data '{key}': mime_type={data.mime_type}")
 ```
@@ -20,10 +20,10 @@ SAR imagery standards store complex XML metadata in data assets. The library can
 these directly:
 
 ```python
-from aws.osml.io import IO
+from aws.osml.io import IO, AssetType
 
 with IO.open(["sicd_image.ntf"], "r") as dataset:
-    for key in dataset.get_asset_keys(asset_type="data"):
+    for key in dataset.get_asset_keys(asset_type=AssetType.Data):
         data = dataset.get_asset(key)
         if data.mime_type == "application/xml":
             xml_tree = data.parse_as_xml()
