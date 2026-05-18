@@ -148,15 +148,82 @@ impl UncompressedBlockDecoder {
         }
     }
 
-    /// Calculate the number of bytes per pixel.
+    /// Calculate the number of bytes per pixel in decoded output.
     fn bytes_per_pixel(&self) -> usize {
         (self.nbpp as usize).div_ceil(8)
     }
 
-    /// Calculate the size of a single block in bytes.
+    /// Whether pixels are stored as a bit-packed bitstream on disk.
+    ///
+    /// Returns `true` for any NBPP that is not a multiple of 8 (e.g., 1, 2, 4, 12).
+    /// Byte-aligned NBPP values (8, 16, 32, 64) return `false`.
+    #[allow(clippy::manual_is_multiple_of)]
+    fn is_bit_packed(&self) -> bool {
+        self.nbpp % 8 != 0
+    }
+
+    /// On-disk size of one band's data within a block.
+    ///
+    /// Pixels form a continuous bitstream of `nppbh * nppbv * nbpp` total bits,
+    /// zero-padded to the next byte boundary: `ceil(nppbh * nppbv * nbpp / 8)`.
+    fn packed_band_size_bytes(&self) -> usize {
+        ((self.nppbh as usize) * (self.nppbv as usize) * (self.nbpp as usize)).div_ceil(8)
+    }
+
+    /// Calculate the on-disk size of a single block in bytes.
     fn block_size_bytes(&self) -> usize {
+        self.packed_band_size_bytes() * (self.nbands as usize)
+    }
+
+    /// Unpack a bit-packed band into its decoded container representation.
+    ///
+    /// Each pixel occupies `nbpp` bits in the packed bitstream. The output uses
+    /// `ceil(nbpp/8)` bytes per pixel (big-endian byte order matching NITF convention,
+    /// which will be swapped to native-endian later by the caller).
+    ///
+    /// For NBPP <= 8: output is 1 byte per pixel.
+    /// For NBPP 9-16 (e.g., 12): output is 2 bytes per pixel (big-endian u16).
+    fn unpack_bitstream(&self, packed: &[u8], num_pixels: usize) -> Vec<u8> {
+        let nbpp = self.nbpp as usize;
         let bpp = self.bytes_per_pixel();
-        (self.nppbh as usize) * (self.nppbv as usize) * (self.nbands as usize) * bpp
+        let mask: u32 = (1u32 << nbpp) - 1;
+        let mut output = Vec::with_capacity(num_pixels * bpp);
+
+        let mut bit_offset = 0usize;
+        for _ in 0..num_pixels {
+            // Extract nbpp bits from the packed bitstream (MSB-first)
+            let mut value: u32 = 0;
+            let mut bits_remaining = nbpp;
+            let mut current_bit = bit_offset;
+
+            while bits_remaining > 0 {
+                let byte_idx = current_bit / 8;
+                let bit_within_byte = current_bit % 8;
+                let bits_available = 8 - bit_within_byte;
+                let bits_to_take = bits_remaining.min(bits_available);
+
+                let shift = bits_available - bits_to_take;
+                let mask_u8 = ((1u16 << bits_to_take) - 1) as u8;
+                let extracted = ((packed[byte_idx] >> shift) & mask_u8) as u32;
+
+                value = (value << bits_to_take) | extracted;
+                bits_remaining -= bits_to_take;
+                current_bit += bits_to_take;
+            }
+
+            value &= mask;
+
+            match bpp {
+                1 => output.push(value as u8),
+                2 => output.extend_from_slice(&(value as u16).to_be_bytes()),
+                4 => output.extend_from_slice(&value.to_be_bytes()),
+                _ => unreachable!("NBPP > 32 not supported for bit-packed"),
+            }
+
+            bit_offset += nbpp;
+        }
+
+        output
     }
 
     /// Lock the scratch buffer and ensure it has at least `required` bytes of capacity.
@@ -199,8 +266,7 @@ impl UncompressedBlockDecoder {
                 // Band sequential: blocks are organized by band first
                 // For a single block access, we need to read from multiple locations
                 // But for offset calculation, we return the start of the first band's block
-                let single_band_block_size =
-                    (self.nppbh as u64) * (self.nppbv as u64) * (self.bytes_per_pixel() as u64);
+                let single_band_block_size = self.packed_band_size_bytes() as u64;
                 // Return offset to first band's block
                 block_index * single_band_block_size
             }
@@ -254,38 +320,62 @@ impl UncompressedBlockDecoder {
         actual_rows: u32,
         actual_cols: u32,
     ) -> Result<Vec<u8>, CodecError> {
-        let bpp = self.bytes_per_pixel();
         let blocks_per_band = (self.nbpr as usize) * (self.nbpc as usize);
-        let single_band_block_size = (self.nppbh as usize) * (self.nppbv as usize) * bpp;
+        let single_band_block_size = self.packed_band_size_bytes();
         let block_index = (block_row as usize) * (self.nbpr as usize) + (block_col as usize);
+        let num_pixels = (actual_rows as usize) * (actual_cols as usize);
 
-        let actual_pixels = (actual_rows as usize) * (actual_cols as usize);
-        let mut output = Vec::with_capacity(actual_pixels * (self.nbands as usize) * bpp);
+        if self.is_bit_packed() {
+            let bpp = self.bytes_per_pixel();
+            let mut output = Vec::with_capacity(num_pixels * (self.nbands as usize) * bpp);
 
-        for band in 0..self.nbands {
-            let band_offset = (band as usize) * blocks_per_band * single_band_block_size;
-            let block_offset = band_offset + block_index * single_band_block_size;
+            for band in 0..self.nbands {
+                let band_offset = (band as usize) * blocks_per_band * single_band_block_size;
+                let block_offset = band_offset + block_index * single_band_block_size;
+                let end = block_offset + single_band_block_size;
 
-            // Read the block data for this band
-            // Handle edge blocks by reading only the actual pixels
-            for row in 0..actual_rows {
-                let row_offset = block_offset + (row as usize) * (self.nppbh as usize) * bpp;
-                let row_bytes = (actual_cols as usize) * bpp;
-
-                if row_offset + row_bytes > self.image_data.len() {
+                if end > self.image_data.len() {
                     return Err(CodecError::Decode(format!(
                         "Block data out of bounds: offset {} + {} > {}",
-                        row_offset,
-                        row_bytes,
+                        block_offset,
+                        single_band_block_size,
                         self.image_data.len()
                     )));
                 }
 
-                output.extend_from_slice(&self.image_data[row_offset..row_offset + row_bytes]);
+                let packed = &self.image_data[block_offset..end];
+                let unpacked = self.unpack_bitstream(packed, num_pixels);
+                output.extend_from_slice(&unpacked);
             }
-        }
 
-        Ok(output)
+            Ok(output)
+        } else {
+            let bpp = self.bytes_per_pixel();
+            let mut output = Vec::with_capacity(num_pixels * (self.nbands as usize) * bpp);
+
+            for band in 0..self.nbands {
+                let band_offset = (band as usize) * blocks_per_band * single_band_block_size;
+                let block_offset = band_offset + block_index * single_band_block_size;
+
+                for row in 0..actual_rows {
+                    let row_offset = block_offset + (row as usize) * (self.nppbh as usize) * bpp;
+                    let row_bytes = (actual_cols as usize) * bpp;
+
+                    if row_offset + row_bytes > self.image_data.len() {
+                        return Err(CodecError::Decode(format!(
+                            "Block data out of bounds: offset {} + {} > {}",
+                            row_offset,
+                            row_bytes,
+                            self.image_data.len()
+                        )));
+                    }
+
+                    output.extend_from_slice(&self.image_data[row_offset..row_offset + row_bytes]);
+                }
+            }
+
+            Ok(output)
+        }
     }
 
     /// Read a block for IMODE B, P, or R.
@@ -298,9 +388,38 @@ impl UncompressedBlockDecoder {
         actual_rows: u32,
         actual_cols: u32,
     ) -> Result<Cow<'_, [u8]>, CodecError> {
-        let bpp = self.bytes_per_pixel();
         let offset = self.block_offset(block_row, block_col) as usize;
         let nominal_block_size = self.block_size_bytes();
+
+        // Bit-packed path: unpack bitstream bands into container-sized pixels
+        if self.is_bit_packed() {
+            if offset + nominal_block_size > self.image_data.len() {
+                return Err(CodecError::Decode(format!(
+                    "Block data out of bounds: offset {} + {} > {}",
+                    offset,
+                    nominal_block_size,
+                    self.image_data.len()
+                )));
+            }
+
+            let bpp = self.bytes_per_pixel();
+            let num_pixels = (actual_rows as usize) * (actual_cols as usize);
+            let packed_band_size = self.packed_band_size_bytes();
+            let mut output = Vec::with_capacity(num_pixels * (self.nbands as usize) * bpp);
+
+            // IMODE=B for bit-packed: each band is packed contiguously
+            for band in 0..self.nbands as usize {
+                let band_start = offset + band * packed_band_size;
+                let band_end = band_start + packed_band_size;
+                let packed = &self.image_data[band_start..band_end];
+                let unpacked = self.unpack_bitstream(packed, num_pixels);
+                output.extend_from_slice(&unpacked);
+            }
+
+            return Ok(Cow::Owned(output));
+        }
+
+        let bpp = self.bytes_per_pixel();
 
         // For full blocks, borrow directly from the Arc — zero-copy
         if actual_rows == self.nppbv && actual_cols == self.nppbh {
@@ -1021,6 +1140,287 @@ mod tests {
         }
     }
 
+    mod sub_byte_decode_tests {
+        use super::*;
+
+        #[test]
+        fn decode_1bpp_single_band() {
+            // 8x4 block, 1 band, 1 bit per pixel, IMODE=B
+            // 8*4 = 32 pixels at 1 bit each = 4 bytes
+            // Pattern: alternating 1,0 per pixel
+            // Byte 0: 0b10101010 = pixels [1,0,1,0,1,0,1,0]
+            // Byte 1: 0b11001100 = pixels [1,1,0,0,1,1,0,0]
+            // Byte 2: 0b11110000 = pixels [1,1,1,1,0,0,0,0]
+            // Byte 3: 0b00001111 = pixels [0,0,0,0,1,1,1,1]
+            let data = vec![0b10101010, 0b11001100, 0b11110000, 0b00001111];
+
+            let decoder = create_test_decoder(
+                4,
+                8, // nrows=4, ncols=8
+                1,
+                1, // nbpr=1, nbpc=1
+                8,
+                4, // nppbh=8, nppbv=4
+                1, // nbands=1
+                1, // nbpp=1
+                InterleaveMode::B,
+                data,
+            );
+
+            let (block_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
+            assert_eq!(shape, [1, 4, 8]);
+            assert_eq!(block_data.len(), 32);
+
+            // Row 0 from byte 0: [1,0,1,0,1,0,1,0]
+            assert_eq!(&block_data[0..8], &[1, 0, 1, 0, 1, 0, 1, 0]);
+            // Row 1 from byte 1: [1,1,0,0,1,1,0,0]
+            assert_eq!(&block_data[8..16], &[1, 1, 0, 0, 1, 1, 0, 0]);
+            // Row 2 from byte 2: [1,1,1,1,0,0,0,0]
+            assert_eq!(&block_data[16..24], &[1, 1, 1, 1, 0, 0, 0, 0]);
+            // Row 3 from byte 3: [0,0,0,0,1,1,1,1]
+            assert_eq!(&block_data[24..32], &[0, 0, 0, 0, 1, 1, 1, 1]);
+        }
+
+        #[test]
+        fn decode_1bpp_two_bands() {
+            // 4x2 block, 2 bands, 1 bit per pixel, IMODE=B
+            // 4*2 = 8 pixels per band at 1 bit = 1 byte per band = 2 bytes total
+            // Band 0: 0b11110000 -> [1,1,1,1,0,0,0,0]
+            // Band 1: 0b00001111 -> [0,0,0,0,1,1,1,1]
+            let data = vec![0b11110000, 0b00001111];
+
+            let decoder = create_test_decoder(
+                2,
+                4, // nrows=2, ncols=4
+                1,
+                1, // nbpr=1, nbpc=1
+                4,
+                2, // nppbh=4, nppbv=2
+                2, // nbands=2
+                1, // nbpp=1
+                InterleaveMode::B,
+                data,
+            );
+
+            let (block_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
+            assert_eq!(shape, [2, 2, 4]);
+            assert_eq!(block_data.len(), 16);
+
+            // Band 0: [1,1,1,1, 0,0,0,0]
+            assert_eq!(&block_data[0..8], &[1, 1, 1, 1, 0, 0, 0, 0]);
+            // Band 1: [0,0,0,0, 1,1,1,1]
+            assert_eq!(&block_data[8..16], &[0, 0, 0, 0, 1, 1, 1, 1]);
+        }
+
+        #[test]
+        fn decode_2bpp_single_band() {
+            // 4x2 block, 1 band, 2 bits per pixel
+            // 4*2 = 8 pixels at 2 bits = 16 bits = 2 bytes
+            // Byte 0: 0b00_01_10_11 = pixels [0, 1, 2, 3]
+            // Byte 1: 0b11_10_01_00 = pixels [3, 2, 1, 0]
+            let data = vec![0b00011011, 0b11100100];
+
+            let decoder = create_test_decoder(
+                2,
+                4, // nrows=2, ncols=4
+                1,
+                1, // nbpr=1, nbpc=1
+                4,
+                2, // nppbh=4, nppbv=2
+                1, // nbands=1
+                2, // nbpp=2
+                InterleaveMode::B,
+                data,
+            );
+
+            let (block_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
+            assert_eq!(shape, [1, 2, 4]);
+            assert_eq!(block_data.len(), 8);
+            assert_eq!(&block_data[0..4], &[0, 1, 2, 3]);
+            assert_eq!(&block_data[4..8], &[3, 2, 1, 0]);
+        }
+
+        #[test]
+        fn decode_4bpp_single_band() {
+            // 2x2 block, 1 band, 4 bits per pixel
+            // 2*2 = 4 pixels at 4 bits = 16 bits = 2 bytes
+            // Byte 0: 0xAB = pixels [0xA, 0xB] = [10, 11]
+            // Byte 1: 0xCD = pixels [0xC, 0xD] = [12, 13]
+            let data = vec![0xAB, 0xCD];
+
+            let decoder = create_test_decoder(
+                2,
+                2, // nrows=2, ncols=2
+                1,
+                1, // nbpr=1, nbpc=1
+                2,
+                2, // nppbh=2, nppbv=2
+                1, // nbands=1
+                4, // nbpp=4
+                InterleaveMode::B,
+                data,
+            );
+
+            let (block_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
+            assert_eq!(shape, [1, 2, 2]);
+            assert_eq!(block_data.len(), 4);
+            assert_eq!(&block_data[..], &[0x0A, 0x0B, 0x0C, 0x0D]);
+        }
+
+        #[test]
+        fn block_size_bytes_sub_byte() {
+            // LUinBand2.ntf scenario: 35x18 block, 2 bands, 1 bpp
+            // Expected: ceil(35*18*1/8) * 2 = ceil(630/8) * 2 = 79 * 2 = 158
+            let decoder = create_test_decoder(
+                18,
+                35,
+                1,
+                1,
+                35,
+                18,
+                2,
+                1,
+                InterleaveMode::B,
+                vec![0u8; 158],
+            );
+            assert_eq!(decoder.block_size_bytes(), 158);
+        }
+
+        #[test]
+        fn decode_1bpp_imode_s() {
+            // 4x2 block, 2 bands, 1bpp, IMODE=S
+            // 4*2 = 8 pixels per band at 1 bit = 1 byte per band
+            // Band 0 blocks then band 1 blocks:
+            // Band 0: 0b11001100 -> [1,1,0,0,1,1,0,0]
+            // Band 1: 0b00110011 -> [0,0,1,1,0,0,1,1]
+            let data = vec![0b11001100, 0b00110011];
+
+            let decoder = create_test_decoder(
+                2,
+                4, // nrows=2, ncols=4
+                1,
+                1, // nbpr=1, nbpc=1
+                4,
+                2, // nppbh=4, nppbv=2
+                2, // nbands=2
+                1, // nbpp=1
+                InterleaveMode::S,
+                data,
+            );
+
+            let (block_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
+            assert_eq!(shape, [2, 2, 4]);
+            assert_eq!(block_data.len(), 16);
+            // Band 0: [1,1,0,0, 1,1,0,0]
+            assert_eq!(&block_data[0..8], &[1, 1, 0, 0, 1, 1, 0, 0]);
+            // Band 1: [0,0,1,1, 0,0,1,1]
+            assert_eq!(&block_data[8..16], &[0, 0, 1, 1, 0, 0, 1, 1]);
+        }
+    }
+
+    mod bit_packed_12bpp_decode_tests {
+        use super::*;
+
+        #[test]
+        fn decode_12bpp_single_band() {
+            // 2x2 block, 1 band, 12 bits per pixel, IMODE=B
+            // 4 pixels * 12 bits = 48 bits = 6 bytes
+            // Pixel values: 0x123, 0x456, 0x789, 0xABC
+            // Bitstream (MSB-first): 000100100011 010001010110 011110001001 101010111100
+            // Byte 0: 00010010 = 0x12
+            // Byte 1: 00110100 = 0x34
+            // Byte 2: 01010110 = 0x56
+            // Byte 3: 01111000 = 0x78
+            // Byte 4: 10011010 = 0x9A
+            // Byte 5: 10111100 = 0xBC
+            let data = vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
+
+            let decoder = create_test_decoder(
+                2,
+                2, // nrows=2, ncols=2
+                1,
+                1, // nbpr=1, nbpc=1
+                2,
+                2,  // nppbh=2, nppbv=2
+                1,  // nbands=1
+                12, // nbpp=12
+                InterleaveMode::B,
+                data,
+            );
+
+            let (block_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
+            assert_eq!(shape, [1, 2, 2]);
+            // Output: 4 pixels * 2 bytes each (native-endian u16)
+            assert_eq!(block_data.len(), 8);
+
+            // The unpack produces BE u16, then swap_be_to_ne converts to native.
+            // On all platforms, verify the u16 values are correct.
+            let pixels: Vec<u16> = block_data
+                .chunks_exact(2)
+                .map(|c| u16::from_ne_bytes([c[0], c[1]]))
+                .collect();
+            assert_eq!(pixels, vec![0x123, 0x456, 0x789, 0xABC]);
+        }
+
+        #[test]
+        fn decode_12bpp_two_bands() {
+            // 2x1 block, 2 bands, 12 bpp, IMODE=B
+            // Each band: 2 pixels * 12 bits = 24 bits = 3 bytes
+            // Band 0: values 0x100, 0x200
+            //   Bits: 000100000000 001000000000
+            //   Bytes: 0x10, 0x02, 0x00
+            // Band 1: values 0xFFF, 0x001
+            //   Bits: 111111111111 000000000001
+            //   Bytes: 0xFF, 0xF0, 0x01
+            let data = vec![0x10, 0x02, 0x00, 0xFF, 0xF0, 0x01];
+
+            let decoder = create_test_decoder(
+                1,
+                2, // nrows=1, ncols=2
+                1,
+                1, // nbpr=1, nbpc=1
+                2,
+                1,  // nppbh=2, nppbv=1
+                2,  // nbands=2
+                12, // nbpp=12
+                InterleaveMode::B,
+                data,
+            );
+
+            let (block_data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
+            assert_eq!(shape, [2, 1, 2]);
+            // 2 bands * 2 pixels * 2 bytes = 8 bytes
+            assert_eq!(block_data.len(), 8);
+
+            let pixels: Vec<u16> = block_data
+                .chunks_exact(2)
+                .map(|c| u16::from_ne_bytes([c[0], c[1]]))
+                .collect();
+            // BSQ: band0 pixels then band1 pixels
+            assert_eq!(pixels, vec![0x100, 0x200, 0xFFF, 0x001]);
+        }
+
+        #[test]
+        fn block_size_bytes_12bpp() {
+            // 4x4 block, 1 band, 12 bpp
+            // packed_band_size = ceil(4*4*12/8) = ceil(192/8) = 24 bytes
+            let decoder =
+                create_test_decoder(4, 4, 1, 1, 4, 4, 1, 12, InterleaveMode::B, vec![0u8; 24]);
+            assert_eq!(decoder.packed_band_size_bytes(), 24);
+            assert_eq!(decoder.block_size_bytes(), 24);
+        }
+
+        #[test]
+        fn block_size_bytes_12bpp_multiband() {
+            // 4x4 block, 3 bands, 12 bpp
+            // packed_band_size = 24 bytes, block_size = 72 bytes
+            let decoder =
+                create_test_decoder(4, 4, 1, 1, 4, 4, 3, 12, InterleaveMode::B, vec![0u8; 72]);
+            assert_eq!(decoder.packed_band_size_bytes(), 24);
+            assert_eq!(decoder.block_size_bytes(), 72);
+        }
+    }
+
     mod decode_block_at_offset_tests {
         use super::*;
 
@@ -1171,7 +1571,59 @@ mod property_tests {
         )
     }
 
-    /// Create test decoder with generated parameters
+    /// Generate valid nbpp values for testing (includes non-byte-aligned > 8)
+    fn nbpp_strategy() -> impl Strategy<Value = u8> {
+        prop_oneof![Just(1u8), Just(2u8), Just(4u8), Just(8u8), Just(12u8)]
+    }
+
+    /// Pack pixel values into bit-packed form for test data generation.
+    ///
+    /// For NBPP <= 8: `pixels` is one u8 per pixel value.
+    /// For NBPP > 8: `pixels` is `bpp` bytes per pixel in big-endian.
+    fn pack_pixels_generic(pixels: &[u8], nbpp: u8) -> Vec<u8> {
+        let nbpp_usize = nbpp as usize;
+        let bpp = (nbpp_usize).div_ceil(8);
+        let num_pixels = pixels.len() / bpp;
+        let total_bits = num_pixels * nbpp_usize;
+        let packed_len = total_bits.div_ceil(8);
+        let mut packed = vec![0u8; packed_len];
+        let mask: u32 = (1u32 << nbpp_usize) - 1;
+
+        let mut bit_offset = 0usize;
+        for i in 0..num_pixels {
+            let value: u32 = match bpp {
+                1 => pixels[i] as u32,
+                2 => u16::from_be_bytes([pixels[i * 2], pixels[i * 2 + 1]]) as u32,
+                _ => unreachable!(),
+            };
+            let value = value & mask;
+
+            let mut bits_remaining = nbpp_usize;
+            let mut current_bit = bit_offset;
+            let mut val_bits_left = value;
+
+            while bits_remaining > 0 {
+                let byte_idx = current_bit / 8;
+                let bit_within_byte = current_bit % 8;
+                let bits_available = 8 - bit_within_byte;
+                let bits_to_write = bits_remaining.min(bits_available);
+
+                let shift = bits_remaining - bits_to_write;
+                let fragment = ((val_bits_left >> shift) & ((1u32 << bits_to_write) - 1)) as u8;
+
+                packed[byte_idx] |= fragment << (bits_available - bits_to_write);
+                bits_remaining -= bits_to_write;
+                val_bits_left &= (1u32 << shift) - 1;
+                current_bit += bits_to_write;
+            }
+
+            bit_offset += nbpp_usize;
+        }
+
+        packed
+    }
+
+    /// Create test decoder with generated parameters (8-bpp only, legacy wrapper).
     fn create_decoder_with_data(
         nppbh: u32,
         nppbv: u32,
@@ -1180,143 +1632,170 @@ mod property_tests {
         nbands: u32,
         imode: InterleaveMode,
     ) -> (UncompressedBlockDecoder, Vec<Vec<Vec<Vec<u8>>>>) {
+        create_decoder_with_data_nbpp(nppbh, nppbv, nbpr, nbpc, nbands, imode, 8)
+    }
+
+    /// Create test decoder with generated parameters and configurable nbpp.
+    ///
+    /// Returns the decoder and expected decoded output bytes per block.
+    /// Expected output is in BSQ format with `bpp` bytes per pixel (native-endian
+    /// after the BE→NE swap that `decode_block` performs).
+    #[allow(clippy::cognitive_complexity)]
+    fn create_decoder_with_data_nbpp(
+        nppbh: u32,
+        nppbv: u32,
+        nbpr: u32,
+        nbpc: u32,
+        nbands: u32,
+        imode: InterleaveMode,
+        nbpp: u8,
+    ) -> (UncompressedBlockDecoder, Vec<Vec<Vec<Vec<u8>>>>) {
         let nrows = nbpc * nppbv;
         let ncols = nbpr * nppbh;
+        let bpp = (nbpp as usize).div_ceil(8);
+        #[allow(clippy::manual_is_multiple_of)]
+        let is_bit_packed = nbpp % 8 != 0;
+        let max_val: u32 = if is_bit_packed {
+            (1u32 << nbpp) - 1
+        } else if nbpp == 8 {
+            255
+        } else {
+            // For 16/32-bit byte-aligned, keep values small for test simplicity
+            255
+        };
 
-        // Create expected values organized as [block_row][block_col][band][pixel_in_block]
-        // This makes verification easier
+        // Generate pixel value for a given position
+        let pixel_val = |band: u32, block_row: u32, block_col: u32, row: u32, col: u32| -> u32 {
+            (band * 100 + block_row * 40 + block_col * 10 + row * 4 + col) % (max_val + 1)
+        };
+
+        // Create expected decoded output bytes organized as
+        // [block_row][block_col][band][bytes_for_all_pixels_in_band]
+        // After decode_block, the output is in native-endian format.
         let mut expected: Vec<Vec<Vec<Vec<u8>>>> = Vec::new();
+        for block_row in 0..nbpc {
+            let mut br = Vec::new();
+            for block_col in 0..nbpr {
+                let mut bc = Vec::new();
+                for band in 0..nbands {
+                    let mut bb = Vec::new();
+                    for row in 0..nppbv {
+                        for col in 0..nppbh {
+                            let val = pixel_val(band, block_row, block_col, row, col);
+                            match bpp {
+                                1 => bb.push(val as u8),
+                                2 => bb.extend_from_slice(&(val as u16).to_ne_bytes()),
+                                4 => bb.extend_from_slice(&val.to_ne_bytes()),
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                    bc.push(bb);
+                }
+                br.push(bc);
+            }
+            expected.push(br);
+        }
 
-        // Create data in the appropriate format based on IMODE
+        // Create on-disk data in the appropriate format based on IMODE.
+        // For bit-packed NBPP: pack values into bitstream.
+        // For byte-aligned NBPP: store as big-endian bytes (NITF on-disk format).
         let data = match imode {
             InterleaveMode::S => {
-                // Band sequential: all blocks of band 0, then all blocks of band 1, etc.
                 let mut d = Vec::new();
                 for band in 0..nbands {
                     for block_row in 0..nbpc {
                         for block_col in 0..nbpr {
+                            let mut block_pixels = Vec::new();
                             for row in 0..nppbv {
                                 for col in 0..nppbh {
-                                    let val = ((band * 100
-                                        + block_row * 40
-                                        + block_col * 10
-                                        + row * 4
-                                        + col)
-                                        % 256) as u8;
-                                    d.push(val);
+                                    let val = pixel_val(band, block_row, block_col, row, col);
+                                    match bpp {
+                                        1 => block_pixels.push(val as u8),
+                                        2 => block_pixels
+                                            .extend_from_slice(&(val as u16).to_be_bytes()),
+                                        4 => block_pixels.extend_from_slice(&val.to_be_bytes()),
+                                        _ => unreachable!(),
+                                    }
                                 }
+                            }
+                            if is_bit_packed {
+                                d.extend_from_slice(&pack_pixels_generic(&block_pixels, nbpp));
+                            } else {
+                                d.extend_from_slice(&block_pixels);
                             }
                         }
                     }
                 }
-
-                // Build expected values
-                for block_row in 0..nbpc {
-                    let mut br = Vec::new();
-                    for block_col in 0..nbpr {
-                        let mut bc = Vec::new();
-                        for band in 0..nbands {
-                            let mut bb = Vec::new();
-                            for row in 0..nppbv {
-                                for col in 0..nppbh {
-                                    let val = ((band * 100
-                                        + block_row * 40
-                                        + block_col * 10
-                                        + row * 4
-                                        + col)
-                                        % 256) as u8;
-                                    bb.push(val);
-                                }
-                            }
-                            bc.push(bb);
-                        }
-                        br.push(bc);
-                    }
-                    expected.push(br);
-                }
-
                 d
             }
             InterleaveMode::B => {
-                // Band interleaved by block: for each block, all bands together
                 let mut d = Vec::new();
                 for block_row in 0..nbpc {
-                    let mut br = Vec::new();
                     for block_col in 0..nbpr {
-                        let mut bc = Vec::new();
                         for band in 0..nbands {
-                            let mut bb = Vec::new();
+                            let mut block_pixels = Vec::new();
                             for row in 0..nppbv {
                                 for col in 0..nppbh {
-                                    let val = ((band * 100
-                                        + block_row * 40
-                                        + block_col * 10
-                                        + row * 4
-                                        + col)
-                                        % 256) as u8;
-                                    d.push(val);
-                                    bb.push(val);
+                                    let val = pixel_val(band, block_row, block_col, row, col);
+                                    match bpp {
+                                        1 => block_pixels.push(val as u8),
+                                        2 => block_pixels
+                                            .extend_from_slice(&(val as u16).to_be_bytes()),
+                                        4 => block_pixels.extend_from_slice(&val.to_be_bytes()),
+                                        _ => unreachable!(),
+                                    }
                                 }
                             }
-                            bc.push(bb);
+                            if is_bit_packed {
+                                d.extend_from_slice(&pack_pixels_generic(&block_pixels, nbpp));
+                            } else {
+                                d.extend_from_slice(&block_pixels);
+                            }
                         }
-                        br.push(bc);
                     }
-                    expected.push(br);
                 }
                 d
             }
             InterleaveMode::P => {
-                // Band interleaved by pixel: for each block, pixels with all bands interleaved
                 let mut d = Vec::new();
                 for block_row in 0..nbpc {
-                    let mut br = Vec::new();
                     for block_col in 0..nbpr {
-                        let mut bc: Vec<Vec<u8>> = (0..nbands).map(|_| Vec::new()).collect();
                         for row in 0..nppbv {
                             for col in 0..nppbh {
                                 for band in 0..nbands {
-                                    let val = ((band * 100
-                                        + block_row * 40
-                                        + block_col * 10
-                                        + row * 4
-                                        + col)
-                                        % 256) as u8;
-                                    d.push(val);
-                                    bc[band as usize].push(val);
+                                    let val = pixel_val(band, block_row, block_col, row, col);
+                                    match bpp {
+                                        1 => d.push(val as u8),
+                                        2 => d.extend_from_slice(&(val as u16).to_be_bytes()),
+                                        4 => d.extend_from_slice(&val.to_be_bytes()),
+                                        _ => unreachable!(),
+                                    }
                                 }
                             }
                         }
-                        br.push(bc);
                     }
-                    expected.push(br);
                 }
                 d
             }
             InterleaveMode::R => {
-                // Band interleaved by row: for each block, rows with bands interleaved
                 let mut d = Vec::new();
                 for block_row in 0..nbpc {
-                    let mut br = Vec::new();
                     for block_col in 0..nbpr {
-                        let mut bc: Vec<Vec<u8>> = (0..nbands).map(|_| Vec::new()).collect();
                         for row in 0..nppbv {
                             for band in 0..nbands {
                                 for col in 0..nppbh {
-                                    let val = ((band * 100
-                                        + block_row * 40
-                                        + block_col * 10
-                                        + row * 4
-                                        + col)
-                                        % 256) as u8;
-                                    d.push(val);
-                                    bc[band as usize].push(val);
+                                    let val = pixel_val(band, block_row, block_col, row, col);
+                                    match bpp {
+                                        1 => d.push(val as u8),
+                                        2 => d.extend_from_slice(&(val as u16).to_be_bytes()),
+                                        4 => d.extend_from_slice(&val.to_be_bytes()),
+                                        _ => unreachable!(),
+                                    }
                                 }
                             }
                         }
-                        br.push(bc);
                     }
-                    expected.push(br);
                 }
                 d
             }
@@ -1331,8 +1810,8 @@ mod property_tests {
             nppbh,
             nppbv,
             nbands,
-            nbpp: 8,
-            abpp: 8,
+            nbpp,
+            abpp: nbpp,
             pvtype: PixelValueType::UnsignedInt,
             pjust: PixelJustification::Right,
             imode,
@@ -1354,6 +1833,7 @@ mod property_tests {
         fn block_access_returns_correct_data(
             (nppbh, nppbv, nbpr, nbpc, nbands) in image_params_strategy(),
             imode in interleave_mode_strategy(),
+            nbpp in nbpp_strategy(),
             block_row in 0u32..3,
             block_col in 0u32..3,
         ) {
@@ -1361,46 +1841,48 @@ mod property_tests {
             if block_row >= nbpc || block_col >= nbpr {
                 return Ok(());
             }
+            // Bit-packed only supports IMODE B and S
+            if nbpp % 8 != 0 && matches!(imode, InterleaveMode::P | InterleaveMode::R) {
+                return Ok(());
+            }
 
-            let (decoder, expected) = create_decoder_with_data(
-                nppbh, nppbv, nbpr, nbpc, nbands, imode
+            let (decoder, expected) = create_decoder_with_data_nbpp(
+                nppbh, nppbv, nbpr, nbpc, nbands, imode, nbpp
             );
 
             let result = decoder.decode_block(block_row, block_col, 0, None);
             prop_assert!(result.is_ok(), "decode_block should succeed for valid coordinates");
 
             let (block_data, shape) = result.unwrap();
+            let bpp = (nbpp as usize).div_ceil(8);
 
             // Verify shape is correct - shape is [bands, rows, cols] (CHW format)
             prop_assert_eq!(shape[0], nbands, "Band count should match");
             prop_assert_eq!(shape[1], nppbv, "Block rows should match nppbv");
             prop_assert_eq!(shape[2], nppbh, "Block cols should match nppbh");
 
-            // Verify data size matches shape
-            let expected_size = (shape[0] * shape[1] * shape[2]) as usize;
+            // Verify data size matches shape (accounts for bytes_per_pixel)
+            let expected_size = (shape[0] as usize) * (shape[1] as usize) * (shape[2] as usize) * bpp;
             prop_assert_eq!(
                 block_data.len(), expected_size,
-                "Data size should match shape: {} vs {}x{}x{}",
-                block_data.len(), shape[0], shape[1], shape[2]
+                "Data size should match shape: {} vs {}x{}x{}x{}",
+                block_data.len(), shape[0], shape[1], shape[2], bpp
             );
 
             // Verify pixel values are correct (output is in BSQ format)
             let expected_block = &expected[block_row as usize][block_col as usize];
+            let pixels_per_band = (nppbv as usize) * (nppbh as usize);
 
             for band in 0..nbands {
-                let band_offset = (band * nppbv * nppbh) as usize;
+                let band_offset = (band as usize) * pixels_per_band * bpp;
                 let expected_band = &expected_block[band as usize];
 
-                for i in 0..expected_band.len() {
-                    let actual = block_data[band_offset + i];
-                    let expected_val = expected_band[i];
-
-                    prop_assert_eq!(
-                        actual, expected_val,
-                        "Pixel mismatch at band={}, pixel={} for block ({}, {}), imode={:?}",
-                        band, i, block_row, block_col, imode
-                    );
-                }
+                prop_assert_eq!(
+                    &block_data[band_offset..band_offset + expected_band.len()],
+                    &expected_band[..],
+                    "Band {} mismatch for block ({}, {}), imode={:?}, nbpp={}",
+                    band, block_row, block_col, imode, nbpp
+                );
             }
         }
 
@@ -1455,10 +1937,17 @@ mod property_tests {
         fn pixel_data_round_trip_per_imode(
             (nppbh, nppbv, nbpr, nbpc, nbands) in image_params_strategy(),
             imode in interleave_mode_strategy(),
+            nbpp in nbpp_strategy(),
         ) {
-            let (decoder, expected) = create_decoder_with_data(
-                nppbh, nppbv, nbpr, nbpc, nbands, imode
+            // Bit-packed only supports IMODE B and S
+            if nbpp % 8 != 0 && matches!(imode, InterleaveMode::P | InterleaveMode::R) {
+                return Ok(());
+            }
+
+            let (decoder, expected) = create_decoder_with_data_nbpp(
+                nppbh, nppbv, nbpr, nbpc, nbands, imode, nbpp
             );
+            let bpp = (nbpp as usize).div_ceil(8);
 
             // Read all blocks and verify they match expected values
             for block_row in 0..nbpc {
@@ -1475,19 +1964,18 @@ mod property_tests {
 
                     // Verify data matches expected (output is always BSQ)
                     let expected_block = &expected[block_row as usize][block_col as usize];
+                    let pixels_per_band = (nppbv as usize) * (nppbh as usize);
 
                     for band in 0..nbands {
-                        let band_offset = (band * nppbv * nppbh) as usize;
+                        let band_offset = (band as usize) * pixels_per_band * bpp;
                         let expected_band = &expected_block[band as usize];
 
-                        for i in 0..expected_band.len() {
-                            prop_assert_eq!(
-                                block_data[band_offset + i],
-                                expected_band[i],
-                                "Pixel mismatch at block ({}, {}), band {}, pixel {} for imode {:?}",
-                                block_row, block_col, band, i, imode
-                            );
-                        }
+                        prop_assert_eq!(
+                            &block_data[band_offset..band_offset + expected_band.len()],
+                            &expected_band[..],
+                            "Band {} mismatch at block ({}, {}), imode={:?}, nbpp={}",
+                            band, block_row, block_col, imode, nbpp
+                        );
                     }
                 }
             }

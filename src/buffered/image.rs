@@ -87,7 +87,22 @@ impl MemoryImageConfig {
         self
     }
 
-    /// Set the actual bits per pixel (for sub-byte precision).
+    /// Set the nominal bits per pixel (NBPP — storage container size).
+    ///
+    /// For sub-byte imagery, this is the packed bit depth (1, 2, or 4).
+    /// For multi-byte imagery where ABPP < NBPP (e.g. 11-bit in 16-bit
+    /// container), set this to the container size and use
+    /// `with_actual_bits_per_pixel` for the significant bits.
+    ///
+    /// Does not modify `actual_bits_per_pixel` — call these in any order.
+    pub fn with_bits_per_pixel(mut self, nbpp: u32) -> Self {
+        self.bits_per_pixel = nbpp;
+        self
+    }
+
+    /// Set the actual bits per pixel (ABPP — significant bits).
+    ///
+    /// Does not modify `bits_per_pixel` — call these in any order.
     pub fn with_actual_bits_per_pixel(mut self, abpp: u32) -> Self {
         self.actual_bits_per_pixel = abpp;
         self

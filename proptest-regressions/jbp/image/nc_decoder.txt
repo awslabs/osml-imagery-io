@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8cde869f81b7c8aa84b68fb7b1775dddd7653683fc47af9fc9542ffa93044653 # shrinks to (nppbh, nppbv, nbpr, nbpc, nbands) = (1, 1, 1, 1, 1), imode = S, block_row = 0, block_col = 0
+cc 9463f6c05fc34fe07fc17310f41097b20559ed687b294146b191a0c7bd1e3bd5 # shrinks to (nppbh, nppbv, nbpr, nbpc, nbands) = (1, 1, 1, 1, 1), imode = S
+cc 4de73125d2926434e9971b5b1cb71cd73b887e80e8738c4b59d02072e71cc339 # shrinks to (nppbh, nppbv, nbpr, nbpc, nbands) = (1, 1, 1, 1, 1), imode = B, nbpp = 12
+cc ce32c7a9d4693df0c0877bb2d87d39c145060de84e10e17e01fa0e06e603f7b6 # shrinks to (nppbh, nppbv, nbpr, nbpc, nbands) = (1, 1, 1, 1, 1), imode = S, nbpp = 12, block_row = 0, block_col = 0

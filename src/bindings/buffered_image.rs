@@ -223,6 +223,7 @@ impl PyBufferedImageAssetProvider {
         block_width=256,
         block_height=256,
         pixel_type=PixelType::UInt8,
+        num_bits_per_pixel=None,
         actual_bits_per_pixel=None,
         metadata=None,
         title=None,
@@ -237,6 +238,7 @@ impl PyBufferedImageAssetProvider {
         block_width: u32,
         block_height: u32,
         pixel_type: PixelType,
+        num_bits_per_pixel: Option<u32>,
         actual_bits_per_pixel: Option<u32>,
         metadata: Option<&PyMetadataProvider>,
         title: Option<&str>,
@@ -246,6 +248,14 @@ impl PyBufferedImageAssetProvider {
             .with_bands(num_bands)
             .with_block_size(block_width, block_height)
             .with_pixel_type(pixel_type);
+
+        if let Some(nbpp) = num_bits_per_pixel {
+            config = config.with_bits_per_pixel(nbpp);
+            // Default ABPP to NBPP when not explicitly provided
+            if actual_bits_per_pixel.is_none() {
+                config = config.with_actual_bits_per_pixel(nbpp);
+            }
+        }
 
         if let Some(abpp) = actual_bits_per_pixel {
             config = config.with_actual_bits_per_pixel(abpp);

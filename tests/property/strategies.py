@@ -424,6 +424,108 @@ def metadata_pairs(
     return result
 
 
+# Sub-byte NBPP values for NITF bit-packed imagery
+SUB_BYTE_NBPP_VALUES = [1, 2, 4]
+
+# All non-byte-aligned NBPP values for NITF bit-packed imagery
+BIT_PACKED_NBPP_VALUES = [1, 2, 4, 12]
+
+
+@st.composite
+def sub_byte_image(
+    draw,
+    min_size: int = 8,
+    max_size: int = 64,
+    min_bands: int = 1,
+    max_bands: int = 4,
+) -> Tuple[np.ndarray, int, int, int, int, int]:
+    """Composite strategy for sub-byte (NBPP < 8) images.
+
+    Generates a random image with pixel values constrained to fit within
+    the specified bit depth. Data is provided as uint8 arrays (one byte per
+    pixel in decoded form) with values in [0, 2^nbpp - 1].
+
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        min_size: Minimum dimension size (default 8)
+        max_size: Maximum dimension size (default 64)
+        min_bands: Minimum band count (default 1)
+        max_bands: Maximum band count (default 4)
+
+    Returns:
+        Tuple of (array, nbpp, num_bands, num_rows, num_cols, block_size)
+        - array: numpy uint8 array with shape (num_bands, num_rows, num_cols)
+        - nbpp: bits per pixel (1, 2, or 4)
+        - num_bands: number of bands
+        - num_rows: number of rows
+        - num_cols: number of columns
+        - block_size: block dimension (used for both width and height)
+    """
+    nbpp = draw(st.sampled_from(SUB_BYTE_NBPP_VALUES))
+    num_rows = draw(st.integers(min_value=min_size, max_value=max_size))
+    num_cols = draw(st.integers(min_value=min_size, max_value=max_size))
+    num_bands = draw(st.integers(min_value=min_bands, max_value=max_bands))
+
+    max_val = (1 << nbpp) - 1
+    array = draw(arrays(
+        dtype=np.uint8,
+        shape=(num_bands, num_rows, num_cols),
+        elements=st.integers(min_value=0, max_value=max_val),
+    ))
+
+    block_size = draw(st.sampled_from([16, 32, 64]))
+
+    return (array, nbpp, num_bands, num_rows, num_cols, block_size)
+
+
+@st.composite
+def bit_packed_image(
+    draw,
+    min_size: int = 8,
+    max_size: int = 64,
+    min_bands: int = 1,
+    max_bands: int = 4,
+) -> Tuple[np.ndarray, int, int, int, int, int]:
+    """Composite strategy for non-byte-aligned NBPP images (includes 12-bit).
+
+    Generates a random image with pixel values constrained to fit within
+    the specified bit depth. For NBPP <= 8 the array dtype is uint8; for
+    NBPP 9-16 (e.g., 12) the dtype is uint16.
+
+    Args:
+        draw: Hypothesis draw function (injected by @st.composite)
+        min_size: Minimum dimension size (default 8)
+        max_size: Maximum dimension size (default 64)
+        min_bands: Minimum band count (default 1)
+        max_bands: Maximum band count (default 4)
+
+    Returns:
+        Tuple of (array, nbpp, num_bands, num_rows, num_cols, block_size)
+        - array: numpy array with shape (num_bands, num_rows, num_cols)
+        - nbpp: bits per pixel (1, 2, 4, or 12)
+        - num_bands: number of bands
+        - num_rows: number of rows
+        - num_cols: number of columns
+        - block_size: block dimension (used for both width and height)
+    """
+    nbpp = draw(st.sampled_from(BIT_PACKED_NBPP_VALUES))
+    num_rows = draw(st.integers(min_value=min_size, max_value=max_size))
+    num_cols = draw(st.integers(min_value=min_size, max_value=max_size))
+    num_bands = draw(st.integers(min_value=min_bands, max_value=max_bands))
+
+    max_val = (1 << nbpp) - 1
+    dtype = np.uint8 if nbpp <= 8 else np.uint16
+    array = draw(arrays(
+        dtype=dtype,
+        shape=(num_bands, num_rows, num_cols),
+        elements=st.integers(min_value=0, max_value=max_val),
+    ))
+
+    block_size = draw(st.sampled_from([16, 32, 64]))
+
+    return (array, nbpp, num_bands, num_rows, num_cols, block_size)
+
+
 # Pixel types suitable for lossy J2K compression (excludes Float32)
 J2K_PIXEL_TYPES = [
     PixelType.UInt8,

@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc c2a3fefb7cf7b4a545d1c8e8098881d2552574a2e43b3f086686a0212560536f # shrinks to (image_width, image_height, nbands, src_tile_w, src_tile_h, out_tile_w, out_tile_h) = (4, 4, 1, 2, 2, 2, 2)
 cc a1e247bd0357435f7f610061161b6beee5e3067602e23e51d649e1922bcfc9a1 # shrinks to (nrows, ncols, nbands, nbpp) = (1, 1, 2, 8), imode = B
+cc 5a495f8cbe2d1d580ef5d94f1d9d90659ae155b0086c3441c9e5c9d24b0bd41e # shrinks to (nrows, ncols, nbands, nbpp) = (1, 2, 1, 1), imode = S

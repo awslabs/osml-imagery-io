@@ -828,27 +828,10 @@ mod tests {
 mod property_tests {
     use super::*;
 
+    use crate::jbp::image::decoder::BlockDecoder;
     use crate::traits::ImageAssetProvider;
     use proptest::prelude::*;
     use std::sync::Arc;
-
-    /// Convert big-endian bytes to native-endian (mirrors decoder's swap_be_to_ne)
-    fn swap_be_to_ne(data: &[u8], bytes_per_pixel: usize) -> Vec<u8> {
-        if cfg!(target_endian = "big") || bytes_per_pixel <= 1 {
-            return data.to_vec();
-        }
-        match bytes_per_pixel {
-            2 => data
-                .chunks_exact(2)
-                .flat_map(|c| u16::from_be_bytes([c[0], c[1]]).to_ne_bytes())
-                .collect(),
-            4 => data
-                .chunks_exact(4)
-                .flat_map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]).to_ne_bytes())
-                .collect(),
-            _ => data.to_vec(),
-        }
-    }
 
     /// Generate a valid InterleaveMode
     fn interleave_mode_strategy() -> impl Strategy<Value = InterleaveMode> {
@@ -863,10 +846,10 @@ mod property_tests {
     /// Generate valid image dimensions for testing (small for speed)
     fn image_dimensions_strategy() -> impl Strategy<Value = (u32, u32, u32, u8)> {
         (
-            1u32..=32,                          // nrows
-            1u32..=32,                          // ncols
-            1u32..=4,                           // nbands
-            prop_oneof![Just(8u8), Just(16u8)], // nbpp
+            1u32..=32,                                                           // nrows
+            1u32..=32,                                                           // ncols
+            1u32..=4,                                                            // nbands
+            prop_oneof![Just(1u8), Just(2u8), Just(4u8), Just(8u8), Just(16u8)], // nbpp
         )
     }
 
@@ -883,12 +866,20 @@ mod property_tests {
             imode in interleave_mode_strategy(),
         ) {
             // Feature: block-encoder-refactor, Property 3: IMODE Conversion Preserves Pixels
+            // Sub-byte IMODE P/R don't apply (NITF sub-byte is always BSQ/B-interleaved)
+            if nbpp < 8 && matches!(imode, InterleaveMode::P | InterleaveMode::R) {
+                return Ok(());
+            }
+
             let bpp = (nbpp as usize).div_ceil(8);
             let total_pixels = (nrows as usize) * (ncols as usize) * (nbands as usize);
             let data_size = total_pixels * bpp;
 
-            // Generate random image data in BSQ format
-            let original_data: Vec<u8> = (0..data_size).map(|i| (i % 256) as u8).collect();
+            // Generate image data in BSQ format with values within the valid range
+            let max_val = if nbpp < 8 { (1u16 << nbpp) - 1 } else { 255 };
+            let original_data: Vec<u8> = (0..data_size)
+                .map(|i| (i as u16 % (max_val + 1)) as u8)
+                .collect();
 
             // Use single block for simplicity (block size = image size)
             let mut encoder = UncompressedBlockEncoder::new(
@@ -906,9 +897,14 @@ mod property_tests {
             // For this test, we'll verify the round-trip by creating a decoder
             // with matching parameters
 
-            // Create decoder with same parameters
-            let decoder = create_test_decoder(
-                nrows, ncols, 1, 1, ncols, nrows, nbands, nbpp, imode, encoded_data
+            // Create decoder with same parameters (use real decoder)
+            let decoder = crate::jbp::image::nc_decoder::UncompressedBlockDecoder::from_raw_params(
+                Arc::from(encoded_data),
+                nrows, ncols, 1, 1, ncols, nrows, nbands, nbpp, nbpp,
+                crate::jbp::image::types::PixelValueType::UnsignedInt,
+                crate::jbp::image::types::PixelJustification::Right,
+                imode,
+                "NC".to_string(),
             );
 
             // Decode the block
@@ -923,239 +919,6 @@ mod property_tests {
                 "IMODE {:?} conversion should preserve pixels for {}x{}x{} image with {} bpp",
                 imode, nrows, ncols, nbands, nbpp
             );
-        }
-    }
-
-    /// Helper to create a test decoder without needing ImageSubheaderFacade
-    fn create_test_decoder(
-        nrows: u32,
-        ncols: u32,
-        nbpr: u32,
-        nbpc: u32,
-        nppbh: u32,
-        nppbv: u32,
-        nbands: u32,
-        nbpp: u8,
-        imode: InterleaveMode,
-        image_data: Vec<u8>,
-    ) -> TestUncompressedBlockDecoder {
-        TestUncompressedBlockDecoder {
-            image_data: Arc::from(image_data),
-            nrows,
-            ncols,
-            nbpr,
-            nbpc,
-            nppbh,
-            nppbv,
-            nbands,
-            nbpp,
-            abpp: nbpp,
-            pvtype: crate::jbp::image::types::PixelValueType::UnsignedInt,
-            pjust: crate::jbp::image::types::PixelJustification::Right,
-            imode,
-            ic: "NC".to_string(),
-        }
-    }
-
-    /// Test decoder struct for property tests (mirrors UncompressedBlockDecoder)
-    struct TestUncompressedBlockDecoder {
-        image_data: Arc<[u8]>,
-        nrows: u32,
-        ncols: u32,
-        nbpr: u32,
-        nbpc: u32,
-        nppbh: u32,
-        nppbv: u32,
-        nbands: u32,
-        nbpp: u8,
-        #[allow(dead_code)]
-        abpp: u8,
-        #[allow(dead_code)]
-        pvtype: crate::jbp::image::types::PixelValueType,
-        #[allow(dead_code)]
-        pjust: crate::jbp::image::types::PixelJustification,
-        imode: InterleaveMode,
-        #[allow(dead_code)]
-        ic: String,
-    }
-
-    impl TestUncompressedBlockDecoder {
-        fn bytes_per_pixel(&self) -> usize {
-            (self.nbpp as usize).div_ceil(8)
-        }
-
-        fn actual_block_dimensions(&self, block_row: u32, block_col: u32) -> (u32, u32) {
-            let start_row = block_row * self.nppbv;
-            let start_col = block_col * self.nppbh;
-
-            let actual_rows = if start_row + self.nppbv > self.nrows {
-                self.nrows - start_row
-            } else {
-                self.nppbv
-            };
-
-            let actual_cols = if start_col + self.nppbh > self.ncols {
-                self.ncols - start_col
-            } else {
-                self.nppbh
-            };
-
-            (actual_rows, actual_cols)
-        }
-
-        fn decode_block(
-            &self,
-            block_row: u32,
-            block_col: u32,
-            resolution_level: u32,
-            _bands: Option<&[u32]>,
-        ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
-            // Test decoder only supports resolution level 0
-            if resolution_level != 0 {
-                return Err(CodecError::InvalidBlockCoordinates(
-                    block_row,
-                    block_col,
-                    resolution_level,
-                ));
-            }
-
-            if block_row >= self.nbpc || block_col >= self.nbpr {
-                return Err(CodecError::InvalidBlockCoordinates(block_row, block_col, 0));
-            }
-
-            let (actual_rows, actual_cols) = self.actual_block_dimensions(block_row, block_col);
-            let bpp = self.bytes_per_pixel();
-
-            // Read raw block data based on IMODE
-            let raw_data = match self.imode {
-                InterleaveMode::S => {
-                    self.read_block_mode_s(block_row, block_col, actual_rows, actual_cols)?
-                }
-                _ => self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?,
-            };
-
-            // Convert to band-sequential format if needed
-            let bsq_data = if self.imode == InterleaveMode::S || self.imode == InterleaveMode::B {
-                raw_data
-            } else {
-                crate::jbp::image::interleave::to_band_sequential(
-                    &raw_data,
-                    self.imode,
-                    actual_rows,
-                    actual_cols,
-                    self.nbands,
-                    bpp,
-                )?
-            };
-
-            // Convert from big-endian (NITF on-disk) to native-endian (internal contract)
-            let final_data = swap_be_to_ne(&bsq_data, bpp);
-
-            // Return shape as [bands, rows, cols] (CHW format)
-            Ok((final_data, [self.nbands, actual_rows, actual_cols]))
-        }
-
-        fn read_block_mode_s(
-            &self,
-            block_row: u32,
-            block_col: u32,
-            actual_rows: u32,
-            actual_cols: u32,
-        ) -> Result<Vec<u8>, CodecError> {
-            let bpp = self.bytes_per_pixel();
-            let blocks_per_band = (self.nbpr as usize) * (self.nbpc as usize);
-            let single_band_block_size = (self.nppbh as usize) * (self.nppbv as usize) * bpp;
-            let block_index = (block_row as usize) * (self.nbpr as usize) + (block_col as usize);
-
-            let actual_pixels = (actual_rows as usize) * (actual_cols as usize);
-            let mut output = Vec::with_capacity(actual_pixels * (self.nbands as usize) * bpp);
-
-            for band in 0..self.nbands {
-                let band_offset = (band as usize) * blocks_per_band * single_band_block_size;
-                let block_offset = band_offset + block_index * single_band_block_size;
-
-                for row in 0..actual_rows {
-                    let row_offset = block_offset + (row as usize) * (self.nppbh as usize) * bpp;
-                    let row_bytes = (actual_cols as usize) * bpp;
-
-                    if row_offset + row_bytes > self.image_data.len() {
-                        return Err(CodecError::Decode(format!(
-                            "Block data out of bounds: offset {} + {} > {}",
-                            row_offset,
-                            row_bytes,
-                            self.image_data.len()
-                        )));
-                    }
-
-                    output.extend_from_slice(&self.image_data[row_offset..row_offset + row_bytes]);
-                }
-            }
-
-            Ok(output)
-        }
-
-        fn read_block_mode_bpr(
-            &self,
-            block_row: u32,
-            block_col: u32,
-            actual_rows: u32,
-            actual_cols: u32,
-        ) -> Result<Vec<u8>, CodecError> {
-            let bpp = self.bytes_per_pixel();
-            let block_size =
-                (self.nppbh as usize) * (self.nppbv as usize) * (self.nbands as usize) * bpp;
-            let block_index = (block_row as usize) * (self.nbpr as usize) + (block_col as usize);
-            let offset = block_index * block_size;
-
-            let actual_pixels = (actual_rows as usize) * (actual_cols as usize);
-            let mut output = Vec::with_capacity(actual_pixels * (self.nbands as usize) * bpp);
-
-            match self.imode {
-                InterleaveMode::B => {
-                    let pixels_per_band = (self.nppbh as usize) * (self.nppbv as usize);
-                    for band in 0..self.nbands {
-                        let band_offset = offset + (band as usize) * pixels_per_band * bpp;
-                        for row in 0..actual_rows {
-                            let row_offset =
-                                band_offset + (row as usize) * (self.nppbh as usize) * bpp;
-                            let row_bytes = (actual_cols as usize) * bpp;
-                            output.extend_from_slice(
-                                &self.image_data[row_offset..row_offset + row_bytes],
-                            );
-                        }
-                    }
-                }
-                InterleaveMode::P => {
-                    let pixel_size = (self.nbands as usize) * bpp;
-                    for row in 0..actual_rows {
-                        for col in 0..actual_cols {
-                            let pixel_offset = offset
-                                + ((row as usize) * (self.nppbh as usize) + (col as usize))
-                                    * pixel_size;
-                            output.extend_from_slice(
-                                &self.image_data[pixel_offset..pixel_offset + pixel_size],
-                            );
-                        }
-                    }
-                }
-                InterleaveMode::R => {
-                    let row_size = (self.nppbh as usize) * bpp;
-                    for row in 0..actual_rows {
-                        for band in 0..self.nbands {
-                            let row_offset = offset
-                                + ((row as usize) * (self.nbands as usize) + (band as usize))
-                                    * row_size;
-                            let actual_row_bytes = (actual_cols as usize) * bpp;
-                            output.extend_from_slice(
-                                &self.image_data[row_offset..row_offset + actual_row_bytes],
-                            );
-                        }
-                    }
-                }
-                InterleaveMode::S => unreachable!("IMODE S handled separately"),
-            }
-
-            Ok(output)
         }
     }
 
