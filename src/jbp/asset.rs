@@ -232,10 +232,20 @@ impl JBPImageAssetProvider {
     }
 
     /// Get the image data bytes for this image segment.
-    fn image_data(&self) -> Arc<[u8]> {
+    fn image_data(&self) -> Result<Arc<[u8]>, CodecError> {
         let start = self.location.data_offset as usize;
         let end = start + self.location.data_length as usize;
-        Arc::from(&self.data[start..end])
+
+        if end > self.data.len() {
+            return Err(CodecError::Decode(format!(
+                "Image segment data extends beyond file: offset {} + length {} > file size {}",
+                start,
+                self.location.data_length,
+                self.data.len()
+            )));
+        }
+
+        Ok(Arc::from(&self.data[start..end]))
     }
 
     /// Get or create the block decoder.
@@ -249,7 +259,7 @@ impl JBPImageAssetProvider {
         let subheader_bytes = self.subheader_bytes();
         let facade =
             ImageSubheaderFacade::from_bytes(subheader_bytes, &self.registry, self.format)?;
-        let image_data = self.image_data();
+        let image_data = self.image_data()?;
         let new_decoder = create_block_decoder(&facade, image_data)?;
 
         // Try to set it (another thread might have set it already)
@@ -1394,6 +1404,35 @@ mod tests {
 
         let result = provider.raw_asset();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn image_provider_decoder_out_of_bounds() {
+        let (file_data, subheader_len, _image_data_len) = create_valid_image_segment();
+        let definition = create_test_definition();
+        let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
+            definition,
+            Arc::from(&file_data[..subheader_len as usize]),
+        ));
+        // Location claims more data than exists — triggers bounds check in image_data()
+        let location = SegmentLocation::new(0, subheader_len, subheader_len, 100000);
+        let registry = create_test_registry();
+
+        let provider = JBPImageAssetProvider::new(
+            "image:0".to_string(),
+            "Test Image".to_string(),
+            "A test image segment".to_string(),
+            vec!["data".to_string()],
+            location,
+            file_data,
+            metadata,
+            registry,
+            test_format(),
+        )
+        .unwrap();
+
+        // Calling has_block triggers decoder() -> image_data() which should return Err, not panic
+        assert!(!provider.has_block(0, 0, 0));
     }
 
     #[test]
