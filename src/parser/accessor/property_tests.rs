@@ -546,7 +546,7 @@ mod prop_1_typeref_size_accuracy {
             let simple_size = get_simple_field_size(field, &ctx, &evaluator, &def, &data, 0).unwrap();
 
             // Get size using get_type_size (mod.rs) via accessor
-            let accessor_size = accessor.get_type_size("inner_type", 0).unwrap();
+            let accessor_size = accessor.get_type_size("inner_type", 0, &ctx).unwrap();
 
             prop_assert_eq!(simple_size, accessor_size,
                 "get_simple_field_size ({}) should match get_type_size ({}) for inner_size={}",
@@ -574,7 +574,7 @@ mod prop_1_typeref_size_accuracy {
             let field = def.fields.iter().find(|f| f.id == "nested").unwrap();
 
             let simple_size = get_simple_field_size(field, &ctx, &evaluator, &def, &data, 0).unwrap();
-            let accessor_size = accessor.get_type_size("multi_field_type", 0).unwrap();
+            let accessor_size = accessor.get_type_size("multi_field_type", 0, &ctx).unwrap();
 
             prop_assert_eq!(simple_size, accessor_size,
                 "get_simple_field_size ({}) should match get_type_size ({}) for field1={}, field2={}",
@@ -601,7 +601,7 @@ mod prop_1_typeref_size_accuracy {
             let field = def.fields.iter().find(|f| f.id == "nested").unwrap();
 
             let simple_size = get_simple_field_size(field, &ctx, &evaluator, &def, &data, 0).unwrap();
-            let accessor_size = accessor.get_type_size("conditional_type", 0).unwrap();
+            let accessor_size = accessor.get_type_size("conditional_type", 0, &ctx).unwrap();
 
             prop_assert_eq!(simple_size, accessor_size,
                 "get_simple_field_size ({}) should match get_type_size ({}) when condition is true (flag={})",
@@ -628,7 +628,7 @@ mod prop_1_typeref_size_accuracy {
             let field = def.fields.iter().find(|f| f.id == "nested").unwrap();
 
             let simple_size = get_simple_field_size(field, &ctx, &evaluator, &def, &data, 0).unwrap();
-            let accessor_size = accessor.get_type_size("conditional_type", 0).unwrap();
+            let accessor_size = accessor.get_type_size("conditional_type", 0, &ctx).unwrap();
 
             prop_assert_eq!(simple_size, accessor_size,
                 "get_simple_field_size ({}) should match get_type_size ({}) when condition is false (flag={})",
@@ -654,7 +654,7 @@ mod prop_1_typeref_size_accuracy {
             let field = def.fields.iter().find(|f| f.id == "nested").unwrap();
 
             let simple_size = get_simple_field_size(field, &ctx, &evaluator, &def, &data, 0).unwrap();
-            let accessor_size = accessor.get_type_size("outer_type", 0).unwrap();
+            let accessor_size = accessor.get_type_size("outer_type", 0, &ctx).unwrap();
 
             prop_assert_eq!(simple_size, accessor_size,
                 "get_simple_field_size ({}) should match get_type_size ({}) for recursive nested type with inner_size={}",

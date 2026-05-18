@@ -175,9 +175,9 @@ impl<'a> StructureAccessor<'a> {
                             .insert(field.id.clone(), (current_offset, size));
                         for _i in 0..count {
                             let elem_size = match &field.field_type {
-                                FieldType::TypeRef(type_name) => {
-                                    self.get_type_size(type_name, elem_offset).unwrap_or(size)
-                                }
+                                FieldType::TypeRef(type_name) => self
+                                    .get_type_size(type_name, elem_offset, &ctx)
+                                    .unwrap_or(size),
                                 _ => size,
                             };
                             if elem_offset + elem_size <= self.data.len() {
@@ -205,9 +205,9 @@ impl<'a> StructureAccessor<'a> {
                         let mut i = 0;
                         loop {
                             let elem_size = match &field.field_type {
-                                FieldType::TypeRef(type_name) => {
-                                    self.get_type_size(type_name, elem_offset).unwrap_or(size)
-                                }
+                                FieldType::TypeRef(type_name) => self
+                                    .get_type_size(type_name, elem_offset, &ctx)
+                                    .unwrap_or(size),
                                 _ => size,
                             };
                             if elem_offset + elem_size > self.data.len() {
@@ -245,9 +245,9 @@ impl<'a> StructureAccessor<'a> {
                             .insert(field.id.clone(), (current_offset, size));
                         loop {
                             let elem_size = match &field.field_type {
-                                FieldType::TypeRef(type_name) => {
-                                    self.get_type_size(type_name, elem_offset).unwrap_or(size)
-                                }
+                                FieldType::TypeRef(type_name) => self
+                                    .get_type_size(type_name, elem_offset, &ctx)
+                                    .unwrap_or(size),
                                 _ => size,
                             };
                             if elem_size == 0 || elem_offset + elem_size > self.data.len() {
@@ -525,7 +525,10 @@ impl<'a> StructureAccessor<'a> {
                         FieldType::UnsignedInt(bytes) | FieldType::SignedInt(bytes) => {
                             Ok(*bytes as usize)
                         }
-                        FieldType::TypeRef(type_name) => self.get_type_size(type_name, offset),
+                        FieldType::TypeRef(type_name) => {
+                            let ctx = self.build_eval_context()?;
+                            self.get_type_size(type_name, offset, &ctx)
+                        }
                         _ => Ok(0),
                     }
                 } else {
@@ -566,6 +569,7 @@ impl<'a> StructureAccessor<'a> {
         &self,
         type_name: &str,
         offset: usize,
+        ctx: &EvalContext,
     ) -> Result<usize, AccessError> {
         let nested_def =
             self.definition
@@ -575,7 +579,7 @@ impl<'a> StructureAccessor<'a> {
                     path: type_name.to_string(),
                 })?;
 
-        let mut nested_ctx = self.build_eval_context()?;
+        let mut nested_ctx = ctx.clone();
         let mut total_size = 0;
 
         for field in &nested_def.fields {
@@ -634,7 +638,8 @@ impl<'a> StructureAccessor<'a> {
                             let mut total = 0;
                             let mut current_offset = base_offset;
                             for _ in 0..(n as usize) {
-                                let elem_size = self.get_type_size(type_name, current_offset)?;
+                                let elem_size =
+                                    self.get_type_size(type_name, current_offset, ctx)?;
                                 total += elem_size;
                                 current_offset += elem_size;
                             }
@@ -667,7 +672,7 @@ impl<'a> StructureAccessor<'a> {
                         FieldType::UnsignedInt(bytes) | FieldType::SignedInt(bytes) => {
                             Ok(*bytes as usize)
                         }
-                        FieldType::TypeRef(type_name) => self.get_type_size(type_name, offset),
+                        FieldType::TypeRef(type_name) => self.get_type_size(type_name, offset, ctx),
                         _ => Ok(0),
                     }
                 } else {
