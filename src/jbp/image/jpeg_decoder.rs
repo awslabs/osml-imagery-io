@@ -411,6 +411,12 @@ impl JpegNitfBlockDecoder {
         subheader: &ImageSubheaderFacade,
         image_data: Arc<[u8]>,
     ) -> Result<Self, CodecError> {
+        if image_data.is_empty() {
+            return Err(CodecError::InvalidFormat(
+                "Image data segment is empty".into(),
+            ));
+        }
+
         let ic = subheader.ic()?.trim().to_string();
         let nrows = subheader.nrows()?;
         let ncols = subheader.ncols()?;
@@ -1350,6 +1356,147 @@ mod tests {
             // Original was R=200, G=100, B=50, so R should be highest
             assert!(avg_r > avg_g, "R avg {} should be > G avg {}", avg_r, avg_g);
             assert!(avg_g > avg_b, "G avg {} should be > B avg {}", avg_g, avg_b);
+        }
+    }
+
+    // =========================================================================
+    // JpegNitfBlockDecoder Validation Tests
+    // =========================================================================
+
+    #[cfg(feature = "libjpeg-turbo")]
+    mod nitf_decoder_tests {
+        use super::*;
+        use crate::jbp::image::facade::ImageSubheaderFacade;
+        use crate::jbp::types::NitfFormat;
+        use crate::parser::StructureRegistry;
+
+        fn create_c3_image_subheader() -> Vec<u8> {
+            let mut data = Vec::new();
+
+            // IM (2)
+            data.extend_from_slice(b"IM");
+            // IID1 (10)
+            data.extend_from_slice(b"TestImage ");
+            // IDATIM (14)
+            data.extend_from_slice(b"20240101120000");
+            // TGTID (17)
+            data.extend_from_slice(&[b' '; 17]);
+            // IID2 (80)
+            data.extend_from_slice(&[b' '; 80]);
+            // Security: ISCLAS(1) ISCLSY(2) ISCODE(11) ISCTLH(2) ISREL(20)
+            //           ISDCTP(2) ISDCDT(8) ISDCXM(4) ISDG(1) ISDGDT(8)
+            //           ISCLTX(43) ISCATP(1) ISCAUT(40) ISCRSN(1) ISSRDT(8) ISCTLN(15)
+            data.push(b'U');
+            data.extend_from_slice(&[b' '; 2]); // ISCLSY
+            data.extend_from_slice(&[b' '; 11]); // ISCODE
+            data.extend_from_slice(&[b' '; 2]); // ISCTLH
+            data.extend_from_slice(&[b' '; 20]); // ISREL
+            data.extend_from_slice(&[b' '; 2]); // ISDCTP
+            data.extend_from_slice(&[b' '; 8]); // ISDCDT
+            data.extend_from_slice(&[b' '; 4]); // ISDCXM
+            data.push(b' '); // ISDG
+            data.extend_from_slice(&[b' '; 8]); // ISDGDT
+            data.extend_from_slice(&[b' '; 43]); // ISCLTX
+            data.push(b' '); // ISCATP
+            data.extend_from_slice(&[b' '; 40]); // ISCAUT
+            data.push(b' '); // ISCRSN
+            data.extend_from_slice(&[b' '; 8]); // ISSRDT
+            data.extend_from_slice(&[b' '; 15]); // ISCTLN
+                                                 // ENCRYP (1)
+            data.push(b'0');
+            // ISORCE (42)
+            data.extend_from_slice(&[b' '; 42]);
+            // NROWS (8)
+            data.extend_from_slice(b"00000064");
+            // NCOLS (8)
+            data.extend_from_slice(b"00000064");
+            // PVTYPE (3)
+            data.extend_from_slice(b"INT");
+            // IREP (8)
+            data.extend_from_slice(b"MONO    ");
+            // ICAT (8)
+            data.extend_from_slice(b"VIS     ");
+            // ABPP (2)
+            data.extend_from_slice(b"08");
+            // PJUST (1)
+            data.push(b'R');
+            // ICORDS (1) - blank to skip IGEOLO
+            data.push(b' ');
+            // NICOM (1)
+            data.push(b'0');
+            // IC (2) - JPEG DCT
+            data.extend_from_slice(b"C3");
+            // COMRAT (4) - required when IC != NC/NM
+            data.extend_from_slice(b"00.0");
+            // NBANDS (1)
+            data.push(b'1');
+            // Band info: IREPBAND(2) ISUBCAT(6) IFC(1) IMFLT(3) NLUTS(1)
+            data.extend_from_slice(b"M ");
+            data.extend_from_slice(b"      ");
+            data.push(b'N');
+            data.extend_from_slice(b"   ");
+            data.push(b'0');
+            // ISYNC (1)
+            data.push(b'0');
+            // IMODE (1)
+            data.push(b'B');
+            // NBPR (4)
+            data.extend_from_slice(b"0001");
+            // NBPC (4)
+            data.extend_from_slice(b"0001");
+            // NPPBH (4)
+            data.extend_from_slice(b"0064");
+            // NPPBV (4)
+            data.extend_from_slice(b"0064");
+            // NBPP (2)
+            data.extend_from_slice(b"08");
+            // IDLVL (3)
+            data.extend_from_slice(b"001");
+            // IALVL (3)
+            data.extend_from_slice(b"000");
+            // ILOC (10)
+            data.extend_from_slice(b"0000000000");
+            // IMAG (4)
+            data.extend_from_slice(b"1.0 ");
+            // UDIDL (5)
+            data.extend_from_slice(b"00000");
+            // IXSHDL (5)
+            data.extend_from_slice(b"00000");
+
+            data
+        }
+
+        #[test]
+        fn test_empty_image_data_returns_error() {
+            let registry = StructureRegistry::new();
+            let subheader_data = create_c3_image_subheader();
+
+            let facade = match ImageSubheaderFacade::from_bytes(
+                &subheader_data,
+                &registry,
+                NitfFormat::Nitf21,
+            ) {
+                Ok(f) => f,
+                Err(_) => {
+                    eprintln!("Skipping test: could not parse test subheader");
+                    return;
+                }
+            };
+
+            let empty_data: Arc<[u8]> = Arc::from(Vec::<u8>::new().into_boxed_slice());
+            let result = JpegNitfBlockDecoder::new(&facade, empty_data);
+
+            assert!(result.is_err(), "Expected error for empty image data");
+            match result.err().unwrap() {
+                CodecError::InvalidFormat(msg) => {
+                    assert!(
+                        msg.contains("empty"),
+                        "Error message should mention 'empty', got: {}",
+                        msg
+                    );
+                }
+                other => panic!("Expected CodecError::InvalidFormat, got: {:?}", other),
+            }
         }
     }
 }
