@@ -66,8 +66,21 @@ blocks are present, allowing empty blocks to be omitted entirely.
 
 ## Iterating Over Blocks
 
-Use `has_block()` to check whether a block contains data before reading it. This lets
-you skip masked regions and handle sparse imagery gracefully:
+`get_block()` always succeeds for valid grid coordinates. For masked (sparse) images,
+absent blocks return fill data — the pad pixel value from the mask table, or zero if
+none is defined. You can iterate over all blocks without guard checks:
+
+```python
+grid_rows, grid_cols = image.block_grid_size
+
+for row in range(grid_rows):
+    for col in range(grid_cols):
+        block = image.get_block(row, col, resolution_level=0)
+        # Process block — filled with pad value if masked
+```
+
+Use `has_block()` to distinguish real image data from synthesized fill. This is useful
+when computing statistics, writing sparse outputs, or skipping unnecessary processing:
 
 ```python
 grid_rows, grid_cols = image.block_grid_size
@@ -80,7 +93,7 @@ for row in range(grid_rows):
         if image.has_block(row, col, resolution_level=0):
             block = image.get_block(row, col, resolution_level=0)
             valid.append((row, col))
-            # Process block...
+            # Process real image data...
         else:
             masked.append((row, col))
 

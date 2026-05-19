@@ -102,14 +102,15 @@ pub enum CodecError {
     // =========================================================================
     // Image masking error variants (Phase 6)
     // =========================================================================
-    /// Block not found error for masked or out-of-bounds blocks.
+    /// Block not found error for out-of-grid coordinates.
     ///
-    /// This error is returned when attempting to access a block that either:
-    /// - Is masked (empty) in a masked image (offset = 0xFFFFFFFF)
-    /// - Is outside the valid block grid
+    /// This error is returned when attempting to access a block outside the valid
+    /// block grid (row >= grid_rows or col >= grid_cols). Masked (absent) blocks
+    /// within the grid are NOT errors — get_block() returns pad-pixel-filled data
+    /// for those coordinates.
     ///
     /// # Requirements
-    /// - 2.3: get_block() on masked block SHALL raise appropriate error
+    /// - 2.3: get_block() on out-of-grid coordinates SHALL raise BlockNotFound
     #[error("Block not found: row={row}, col={col}")]
     BlockNotFound {
         /// Block row index

@@ -354,32 +354,71 @@ impl ImageAssetProvider for JBPImageAssetProvider {
         resolution_level: u32,
         bands: Option<&[u32]>,
     ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
-        if !self.has_block(block_row, block_col, resolution_level)? {
+        let subheader = self.subheader()?;
+        let nbpr = subheader.nbpr()?;
+        let nbpc = subheader.nbpc()?;
+
+        // Block outside the valid grid is an error
+        if block_row >= nbpc || block_col >= nbpr {
             return Err(CodecError::BlockNotFound {
                 row: block_row,
                 col: block_col,
             });
         }
 
-        let decoder = self.decoder()?;
-        if resolution_level >= decoder.num_resolution_levels() {
-            return Err(CodecError::InvalidBlockCoordinates(
-                block_row,
-                block_col,
-                resolution_level,
-            ));
-        }
-
-        // For masked images, use offset-based decoding with mask offsets
+        // For masked images, check mask and synthesize fill for absent blocks
         if let Some(ref mask) = self.mask {
-            let subheader = self.subheader()?;
-            let nbpr = subheader.nbpr()?;
             let imode = subheader.imode()?;
 
-            // Get the block offset from the mask table
-            // The offset is relative to the start of blocked image data,
-            // so we need to add image_data_offset to get the actual position
-            // in the image data buffer (which includes the mask table)
+            if !mask.has_block(block_row, block_col, nbpr, 0, imode) {
+                // Synthesize fill data for masked (absent) block
+                let nrows = subheader.nrows()?;
+                let ncols = subheader.ncols()?;
+                let nppbv = subheader.effective_nppbv()?;
+                let nppbh = subheader.effective_nppbh()?;
+                let nbpp = subheader.nbpp()? as u32;
+                let num_bands = subheader.band_count()? as u32;
+                let bytes_per_pixel = nbpp.div_ceil(8);
+
+                // Compute actual block dimensions (edge blocks may be smaller)
+                let start_row = block_row * nppbv;
+                let start_col = block_col * nppbh;
+                let actual_rows = if start_row + nppbv > nrows {
+                    nrows - start_row
+                } else {
+                    nppbv
+                };
+                let actual_cols = if start_col + nppbh > ncols {
+                    ncols - start_col
+                } else {
+                    nppbh
+                };
+
+                let band_count = bands.map_or(num_bands, |b| b.len() as u32);
+                let block_size = (band_count as usize)
+                    * (actual_rows as usize)
+                    * (actual_cols as usize)
+                    * (bytes_per_pixel as usize);
+
+                // Fill with pad pixel value from mask table, or zero
+                let fill_byte = match mask.pad_pixel_value() {
+                    Some(v) if v != 0 && bytes_per_pixel == 1 => v as u8,
+                    _ => 0u8,
+                };
+                let fill_data = vec![fill_byte; block_size];
+                return Ok((fill_data, [band_count, actual_rows, actual_cols]));
+            }
+
+            // Block is present in mask — decode it
+            let decoder = self.decoder()?;
+            if resolution_level >= decoder.num_resolution_levels() {
+                return Err(CodecError::InvalidBlockCoordinates(
+                    block_row,
+                    block_col,
+                    resolution_level,
+                ));
+            }
+
             if let Some(block_offset) = mask.get_block_offset(block_row, block_col, nbpr, 0, imode)
             {
                 let actual_offset = (mask.image_data_offset as u64) + block_offset;
@@ -391,11 +430,25 @@ impl ImageAssetProvider for JBPImageAssetProvider {
                     bands,
                 );
             }
-            // If no offset in mask but has_block returned true, fall through to standard decode
-            // This shouldn't happen but provides a fallback
         }
 
-        // For non-masked images, use standard offset calculation
+        // For non-masked images, check has_block via decoder
+        let decoder = self.decoder()?;
+        if resolution_level >= decoder.num_resolution_levels() {
+            return Err(CodecError::InvalidBlockCoordinates(
+                block_row,
+                block_col,
+                resolution_level,
+            ));
+        }
+
+        if !decoder.has_block(block_row, block_col) {
+            return Err(CodecError::BlockNotFound {
+                row: block_row,
+                col: block_col,
+            });
+        }
+
         decoder.decode_block(block_row, block_col, resolution_level, bands)
     }
 
