@@ -171,6 +171,35 @@ impl Drop for TjCompressor {
 // Safety: TurboJPEG handles are thread-safe
 unsafe impl Send for TjCompressor {}
 
+// =============================================================================
+// JPEG Stream Helpers
+// =============================================================================
+
+/// Skip leading 0xFF fill bytes to find the JPEG SOI marker (FF D8).
+///
+/// NITF files may pad JPEG data with 0xFF bytes before the actual stream
+/// (e.g., for word-alignment). This function returns a slice starting at SOI.
+fn skip_to_soi(data: &[u8]) -> Result<&[u8], CodecError> {
+    // Fast path: already starts with SOI
+    if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
+        return Ok(data);
+    }
+
+    // Skip consecutive 0xFF fill bytes
+    let mut offset = 0;
+    while offset < data.len() && data[offset] == 0xFF {
+        if offset + 1 < data.len() && data[offset + 1] == 0xD8 {
+            return Ok(&data[offset..]);
+        }
+        offset += 1;
+    }
+
+    Err(CodecError::Decode(format!(
+        "Not a JPEG file: SOI marker (FF D8) not found in first {} bytes",
+        offset.min(32)
+    )))
+}
+
 /// Safe wrapper for TurboJPEG decompressor handle.
 pub struct TjDecompressor {
     handle: tjhandle,
@@ -380,6 +409,10 @@ pub fn decompress_8bit(
     expected_height: usize,
     num_bands: usize,
 ) -> Result<Vec<u8>, CodecError> {
+    // Skip leading 0xFF fill bytes to find the SOI marker (FF D8).
+    // NITF files may pad JPEG streams with FF bytes for alignment.
+    let jpeg_data = skip_to_soi(jpeg_data)?;
+
     let decompressor = TjDecompressor::new()?;
 
     let (width, height, _subsamp, _colorspace) = decompressor.get_header(jpeg_data)?;
@@ -670,5 +703,47 @@ mod tests {
 
         let result = decompress_8bit(&jpeg_data, block_w, block_h, 1);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_skip_to_soi_no_padding() {
+        let data = [0xFF, 0xD8, 0xFF, 0xE0];
+        let result = skip_to_soi(&data).unwrap();
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], 0xFF);
+        assert_eq!(result[1], 0xD8);
+    }
+
+    #[test]
+    fn test_skip_to_soi_with_padding() {
+        // 4 FF padding bytes before SOI
+        let data = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xD8, 0xFF, 0xE0];
+        let result = skip_to_soi(&data).unwrap();
+        assert_eq!(result.len(), 4); // FF D8 FF E0
+        assert_eq!(result[0], 0xFF);
+        assert_eq!(result[1], 0xD8);
+    }
+
+    #[test]
+    fn test_skip_to_soi_no_soi_found() {
+        let data = [0xFF, 0xFF, 0xFF, 0x00];
+        let result = skip_to_soi(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decompress_with_ff_padding() {
+        // Simulate NITF-style FF padding before a valid JPEG stream
+        let width = 8;
+        let height = 8;
+        let src = vec![128u8; width * height];
+        let jpeg_data = compress_8bit(&src, width, height, 1, 90).unwrap();
+
+        // Prepend FF padding (like NITF alignment)
+        let mut padded = vec![0xFF; 6];
+        padded.extend_from_slice(&jpeg_data);
+
+        let decoded = decompress_8bit(&padded, width, height, 1).unwrap();
+        assert_eq!(decoded.len(), width * height);
     }
 }
