@@ -34,6 +34,18 @@ could offer:
 The `datetime.rs` Rust implementation could back the datetime conversion if
 exposed through PyO3, or it could be implemented purely in Python.
 
+## Native Sub-Sampled Component Access
+
+JPEG 2000 images with non-uniform sub-sampling (e.g. YCbCr 4:2:0/4:2:2,
+multispectral with mixed GSD bands) currently have all components upsampled
+to the reference grid via nearest-neighbor replication before being returned
+to the caller. This prevents access to components at their native resolution.
+
+A future API extension would allow callers to request individual components
+at their native sampling rate without upsampling. This is important for
+scientific workflows (e.g. spectral unmixing, pan-sharpening inputs) where
+the spatial resolution of each band matters.
+
 ## GeoZarr Conventions
 
 The hierarchical tile index currently declares the

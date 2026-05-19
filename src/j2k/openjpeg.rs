@@ -38,6 +38,63 @@ use super::ffi::{OjpCodec, OjpImage, OjpStream};
 use super::sys::{self, opj_cparameters_t, opj_dparameters_t, OPJ_TRUE};
 
 // =============================================================================
+// Helpers
+// =============================================================================
+
+/// Compute the reference grid dimensions from decoded image components.
+///
+/// The reference grid is the largest component dimension (width, height) across
+/// all components. In the common case all components have dx=dy=1 and share the
+/// same (w, h). When components differ (sub-sampled images), the component with
+/// the finest sampling (dx=1, dy=1) defines the reference grid. That component
+/// may not be comp0.
+fn reference_grid_dimensions(
+    image: &super::ffi::OjpImage,
+    num_components: u32,
+    comp0_width: u32,
+    comp0_height: u32,
+) -> (u32, u32) {
+    let mut ref_w = comp0_width;
+    let mut ref_h = comp0_height;
+    for i in 1..num_components {
+        if let Some(ci) = image.component(i) {
+            ref_w = ref_w.max(ci.width);
+            ref_h = ref_h.max(ci.height);
+        }
+    }
+    (ref_w, ref_h)
+}
+
+/// Serialize a single decoded sample value into the output buffer.
+#[inline]
+fn serialize_sample(
+    value: i32,
+    bytes_per_sample: usize,
+    output: &mut Vec<u8>,
+) -> Result<(), CodecError> {
+    match bytes_per_sample {
+        1 => output.push(value as u8),
+        2 => output.extend_from_slice(&(value as u16).to_ne_bytes()),
+        3 => {
+            let bytes = (value as u32).to_ne_bytes();
+            output.extend_from_slice(&bytes[..3]);
+        }
+        4 => output.extend_from_slice(&(value as u32).to_ne_bytes()),
+        5 => {
+            let bytes = (value as i64 as u64).to_ne_bytes();
+            output.extend_from_slice(&bytes[..5]);
+        }
+        _ => {
+            return Err(CodecError::Decode(format!(
+                "Unsupported precision: {} bytes per sample",
+                bytes_per_sample
+            )));
+        }
+    }
+    Ok(())
+}
+
+// =============================================================================
 // OpenJPEG Codec
 // =============================================================================
 
@@ -208,52 +265,48 @@ impl J2KCodec for OpenJpegCodec {
             .component(0)
             .ok_or_else(|| CodecError::Decode("No components in decoded image".into()))?;
 
-        let width = comp0.width;
-        let height = comp0.height;
         let precision = comp0.precision;
         let is_signed = comp0.is_signed;
+
+        // Reference grid dimensions: the largest component dimensions across all
+        // components (the component with dx=1, dy=1 may not be comp0).
+        let (ref_width, ref_height) =
+            reference_grid_dimensions(&image, num_components, comp0.width, comp0.height);
 
         // Calculate bytes per sample
         let bytes_per_sample = (precision as usize).div_ceil(8);
 
         // Convert to band-sequential byte format
-        let pixels_per_band = (width * height) as usize;
+        let pixels_per_band = (ref_width * ref_height) as usize;
         let mut output =
             Vec::with_capacity(pixels_per_band * num_components as usize * bytes_per_sample);
 
         for comp_idx in 0..num_components {
+            let comp_info = image.component(comp_idx).ok_or_else(|| {
+                CodecError::Decode(format!("Missing info for component {}", comp_idx))
+            })?;
             let comp_data = image.component_data(comp_idx).ok_or_else(|| {
                 CodecError::Decode(format!("Missing data for component {}", comp_idx))
             })?;
 
-            for &value in comp_data {
-                match bytes_per_sample {
-                    1 => {
-                        output.push(value as u8);
+            let needs_upsample = comp_info.width != ref_width || comp_info.height != ref_height;
+
+            if needs_upsample {
+                let comp_w = comp_info.width as usize;
+                let comp_h = comp_info.height as usize;
+                // Nearest-neighbor upsampling to reference grid
+                for y in 0..ref_height as usize {
+                    let src_y = (y * comp_h) / ref_height as usize;
+                    for x in 0..ref_width as usize {
+                        let src_x = (x * comp_w) / ref_width as usize;
+                        let src_idx = src_y * comp_w + src_x;
+                        let value = comp_data[src_idx];
+                        serialize_sample(value, bytes_per_sample, &mut output)?;
                     }
-                    2 => {
-                        // OpenJPEG returns native integers; serialize as native-endian
-                        // to match the internal Vec<u8> contract.
-                        output.extend_from_slice(&(value as u16).to_ne_bytes());
-                    }
-                    3 => {
-                        let bytes = (value as u32).to_ne_bytes();
-                        output.extend_from_slice(&bytes[..3]);
-                    }
-                    4 => {
-                        // OpenJPEG returns native integers; serialize as native-endian.
-                        output.extend_from_slice(&(value as u32).to_ne_bytes());
-                    }
-                    5 => {
-                        let bytes = (value as i64 as u64).to_ne_bytes();
-                        output.extend_from_slice(&bytes[..5]);
-                    }
-                    _ => {
-                        return Err(CodecError::Decode(format!(
-                            "Unsupported precision: {} bits ({} bytes per sample)",
-                            precision, bytes_per_sample
-                        )));
-                    }
+                }
+            } else {
+                for &value in comp_data {
+                    serialize_sample(value, bytes_per_sample, &mut output)?;
                 }
             }
         }
@@ -264,8 +317,8 @@ impl J2KCodec for OpenJpegCodec {
 
         Ok(J2KDecodeResult {
             data: output,
-            width,
-            height,
+            width: ref_width,
+            height: ref_height,
             num_components,
             bits_per_component: precision,
             is_signed,
@@ -504,6 +557,14 @@ impl J2KCodec for OpenJpegCodec {
             .component(0)
             .ok_or_else(|| CodecError::Decode("No components in decoded image".into()))?;
 
+        let precision = comp0.precision;
+        let is_signed = comp0.is_signed;
+
+        // Reference grid dimensions: the largest component dimensions across all
+        // components (the component with dx=1, dy=1 may not be comp0).
+        let (max_comp_width, max_comp_height) =
+            reference_grid_dimensions(&image, num_components, comp0.width, comp0.height);
+
         // Calculate tile dimensions at this resolution level
         let scale = 1u32 << params.resolution_level;
 
@@ -522,54 +583,44 @@ impl J2KCodec for OpenJpegCodec {
         let scaled_actual_width = actual_tile_width.div_ceil(scale);
         let scaled_actual_height = actual_tile_height.div_ceil(scale);
 
-        let width = comp0.width.min(scaled_actual_width);
-        let height = comp0.height.min(scaled_actual_height);
-        let precision = comp0.precision;
-        let is_signed = comp0.is_signed;
+        let ref_width = max_comp_width.min(scaled_actual_width);
+        let ref_height = max_comp_height.min(scaled_actual_height);
 
         // Calculate bytes per sample
         let bytes_per_sample = (precision as usize).div_ceil(8);
 
         // Convert to band-sequential byte format
-        let pixels_per_band = (width * height) as usize;
+        let pixels_per_band = (ref_width * ref_height) as usize;
         let mut output =
             Vec::with_capacity(pixels_per_band * num_components as usize * bytes_per_sample);
 
         for comp_idx in 0..num_components {
+            let comp_info = image.component(comp_idx).ok_or_else(|| {
+                CodecError::Decode(format!("Missing info for component {}", comp_idx))
+            })?;
             let comp_data = image.component_data(comp_idx).ok_or_else(|| {
                 CodecError::Decode(format!("Missing data for component {}", comp_idx))
             })?;
 
-            // Take only the pixels we need (in case component has more data)
-            let pixels_to_take = pixels_per_band.min(comp_data.len());
-            for &value in &comp_data[..pixels_to_take] {
-                match bytes_per_sample {
-                    1 => {
-                        output.push(value as u8);
+            let needs_upsample = comp_info.width != ref_width || comp_info.height != ref_height;
+
+            if needs_upsample {
+                let comp_w = comp_info.width as usize;
+                let comp_h = comp_info.height as usize;
+                // Nearest-neighbor upsampling to reference grid
+                for y in 0..ref_height as usize {
+                    let src_y = (y * comp_h) / ref_height as usize;
+                    for x in 0..ref_width as usize {
+                        let src_x = (x * comp_w) / ref_width as usize;
+                        let src_idx = src_y * comp_w + src_x;
+                        let value = comp_data[src_idx];
+                        serialize_sample(value, bytes_per_sample, &mut output)?;
                     }
-                    2 => {
-                        // OpenJPEG returns native integers; serialize as native-endian
-                        // to match the internal Vec<u8> contract.
-                        output.extend_from_slice(&(value as u16).to_ne_bytes());
-                    }
-                    3 => {
-                        let bytes = (value as u32).to_ne_bytes();
-                        output.extend_from_slice(&bytes[..3]);
-                    }
-                    4 => {
-                        // OpenJPEG returns native integers; serialize as native-endian.
-                        output.extend_from_slice(&(value as u32).to_ne_bytes());
-                    }
-                    5 => {
-                        let bytes = (value as i64 as u64).to_ne_bytes();
-                        output.extend_from_slice(&bytes[..5]);
-                    }
-                    _ => {
-                        return Err(CodecError::Decode(format!(
-                            "Unsupported precision: {} bits ({} bytes per sample)",
-                            precision, bytes_per_sample
-                        )));
-                    }
+                }
+            } else {
+                let pixels_to_take = pixels_per_band.min(comp_data.len());
+                for &value in &comp_data[..pixels_to_take] {
+                    serialize_sample(value, bytes_per_sample, &mut output)?;
                 }
             }
         }
@@ -579,8 +630,8 @@ impl J2KCodec for OpenJpegCodec {
 
         Ok(J2KDecodeResult {
             data: output,
-            width,
-            height,
+            width: ref_width,
+            height: ref_height,
             num_components,
             bits_per_component: precision,
             is_signed,

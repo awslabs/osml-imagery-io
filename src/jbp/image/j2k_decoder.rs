@@ -466,11 +466,16 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         let expected_width = actual_tile_width.div_ceil(scale);
         let expected_height = actual_tile_height.div_ceil(scale);
 
-        // Validate decoded dimensions match expected scaled dimensions
-        if result.width != expected_width || result.height != expected_height {
+        // Validate: decoded pixel count must not exceed expected (corruption guard).
+        // The J2K codestream may have different geometry than the NITF subheader
+        // due to non-zero image/tile offsets or sub-sampling, so we compare total
+        // pixel count rather than exact width/height.
+        let decoded_pixels = (result.width as u64) * (result.height as u64);
+        let expected_pixels = (expected_width as u64) * (expected_height as u64);
+        if decoded_pixels > expected_pixels {
             return Err(CodecError::Decode(format!(
-                "Decoded tile dimensions {}x{} don't match expected {}x{} at resolution level {} for tile ({}, {})",
-                result.width, result.height, expected_width, expected_height, resolution_level, block_row, block_col
+                "Decoded tile pixel count {} ({}x{}) exceeds expected {} ({}x{}) at resolution level {} for tile ({}, {})",
+                decoded_pixels, result.width, result.height, expected_pixels, expected_width, expected_height, resolution_level, block_row, block_col
             )));
         }
 
@@ -644,11 +649,16 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
         let expected_width = actual_tile_width.div_ceil(scale);
         let expected_height = actual_tile_height.div_ceil(scale);
 
-        // Validate decoded dimensions match expected scaled dimensions
-        if result.width != expected_width || result.height != expected_height {
+        // Validate: decoded pixel count must not exceed expected (corruption guard).
+        // The J2K codestream may have different geometry than the NITF subheader
+        // due to non-zero image/tile offsets or sub-sampling, so we compare total
+        // pixel count rather than exact width/height.
+        let decoded_pixels = (result.width as u64) * (result.height as u64);
+        let expected_pixels = (expected_width as u64) * (expected_height as u64);
+        if decoded_pixels > expected_pixels {
             return Err(CodecError::Decode(format!(
-                "Decoded block dimensions {}x{} don't match expected {}x{} at resolution level {} for block ({}, {})",
-                result.width, result.height, expected_width, expected_height, resolution_level, block_row, block_col
+                "Decoded block pixel count {} ({}x{}) exceeds expected {} ({}x{}) at resolution level {} for block ({}, {})",
+                decoded_pixels, result.width, result.height, expected_pixels, expected_width, expected_height, resolution_level, block_row, block_col
             )));
         }
 

@@ -798,6 +798,8 @@ impl OjpImage {
                 precision: comp.prec as u8,
                 is_signed: comp.sgnd != 0,
                 factor: comp.factor,
+                dx: comp.dx,
+                dy: comp.dy,
             })
         }
     }
@@ -874,4 +876,8 @@ pub struct ComponentInfo {
     pub is_signed: bool,
     /// Resolution reduction factor
     pub factor: u32,
+    /// Horizontal sub-sampling factor (XRsiz)
+    pub dx: u32,
+    /// Vertical sub-sampling factor (YRsiz)
+    pub dy: u32,
 }

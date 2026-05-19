@@ -144,3 +144,16 @@ Block-level resolution levels are different from overview assets. Overviews are
 separate images at reduced resolutions, exposed as distinct assets within the dataset.
 See [Image Pyramids](datasets-and-io.md#image-pyramids) for how the library handles
 embedded overviews (COG) and multi-file pyramids (R-sets).
+
+## Known Limitations
+
+### JPEG 2000 Sub-Sampled Components
+
+When a JPEG 2000 codestream contains components with non-uniform sub-sampling factors
+(XRsiz/YRsiz > 1, as in YCbCr 4:2:0 or 4:2:2 imagery), the library automatically
+upsamples all components to the reference grid using nearest-neighbor interpolation.
+The returned block always has uniform dimensions across all bands. This means sub-sampled
+components are spatially replicated — not interpolated with a reconstruction filter — which
+introduces blocky artifacts and does not preserve the native resolution of individual
+components. For scientific workflows that require access to components at their native
+sampling rate, this behavior is lossy and may not be acceptable.
