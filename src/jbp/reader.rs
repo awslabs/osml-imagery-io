@@ -142,8 +142,12 @@ impl JBPDatasetReader {
                 message: format!("Failed to parse HL as u64: {}", e),
             })? as usize;
 
-        // Calculate segment offsets
-        let segment_offsets = SegmentOffsets::from_header(&accessor)?;
+        // Calculate segment offsets. The closure is only called for legacy
+        // streaming-mode files that use all-9s sentinel values in segment length
+        // fields — it provides the actual file size so the sentinel can be resolved
+        // to a real byte count. For normal files the closure is never invoked.
+        let data_len = data.len() as u64;
+        let segment_offsets = SegmentOffsets::from_header(&accessor, || data_len)?;
 
         // Validate segment counts
         Self::validate_segment_counts(&accessor, &segment_offsets, &mut warnings)?;
@@ -351,6 +355,20 @@ impl JBPDatasetReader {
             },
             Err(_) => return,
         };
+
+        // FL sentinel (999999999999) indicates streaming-mode — skip FL-based validation
+        const FL_SENTINEL: usize = 999_999_999_999;
+        if fl_value == FL_SENTINEL {
+            warnings.push(
+                ValidationWarning::new(
+                    ValidationCode::FileLengthMismatch,
+                    "FL field contains streaming-mode sentinel value (999999999999) — file length not recorded at write time".to_string(),
+                )
+                .with_field("FL")
+                .with_actual(fl_value.to_string()),
+            );
+            return;
+        }
 
         // Calculate expected file length from segments
         let calculated_length = Self::calculate_expected_file_length(offsets);
