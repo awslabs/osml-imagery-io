@@ -71,7 +71,12 @@ impl AssetMetadata for OverviewAssetWrapper {
 }
 
 impl ImageAssetProvider for OverviewAssetWrapper {
-    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
+    fn has_block(
+        &self,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+    ) -> Result<bool, CodecError> {
         self.inner.has_block(block_row, block_col, resolution_level)
     }
 

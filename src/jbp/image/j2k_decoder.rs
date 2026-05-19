@@ -179,6 +179,15 @@ impl Jpeg2000BlockDecoder {
                 ));
             }
             if codestream[0] != 0xFF || codestream[1] != 0x4F {
+                // Detect JP2 file format container (signature box: 0x0000000C 6A502020)
+                if codestream.len() >= 12 && codestream[4..8] == [0x6A, 0x50, 0x20, 0x20] {
+                    return Err(CodecError::Unsupported(
+                        "JPEG 2000 image data contains a JP2 file format container \
+                         (detected JP2 signature box) instead of a raw J2K codestream. \
+                         JP2 wrapping in NITF is not compliant with BPJ2K01.20."
+                            .to_string(),
+                    ));
+                }
                 return Err(CodecError::InvalidFormat(format!(
                     "Invalid JPEG 2000 codestream: missing SOC marker at offset 0 \
                      (found 0x{:02X}{:02X}, expected 0xFF4F)",

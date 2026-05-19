@@ -134,8 +134,13 @@ impl AssetMetadata for DTEDImageAssetProvider {
 }
 
 impl ImageAssetProvider for DTEDImageAssetProvider {
-    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
-        resolution_level == 0 && block_row == 0 && block_col == 0
+    fn has_block(
+        &self,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+    ) -> Result<bool, CodecError> {
+        Ok(resolution_level == 0 && block_row == 0 && block_col == 0)
     }
 
     fn get_block(
@@ -384,10 +389,10 @@ mod tests {
         let metadata = make_test_metadata();
         let provider = DTEDImageAssetProvider::new(Arc::from(data.as_slice()), 3, 4, metadata);
 
-        assert!(provider.has_block(0, 0, 0));
-        assert!(!provider.has_block(1, 0, 0));
-        assert!(!provider.has_block(0, 1, 0));
-        assert!(!provider.has_block(0, 0, 1));
+        assert!(provider.has_block(0, 0, 0).unwrap());
+        assert!(!provider.has_block(1, 0, 0).unwrap());
+        assert!(!provider.has_block(0, 1, 0).unwrap());
+        assert!(!provider.has_block(0, 0, 1).unwrap());
     }
 
     #[test]

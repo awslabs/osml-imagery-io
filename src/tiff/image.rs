@@ -212,12 +212,17 @@ impl AssetMetadata for TIFFImageAssetProvider {
 // =============================================================================
 
 impl ImageAssetProvider for TIFFImageAssetProvider {
-    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
+    fn has_block(
+        &self,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+    ) -> Result<bool, CodecError> {
         if resolution_level > 0 {
-            return false;
+            return Ok(false);
         }
         let (grid_rows, grid_cols) = self.block_grid_size();
-        block_row < grid_rows && block_col < grid_cols
+        Ok(block_row < grid_rows && block_col < grid_cols)
     }
 
     fn get_block(
@@ -1042,15 +1047,15 @@ mod tests {
         .unwrap();
 
         // Valid blocks
-        assert!(provider.has_block(0, 0, 0));
-        assert!(provider.has_block(1, 0, 0));
+        assert!(provider.has_block(0, 0, 0).unwrap());
+        assert!(provider.has_block(1, 0, 0).unwrap());
 
         // Out of bounds
-        assert!(!provider.has_block(2, 0, 0));
-        assert!(!provider.has_block(0, 1, 0));
+        assert!(!provider.has_block(2, 0, 0).unwrap());
+        assert!(!provider.has_block(0, 1, 0).unwrap());
 
         // Invalid resolution level
-        assert!(!provider.has_block(0, 0, 1));
+        assert!(!provider.has_block(0, 0, 1).unwrap());
     }
 
     #[test]

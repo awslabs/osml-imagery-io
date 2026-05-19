@@ -491,26 +491,31 @@ impl AssetMetadata for BufferedImageAssetProvider {
 }
 
 impl ImageAssetProvider for BufferedImageAssetProvider {
-    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
+    fn has_block(
+        &self,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+    ) -> Result<bool, CodecError> {
         if resolution_level != 0 {
-            return false;
+            return Ok(false);
         }
 
         let num_blocks_h = self.config.num_blocks_horizontal();
         let num_blocks_v = self.config.num_blocks_vertical();
 
         if block_row >= num_blocks_v || block_col >= num_blocks_h {
-            return false;
+            return Ok(false);
         }
 
         // Check local overrides first
-        let provided = match self.provided_blocks.read() {
-            Ok(p) => p,
-            Err(_) => return false,
-        };
+        let provided = self
+            .provided_blocks
+            .read()
+            .map_err(|_| CodecError::Decode("poisoned lock on provided_blocks".into()))?;
 
         if provided.contains(&(block_row, block_col)) {
-            return true;
+            return Ok(true);
         }
 
         // Fall back to source provider
@@ -518,7 +523,7 @@ impl ImageAssetProvider for BufferedImageAssetProvider {
             return source.has_block(block_row, block_col, resolution_level);
         }
 
-        false
+        Ok(false)
     }
 
     fn get_block(
@@ -714,7 +719,7 @@ mod tests {
         let block_data = vec![128u8; 256 * 256];
         provider.set_block(0, 0, &block_data).unwrap();
 
-        assert!(provider.has_block(0, 0, 0));
+        assert!(provider.has_block(0, 0, 0).unwrap());
 
         let (data, shape) = provider.get_block(0, 0, 0, None).unwrap();
         // Shape is now [bands, rows, cols] (CHW format)

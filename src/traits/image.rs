@@ -34,7 +34,17 @@ pub trait ImageAssetProvider: AssetMetadata {
     /// # Returns
     ///
     /// `true` if the block exists, `false` otherwise.
-    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool;
+    ///
+    /// # Errors
+    ///
+    /// Returns a `CodecError` if the underlying image data is malformed and
+    /// block existence cannot be determined (e.g. invalid codestream format).
+    fn has_block(
+        &self,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+    ) -> Result<bool, CodecError>;
 
     /// Retrieve block data as a contiguous array.
     ///

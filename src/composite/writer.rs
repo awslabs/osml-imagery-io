@@ -210,8 +210,13 @@ mod tests {
     }
 
     impl ImageAssetProvider for MockAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
-            true
+        fn has_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+        ) -> Result<bool, CodecError> {
+            Ok(true)
         }
         fn get_block(
             &self,

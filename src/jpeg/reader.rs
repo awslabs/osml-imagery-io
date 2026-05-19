@@ -380,10 +380,10 @@ mod tests {
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
-        assert!(image.has_block(0, 0, 0));
-        assert!(!image.has_block(1, 0, 0));
-        assert!(!image.has_block(0, 1, 0));
-        assert!(!image.has_block(0, 0, 1));
+        assert!(image.has_block(0, 0, 0).unwrap());
+        assert!(!image.has_block(1, 0, 0).unwrap());
+        assert!(!image.has_block(0, 1, 0).unwrap());
+        assert!(!image.has_block(0, 0, 1).unwrap());
     }
 
     #[test]

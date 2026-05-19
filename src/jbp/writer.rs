@@ -732,19 +732,21 @@ impl JBPDatasetWriter {
     ///
     /// # Requirements
     /// - 5.1: Tracks which blocks have been provided via set_block()
-    fn collect_provided_blocks(provider: &dyn ImageAssetProvider) -> HashSet<(u32, u32)> {
+    fn collect_provided_blocks(
+        provider: &dyn ImageAssetProvider,
+    ) -> Result<HashSet<(u32, u32)>, CodecError> {
         let (grid_rows, grid_cols) = provider.block_grid_size();
         let mut provided = HashSet::new();
 
         for row in 0..grid_rows {
             for col in 0..grid_cols {
-                if provider.has_block(row, col, 0) {
+                if provider.has_block(row, col, 0)? {
                     provided.insert((row, col));
                 }
             }
         }
 
-        provided
+        Ok(provided)
     }
 
     /// Validate that block data is consistent with the IC value.
@@ -769,7 +771,7 @@ impl JBPDatasetWriter {
     ) -> Result<HashSet<(u32, u32)>, CodecError> {
         use crate::jbp::image::is_masked_ic;
 
-        let provided_blocks = Self::collect_provided_blocks(provider);
+        let provided_blocks = Self::collect_provided_blocks(provider)?;
         let (grid_rows, grid_cols) = provider.block_grid_size();
         let total_blocks = grid_rows * grid_cols;
 
@@ -2616,8 +2618,13 @@ mod tests {
     }
 
     impl ImageAssetProvider for TestAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
-            true
+        fn has_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+        ) -> Result<bool, CodecError> {
+            Ok(true)
         }
         fn get_block(
             &self,
@@ -3315,8 +3322,13 @@ mod tests {
     }
 
     impl ImageAssetProvider for ConflictTestAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
-            true
+        fn has_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+        ) -> Result<bool, CodecError> {
+            Ok(true)
         }
         fn get_block(
             &self,
@@ -3910,7 +3922,7 @@ mod tests {
         provider.set_block(0, 0, &block_data).unwrap();
         provider.set_block(1, 1, &block_data).unwrap();
 
-        let provided = JBPDatasetWriter::collect_provided_blocks(&provider);
+        let provided = JBPDatasetWriter::collect_provided_blocks(&provider).unwrap();
 
         assert_eq!(provided.len(), 2);
         assert!(provided.contains(&(0, 0)));
@@ -4121,8 +4133,13 @@ mod property_tests {
     }
 
     impl ImageAssetProvider for PropTestAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
-            true
+        fn has_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+        ) -> Result<bool, CodecError> {
+            Ok(true)
         }
         fn get_block(
             &self,
@@ -4731,8 +4748,13 @@ mod bugfix_tests {
     }
 
     impl ImageAssetProvider for BugfixAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
-            true
+        fn has_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+        ) -> Result<bool, CodecError> {
+            Ok(true)
         }
         fn get_block(
             &self,
@@ -5094,8 +5116,13 @@ mod metadata_writing_tests {
     }
 
     impl ImageAssetProvider for MetaAssetProvider {
-        fn has_block(&self, _block_row: u32, _block_col: u32, _resolution_level: u32) -> bool {
-            true
+        fn has_block(
+            &self,
+            _block_row: u32,
+            _block_col: u32,
+            _resolution_level: u32,
+        ) -> Result<bool, CodecError> {
+            Ok(true)
         }
         fn get_block(
             &self,

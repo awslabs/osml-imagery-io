@@ -607,8 +607,10 @@ impl PyBufferedImageAssetProvider {
     /// :returns: ``True`` if the block contains data, ``False`` otherwise.
     /// :rtype: bool
     #[pyo3(signature = (block_row, block_col, resolution_level=0))]
-    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
-        self.inner.has_block(block_row, block_col, resolution_level)
+    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> PyResult<bool> {
+        self.inner
+            .has_block(block_row, block_col, resolution_level)
+            .map_err(|e| e.into())
     }
 
     /// Read a block of pixel data as a NumPy array.

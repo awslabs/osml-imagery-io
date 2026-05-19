@@ -129,8 +129,13 @@ impl AssetMetadata for JPEGImageAssetProvider {
 // =============================================================================
 
 impl ImageAssetProvider for JPEGImageAssetProvider {
-    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
-        resolution_level == 0 && block_row == 0 && block_col == 0
+    fn has_block(
+        &self,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+    ) -> Result<bool, CodecError> {
+        Ok(resolution_level == 0 && block_row == 0 && block_col == 0)
     }
 
     fn get_block(

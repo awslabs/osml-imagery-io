@@ -171,10 +171,15 @@ impl AssetMetadata for J2KImageAssetProvider {
 // =============================================================================
 
 impl ImageAssetProvider for J2KImageAssetProvider {
-    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
-        resolution_level < self.num_resolution_levels
+    fn has_block(
+        &self,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+    ) -> Result<bool, CodecError> {
+        Ok(resolution_level < self.num_resolution_levels
             && block_row < self.num_tiles_y
-            && block_col < self.num_tiles_x
+            && block_col < self.num_tiles_x)
     }
 
     fn get_block(

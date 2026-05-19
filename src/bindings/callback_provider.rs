@@ -214,9 +214,14 @@ impl AssetMetadata for PyCallbackImageAssetProvider {
 // ---------------------------------------------------------------------------
 
 impl ImageAssetProvider for PyCallbackImageAssetProvider {
-    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
+    fn has_block(
+        &self,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+    ) -> Result<bool, CodecError> {
         if !self.has_has_block {
-            return true;
+            return Ok(true);
         }
         Python::attach(|py| {
             self.py_obj
@@ -227,7 +232,7 @@ impl ImageAssetProvider for PyCallbackImageAssetProvider {
                     None,
                 )
                 .and_then(|r| r.extract::<bool>(py))
-                .unwrap_or(true)
+                .map_err(|e| CodecError::Python(e.to_string()))
         })
     }
 

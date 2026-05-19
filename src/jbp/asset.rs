@@ -319,42 +319,32 @@ impl AssetMetadata for JBPImageAssetProvider {
 }
 
 impl ImageAssetProvider for JBPImageAssetProvider {
-    fn has_block(&self, block_row: u32, block_col: u32, resolution_level: u32) -> bool {
+    fn has_block(
+        &self,
+        block_row: u32,
+        block_col: u32,
+        resolution_level: u32,
+    ) -> Result<bool, CodecError> {
         if resolution_level != 0 {
-            // Check if decoder supports multiple resolution levels
-            if let Ok(decoder) = self.decoder() {
-                if resolution_level >= decoder.num_resolution_levels() {
-                    return false;
-                }
-            } else {
-                return false;
+            let decoder = self.decoder()?;
+            if resolution_level >= decoder.num_resolution_levels() {
+                return Ok(false);
             }
         }
 
         // For masked images, check the mask
         if let Some(ref mask) = self.mask {
-            // Get NBPR and IMODE from subheader
-            let subheader = match self.subheader() {
-                Ok(s) => s,
-                Err(_) => return false,
-            };
-            let nbpr = match subheader.nbpr() {
-                Ok(n) => n,
-                Err(_) => return false,
-            };
-            let imode = match subheader.imode() {
-                Ok(m) => m,
-                Err(_) => return false,
-            };
+            let subheader = self.subheader()?;
+            let nbpr = subheader.nbpr()?;
+            let imode = subheader.imode()?;
 
             // For masked images, check the mask (band 0 for non-IMODE=S)
-            return mask.has_block(block_row, block_col, nbpr, 0, imode);
+            return Ok(mask.has_block(block_row, block_col, nbpr, 0, imode));
         }
 
         // For non-masked images, delegate to decoder
-        self.decoder()
-            .map(|d| d.has_block(block_row, block_col))
-            .unwrap_or(false)
+        let decoder = self.decoder()?;
+        Ok(decoder.has_block(block_row, block_col))
     }
 
     fn get_block(
@@ -364,8 +354,7 @@ impl ImageAssetProvider for JBPImageAssetProvider {
         resolution_level: u32,
         bands: Option<&[u32]>,
     ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
-        // Validate block exists via has_block()
-        if !self.has_block(block_row, block_col, resolution_level) {
+        if !self.has_block(block_row, block_col, resolution_level)? {
             return Err(CodecError::BlockNotFound {
                 row: block_row,
                 col: block_col,
@@ -1432,7 +1421,7 @@ mod tests {
         .unwrap();
 
         // Calling has_block triggers decoder() -> image_data() which should return Err, not panic
-        assert!(!provider.has_block(0, 0, 0));
+        assert!(provider.has_block(0, 0, 0).is_err());
     }
 
     #[test]
