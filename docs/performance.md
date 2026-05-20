@@ -70,21 +70,59 @@ python scripts/generate_synthetic_image_pyramid.py data/integration/synthetic/sy
 Set `OSML_IO_BENCHMARK_DATA=data/integration` when running benchmarks to include
 the synthetic datasets.
 
-### 2. Run the benchmarks
+### 2. Upload benchmark data to S3 (optional — for S3 benchmarks)
+
+The S3 Zarr benchmarks read tiles over the network from an S3 bucket. The bucket
+must mirror the same relative paths that `benchmark_datasets.yaml` uses under
+`OSML_IO_BENCHMARK_DATA`.
+
+**Prerequisites:**
+
+- An S3 bucket you have read access to.
+- The `s3fs` Python package installed (`pip install s3fs`).
+- AWS credentials available via the standard boto3 credential chain
+  (environment variables, `~/.aws/credentials`, instance role, etc.).
+
+**Upload the data:**
+
+```bash
+# Sync local benchmark data to S3 (preserves relative paths)
+aws s3 sync data/integration/ s3://my-bucket/benchmark-data/
+```
+
+The `OSML_IO_BENCHMARK_S3_BUCKET` value must point to the same prefix:
+
+```
+OSML_IO_BENCHMARK_S3_BUCKET=s3://my-bucket/benchmark-data
+```
+
+If this variable is not set, S3 benchmarks are skipped automatically.
+
+### 3. Build with release optimizations
+
+Benchmarks **must** be run against a release build. Debug builds (the default for
+`maturin develop`) include no optimizations and produce results 5–15x slower than
+release, which makes comparisons meaningless.
+
+```bash
+maturin develop --release
+```
+
+### 4. Run the benchmarks
 
 ```bash
 # Local benchmarks only
 OSML_IO_BENCHMARK_DATA=data/integration pytest -m benchmark --benchmark-autosave
 
-# Include S3 benchmarks (requires imagery uploaded to the bucket + credentials)
+# Include S3 benchmarks
 OSML_IO_BENCHMARK_DATA=data/integration \
-OSML_IO_BENCHMARK_S3_BUCKET=s3://my-bucket/path \
+OSML_IO_BENCHMARK_S3_BUCKET=s3://my-bucket/benchmark-data \
 pytest -m benchmark --benchmark-autosave
 ```
 
 Results are saved to `.benchmarks/`.
 
-### 3. Generate the results fragment
+### 5. Generate the results fragment
 
 ```bash
 python scripts/generate_benchmark_report.py
@@ -97,7 +135,7 @@ You can also point it at a specific file:
 python scripts/generate_benchmark_report.py .benchmarks/Linux-CPython-3.12/0001_abc.json
 ```
 
-### 4. Rebuild the docs
+### 6. Rebuild the docs
 
 ```bash
 make html -C docs
