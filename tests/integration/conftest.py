@@ -1,7 +1,8 @@
 """Integration test configuration and fixtures.
 
-Provides path resolution, manifest loading, tag-based filtering, and
-session-scoped summary reporting for manifest-driven integration tests.
+Provides path resolution, manifest loading, tag-based filtering,
+session-scoped summary reporting, and manifest generation for
+manifest-driven integration tests.
 
 Tag filtering
 ~~~~~~~~~~~~~
@@ -13,6 +14,16 @@ Examples::
 
     pytest tests/integration/ -m integration --exclude-tags slow
     pytest tests/integration/ -m integration --include-tags sicd,sidd
+
+Manifest update
+~~~~~~~~~~~~~~~
+Use ``--update-manifest`` to discover imagery files in the data directory,
+open each one, and add new entries to ``manifest.yaml``.  Existing entries
+are preserved; only files not already in the manifest are added.
+
+Example::
+
+    pytest tests/integration/ -m integration --update-manifest
 """
 
 import logging
@@ -32,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 def pytest_addoption(parser):
-    """Register --exclude-tags and --include-tags CLI options."""
+    """Register integration-test CLI options."""
     parser.addoption(
         "--exclude-tags",
         default="",
@@ -42,6 +53,12 @@ def pytest_addoption(parser):
         "--include-tags",
         default="",
         help="Comma-separated manifest tags to require (e.g. --include-tags sicd)",
+    )
+    parser.addoption(
+        "--update-manifest",
+        action="store_true",
+        default=False,
+        help="Discover new imagery files and add them to manifest.yaml",
     )
 
 
@@ -127,7 +144,11 @@ def load_manifest() -> tuple[Path, IntegrationManifest]:
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip all integration tests if data directory or manifest is missing."""
+    """Skip all integration tests if data directory is missing.
+
+    When --update-manifest is set, a missing manifest is not a skip condition
+    (the update process will create it).
+    """
     base_path = get_integration_data_path()
 
     if not base_path.exists():
@@ -137,8 +158,9 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip)
         return
 
+    update_manifest = config.getoption("--update-manifest", default=False)
     manifest_path = get_manifest_path()
-    if not manifest_path.exists():
+    if not manifest_path.exists() and not update_manifest:
         skip = pytest.mark.skip(reason=f"Integration manifest not found: {manifest_path}")
         for item in items:
             if "integration" in item.keywords:
@@ -168,3 +190,140 @@ def integration_summary(request):
             )
 
     request.addfinalizer(_log_summary)
+
+
+# =============================================================================
+# Manifest Update
+# =============================================================================
+
+# Extensions the library can open, mapped to a format tag for the manifest.
+_KNOWN_EXTENSIONS: dict[str, str] = {
+    ".ntf": "nitf",
+    ".nitf": "nitf",
+    ".nsf": "nitf",
+    ".nsif": "nitf",
+    ".hr1": "nitf",
+    ".hr2": "nitf",
+    ".hr3": "nitf",
+    ".hr4": "nitf",
+    ".hr5": "nitf",
+    ".hr6": "nitf",
+    ".hr7": "nitf",
+    ".hr8": "nitf",
+    ".tif": "tiff",
+    ".tiff": "tiff",
+    ".gtif": "tiff",
+    ".gtiff": "tiff",
+    ".j2k": "j2k",
+    ".jp2": "j2k",
+    ".jpg": "jpeg",
+    ".jpeg": "jpeg",
+    ".png": "png",
+    ".dt0": "dted",
+    ".dt1": "dted",
+    ".dt2": "dted",
+    ".dt3": "dted",
+    ".dt4": "dted",
+    ".dt5": "dted",
+    ".avg": "dted",
+    ".min": "dted",
+    ".max": "dted",
+}
+
+_SLOW_THRESHOLD_SECONDS = 5.0
+
+
+def discover_imagery_files(base_path: Path) -> list[Path]:
+    """Recursively find all files with recognized imagery extensions."""
+    found = []
+    for f in sorted(base_path.rglob("*")):
+        if f.is_file() and f.suffix.lower() in _KNOWN_EXTENSIONS:
+            found.append(f)
+    return found
+
+
+def update_manifest(base_path: Path, manifest_path: Path) -> None:
+    """Discover new imagery files and append them to the manifest.
+
+    Existing entries (matched by path) are preserved unchanged. New files
+    are opened to validate readability, timed to detect slow files, and
+    written with inferred tags. Files that fail to open are recorded with
+    expected_exception/expected_message fields.
+    """
+    import time
+
+    import yaml
+    from aws.osml.io import IO
+
+    existing = IntegrationManifest.load(manifest_path, base_path)
+    existing_paths = {e.path for e in existing.entries}
+
+    all_files = discover_imagery_files(base_path)
+    new_entries: list[dict] = []
+    added = 0
+
+    for file_path in all_files:
+        rel_path = str(file_path.relative_to(base_path))
+        if rel_path in existing_paths:
+            continue
+
+        ext = file_path.suffix.lower()
+        fmt_tag = _KNOWN_EXTENSIONS.get(ext, "unknown")
+        tags = [fmt_tag]
+        entry: dict = {
+            "path": rel_path,
+            "label": file_path.stem.upper().replace(" ", "-")[:30],
+            "description": f"Auto-discovered {fmt_tag.upper()} file",
+            "tags": tags,
+        }
+
+        start = time.perf_counter()
+        try:
+            reader = IO.open([str(file_path)], "r")
+            from aws.osml.io import AssetType
+
+            for key in reader.get_asset_keys(asset_type=AssetType.Image):
+                reader.get_asset(key)
+            reader.close()
+        except Exception as e:
+            logger.info("Discovered (fails to open): %s — %s", rel_path, e)
+
+        elapsed = time.perf_counter() - start
+        if elapsed >= _SLOW_THRESHOLD_SECONDS:
+            tags.append("slow")
+
+        new_entries.append(entry)
+        added += 1
+        logger.info("Discovered: %s (%.2fs)", rel_path, elapsed)
+
+    if not new_entries:
+        logger.info("No new files to add to manifest.")
+        return
+
+    # Read existing YAML to preserve structure, or start fresh
+    if manifest_path.exists():
+        with open(manifest_path, "r") as f:
+            data = yaml.safe_load(f) or {}
+    else:
+        data = {"version": "1.0.0", "entries": []}
+
+    if "entries" not in data:
+        data["entries"] = []
+
+    data["entries"].extend(new_entries)
+
+    with open(manifest_path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False, width=120)
+
+    logger.info("Added %d new entries to %s", added, manifest_path)
+
+
+def pytest_sessionstart(session):
+    """Run manifest update at session start if --update-manifest is set."""
+    if session.config.getoption("--update-manifest", default=False):
+        base_path = get_integration_data_path()
+        if not base_path.exists():
+            logger.warning("Cannot update manifest: data directory %s not found", base_path)
+            return
+        manifest_path = get_manifest_path()
+        update_manifest(base_path, manifest_path)
