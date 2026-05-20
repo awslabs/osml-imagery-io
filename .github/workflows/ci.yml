@@ -99,34 +99,3 @@ jobs:
           pip install ".[dev,zarr,virtualizarr]" kerchunk
           pytest tests/unit tests/property -m "not integration and not benchmark"
 
-  docs:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Install native deps
-        run: |
-          sudo apt-get update && sudo apt-get install -y cmake libjpeg-turbo8-dev libturbojpeg0-dev libtiff-dev
-          curl -sL "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
-          cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
-            -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_CODEC=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-openjpeg -j$(nproc)
-          sudo cmake --install build-openjpeg
-          sudo ldconfig
-      - name: Build extension and docs
-        run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          pip install maturin numpy sphinx myst-parser sphinx-autodoc-typehints sphinxcontrib-mermaid furo zarr fsspec
-          maturin develop --features extension-module,openjpeg,libjpeg-turbo,libtiff
-          sphinx-build docs docs/_build/html --keep-going
-      - uses: actions/upload-pages-artifact@v5
-        if: github.ref == 'refs/heads/main'
-        with:
-          path: docs/_build/html
