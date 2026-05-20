@@ -75,15 +75,8 @@ fn serialize_sample(
     match bytes_per_sample {
         1 => output.push(value as u8),
         2 => output.extend_from_slice(&(value as u16).to_ne_bytes()),
-        3 => {
-            let bytes = (value as u32).to_ne_bytes();
-            output.extend_from_slice(&bytes[..3]);
-        }
         4 => output.extend_from_slice(&(value as u32).to_ne_bytes()),
-        5 => {
-            let bytes = (value as i64 as u64).to_ne_bytes();
-            output.extend_from_slice(&bytes[..5]);
-        }
+        8 => output.extend_from_slice(&(value as i64 as u64).to_ne_bytes()),
         _ => {
             return Err(CodecError::Decode(format!(
                 "Unsupported precision: {} bytes per sample",
@@ -92,6 +85,20 @@ fn serialize_sample(
         }
     }
     Ok(())
+}
+
+/// Map bit precision to the number of bytes per sample, aligned to PixelType buckets.
+fn bytes_per_sample_for_precision(precision: u8) -> Result<usize, CodecError> {
+    match precision {
+        1..=8 => Ok(1),
+        9..=16 => Ok(2),
+        17..=32 => Ok(4),
+        33..=64 => Ok(8),
+        _ => Err(CodecError::Decode(format!(
+            "Unsupported bit precision: {}",
+            precision
+        ))),
+    }
 }
 
 // =============================================================================
@@ -273,8 +280,8 @@ impl J2KCodec for OpenJpegCodec {
         let (ref_width, ref_height) =
             reference_grid_dimensions(&image, num_components, comp0.width, comp0.height);
 
-        // Calculate bytes per sample
-        let bytes_per_sample = (precision as usize).div_ceil(8);
+        // Calculate bytes per sample aligned to PixelType buckets
+        let bytes_per_sample = bytes_per_sample_for_precision(precision)?;
 
         // Convert to band-sequential byte format
         let pixels_per_band = (ref_width * ref_height) as usize;
@@ -586,8 +593,8 @@ impl J2KCodec for OpenJpegCodec {
         let ref_width = max_comp_width.min(scaled_actual_width);
         let ref_height = max_comp_height.min(scaled_actual_height);
 
-        // Calculate bytes per sample
-        let bytes_per_sample = (precision as usize).div_ceil(8);
+        // Calculate bytes per sample aligned to PixelType buckets
+        let bytes_per_sample = bytes_per_sample_for_precision(precision)?;
 
         // Convert to band-sequential byte format
         let pixels_per_band = (ref_width * ref_height) as usize;
@@ -1264,5 +1271,76 @@ mod tests {
         assert_eq!(th, 128);
         assert_eq!(ntx, 2);
         assert_eq!(nty, 2);
+    }
+
+    // =========================================================================
+    // serialize_sample / bytes_per_sample_for_precision Tests
+    // =========================================================================
+
+    #[test]
+    fn test_bytes_per_sample_for_precision_buckets() {
+        for prec in 1..=8 {
+            assert_eq!(bytes_per_sample_for_precision(prec).unwrap(), 1);
+        }
+        for prec in 9..=16 {
+            assert_eq!(bytes_per_sample_for_precision(prec).unwrap(), 2);
+        }
+        for prec in 17..=32 {
+            assert_eq!(bytes_per_sample_for_precision(prec).unwrap(), 4);
+        }
+        for prec in 33..=64 {
+            assert_eq!(bytes_per_sample_for_precision(prec).unwrap(), 8);
+        }
+    }
+
+    #[test]
+    fn test_bytes_per_sample_for_precision_invalid() {
+        assert!(bytes_per_sample_for_precision(0).is_err());
+        assert!(bytes_per_sample_for_precision(65).is_err());
+    }
+
+    #[test]
+    fn test_serialize_sample_1_byte() {
+        let mut buf = Vec::new();
+        serialize_sample(42, 1, &mut buf).unwrap();
+        assert_eq!(buf, vec![42u8]);
+    }
+
+    #[test]
+    fn test_serialize_sample_2_bytes() {
+        let mut buf = Vec::new();
+        serialize_sample(1000, 2, &mut buf).unwrap();
+        assert_eq!(buf, (1000u16).to_ne_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_serialize_sample_4_bytes() {
+        let mut buf = Vec::new();
+        serialize_sample(0x000F_FFFF, 4, &mut buf).unwrap();
+        assert_eq!(buf, (0x000F_FFFFu32).to_ne_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_serialize_sample_8_bytes() {
+        let mut buf = Vec::new();
+        serialize_sample(i32::MAX, 8, &mut buf).unwrap();
+        assert_eq!(buf, (i32::MAX as i64 as u64).to_ne_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_serialize_sample_invalid_width() {
+        let mut buf = Vec::new();
+        assert!(serialize_sample(0, 3, &mut buf).is_err());
+        assert!(serialize_sample(0, 5, &mut buf).is_err());
+    }
+
+    #[test]
+    fn test_serialize_sample_20bit_emits_4_bytes() {
+        let bps = bytes_per_sample_for_precision(20).unwrap();
+        assert_eq!(bps, 4);
+        let mut buf = Vec::new();
+        serialize_sample(0x000A_BCDE, bps, &mut buf).unwrap();
+        assert_eq!(buf.len(), 4);
+        assert_eq!(buf, (0x000A_BCDEu32).to_ne_bytes().to_vec());
     }
 }
