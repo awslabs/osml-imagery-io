@@ -18,6 +18,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use crate::assembly::reassemble_full_image;
 use crate::error::CodecError;
 use crate::traits::{AssetProvider, DatasetWriter, MetadataProvider};
 use crate::types::{AssetType, PixelType};
@@ -325,8 +326,8 @@ impl DatasetWriter for PNGDatasetWriter {
         let num_bands = image.num_bands();
         let pixel_type = image.pixel_value_type();
 
-        // Read all pixel data (BSQ format)
-        let (bsq_data, _shape) = image.get_block(0, 0, 0, None)?;
+        // Read all pixel data (BSQ format) — reassemble from multi-block providers
+        let (bsq_data, _shape) = reassemble_full_image(image)?;
 
         // Determine PNG color type and bit depth
         let meta_ref = self.metadata.as_deref();
@@ -665,5 +666,140 @@ mod tests {
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [3, 2, 2]);
         assert_eq!(read_pixels, pixels);
+    }
+
+    // =========================================================================
+    // Roundtrip: write from multi-block grayscale provider
+    // =========================================================================
+
+    #[test]
+    fn test_roundtrip_multiblock_grayscale() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multiblock_gray.png");
+
+        // 4x4 image with 2x2 blocks → 2x2 block grid
+        let width: u32 = 4;
+        let height: u32 = 4;
+        let block_w: u32 = 2;
+        let block_h: u32 = 2;
+
+        let config = MemoryImageConfig::new(width, height)
+            .with_bands(1)
+            .with_block_size(block_w, block_h)
+            .with_pixel_type(PixelType::UInt8);
+        let provider = BufferedImageAssetProvider::new("image:0", config);
+
+        // Fill blocks: pixel value = row * width + col
+        for br in 0..2u32 {
+            for bc in 0..2u32 {
+                let mut block_data = Vec::with_capacity(4);
+                for r in 0..block_h {
+                    for c in 0..block_w {
+                        let y = br * block_h + r;
+                        let x = bc * block_w + c;
+                        block_data.push((y * width + x) as u8);
+                    }
+                }
+                provider.set_block(br, bc, &block_data).unwrap();
+            }
+        }
+
+        let provider = Arc::new(provider);
+        let mut writer = PNGDatasetWriter::new(&path).unwrap();
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        // Expected full image (BSQ, 1 band)
+        let expected: Vec<u8> = (0..16).collect();
+
+        let data = std::fs::read(&path).unwrap();
+        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
+        let image = asset.as_image().expect("Expected Image variant");
+
+        let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
+        assert_eq!(shape, [1, 4, 4]);
+        assert_eq!(read_pixels, expected);
+    }
+
+    // =========================================================================
+    // Roundtrip: write from multi-block RGB provider
+    // =========================================================================
+
+    #[test]
+    fn test_roundtrip_multiblock_rgb() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multiblock_rgb.png");
+
+        // 4x4 RGB image with 2x2 blocks
+        let width: u32 = 4;
+        let height: u32 = 4;
+        let num_bands: u32 = 3;
+        let block_w: u32 = 2;
+        let block_h: u32 = 2;
+
+        let config = MemoryImageConfig::new(width, height)
+            .with_bands(num_bands)
+            .with_block_size(block_w, block_h)
+            .with_pixel_type(PixelType::UInt8);
+        let provider = BufferedImageAssetProvider::new("image:0", config);
+
+        // Fill each block with BSQ data: pixel = band*48 + row*width + col
+        let blk_pixels = (block_h * block_w) as usize;
+        for br in 0..2u32 {
+            for bc in 0..2u32 {
+                let mut block_bsq = Vec::with_capacity(blk_pixels * num_bands as usize);
+                for band in 0..num_bands {
+                    for r in 0..block_h {
+                        for c in 0..block_w {
+                            let y = br * block_h + r;
+                            let x = bc * block_w + c;
+                            block_bsq.push((band * 48 + y * width + x) as u8);
+                        }
+                    }
+                }
+                provider.set_block(br, bc, &block_bsq).unwrap();
+            }
+        }
+
+        let provider = Arc::new(provider);
+        let mut writer = PNGDatasetWriter::new(&path).unwrap();
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        // Expected full image in BSQ: band0 then band1 then band2
+        let mut expected = Vec::with_capacity(48);
+        for band in 0..num_bands {
+            for y in 0..height {
+                for x in 0..width {
+                    expected.push((band * 48 + y * width + x) as u8);
+                }
+            }
+        }
+
+        let data = std::fs::read(&path).unwrap();
+        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
+        let image = asset.as_image().expect("Expected Image variant");
+
+        let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
+        assert_eq!(shape, [3, 4, 4]);
+        assert_eq!(read_pixels, expected);
     }
 }

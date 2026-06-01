@@ -7,6 +7,7 @@
 
 use pyo3::prelude::*;
 
+pub mod assembly;
 mod bindings;
 pub mod buffered;
 pub mod composite;

@@ -602,6 +602,60 @@ metadata["GeoPixelScale"] = "[0.5, 0.5, 0.0]"
 metadata["GeoTiepoints"] = "[0, 0, 0, 300000.0, 4500000.0, 0.0]"
 ```
 
+### JPEG 2000 (Standalone)
+
+The standalone J2K writer produces `.j2k` or `.jp2` files containing a single JPEG 2000
+codestream. Encoding parameters are set via dataset-level metadata.
+
+| Field | Values | Default | Description |
+|-------|--------|---------|-------------|
+| J2K_LOSSLESS | `true`, `false` | `true` | Lossless mode. When `false`, lossy compression at the target ratio is used. |
+| J2K_COMPRESSION_RATIO | float | `10.0` | Target compression ratio (e.g. `10.0` = 10:1). Only used when `J2K_LOSSLESS` is `false`. |
+| J2K_DECOMPOSITION_LEVELS | 1–32 | `5` | Wavelet decomposition levels. |
+| J2K_QUALITY_LAYERS | 1–255 | `1` | Quality layers for progressive refinement. |
+| J2K_HTJK | `true`, `false` | `false` | Use HTJ2K (Part 15) encoding for faster encode/decode. |
+| J2K_TILE_WIDTH | positive int | image width | Output tile width in pixels. When omitted, the entire image is encoded as a single tile. |
+| J2K_TILE_HEIGHT | positive int | image height | Output tile height in pixels. When omitted, the entire image is encoded as a single tile. |
+
+When `J2K_TILE_WIDTH` and `J2K_TILE_HEIGHT` are specified, the writer produces a
+multi-tile JPEG 2000 codestream where each tile is an independently decodable unit.
+The source provider's block grid need not match the output tile dimensions — the writer
+handles the remapping internally.
+
+**Decomposition level clamping:** JPEG 2000 requires
+`min(tile_width, tile_height) >= 2^decomposition_levels`. When the requested tile size
+is too small for the configured decomposition levels, the writer silently reduces
+`decomposition_levels` to `floor(log2(min(tile_width, tile_height)))`. For example,
+16×16 tiles support at most 4 decomposition levels.
+
+```python
+from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
+import numpy as np
+
+data = np.random.randint(0, 255, (3, 512, 512), dtype=np.uint8)
+
+# Multi-tile lossless J2K with 128×128 tiles
+metadata = BufferedMetadataProvider()
+metadata["J2K_TILE_WIDTH"] = "128"
+metadata["J2K_TILE_HEIGHT"] = "128"
+metadata["J2K_DECOMPOSITION_LEVELS"] = "5"
+
+provider = BufferedImageAssetProvider.create(
+    key="image:0",
+    num_columns=512, num_rows=512, num_bands=3,
+    block_width=256, block_height=256,
+    pixel_type=PixelType.UInt8,
+    metadata=metadata,
+)
+provider.set_full_image(data)
+
+with IO.open(["output.j2k"], "w") as writer:
+    writer.set_metadata(metadata)
+    writer.add_asset("image:0", provider,
+                     title="Tiled J2K", description="Multi-tile output",
+                     roles=["data"])
+```
+
 ## Example: NITF Chip with TRE Preservation
 
 Create a NITF chip from an arbitrary pixel region — not just a single block — while

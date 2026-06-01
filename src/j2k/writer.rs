@@ -25,6 +25,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use crate::assembly::TileAssembler;
 use crate::error::CodecError;
 use crate::j2k::codec::{J2KCodec, J2KEncodeParams};
 use crate::traits::{AssetProvider, DatasetWriter, MetadataProvider};
@@ -32,6 +33,17 @@ use crate::types::{AssetType, PixelType};
 
 #[cfg(feature = "openjpeg")]
 use crate::j2k::openjpeg::get_j2k_codec;
+
+/// Parsed encoding hints extracted from metadata.
+struct J2KEncodingHints {
+    lossless: bool,
+    compression_ratio: Option<f64>,
+    decomposition_levels: u8,
+    quality_layers: u8,
+    htj2k: bool,
+    tile_width: Option<u32>,
+    tile_height: Option<u32>,
+}
 
 /// An image asset queued for writing.
 struct QueuedJ2KAsset {
@@ -123,7 +135,7 @@ impl J2KDatasetWriter {
     /// file workflows where data fidelity is the priority.
     fn encoding_hints_from_metadata(
         metadata: Option<&dyn MetadataProvider>,
-    ) -> (bool, Option<f64>, u8, u8, bool) {
+    ) -> J2KEncodingHints {
         let dict = metadata.map(|m| m.entries(None));
 
         let lossless = dict
@@ -161,13 +173,27 @@ impl J2KDatasetWriter {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        (
+        let tile_width = dict
+            .as_ref()
+            .and_then(|d| d.get("J2K_TILE_WIDTH"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+
+        let tile_height = dict
+            .as_ref()
+            .and_then(|d| d.get("J2K_TILE_HEIGHT"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+
+        J2KEncodingHints {
             lossless,
             compression_ratio,
             decomposition_levels,
             quality_layers,
             htj2k,
-        )
+            tile_width,
+            tile_height,
+        }
     }
 
     /// Derive `(bits_per_component, is_signed)` from a `PixelType`.
@@ -256,42 +282,50 @@ impl DatasetWriter for J2KDatasetWriter {
         let num_bands = image.num_bands();
         let pixel_type = image.pixel_value_type();
 
-        // Read all pixel data (BSQ format)
-        let (bsq_data, _shape) = image.get_block(0, 0, 0, None)?;
-
         // Extract encoding hints from metadata
         let meta_ref = self.metadata.as_deref();
-        let (lossless, compression_ratio, decomposition_levels, quality_layers, htj2k) =
-            Self::encoding_hints_from_metadata(meta_ref);
+        let hints = Self::encoding_hints_from_metadata(meta_ref);
 
         let (bits_per_component, is_signed) = Self::pixel_type_to_siz(pixel_type);
 
-        // Build encode params — single tile covering the entire image
+        // Determine output tile dimensions: use metadata hints or default to full image
+        let tile_width = hints.tile_width.unwrap_or(width);
+        let tile_height = hints.tile_height.unwrap_or(height);
+
         let mut params = J2KEncodeParams {
             width,
             height,
             num_components: num_bands,
             bits_per_component,
             is_signed,
-            compression_ratio,
-            lossless,
-            num_decomposition_levels: decomposition_levels,
-            num_quality_layers: quality_layers,
-            htj2k,
-            tile_width: width,
-            tile_height: height,
+            compression_ratio: hints.compression_ratio,
+            lossless: hints.lossless,
+            num_decomposition_levels: hints.decomposition_levels,
+            num_quality_layers: hints.quality_layers,
+            htj2k: hints.htj2k,
+            tile_width,
+            tile_height,
         };
         params.clamp_decomposition_levels();
 
-        // Encode: start → write single tile → finalize
+        // Encode using TileAssembler to handle grid mismatches
+        let assembler = TileAssembler::new(image, tile_width, tile_height);
+        let (grid_rows, grid_cols) = assembler.output_grid_size();
+
         let mut state = self
             .codec
             .start_encode(&params)
             .map_err(|e| CodecError::Encode(format!("J2K encode error: {}", e)))?;
 
-        state
-            .encode_tile(0, &bsq_data)
-            .map_err(|e| CodecError::Encode(format!("J2K encode error: {}", e)))?;
+        for row in 0..grid_rows {
+            for col in 0..grid_cols {
+                let tile_index = row * grid_cols + col;
+                let (tile_data, _shape) = assembler.get_output_tile(row, col)?;
+                state
+                    .encode_tile(tile_index, &tile_data)
+                    .map_err(|e| CodecError::Encode(format!("J2K encode error: {}", e)))?;
+            }
+        }
 
         let codestream = state
             .finalize()
@@ -613,5 +647,243 @@ mod tests {
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [1, 64, 64]);
         assert_eq!(read_pixels, pixels);
+    }
+
+    // =========================================================================
+    // Multi-tile: J2K_TILE_WIDTH/J2K_TILE_HEIGHT metadata → tiled output
+    // =========================================================================
+
+    #[test]
+    fn test_roundtrip_multi_tile() {
+        use crate::buffered::BufferedMetadataProvider;
+        use serde_json::json;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tiled.j2k");
+
+        // 128x128 RGB image, source has a single block (128x128)
+        let npix = 128 * 128usize;
+        let mut pixels = Vec::with_capacity(npix * 3);
+        for band in 0u8..3 {
+            for i in 0..npix {
+                pixels.push(band.wrapping_mul(70).wrapping_add((i % 256) as u8));
+            }
+        }
+        let provider = make_image_provider(128, 128, 3, PixelType::UInt8, &pixels);
+
+        // Set tile metadata: 64x64 tiles → 2x2 tile grid
+        let metadata = BufferedMetadataProvider::new();
+        metadata.set("J2K_TILE_WIDTH", json!(64));
+        metadata.set("J2K_TILE_HEIGHT", json!(64));
+
+        let mut writer = J2KDatasetWriter::new(&path).unwrap();
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
+            .unwrap();
+        writer
+            .set_metadata(Arc::new(metadata))
+            .unwrap();
+        writer.close().unwrap();
+
+        // Read back and verify the J2K file has the expected tile grid
+        let data = std::fs::read(&path).unwrap();
+        let reader = J2KDatasetReader::from_bytes(&data).unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
+        let image = asset.as_image().expect("Expected Image variant");
+
+        // Verify tile grid reported by reader (2x2 for 128x128 with 64x64 tiles)
+        assert_eq!(image.num_columns(), 128);
+        assert_eq!(image.num_rows(), 128);
+        assert_eq!(image.num_pixels_per_block_horizontal(), 64);
+        assert_eq!(image.num_pixels_per_block_vertical(), 64);
+
+        // Read all tiles and verify pixel correctness
+        let mut reconstructed = vec![0u8; npix * 3];
+        let bw = 64usize;
+        let bh = 64usize;
+        let img_w = 128usize;
+
+        for tile_row in 0..2u32 {
+            for tile_col in 0..2u32 {
+                let (tile_data, shape) = image.get_block(tile_row, tile_col, 0, None).unwrap();
+                assert_eq!(shape, [3, 64, 64]);
+
+                // Copy into reconstructed full image (BSQ)
+                for band in 0..3usize {
+                    for row in 0..bh {
+                        for col in 0..bw {
+                            let img_x = tile_col as usize * bw + col;
+                            let img_y = tile_row as usize * bh + row;
+                            let src_off = band * bw * bh + row * bw + col;
+                            let dst_off = band * img_w * img_w + img_y * img_w + img_x;
+                            reconstructed[dst_off] = tile_data[src_off];
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(reconstructed, pixels);
+    }
+
+    // =========================================================================
+    // Multi-tile: source with different block grid from output tiles
+    // =========================================================================
+
+    #[test]
+    fn test_roundtrip_multi_tile_mismatched_source_grid() {
+        use crate::buffered::BufferedMetadataProvider;
+        use serde_json::json;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tiled_mismatch.j2k");
+
+        // 128x128 grayscale, source split into 32x32 blocks (4x4 grid)
+        let npix = 128 * 128usize;
+        let pixels: Vec<u8> = (0..npix).map(|i| (i % 256) as u8).collect();
+
+        let config = MemoryImageConfig::new(128, 128)
+            .with_bands(1)
+            .with_block_size(32, 32)
+            .with_pixel_type(PixelType::UInt8);
+        let provider = BufferedImageAssetProvider::new("image:0", config);
+        // Fill all 4x4=16 blocks
+        for br in 0..4u32 {
+            for bc in 0..4u32 {
+                let mut block = Vec::with_capacity(32 * 32);
+                for row in 0..32usize {
+                    for col in 0..32usize {
+                        let img_x = bc as usize * 32 + col;
+                        let img_y = br as usize * 32 + row;
+                        block.push(((img_y * 128 + img_x) % 256) as u8);
+                    }
+                }
+                provider.set_block(br, bc, &block).unwrap();
+            }
+        }
+        let provider = Arc::new(provider);
+
+        // Output tiles: 64x64 (different from source's 32x32 blocks)
+        let metadata = BufferedMetadataProvider::new();
+        metadata.set("J2K_TILE_WIDTH", json!(64));
+        metadata.set("J2K_TILE_HEIGHT", json!(64));
+
+        let mut writer = J2KDatasetWriter::new(&path).unwrap();
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
+            .unwrap();
+        writer
+            .set_metadata(Arc::new(metadata))
+            .unwrap();
+        writer.close().unwrap();
+
+        // Read back
+        let data = std::fs::read(&path).unwrap();
+        let reader = J2KDatasetReader::from_bytes(&data).unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
+        let image = asset.as_image().expect("Expected Image variant");
+
+        assert_eq!(image.num_pixels_per_block_horizontal(), 64);
+        assert_eq!(image.num_pixels_per_block_vertical(), 64);
+
+        // Reconstruct and verify
+        let mut reconstructed = vec![0u8; npix];
+        for tile_row in 0..2u32 {
+            for tile_col in 0..2u32 {
+                let (tile_data, shape) = image.get_block(tile_row, tile_col, 0, None).unwrap();
+                assert_eq!(shape, [1, 64, 64]);
+
+                for row in 0..64usize {
+                    for col in 0..64usize {
+                        let img_x = tile_col as usize * 64 + col;
+                        let img_y = tile_row as usize * 64 + row;
+                        let src_off = row * 64 + col;
+                        let dst_off = img_y * 128 + img_x;
+                        reconstructed[dst_off] = tile_data[src_off];
+                    }
+                }
+            }
+        }
+
+        assert_eq!(reconstructed, pixels);
+    }
+
+    // =========================================================================
+    // Multi-tile: decomposition levels clamped per-tile
+    // =========================================================================
+
+    #[test]
+    fn test_multi_tile_decomposition_levels_clamped() {
+        use crate::buffered::BufferedMetadataProvider;
+        use serde_json::json;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("small_tiles.j2k");
+
+        // 64x64 image with 16x16 tiles. floor(log2(16))=4, so levels clamped from 5 to 4.
+        let npix = 64 * 64usize;
+        let pixels: Vec<u8> = (0..npix).map(|i| (i % 256) as u8).collect();
+        let provider = make_image_provider(64, 64, 1, PixelType::UInt8, &pixels);
+
+        let metadata = BufferedMetadataProvider::new();
+        metadata.set("J2K_TILE_WIDTH", json!(16));
+        metadata.set("J2K_TILE_HEIGHT", json!(16));
+        metadata.set("J2K_DECOMPOSITION_LEVELS", json!(5));
+
+        let mut writer = J2KDatasetWriter::new(&path).unwrap();
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Test",
+                "Test",
+                &[],
+            )
+            .unwrap();
+        writer
+            .set_metadata(Arc::new(metadata))
+            .unwrap();
+        writer.close().unwrap();
+
+        // Should succeed (levels clamped internally) and produce valid output
+        let data = std::fs::read(&path).unwrap();
+        let reader = J2KDatasetReader::from_bytes(&data).unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
+        let image = asset.as_image().expect("Expected Image variant");
+
+        assert_eq!(image.num_columns(), 64);
+        assert_eq!(image.num_rows(), 64);
+        assert_eq!(image.num_pixels_per_block_horizontal(), 16);
+        assert_eq!(image.num_pixels_per_block_vertical(), 16);
+
+        // Verify pixel data is lossless
+        let mut reconstructed = vec![0u8; npix];
+        for tile_row in 0..4u32 {
+            for tile_col in 0..4u32 {
+                let (tile_data, shape) = image.get_block(tile_row, tile_col, 0, None).unwrap();
+                assert_eq!(shape, [1, 16, 16]);
+
+                for row in 0..16usize {
+                    for col in 0..16usize {
+                        let img_x = tile_col as usize * 16 + col;
+                        let img_y = tile_row as usize * 16 + row;
+                        reconstructed[img_y * 64 + img_x] = tile_data[row * 16 + col];
+                    }
+                }
+            }
+        }
+        assert_eq!(reconstructed, pixels);
     }
 }

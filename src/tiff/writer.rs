@@ -10,6 +10,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use crate::assembly::TileAssembler;
 use crate::error::CodecError;
 use crate::tiff::ffi::TiffHandle;
 use crate::tiff::geotiff;
@@ -911,15 +912,15 @@ impl TIFFDatasetWriter {
         }
         handle.set_field_u16(tags::PLANAR_CONFIGURATION, hints.planar_config)?;
 
-        let tiles_across = num_cols.div_ceil(tile_width);
-        let tiles_down = num_rows.div_ceil(tile_height);
+        let assembler = TileAssembler::new(image, tile_width, tile_height);
+        let (tiles_down, tiles_across) = assembler.output_grid_size();
 
         let is_planar = hints.planar_config == tags::PLANAR_CONFIG_SEPARATE;
 
-        // Iterate over the block grid
+        // Iterate over the output tile grid
         for block_row in 0..tiles_down {
             for block_col in 0..tiles_across {
-                let (block_data, shape) = image.get_block(block_row, block_col, 0, None)?;
+                let (block_data, shape) = assembler.get_output_tile(block_row, block_col)?;
                 let [_bands, actual_rows, actual_cols] = shape;
 
                 let needs_padding = actual_rows < tile_height || actual_cols < tile_width;
@@ -2635,6 +2636,98 @@ mod tests {
                         "Roundtrip mismatch for field_type={}: read={}, expected={}",
                         field_type, read_val, expected_check
                     );
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // TileAssembler integration: mismatched source grid
+    // =========================================================================
+
+    #[test]
+    fn writer_mismatched_grid_produces_valid_tiff() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        // Source: 64×64 image with 16×16 blocks (4×4 grid)
+        // Output: 32×32 tiles (different from source block size)
+        let config = MemoryImageConfig::new(64, 64)
+            .with_bands(1)
+            .with_block_size(16, 16)
+            .with_pixel_type(PixelType::UInt8);
+        let provider = BufferedImageAssetProvider::new("image:0", config);
+
+        // Fill all 4×4=16 blocks with a deterministic gradient pattern
+        for block_row in 0..4u32 {
+            for block_col in 0..4u32 {
+                let mut data = vec![0u8; 16 * 16];
+                for row in 0..16usize {
+                    for col in 0..16usize {
+                        let img_x = block_col as usize * 16 + col;
+                        let img_y = block_row as usize * 16 + row;
+                        data[row * 16 + col] = ((img_y * 64 + img_x) % 256) as u8;
+                    }
+                }
+                provider.set_block(block_row, block_col, &data).unwrap();
+            }
+        }
+
+        // Set output tile size to 32×32 via metadata (different from 16×16 source blocks)
+        let meta = BufferedMetadataProvider::new();
+        meta.set("322", serde_json::json!(32)); // TileWidth
+        meta.set("323", serde_json::json!(32)); // TileLength
+        meta.set("259", serde_json::json!(1)); // No compression for exact comparison
+        let provider =
+            provider.with_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta)));
+        let provider = Arc::new(provider);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mismatched_grid.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Image",
+                "desc",
+                &["data".to_string()],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        // Read back and verify pixel data
+        let bytes = std::fs::read(&path).unwrap();
+        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
+        let image = asset.as_image().unwrap();
+
+        assert_eq!(image.num_columns(), 64);
+        assert_eq!(image.num_rows(), 64);
+
+        // Read all blocks from the output and verify pixels match the gradient
+        let grid_rows = 64u32.div_ceil(image.num_pixels_per_block_vertical());
+        let grid_cols = 64u32.div_ceil(image.num_pixels_per_block_horizontal());
+        for block_row in 0..grid_rows {
+            for block_col in 0..grid_cols {
+                let (data, shape) = image.get_block(block_row, block_col, 0, None).unwrap();
+                let [_bands, h, w] = shape;
+                for row in 0..h as usize {
+                    for col in 0..w as usize {
+                        let img_x = block_col as usize
+                            * image.num_pixels_per_block_horizontal() as usize
+                            + col;
+                        let img_y = block_row as usize
+                            * image.num_pixels_per_block_vertical() as usize
+                            + row;
+                        let expected = ((img_y * 64 + img_x) % 256) as u8;
+                        let actual = data[row * w as usize + col];
+                        assert_eq!(
+                            actual, expected,
+                            "Pixel mismatch at ({}, {}): expected {}, got {}",
+                            img_x, img_y, expected, actual
+                        );
+                    }
                 }
             }
         }
