@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
+use crate::assembly::{pad_pixel_bytes, TileAssembler};
 use crate::error::CodecError;
 use crate::traits::{AssetMetadata, ImageAssetProvider, MetadataProvider};
 use crate::types::PixelType;
@@ -520,7 +521,18 @@ impl ImageAssetProvider for BufferedImageAssetProvider {
 
         // Fall back to source provider
         if let Some(ref source) = self.source {
-            return source.has_block(block_row, block_col, resolution_level);
+            let src_bw = source.num_pixels_per_block_horizontal();
+            let src_bh = source.num_pixels_per_block_vertical();
+            if src_bw == self.config.block_width && src_bh == self.config.block_height {
+                return source.has_block(block_row, block_col, resolution_level);
+            }
+            // Grids differ — use geometry check against source extent
+            let assembler = TileAssembler::new(
+                source.as_ref(),
+                self.config.block_width,
+                self.config.block_height,
+            );
+            return Ok(assembler.has_block(block_row, block_col));
         }
 
         Ok(false)
@@ -603,8 +615,117 @@ impl ImageAssetProvider for BufferedImageAssetProvider {
             // Return shape as [bands, rows, cols] (CHW format)
             Ok((output_data, [num_bands, block_rows, block_cols]))
         } else if let Some(ref source) = self.source {
-            // Delegate to source provider
-            source.get_block(block_row, block_col, resolution_level, bands)
+            let src_bw = source.num_pixels_per_block_horizontal();
+            let src_bh = source.num_pixels_per_block_vertical();
+            let (src_grid_rows, src_grid_cols) = source.block_grid_size();
+            let block_within_source =
+                block_row < src_grid_rows && block_col < src_grid_cols;
+
+            let (all_band_data, shape) =
+                if src_bw == self.config.block_width
+                    && src_bh == self.config.block_height
+                    && block_within_source
+                {
+                    source.get_block(block_row, block_col, resolution_level, None)?
+                } else {
+                    let assembler = TileAssembler::new(
+                        source.as_ref(),
+                        self.config.block_width,
+                        self.config.block_height,
+                    );
+
+                    if !assembler.has_block(block_row, block_col) {
+                        // Block is entirely outside source extent — return pad-filled buffer
+                        let block_rows = self
+                            .config
+                            .block_height
+                            .min(self.config.num_rows - block_row * self.config.block_height);
+                        let block_cols = self
+                            .config
+                            .block_width
+                            .min(self.config.num_columns - block_col * self.config.block_width);
+                        let pad = pad_pixel_bytes(self.pad_pixel_value(), self.config.pixel_type);
+                        let buf_size = (block_rows as usize)
+                            * (block_cols as usize)
+                            * (self.config.num_bands as usize)
+                            * pad.len();
+                        let mut buf = vec![0u8; buf_size];
+                        if pad.iter().any(|&b| b != 0) {
+                            for chunk in buf.chunks_exact_mut(pad.len()) {
+                                chunk.copy_from_slice(&pad);
+                            }
+                        }
+                        (buf, [self.config.num_bands, block_rows, block_cols])
+                    } else {
+                        let (tile_data, tile_shape) =
+                            assembler.get_output_tile(block_row, block_col)?;
+                        let [_bands, tile_rows, tile_cols] = tile_shape;
+
+                        // Expected block dimensions for this position
+                        let block_rows = self
+                            .config
+                            .block_height
+                            .min(self.config.num_rows - block_row * self.config.block_height);
+                        let block_cols = self
+                            .config
+                            .block_width
+                            .min(self.config.num_columns - block_col * self.config.block_width);
+
+                        if tile_rows == block_rows && tile_cols == block_cols {
+                            (tile_data, tile_shape)
+                        } else {
+                            // Partial overlap — pad to expected block dimensions
+                            let pad =
+                                pad_pixel_bytes(self.pad_pixel_value(), self.config.pixel_type);
+                            let bpp = pad.len();
+                            let out_size = (block_rows as usize)
+                                * (block_cols as usize)
+                                * (self.config.num_bands as usize)
+                                * bpp;
+                            let mut buf = vec![0u8; out_size];
+                            if pad.iter().any(|&b| b != 0) {
+                                for chunk in buf.chunks_exact_mut(bpp) {
+                                    chunk.copy_from_slice(&pad);
+                                }
+                            }
+                            let out_band_size =
+                                (block_rows as usize) * (block_cols as usize) * bpp;
+                            let tile_band_size =
+                                (tile_rows as usize) * (tile_cols as usize) * bpp;
+                            for band in 0..self.config.num_bands as usize {
+                                for row in 0..tile_rows as usize {
+                                    let src_off = band * tile_band_size
+                                        + row * (tile_cols as usize) * bpp;
+                                    let dst_off = band * out_band_size
+                                        + row * (block_cols as usize) * bpp;
+                                    let copy_bytes = (tile_cols as usize) * bpp;
+                                    buf[dst_off..dst_off + copy_bytes]
+                                        .copy_from_slice(&tile_data[src_off..src_off + copy_bytes]);
+                                }
+                            }
+                            (buf, [self.config.num_bands, block_rows, block_cols])
+                        }
+                    }
+                };
+
+            // Apply band subsetting if requested
+            if let Some(band_indices) = bands {
+                let [_, rows, cols] = shape;
+                let bytes_per_pixel = self.config.pixel_type.bytes_per_pixel();
+                let block_band_size = (rows as usize) * (cols as usize) * bytes_per_pixel;
+                let mut extracted =
+                    Vec::with_capacity(band_indices.len() * block_band_size);
+                for &band in band_indices {
+                    let src_band_start = (band as usize) * block_band_size;
+                    let src_band_end = src_band_start + block_band_size;
+                    if src_band_end <= all_band_data.len() {
+                        extracted.extend_from_slice(&all_band_data[src_band_start..src_band_end]);
+                    }
+                }
+                Ok((extracted, [band_indices.len() as u32, rows, cols]))
+            } else {
+                Ok((all_band_data, shape))
+            }
         } else {
             Err(CodecError::Decode(format!(
                 "Block ({}, {}) not found",
@@ -887,6 +1008,359 @@ mod property_tests {
                     Some(value),
                     "Provider 2 value for key {} should match", key
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod retiling_tests {
+    use super::*;
+
+    fn make_source(
+        width: u32,
+        height: u32,
+        block_w: u32,
+        block_h: u32,
+        bands: u32,
+        pixel_type: PixelType,
+    ) -> BufferedImageAssetProvider {
+        let config = MemoryImageConfig::new(width, height)
+            .with_bands(bands)
+            .with_block_size(block_w, block_h)
+            .with_pixel_type(pixel_type);
+        let provider = BufferedImageAssetProvider::new("source", config);
+
+        let bpp = pixel_type.bytes_per_pixel();
+        let num_blocks_h = width.div_ceil(block_w);
+        let num_blocks_v = height.div_ceil(block_h);
+        for br in 0..num_blocks_v {
+            for bc in 0..num_blocks_h {
+                let start_row = br * block_h;
+                let start_col = bc * block_w;
+                let end_row = (start_row + block_h).min(height);
+                let end_col = (start_col + block_w).min(width);
+                let brows = end_row - start_row;
+                let bcols = end_col - start_col;
+                let pixels = (brows as usize) * (bcols as usize);
+                let mut data = vec![0u8; pixels * (bands as usize) * bpp];
+                for band in 0..bands as usize {
+                    for row in 0..brows as usize {
+                        for col in 0..bcols as usize {
+                            let img_x = start_col as usize + col;
+                            let img_y = start_row as usize + row;
+                            let val =
+                                ((img_y * width as usize + img_x + band * 37) % 256) as u8;
+                            let offset = band * pixels * bpp + row * (bcols as usize) * bpp
+                                + col * bpp;
+                            data[offset] = val;
+                        }
+                    }
+                }
+                provider.set_block(br, bc, &data).unwrap();
+            }
+        }
+        provider
+    }
+
+    fn build_reference(width: u32, height: u32, bands: u32, bpp: usize) -> Vec<u8> {
+        let w = width as usize;
+        let h = height as usize;
+        let mut reference = vec![0u8; w * h * (bands as usize) * bpp];
+        for band in 0..bands as usize {
+            for row in 0..h {
+                for col in 0..w {
+                    let val = ((row * w + col + band * 37) % 256) as u8;
+                    let offset = band * w * h * bpp + row * w * bpp + col * bpp;
+                    reference[offset] = val;
+                }
+            }
+        }
+        reference
+    }
+
+    #[test]
+    fn matching_grids_delegates_directly() {
+        let source = Arc::new(make_source(16, 16, 4, 4, 1, PixelType::UInt8));
+        let config = MemoryImageConfig::new(16, 16)
+            .with_bands(1)
+            .with_block_size(4, 4)
+            .with_pixel_type(PixelType::UInt8);
+        let buffered = BufferedImageAssetProvider::new("buffered", config)
+            .with_source(source.clone());
+
+        for row in 0..4u32 {
+            for col in 0..4u32 {
+                let (data, shape) = buffered.get_block(row, col, 0, None).unwrap();
+                let (expected, expected_shape) = source.get_block(row, col, 0, None).unwrap();
+                assert_eq!(shape, expected_shape);
+                assert_eq!(data, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn mismatched_grids_assembles_correctly() {
+        // Source: 4x4 blocks on 16x16 image
+        // Buffered: 8x8 blocks on 16x16 image
+        let source = Arc::new(make_source(16, 16, 4, 4, 1, PixelType::UInt8));
+        let config = MemoryImageConfig::new(16, 16)
+            .with_bands(1)
+            .with_block_size(8, 8)
+            .with_pixel_type(PixelType::UInt8);
+        let buffered = BufferedImageAssetProvider::new("buffered", config)
+            .with_source(source);
+
+        let reference = build_reference(16, 16, 1, 1);
+
+        for row in 0..2u32 {
+            for col in 0..2u32 {
+                let (data, shape) = buffered.get_block(row, col, 0, None).unwrap();
+                assert_eq!(shape, [1, 8, 8]);
+                for r in 0..8usize {
+                    for c in 0..8usize {
+                        let img_x = col as usize * 8 + c;
+                        let img_y = row as usize * 8 + r;
+                        let ref_offset = img_y * 16 + img_x;
+                        let tile_offset = r * 8 + c;
+                        assert_eq!(
+                            data[tile_offset], reference[ref_offset],
+                            "Mismatch at block ({}, {}), pixel ({}, {})",
+                            row, col, r, c
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mismatched_grids_smaller_output() {
+        // Source: 8x8 blocks on 16x16 image
+        // Buffered: 4x4 blocks on 16x16 image
+        let source = Arc::new(make_source(16, 16, 8, 8, 1, PixelType::UInt8));
+        let config = MemoryImageConfig::new(16, 16)
+            .with_bands(1)
+            .with_block_size(4, 4)
+            .with_pixel_type(PixelType::UInt8);
+        let buffered = BufferedImageAssetProvider::new("buffered", config)
+            .with_source(source);
+
+        let reference = build_reference(16, 16, 1, 1);
+
+        for row in 0..4u32 {
+            for col in 0..4u32 {
+                let (data, shape) = buffered.get_block(row, col, 0, None).unwrap();
+                assert_eq!(shape, [1, 4, 4]);
+                for r in 0..4usize {
+                    for c in 0..4usize {
+                        let img_x = col as usize * 4 + c;
+                        let img_y = row as usize * 4 + r;
+                        let ref_offset = img_y * 16 + img_x;
+                        let tile_offset = r * 4 + c;
+                        assert_eq!(data[tile_offset], reference[ref_offset]);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn buffered_larger_than_source_full_outside() {
+        // Source: 8x8 image, 4x4 blocks
+        // Buffered: 16x16 image, 4x4 blocks → blocks beyond (2,2) are outside source
+        let source = Arc::new(make_source(8, 8, 4, 4, 1, PixelType::UInt8));
+        let config = MemoryImageConfig::new(16, 16)
+            .with_bands(1)
+            .with_block_size(4, 4)
+            .with_pixel_type(PixelType::UInt8);
+        let buffered = BufferedImageAssetProvider::new("buffered", config)
+            .with_source(source);
+
+        // Block (3, 0) starts at y=12, source is only 8 tall → fully outside
+        let (data, shape) = buffered.get_block(3, 0, 0, None).unwrap();
+        assert_eq!(shape, [1, 4, 4]);
+        assert!(data.iter().all(|&b| b == 0)); // pad value is 0.0 → all zeros
+    }
+
+    #[test]
+    fn buffered_larger_than_source_partial_overlap() {
+        // Source: 10x10 image, 10x10 block (single block)
+        // Buffered: 16x16 image, 8x8 blocks
+        // Block (1,1) covers pixels (8,8)→(16,16) but source only has (0,0)→(10,10)
+        // So overlap is (8,8)→(10,10) = 2x2 pixels, rest is pad
+        let source = Arc::new(make_source(10, 10, 10, 10, 1, PixelType::UInt8));
+        let config = MemoryImageConfig::new(16, 16)
+            .with_bands(1)
+            .with_block_size(8, 8)
+            .with_pixel_type(PixelType::UInt8);
+        let buffered = BufferedImageAssetProvider::new("buffered", config)
+            .with_source(source);
+
+        let reference = build_reference(10, 10, 1, 1);
+
+        let (data, shape) = buffered.get_block(1, 1, 0, None).unwrap();
+        assert_eq!(shape, [1, 8, 8]);
+
+        // First 2 rows, 2 cols should have real data; rest should be zero (pad)
+        for r in 0..8usize {
+            for c in 0..8usize {
+                let tile_offset = r * 8 + c;
+                let img_x = 8 + c;
+                let img_y = 8 + r;
+                if img_x < 10 && img_y < 10 {
+                    let ref_offset = img_y * 10 + img_x;
+                    assert_eq!(
+                        data[tile_offset], reference[ref_offset],
+                        "Mismatch at pixel ({}, {})",
+                        r, c
+                    );
+                } else {
+                    assert_eq!(data[tile_offset], 0, "Expected pad at ({}, {})", r, c);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn buffered_larger_full_overlap() {
+        // Source: 16x16 image, 8x8 blocks
+        // Buffered: 16x16 image, 4x4 blocks (all blocks fully inside source)
+        let source = Arc::new(make_source(16, 16, 8, 8, 1, PixelType::UInt8));
+        let config = MemoryImageConfig::new(16, 16)
+            .with_bands(1)
+            .with_block_size(4, 4)
+            .with_pixel_type(PixelType::UInt8);
+        let buffered = BufferedImageAssetProvider::new("buffered", config)
+            .with_source(source);
+
+        let reference = build_reference(16, 16, 1, 1);
+
+        // All blocks should be fully within source → no padding needed
+        for row in 0..4u32 {
+            for col in 0..4u32 {
+                let (data, shape) = buffered.get_block(row, col, 0, None).unwrap();
+                assert_eq!(shape, [1, 4, 4]);
+                for r in 0..4usize {
+                    for c in 0..4usize {
+                        let img_x = col as usize * 4 + c;
+                        let img_y = row as usize * 4 + r;
+                        let ref_offset = img_y * 16 + img_x;
+                        let tile_offset = r * 4 + c;
+                        assert_eq!(data[tile_offset], reference[ref_offset]);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nonzero_pad_value_uint16() {
+        // Source: 4x4 image, 4x4 block
+        // Buffered: 8x8 image, 4x4 blocks, UInt16 with pad=0 (default)
+        // Block (1,1) is fully outside → all zeros
+        let source = Arc::new(make_source(4, 4, 4, 4, 1, PixelType::UInt16));
+        let config = MemoryImageConfig::new(8, 8)
+            .with_bands(1)
+            .with_block_size(4, 4)
+            .with_pixel_type(PixelType::UInt16);
+        let buffered = BufferedImageAssetProvider::new("buffered", config)
+            .with_source(source);
+
+        let (data, shape) = buffered.get_block(1, 1, 0, None).unwrap();
+        assert_eq!(shape, [1, 4, 4]);
+        assert_eq!(data.len(), 4 * 4 * 2); // 16 pixels × 2 bytes
+        assert!(data.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn band_subsetting_after_assembly() {
+        // Source: 8x8 image, 4x4 blocks, 3 bands
+        // Buffered: 8x8 image, 8x8 blocks (mismatch), 3 bands
+        let source = Arc::new(make_source(8, 8, 4, 4, 3, PixelType::UInt8));
+        let config = MemoryImageConfig::new(8, 8)
+            .with_bands(3)
+            .with_block_size(8, 8)
+            .with_pixel_type(PixelType::UInt8);
+        let buffered = BufferedImageAssetProvider::new("buffered", config)
+            .with_source(source);
+
+        // Request only band 1
+        let (data, shape) = buffered.get_block(0, 0, 0, Some(&[1])).unwrap();
+        assert_eq!(shape, [1, 8, 8]);
+        assert_eq!(data.len(), 8 * 8);
+
+        // Verify it matches band 1 from full assembly
+        let (full_data, _) = buffered.get_block(0, 0, 0, None).unwrap();
+        let band_size = 8 * 8;
+        let band1_data = &full_data[band_size..2 * band_size];
+        assert_eq!(data, band1_data);
+    }
+
+    #[test]
+    fn local_override_takes_priority() {
+        // Source: 8x8 image, 4x4 blocks
+        // Buffered: 8x8 image, 8x8 blocks (mismatch)
+        let source = Arc::new(make_source(8, 8, 4, 4, 1, PixelType::UInt8));
+        let config = MemoryImageConfig::new(8, 8)
+            .with_bands(1)
+            .with_block_size(8, 8)
+            .with_pixel_type(PixelType::UInt8);
+        let buffered = BufferedImageAssetProvider::new("buffered", config)
+            .with_source(source);
+
+        // Set a local override for block (0, 0)
+        let override_data = vec![255u8; 8 * 8];
+        buffered.set_block(0, 0, &override_data).unwrap();
+
+        let (data, shape) = buffered.get_block(0, 0, 0, None).unwrap();
+        assert_eq!(shape, [1, 8, 8]);
+        assert_eq!(data, override_data);
+    }
+
+    #[test]
+    fn multi_band_retiling() {
+        // Source: 8x8 image, 4x4 blocks, 3 bands
+        // Buffered: 8x8 image, 8x8 blocks, 3 bands
+        let source = Arc::new(make_source(8, 8, 4, 4, 3, PixelType::UInt8));
+        let config = MemoryImageConfig::new(8, 8)
+            .with_bands(3)
+            .with_block_size(8, 8)
+            .with_pixel_type(PixelType::UInt8);
+        let buffered = BufferedImageAssetProvider::new("buffered", config)
+            .with_source(source);
+
+        let reference = build_reference(8, 8, 3, 1);
+
+        let (data, shape) = buffered.get_block(0, 0, 0, None).unwrap();
+        assert_eq!(shape, [3, 8, 8]);
+        assert_eq!(data, reference);
+    }
+
+    #[test]
+    fn edge_blocks_non_divisible() {
+        // Source: 10x10 image, 10x10 block (single block)
+        // Buffered: 10x10 image, 4x4 blocks → edge blocks are 2 pixels wide/tall
+        let source = Arc::new(make_source(10, 10, 10, 10, 1, PixelType::UInt8));
+        let config = MemoryImageConfig::new(10, 10)
+            .with_bands(1)
+            .with_block_size(4, 4)
+            .with_pixel_type(PixelType::UInt8);
+        let buffered = BufferedImageAssetProvider::new("buffered", config)
+            .with_source(source);
+
+        let reference = build_reference(10, 10, 1, 1);
+
+        // Bottom-right block (2, 2) covers pixels (8,8)→(10,10) = 2x2
+        let (data, shape) = buffered.get_block(2, 2, 0, None).unwrap();
+        assert_eq!(shape, [1, 2, 2]);
+        for r in 0..2usize {
+            for c in 0..2usize {
+                let img_x = 8 + c;
+                let img_y = 8 + r;
+                let ref_offset = img_y * 10 + img_x;
+                let tile_offset = r * 2 + c;
+                assert_eq!(data[tile_offset], reference[ref_offset]);
             }
         }
     }

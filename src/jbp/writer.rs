@@ -32,7 +32,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::CodecError;
 use crate::jbp::error::JBPError;
-use crate::jbp::image::encoder::{create_block_encoder, TileAssembler};
+use crate::assembly::TileAssembler;
+use crate::jbp::image::encoder::create_block_encoder;
 use crate::jbp::image::types::InterleaveMode;
 use crate::jbp::overflow::{create_overflow_des, OverflowSource};
 use crate::jbp::tre::{parse_tre_fields_from_metadata, write_tre_envelopes, TreEnvelope};
@@ -2633,7 +2634,8 @@ mod tests {
             _resolution_level: u32,
             _bands: Option<&[u32]>,
         ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
-            Ok((self.data.clone(), [1, 1, 1]))
+            let len = self.data.len() as u32;
+            Ok((self.data.clone(), [1, 1, len]))
         }
         fn num_resolution_levels(&self) -> u32 {
             1
@@ -2645,10 +2647,10 @@ mod tests {
             1
         }
         fn num_columns(&self) -> u32 {
-            1
+            self.data.len() as u32
         }
         fn num_pixels_per_block_horizontal(&self) -> u32 {
-            1
+            self.data.len() as u32
         }
         fn num_pixels_per_block_vertical(&self) -> u32 {
             1
@@ -4148,7 +4150,8 @@ mod property_tests {
             _resolution_level: u32,
             _bands: Option<&[u32]>,
         ) -> Result<(Vec<u8>, [u32; 3]), CodecError> {
-            Ok((self.data.clone(), [1, 1, 1]))
+            let len = self.data.len() as u32;
+            Ok((self.data.clone(), [1, 1, len]))
         }
         fn num_resolution_levels(&self) -> u32 {
             1
@@ -4160,10 +4163,10 @@ mod property_tests {
             1
         }
         fn num_columns(&self) -> u32 {
-            1
+            self.data.len() as u32
         }
         fn num_pixels_per_block_horizontal(&self) -> u32 {
-            1
+            self.data.len() as u32
         }
         fn num_pixels_per_block_vertical(&self) -> u32 {
             1

@@ -26,8 +26,9 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use crate::assembly::reassemble_full_image;
 use crate::error::CodecError;
-use crate::traits::{AssetProvider, DatasetWriter, ImageAssetProvider, MetadataProvider};
+use crate::traits::{AssetProvider, DatasetWriter, MetadataProvider};
 use crate::types::{AssetType, PixelType};
 
 /// An image asset queued for writing.
@@ -95,51 +96,6 @@ impl JPEGDatasetWriter {
             .and_then(|v| v.as_u64())
             .map(|v| (v as u8).clamp(1, 100))
             .unwrap_or(75)
-    }
-
-    /// Reassemble a full BSQ image from a multi-block provider.
-    ///
-    /// Iterates over the block grid, reads each tile, and copies its pixels
-    /// into the correct position in a contiguous BSQ buffer of shape
-    /// `[bands, height, width]`.
-    fn reassemble_bsq(
-        image: &dyn ImageAssetProvider,
-        width: u32,
-        height: u32,
-        num_bands: u32,
-        grid_rows: u32,
-        grid_cols: u32,
-    ) -> Result<Vec<u8>, CodecError> {
-        let total_size = (num_bands as usize) * (height as usize) * (width as usize);
-        let mut bsq = vec![0u8; total_size];
-        let band_stride = (height as usize) * (width as usize);
-
-        for br in 0..grid_rows {
-            for bc in 0..grid_cols {
-                let (block_data, shape) = image.get_block(br, bc, 0, None)?;
-                let blk_bands = shape[0] as usize;
-                let blk_rows = shape[1] as usize;
-                let blk_cols = shape[2] as usize;
-                let blk_band_size = blk_rows * blk_cols;
-
-                let start_row = (br * image.num_pixels_per_block_vertical()) as usize;
-                let start_col = (bc * image.num_pixels_per_block_horizontal()) as usize;
-
-                for band in 0..blk_bands {
-                    let src_band_offset = band * blk_band_size;
-                    let dst_band_offset = band * band_stride;
-                    for row in 0..blk_rows {
-                        let src_start = src_band_offset + row * blk_cols;
-                        let dst_start =
-                            dst_band_offset + (start_row + row) * (width as usize) + start_col;
-                        bsq[dst_start..dst_start + blk_cols]
-                            .copy_from_slice(&block_data[src_start..src_start + blk_cols]);
-                    }
-                }
-            }
-        }
-
-        Ok(bsq)
     }
 
     /// Convert BSQ pixel data to pixel-interleaved format.
@@ -255,18 +211,8 @@ impl DatasetWriter for JPEGDatasetWriter {
         let num_bands = image.num_bands();
         let num_pixels = (width * height) as usize;
 
-        // Read all pixel data (BSQ format).
-        // We must iterate over the block grid and reassemble the full image
-        // because get_block() returns a single tile, not the entire image.
-        let (grid_rows, grid_cols) = image.block_grid_size();
-        let bsq_data = if grid_rows == 1 && grid_cols == 1 {
-            // Single block — no reassembly needed
-            let (data, _shape) = image.get_block(0, 0, 0, None)?;
-            data
-        } else {
-            // Multi-block: reassemble into a contiguous BSQ buffer
-            Self::reassemble_bsq(image, width, height, num_bands, grid_rows, grid_cols)?
-        };
+        // Read all pixel data (BSQ format) — reassemble from multi-block providers
+        let (bsq_data, _shape) = reassemble_full_image(image)?;
 
         // Convert BSQ to pixel-interleaved for libjpeg-turbo
         let interleaved = Self::bsq_to_interleaved(&bsq_data, num_pixels, num_bands as usize);

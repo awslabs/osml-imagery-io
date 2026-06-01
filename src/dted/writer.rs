@@ -7,6 +7,7 @@
 use std::io::{BufWriter, Write};
 use std::sync::{Arc, Mutex};
 
+use crate::assembly::reassemble_full_image;
 use crate::dted::records::{
     compute_record_checksum, encode_elevation, ACC_SIZE, DSI_SIZE, UHL_SIZE,
 };
@@ -339,8 +340,9 @@ impl DatasetWriter for DTEDDatasetWriter {
         let num_lon_lines = image.num_columns() as u16;
         let num_lat_points = image.num_rows() as u16;
 
-        // Read all pixel data (BSQ, single band, native-endian i16)
-        let (bsq_data, shape) = image.get_block(0, 0, 0, None)?;
+        // Read all pixel data (BSQ, single band, native-endian i16) —
+        // reassemble from multi-block providers
+        let (bsq_data, shape) = reassemble_full_image(image)?;
         let expected_pixels = num_lon_lines as usize * num_lat_points as usize;
         if bsq_data.len() != expected_pixels * 2 {
             return Err(CodecError::Encode(format!(
@@ -756,6 +758,61 @@ mod tests {
             Some("MSL")
         );
         assert_eq!(dict.get("dted:security_code").unwrap().as_str(), Some("U"));
+    }
+
+    #[test]
+    fn test_roundtrip_multiblock() {
+        // 3x4 grid (3 columns, 4 rows) with 3x2 blocks → 2x1 block grid
+        let width: u32 = 3;
+        let height: u32 = 4;
+        let block_w: u32 = 3;
+        let block_h: u32 = 2;
+
+        let values: Vec<i16> = vec![
+            400, 800, 1200, 300, 700, 1100, 200, 600, 1000, 100, 500, 900,
+        ];
+
+        let config = MemoryImageConfig::new(width, height)
+            .with_bands(1)
+            .with_block_size(block_w, block_h)
+            .with_pixel_type(PixelType::Int16);
+        let provider = BufferedImageAssetProvider::new("elevation", config);
+
+        // Set blocks — top 2 rows and bottom 2 rows
+        let top_values: Vec<u8> = values[..6].iter().flat_map(|&v| v.to_ne_bytes()).collect();
+        let bot_values: Vec<u8> = values[6..].iter().flat_map(|&v| v.to_ne_bytes()).collect();
+        provider.set_block(0, 0, &top_values).unwrap();
+        provider.set_block(1, 0, &bot_values).unwrap();
+
+        let provider = Arc::new(provider);
+        let metadata = make_metadata(-109.0, 38.0, 30, 30);
+
+        let shared_buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let write_buf = shared_buf.clone();
+        let output: Box<dyn Write + Send> = Box::new(SharedVecWriter(write_buf));
+
+        let mut writer = DTEDDatasetWriter::new_with_output(output).unwrap();
+        writer
+            .add_asset("elevation", AssetProvider::Image(provider), "T", "D", &[])
+            .unwrap();
+        writer.set_metadata(metadata).unwrap();
+        writer.close().unwrap();
+
+        let written = shared_buf.lock().unwrap().clone();
+
+        let reader = DTEDDatasetReader::from_bytes(&written).unwrap();
+        let asset = reader.get_asset("elevation").unwrap();
+        let image = asset.as_image().unwrap();
+        let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
+
+        assert_eq!(shape, [1, 4, 3]);
+
+        let read_values: Vec<i16> = read_pixels
+            .chunks_exact(2)
+            .map(|c| i16::from_ne_bytes([c[0], c[1]]))
+            .collect();
+
+        assert_eq!(read_values, values);
     }
 
     // Helper: a Write impl that appends to a shared Vec
