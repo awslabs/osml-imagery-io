@@ -128,11 +128,14 @@ class TestTiffMetadataRoundtrip:
 
             assert meta["259"] == _COMPRESSION_TAG[hints["259"]]
 
-            # Tile dimensions are passed through to libtiff as-is (they are
-            # already multiples of 16 from the encoding hints strategy).
-            # They may exceed image dimensions — libtiff stores them verbatim.
-            assert meta["322"] == int(hints["322"])
-            assert meta["323"] == int(hints["323"])
+            # Output tile dimensions match the provider's block size (which
+            # is min(image_dim, hint_tile_dim)), rounded up to a multiple of 16.
+            # Provider block size always overrides metadata tile tags to prevent
+            # buffer size mismatches between TileAssembler and libtiff.
+            expected_tw = (min(num_cols, int(hints["322"])) + 15) & ~15
+            expected_th = (min(num_rows, int(hints["323"])) + 15) & ~15
+            assert meta["322"] == expected_tw
+            assert meta["323"] == expected_th
 
             if hints["317"] == 2 and hints["259"] != 1:
                 assert meta.get("317") == _PREDICTOR_TAG[hints["317"]]

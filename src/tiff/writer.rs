@@ -45,10 +45,6 @@ struct TiffEncodingHints {
     /// RGB input and converts to YCbCr internally on write. When `None`,
     /// libtiff expects raw YCbCr input for JPEG-compressed ≥3-band images.
     jpeg_color_mode: Option<u32>,
-    /// Whether tile_width was explicitly set via metadata (tag 322).
-    tile_width_explicit: bool,
-    /// Whether tile_height was explicitly set via metadata (tag 323).
-    tile_height_explicit: bool,
 }
 
 impl Default for TiffEncodingHints {
@@ -61,8 +57,6 @@ impl Default for TiffEncodingHints {
             planar_config: tags::PLANAR_CONFIG_CONTIG,
             jpeg_quality: 75,
             jpeg_color_mode: None,
-            tile_width_explicit: false,
-            tile_height_explicit: false,
         }
     }
 }
@@ -91,18 +85,17 @@ impl TiffEncodingHints {
         let dict = metadata.entries(None);
         let mut hints = TiffEncodingHints::default();
 
-        // Tag 322: TileWidth
+        // Tag 322: TileWidth — used as initial hint, but provider block size
+        // will override via apply_provider_defaults when non-zero.
         let tile_width_key = tags::TILE_WIDTH.to_string();
         if let Some(val) = dict.get(&tile_width_key) {
             hints.tile_width = parse_u32_from_json(val, "TileWidth (322)")?;
-            hints.tile_width_explicit = true;
         }
 
         // Tag 323: TileLength (tile height)
         let tile_length_key = tags::TILE_LENGTH.to_string();
         if let Some(val) = dict.get(&tile_length_key) {
             hints.tile_height = parse_u32_from_json(val, "TileLength (323)")?;
-            hints.tile_height_explicit = true;
         }
 
         // Tag 259: Compression (integer only)
@@ -217,19 +210,21 @@ impl TiffEncodingHints {
         Ok(hints)
     }
 
-    /// Apply provider block dimensions as defaults for tile size.
+    /// Apply provider block dimensions as the output tile size.
     ///
-    /// If the metadata did not explicitly specify tile dimensions, use the
-    /// provider's block_width/block_height instead. This mirrors how the JBP
-    /// writer uses NPPBH/NPPBV from the provider as defaults.
+    /// The provider's block dimensions always take precedence over metadata
+    /// tags 322/323 when non-zero. Metadata tile tags may be stale (copied
+    /// from a source file with a different tile layout), but the provider's
+    /// block size is the physical reality of the data being written. The
+    /// TileAssembler handles any mismatch between source blocks and output tiles.
     ///
     /// Provider block dimensions are rounded up to the nearest multiple of 16
     /// because the TIFF spec requires tile dimensions to be multiples of 16.
     fn apply_provider_defaults(&mut self, block_width: u32, block_height: u32) {
-        if !self.tile_width_explicit && block_width > 0 {
+        if block_width > 0 {
             self.tile_width = (block_width + 15) & !15;
         }
-        if !self.tile_height_explicit && block_height > 0 {
+        if block_height > 0 {
             self.tile_height = (block_height + 15) & !15;
         }
     }
@@ -902,74 +897,30 @@ impl TIFFDatasetWriter {
         // Set JPEG quality pseudo-tag before writing tile data
         if hints.compression == tags::COMPRESSION_JPEG {
             handle.set_field_u32(tags::TIFFTAG_JPEGQUALITY, hints.jpeg_quality)?;
-            // Apply caller-specified JPEG color mode if provided.
-            // JPEGCOLORMODE_RGB (1) tells libtiff to accept RGB input and
-            // convert to YCbCr internally. Without this, libtiff expects
-            // raw YCbCr data for ≥3-band JPEG images.
-            if let Some(mode) = hints.jpeg_color_mode {
-                handle.set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, mode)?;
-            }
+            // Determine JPEG color mode. For ≥3-band images, default to
+            // JPEGCOLORMODE_RGB so libtiff accepts RGB input and converts to
+            // YCbCr internally. Providers always deliver decoded RGB pixels
+            // (readers perform YCbCr→RGB on decode), so without this flag
+            // libtiff would interpret the RGB data as raw YCbCr, producing
+            // garbled colors (typically a bright green cast).
+            let mode = hints.jpeg_color_mode.unwrap_or(if num_bands >= 3 {
+                tags::JPEGCOLORMODE_RGB
+            } else {
+                tags::JPEGCOLORMODE_RAW
+            });
+            handle.set_field_u32(tags::TIFFTAG_JPEGCOLORMODE, mode)?;
         }
         handle.set_field_u16(tags::PLANAR_CONFIGURATION, hints.planar_config)?;
 
-        let assembler = TileAssembler::new(image, tile_width, tile_height);
-        let (tiles_down, tiles_across) = assembler.output_grid_size();
-
-        let is_planar = hints.planar_config == tags::PLANAR_CONFIG_SEPARATE;
-
-        // Iterate over the output tile grid
-        for block_row in 0..tiles_down {
-            for block_col in 0..tiles_across {
-                let (block_data, shape) = assembler.get_output_tile(block_row, block_col)?;
-                let [_bands, actual_rows, actual_cols] = shape;
-
-                let needs_padding = actual_rows < tile_height || actual_cols < tile_width;
-
-                // Pad edge tiles if needed
-                let padded = if needs_padding {
-                    pad_tile(
-                        &block_data,
-                        actual_rows,
-                        actual_cols,
-                        tile_height,
-                        tile_width,
-                        num_bands,
-                        bytes_per_sample,
-                        Self::pad_byte(image.pad_pixel_value()),
-                    )
-                } else {
-                    block_data
-                };
-
-                if is_planar {
-                    // Write each band as a separate tile plane
-                    let tiles_per_plane = tiles_across * tiles_down;
-                    let plane_size = (tile_height as usize)
-                        * (tile_width as usize)
-                        * (bytes_per_sample as usize);
-                    for band in 0..num_bands {
-                        let tile_index =
-                            band * tiles_per_plane + block_row * tiles_across + block_col;
-                        let src_offset = band as usize * plane_size;
-                        let band_data = &padded[src_offset..src_offset + plane_size];
-                        handle.write_encoded_tile(tile_index, band_data)?;
-                    }
-                } else {
-                    // Convert CHW → HWC and write as a single tile
-                    let pixels_in_tile = tile_height * tile_width;
-                    let interleaved =
-                        bsq_to_interleaved(&padded, num_bands, pixels_in_tile, bytes_per_sample);
-                    let tile_index = block_row * tiles_across + block_col;
-                    handle.write_encoded_tile(tile_index, &interleaved)?;
-                }
-            }
-        }
-
-        // Write GeoTIFF tags from metadata encoding hints.
-        // Overview IFDs (nsft == 1) do NOT get GeoTIFF tags per OGC COG Standard.
+        // Write GeoTIFF and custom metadata tags BEFORE tile data.
+        // libtiff requires TIFFMergeFieldInfo (custom tag registration) and
+        // TIFFSetField for non-structural tags to happen before any
+        // TIFFWriteEncodedTile calls. Registering or writing tags after tile
+        // data can segfault or corrupt the IFD.
         if let Some(meta) = metadata {
             let dict = meta.entries(None);
 
+            // Overview IFDs (nsft == 1) do NOT get GeoTIFF tags per OGC COG Standard.
             if nsft == 0 {
                 // Build and write GeoKey directory (tags 34735, 34736, 34737)
                 let (directory, double_params, ascii_params) =
@@ -1020,6 +971,9 @@ impl TIFFDatasetWriter {
                 tags::STRIP_BYTE_COUNTS,
                 tags::TILE_OFFSETS,
                 tags::TILE_BYTE_COUNTS,
+                // Tags auto-generated by libtiff during JPEG encoding
+                tags::JPEG_TABLES,
+                tags::YCBCR_SUB_SAMPLING,
                 // GeoTIFF tags handled by the dedicated write path above
                 tags::MODEL_PIXEL_SCALE_TAG,
                 tags::MODEL_TIEPOINT_TAG,
@@ -1036,6 +990,10 @@ impl TIFFDatasetWriter {
 
             // Collect custom tags that need to be written, inferring their types.
             // We must register all custom tags with libtiff before writing any.
+            // Only private/extension tags (≥ 32768) are safe to register via
+            // TIFFMergeFieldInfo. Standard TIFF tags (< 32768) have built-in
+            // definitions in libtiff; re-registering them with an inferred type
+            // can cause type mismatches and segfaults.
             let mut custom_tags: Vec<(u32, InferredTag)> = Vec::new();
             for (key, value) in &dict {
                 let tag: u32 = match key.parse() {
@@ -1043,6 +1001,9 @@ impl TIFFDatasetWriter {
                     Err(_) => continue,
                 };
                 if structural_tags.contains(&tag) {
+                    continue;
+                }
+                if tag < 32768 {
                     continue;
                 }
                 match infer_field_type(value) {
@@ -1067,6 +1028,59 @@ impl TIFFDatasetWriter {
             for (tag, inferred) in &custom_tags {
                 if let Err(e) = write_inferred_tag(handle, *tag, inferred) {
                     eprintln!("Warning: failed to write tag {}: {}", tag, e);
+                }
+            }
+        }
+
+        let assembler = TileAssembler::new(image, tile_width, tile_height);
+        let (tiles_down, tiles_across) = assembler.output_grid_size();
+
+        let is_planar = hints.planar_config == tags::PLANAR_CONFIG_SEPARATE;
+
+        // Iterate over the output tile grid
+        for block_row in 0..tiles_down {
+            for block_col in 0..tiles_across {
+                let (block_data, shape) = assembler.get_output_tile(block_row, block_col)?;
+                let [_bands, actual_rows, actual_cols] = shape;
+
+                let needs_padding = actual_rows < tile_height || actual_cols < tile_width;
+
+                // Pad edge tiles if needed
+                let padded = if needs_padding {
+                    pad_tile(
+                        &block_data,
+                        actual_rows,
+                        actual_cols,
+                        tile_height,
+                        tile_width,
+                        num_bands,
+                        bytes_per_sample,
+                        Self::pad_byte(image.pad_pixel_value()),
+                    )
+                } else {
+                    block_data
+                };
+
+                if is_planar {
+                    // Write each band as a separate tile plane
+                    let tiles_per_plane = tiles_across * tiles_down;
+                    let plane_size = (tile_height as usize)
+                        * (tile_width as usize)
+                        * (bytes_per_sample as usize);
+                    for band in 0..num_bands {
+                        let tile_index =
+                            band * tiles_per_plane + block_row * tiles_across + block_col;
+                        let src_offset = band as usize * plane_size;
+                        let band_data = &padded[src_offset..src_offset + plane_size];
+                        handle.write_encoded_tile(tile_index, band_data)?;
+                    }
+                } else {
+                    // Convert CHW → HWC and write as a single tile
+                    let pixels_in_tile = tile_height * tile_width;
+                    let interleaved =
+                        bsq_to_interleaved(&padded, num_bands, pixels_in_tile, bytes_per_sample);
+                    let tile_index = block_row * tiles_across + block_col;
+                    handle.write_encoded_tile(tile_index, &interleaved)?;
                 }
             }
         }
@@ -1529,15 +1543,16 @@ mod tests {
     }
 
     #[test]
-    fn writer_metadata_overrides_provider_defaults() {
+    fn writer_provider_block_size_overrides_metadata_tile_tags() {
         let meta = BufferedMetadataProvider::new();
-        meta.set("322", serde_json::json!("512")); // Tag 322 = TileWidth
-        meta.set("323", serde_json::json!("512")); // Tag 323 = TileLength
+        meta.set("322", serde_json::json!("512")); // Tag 322 = TileWidth (source)
+        meta.set("323", serde_json::json!("512")); // Tag 323 = TileLength (source)
         let mut hints = TiffEncodingHints::from_metadata(&meta).unwrap();
-        // Provider defaults should NOT override explicit metadata values
+        // Provider block size always wins — it's the physical layout of the
+        // data being written. Metadata tile tags may be stale from a source file.
         hints.apply_provider_defaults(128, 64);
-        assert_eq!(hints.tile_width, 512);
-        assert_eq!(hints.tile_height, 512);
+        assert_eq!(hints.tile_width, 128);
+        assert_eq!(hints.tile_height, 64);
     }
 
     // =========================================================================
@@ -1818,16 +1833,18 @@ mod tests {
         use crate::tiff::TIFFDatasetReader;
         use crate::traits::DatasetReader;
 
-        // Encoding hints (compression, tile size) should be sourced from
-        // the provider's metadata, not dataset-level metadata.
+        // Encoding hints (compression) should be sourced from the provider's
+        // metadata. Tile size comes from the provider's block dimensions.
         let meta = BufferedMetadataProvider::new();
         meta.set("259", serde_json::json!(5)); // LZW compression
-        meta.set("322", serde_json::json!(512)); // TileWidth
-        meta.set("323", serde_json::json!(512)); // TileLength
+        meta.set("322", serde_json::json!(512)); // TileWidth (stale from source)
+        meta.set("323", serde_json::json!(512)); // TileLength (stale from source)
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("provider_hints.tif");
         let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        // Provider has block_size=256x256, so output tiles will be 256x256
+        // regardless of metadata tags 322/323.
         let provider = make_image_provider_with_metadata("image:0", &meta);
         writer
             .add_asset(
@@ -1853,13 +1870,13 @@ mod tests {
         );
         assert_eq!(
             dict.get("322"),
-            Some(&serde_json::json!(512)),
-            "TileWidth should be 512"
+            Some(&serde_json::json!(256)),
+            "TileWidth should match provider block size (256)"
         );
         assert_eq!(
             dict.get("323"),
-            Some(&serde_json::json!(512)),
-            "TileLength should be 512"
+            Some(&serde_json::json!(256)),
+            "TileLength should match provider block size (256)"
         );
     }
 
