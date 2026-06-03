@@ -213,9 +213,9 @@ pub struct EncodingHints {
     pub imode: String,
     /// Image compression code (NC, NM, C1, C3, etc.)
     pub ic: String,
-    /// Pixels per block horizontal (1-8192)
+    /// Pixels per block horizontal (0 = full image width, 1-8192 = literal)
     pub nppbh: u32,
-    /// Pixels per block vertical (1-8192)
+    /// Pixels per block vertical (0 = full image height, 1-8192 = literal)
     pub nppbv: u32,
     /// Compression ratio (for compressed images)
     pub comrat: Option<String>,
@@ -1177,36 +1177,39 @@ impl JBPDatasetWriter {
             }
         }
 
-        // Validate NPPBH range
-        if hints.nppbh < 1 || hints.nppbh > 8192 {
+        let mut adjusted = hints.clone();
+
+        // Allow NPPBH/NPPBV values > 8192 when they represent a single-block layout
+        // (block width >= image width). The subheader will encode these as NPPBH=0000
+        // per MIL-STD-2500C section 5.4.2.2. Clamp to image dimensions so the encoder
+        // allocates correctly.
+        if adjusted.nppbh >= image_props.ncols {
+            adjusted.nppbh = image_props.ncols;
+        }
+        if adjusted.nppbv >= image_props.nrows {
+            adjusted.nppbv = image_props.nrows;
+        }
+
+        // Validate NPPBH range: must be 1–8192 unless it equals ncols (single-block)
+        let is_single_block_h = adjusted.nppbh == image_props.ncols;
+        if !is_single_block_h && adjusted.nppbh > 8192 {
             return Err(CodecError::InvalidFormat(format!(
-                "Invalid NPPBH value '{}': must be between 1 and 8192",
+                "Invalid NPPBH value '{}': must be between 1 and 8192, or equal to \
+                 image width for single-block encoding",
                 hints.nppbh
             )));
         }
 
-        // Validate NPPBV range
-        if hints.nppbv < 1 || hints.nppbv > 8192 {
+        // Validate NPPBV range: must be 1–8192 unless it equals nrows (single-block)
+        let is_single_block_v = adjusted.nppbv == image_props.nrows;
+        if !is_single_block_v && adjusted.nppbv > 8192 {
             return Err(CodecError::InvalidFormat(format!(
-                "Invalid NPPBV value '{}': must be between 1 and 8192",
+                "Invalid NPPBV value '{}': must be between 1 and 8192, or equal to \
+                 image height for single-block encoding",
                 hints.nppbv
             )));
         }
 
-        // Auto-adjust block sizes if larger than image dimensions
-        let mut adjusted = hints.clone();
-
-        if hints.nppbh > image_props.ncols {
-            // Note: In production, this would log a warning
-            // "NPPBH {} exceeds image width {}, adjusting to {}"
-            adjusted.nppbh = image_props.ncols;
-        }
-
-        if hints.nppbv > image_props.nrows {
-            // Note: In production, this would log a warning
-            // "NPPBV {} exceeds image height {}, adjusting to {}"
-            adjusted.nppbv = image_props.nrows;
-        }
 
         // For JPEG 2000, force IMODE to "B" if not already set
         if is_j2k {
@@ -1738,18 +1741,21 @@ impl JBPDatasetWriter {
         // IMODE (1) - Image Mode (from encoding hints)
         subheader.extend_from_slice(hints.imode.as_bytes());
 
-        // Calculate blocking parameters using hints
+        // Calculate blocking parameters and apply NPPBH=0000 encoding for
+        // single-block layouts per MIL-STD-2500C section 5.4.2.2
         let nbpr = props.ncols.div_ceil(hints.nppbh);
         let nbpc = props.nrows.div_ceil(hints.nppbv);
+        let serial_nppbh = if nbpr == 1 && hints.nppbh == props.ncols { 0 } else { hints.nppbh };
+        let serial_nppbv = if nbpc == 1 && hints.nppbv == props.nrows { 0 } else { hints.nppbv };
 
         // NBPR (4) - Number of Blocks Per Row
         subheader.extend_from_slice(format!("{:04}", nbpr).as_bytes());
         // NBPC (4) - Number of Blocks Per Column
         subheader.extend_from_slice(format!("{:04}", nbpc).as_bytes());
-        // NPPBH (4) - Number of Pixels Per Block Horizontal (from encoding hints)
-        subheader.extend_from_slice(format!("{:04}", hints.nppbh).as_bytes());
-        // NPPBV (4) - Number of Pixels Per Block Vertical (from encoding hints)
-        subheader.extend_from_slice(format!("{:04}", hints.nppbv).as_bytes());
+        // NPPBH (4) - Number of Pixels Per Block Horizontal
+        subheader.extend_from_slice(format!("{:04}", serial_nppbh).as_bytes());
+        // NPPBV (4) - Number of Pixels Per Block Vertical
+        subheader.extend_from_slice(format!("{:04}", serial_nppbv).as_bytes());
         // NBPP (2) - Number of Bits Per Pixel
         subheader.extend_from_slice(format!("{:02}", props.nbpp).as_bytes());
         // IDLVL (3) - Image Display Level
@@ -4072,6 +4078,97 @@ mod tests {
                 ic
             );
         }
+    }
+
+    #[test]
+    fn nppbh_accepts_wide_single_block_row() {
+        let hints = EncodingHints {
+            ic: "NC".to_string(),
+            nppbh: 19278,
+            nppbv: 4096,
+            ..Default::default()
+        };
+        let props = ImageProperties {
+            ncols: 19278,
+            nrows: 4096,
+            ..Default::default()
+        };
+        let result = JBPDatasetWriter::validate_encoding_hints(&hints, &props).unwrap();
+        assert_eq!(result.nppbh, 19278);
+        assert_eq!(result.nppbv, 4096);
+    }
+
+    #[test]
+    fn nppbv_accepts_tall_single_block_column() {
+        let hints = EncodingHints {
+            ic: "NC".to_string(),
+            nppbh: 256,
+            nppbv: 12000,
+            ..Default::default()
+        };
+        let props = ImageProperties {
+            ncols: 1024,
+            nrows: 12000,
+            ..Default::default()
+        };
+        let result = JBPDatasetWriter::validate_encoding_hints(&hints, &props).unwrap();
+        assert_eq!(result.nppbh, 256);
+        assert_eq!(result.nppbv, 12000);
+    }
+
+    #[test]
+    fn nppbh_rejects_multi_block_row_exceeding_8192() {
+        let hints = EncodingHints {
+            ic: "NC".to_string(),
+            nppbh: 9000,
+            nppbv: 4096,
+            ..Default::default()
+        };
+        let props = ImageProperties {
+            ncols: 18000,
+            nrows: 4096,
+            ..Default::default()
+        };
+        let result = JBPDatasetWriter::validate_encoding_hints(&hints, &props);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("9000"), "Error should mention the invalid value: {msg}");
+    }
+
+    #[test]
+    fn j2k_accepts_wide_single_block() {
+        let hints = EncodingHints {
+            ic: "C8".to_string(),
+            nppbh: 19278,
+            nppbv: 4096,
+            ..Default::default()
+        };
+        let props = ImageProperties {
+            ncols: 19278,
+            nrows: 4096,
+            ..Default::default()
+        };
+        let result = JBPDatasetWriter::validate_encoding_hints(&hints, &props).unwrap();
+        assert_eq!(result.nppbh, 19278);
+        assert_eq!(result.nppbv, 4096);
+    }
+
+    #[test]
+    fn nppbh_clamps_to_image_dimensions() {
+        let hints = EncodingHints {
+            ic: "NC".to_string(),
+            nppbh: 1024,
+            nppbv: 1024,
+            ..Default::default()
+        };
+        let props = ImageProperties {
+            ncols: 512,
+            nrows: 768,
+            ..Default::default()
+        };
+        let result = JBPDatasetWriter::validate_encoding_hints(&hints, &props).unwrap();
+        assert_eq!(result.nppbh, 512);
+        assert_eq!(result.nppbv, 768);
     }
 }
 
