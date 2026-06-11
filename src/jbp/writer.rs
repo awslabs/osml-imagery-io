@@ -30,9 +30,9 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use crate::assembly::TileAssembler;
 use crate::error::CodecError;
 use crate::jbp::error::JBPError;
-use crate::assembly::TileAssembler;
 use crate::jbp::image::encoder::create_block_encoder;
 use crate::jbp::image::types::InterleaveMode;
 use crate::jbp::overflow::{create_overflow_des, OverflowSource};
@@ -1210,7 +1210,6 @@ impl JBPDatasetWriter {
             )));
         }
 
-
         // For JPEG 2000, force IMODE to "B" if not already set
         if is_j2k {
             adjusted.imode = "B".to_string();
@@ -1745,8 +1744,16 @@ impl JBPDatasetWriter {
         // single-block layouts per MIL-STD-2500C section 5.4.2.2
         let nbpr = props.ncols.div_ceil(hints.nppbh);
         let nbpc = props.nrows.div_ceil(hints.nppbv);
-        let serial_nppbh = if nbpr == 1 && hints.nppbh == props.ncols { 0 } else { hints.nppbh };
-        let serial_nppbv = if nbpc == 1 && hints.nppbv == props.nrows { 0 } else { hints.nppbv };
+        let serial_nppbh = if nbpr == 1 && hints.nppbh == props.ncols {
+            0
+        } else {
+            hints.nppbh
+        };
+        let serial_nppbv = if nbpc == 1 && hints.nppbv == props.nrows {
+            0
+        } else {
+            hints.nppbv
+        };
 
         // NBPR (4) - Number of Blocks Per Row
         subheader.extend_from_slice(format!("{:04}", nbpr).as_bytes());
@@ -4132,7 +4139,10 @@ mod tests {
         let result = JBPDatasetWriter::validate_encoding_hints(&hints, &props);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("9000"), "Error should mention the invalid value: {msg}");
+        assert!(
+            msg.contains("9000"),
+            "Error should mention the invalid value: {msg}"
+        );
     }
 
     #[test]

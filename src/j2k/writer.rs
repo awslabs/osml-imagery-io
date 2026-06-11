@@ -133,9 +133,7 @@ impl J2KDatasetWriter {
     /// Standalone J2K files default to lossless encoding (unlike NITF which
     /// defaults to lossy 10:1). This matches user expectations for standalone
     /// file workflows where data fidelity is the priority.
-    fn encoding_hints_from_metadata(
-        metadata: Option<&dyn MetadataProvider>,
-    ) -> J2KEncodingHints {
+    fn encoding_hints_from_metadata(metadata: Option<&dyn MetadataProvider>) -> J2KEncodingHints {
         let dict = metadata.map(|m| m.entries(None));
 
         let lossless = dict
@@ -686,9 +684,7 @@ mod tests {
                 &[],
             )
             .unwrap();
-        writer
-            .set_metadata(Arc::new(metadata))
-            .unwrap();
+        writer.set_metadata(Arc::new(metadata)).unwrap();
         writer.close().unwrap();
 
         // Read back and verify the J2K file has the expected tile grid
@@ -784,9 +780,7 @@ mod tests {
                 &[],
             )
             .unwrap();
-        writer
-            .set_metadata(Arc::new(metadata))
-            .unwrap();
+        writer.set_metadata(Arc::new(metadata)).unwrap();
         writer.close().unwrap();
 
         // Read back
@@ -852,9 +846,7 @@ mod tests {
                 &[],
             )
             .unwrap();
-        writer
-            .set_metadata(Arc::new(metadata))
-            .unwrap();
+        writer.set_metadata(Arc::new(metadata)).unwrap();
         writer.close().unwrap();
 
         // Should succeed (levels clamped internally) and produce valid output
