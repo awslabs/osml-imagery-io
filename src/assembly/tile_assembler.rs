@@ -219,12 +219,7 @@ mod tests {
     }
 
     impl MockProvider {
-        fn new(
-            image_width: u32,
-            image_height: u32,
-            block_width: u32,
-            block_height: u32,
-        ) -> Self {
+        fn new(image_width: u32, image_height: u32, block_width: u32, block_height: u32) -> Self {
             Self {
                 image_width,
                 image_height,
@@ -311,8 +306,8 @@ mod tests {
                     for col in 0..w as usize {
                         let img_x = start_x as usize + col;
                         let img_y = start_y as usize + row;
-                        let value = ((img_y * self.image_width as usize + img_x + band * 37) % 256)
-                            as u8;
+                        let value =
+                            ((img_y * self.image_width as usize + img_x + band * 37) % 256) as u8;
                         let offset = band * pixels * bpp + row * (w as usize) * bpp + col * bpp;
                         data[offset] = value;
                     }

@@ -618,103 +618,97 @@ impl ImageAssetProvider for BufferedImageAssetProvider {
             let src_bw = source.num_pixels_per_block_horizontal();
             let src_bh = source.num_pixels_per_block_vertical();
             let (src_grid_rows, src_grid_cols) = source.block_grid_size();
-            let block_within_source =
-                block_row < src_grid_rows && block_col < src_grid_cols;
+            let block_within_source = block_row < src_grid_rows && block_col < src_grid_cols;
 
-            let (all_band_data, shape) =
-                if src_bw == self.config.block_width
-                    && src_bh == self.config.block_height
-                    && block_within_source
-                {
-                    source.get_block(block_row, block_col, resolution_level, None)?
+            let (all_band_data, shape) = if src_bw == self.config.block_width
+                && src_bh == self.config.block_height
+                && block_within_source
+            {
+                source.get_block(block_row, block_col, resolution_level, None)?
+            } else {
+                let assembler = TileAssembler::new(
+                    source.as_ref(),
+                    self.config.block_width,
+                    self.config.block_height,
+                );
+
+                if !assembler.has_block(block_row, block_col) {
+                    // Block is entirely outside source extent — return pad-filled buffer
+                    let block_rows = self
+                        .config
+                        .block_height
+                        .min(self.config.num_rows - block_row * self.config.block_height);
+                    let block_cols = self
+                        .config
+                        .block_width
+                        .min(self.config.num_columns - block_col * self.config.block_width);
+                    let pad = pad_pixel_bytes(self.pad_pixel_value(), self.config.pixel_type);
+                    let buf_size = (block_rows as usize)
+                        * (block_cols as usize)
+                        * (self.config.num_bands as usize)
+                        * pad.len();
+                    let mut buf = vec![0u8; buf_size];
+                    if pad.iter().any(|&b| b != 0) {
+                        for chunk in buf.chunks_exact_mut(pad.len()) {
+                            chunk.copy_from_slice(&pad);
+                        }
+                    }
+                    (buf, [self.config.num_bands, block_rows, block_cols])
                 } else {
-                    let assembler = TileAssembler::new(
-                        source.as_ref(),
-                        self.config.block_width,
-                        self.config.block_height,
-                    );
+                    let (tile_data, tile_shape) =
+                        assembler.get_output_tile(block_row, block_col)?;
+                    let [_bands, tile_rows, tile_cols] = tile_shape;
 
-                    if !assembler.has_block(block_row, block_col) {
-                        // Block is entirely outside source extent — return pad-filled buffer
-                        let block_rows = self
-                            .config
-                            .block_height
-                            .min(self.config.num_rows - block_row * self.config.block_height);
-                        let block_cols = self
-                            .config
-                            .block_width
-                            .min(self.config.num_columns - block_col * self.config.block_width);
+                    // Expected block dimensions for this position
+                    let block_rows = self
+                        .config
+                        .block_height
+                        .min(self.config.num_rows - block_row * self.config.block_height);
+                    let block_cols = self
+                        .config
+                        .block_width
+                        .min(self.config.num_columns - block_col * self.config.block_width);
+
+                    if tile_rows == block_rows && tile_cols == block_cols {
+                        (tile_data, tile_shape)
+                    } else {
+                        // Partial overlap — pad to expected block dimensions
                         let pad = pad_pixel_bytes(self.pad_pixel_value(), self.config.pixel_type);
-                        let buf_size = (block_rows as usize)
+                        let bpp = pad.len();
+                        let out_size = (block_rows as usize)
                             * (block_cols as usize)
                             * (self.config.num_bands as usize)
-                            * pad.len();
-                        let mut buf = vec![0u8; buf_size];
+                            * bpp;
+                        let mut buf = vec![0u8; out_size];
                         if pad.iter().any(|&b| b != 0) {
-                            for chunk in buf.chunks_exact_mut(pad.len()) {
+                            for chunk in buf.chunks_exact_mut(bpp) {
                                 chunk.copy_from_slice(&pad);
                             }
                         }
-                        (buf, [self.config.num_bands, block_rows, block_cols])
-                    } else {
-                        let (tile_data, tile_shape) =
-                            assembler.get_output_tile(block_row, block_col)?;
-                        let [_bands, tile_rows, tile_cols] = tile_shape;
-
-                        // Expected block dimensions for this position
-                        let block_rows = self
-                            .config
-                            .block_height
-                            .min(self.config.num_rows - block_row * self.config.block_height);
-                        let block_cols = self
-                            .config
-                            .block_width
-                            .min(self.config.num_columns - block_col * self.config.block_width);
-
-                        if tile_rows == block_rows && tile_cols == block_cols {
-                            (tile_data, tile_shape)
-                        } else {
-                            // Partial overlap — pad to expected block dimensions
-                            let pad =
-                                pad_pixel_bytes(self.pad_pixel_value(), self.config.pixel_type);
-                            let bpp = pad.len();
-                            let out_size = (block_rows as usize)
-                                * (block_cols as usize)
-                                * (self.config.num_bands as usize)
-                                * bpp;
-                            let mut buf = vec![0u8; out_size];
-                            if pad.iter().any(|&b| b != 0) {
-                                for chunk in buf.chunks_exact_mut(bpp) {
-                                    chunk.copy_from_slice(&pad);
-                                }
+                        let out_band_size = (block_rows as usize) * (block_cols as usize) * bpp;
+                        let tile_band_size = (tile_rows as usize) * (tile_cols as usize) * bpp;
+                        for band in 0..self.config.num_bands as usize {
+                            for row in 0..tile_rows as usize {
+                                let src_off =
+                                    band * tile_band_size + row * (tile_cols as usize) * bpp;
+                                let dst_off =
+                                    band * out_band_size + row * (block_cols as usize) * bpp;
+                                let copy_bytes = (tile_cols as usize) * bpp;
+                                buf[dst_off..dst_off + copy_bytes]
+                                    .copy_from_slice(&tile_data[src_off..src_off + copy_bytes]);
                             }
-                            let out_band_size =
-                                (block_rows as usize) * (block_cols as usize) * bpp;
-                            let tile_band_size =
-                                (tile_rows as usize) * (tile_cols as usize) * bpp;
-                            for band in 0..self.config.num_bands as usize {
-                                for row in 0..tile_rows as usize {
-                                    let src_off = band * tile_band_size
-                                        + row * (tile_cols as usize) * bpp;
-                                    let dst_off = band * out_band_size
-                                        + row * (block_cols as usize) * bpp;
-                                    let copy_bytes = (tile_cols as usize) * bpp;
-                                    buf[dst_off..dst_off + copy_bytes]
-                                        .copy_from_slice(&tile_data[src_off..src_off + copy_bytes]);
-                                }
-                            }
-                            (buf, [self.config.num_bands, block_rows, block_cols])
                         }
+                        (buf, [self.config.num_bands, block_rows, block_cols])
                     }
-                };
+                }
+            };
 
             // Apply band subsetting if requested
             if let Some(band_indices) = bands {
                 let [_, rows, cols] = shape;
                 let bytes_per_pixel = self.config.pixel_type.bytes_per_pixel();
                 let block_band_size = (rows as usize) * (cols as usize) * bytes_per_pixel;
-                let mut extracted =
-                    Vec::with_capacity(band_indices.len() * block_band_size);
+                let mut extracted = Vec::with_capacity(band_indices.len() * block_band_size);
                 for &band in band_indices {
                     let src_band_start = (band as usize) * block_band_size;
                     let src_band_end = src_band_start + block_band_size;
@@ -1049,10 +1043,9 @@ mod retiling_tests {
                         for col in 0..bcols as usize {
                             let img_x = start_col as usize + col;
                             let img_y = start_row as usize + row;
-                            let val =
-                                ((img_y * width as usize + img_x + band * 37) % 256) as u8;
-                            let offset = band * pixels * bpp + row * (bcols as usize) * bpp
-                                + col * bpp;
+                            let val = ((img_y * width as usize + img_x + band * 37) % 256) as u8;
+                            let offset =
+                                band * pixels * bpp + row * (bcols as usize) * bpp + col * bpp;
                             data[offset] = val;
                         }
                     }
@@ -1086,8 +1079,8 @@ mod retiling_tests {
             .with_bands(1)
             .with_block_size(4, 4)
             .with_pixel_type(PixelType::UInt8);
-        let buffered = BufferedImageAssetProvider::new("buffered", config)
-            .with_source(source.clone());
+        let buffered =
+            BufferedImageAssetProvider::new("buffered", config).with_source(source.clone());
 
         for row in 0..4u32 {
             for col in 0..4u32 {
@@ -1108,8 +1101,7 @@ mod retiling_tests {
             .with_bands(1)
             .with_block_size(8, 8)
             .with_pixel_type(PixelType::UInt8);
-        let buffered = BufferedImageAssetProvider::new("buffered", config)
-            .with_source(source);
+        let buffered = BufferedImageAssetProvider::new("buffered", config).with_source(source);
 
         let reference = build_reference(16, 16, 1, 1);
 
@@ -1143,8 +1135,7 @@ mod retiling_tests {
             .with_bands(1)
             .with_block_size(4, 4)
             .with_pixel_type(PixelType::UInt8);
-        let buffered = BufferedImageAssetProvider::new("buffered", config)
-            .with_source(source);
+        let buffered = BufferedImageAssetProvider::new("buffered", config).with_source(source);
 
         let reference = build_reference(16, 16, 1, 1);
 
@@ -1174,8 +1165,7 @@ mod retiling_tests {
             .with_bands(1)
             .with_block_size(4, 4)
             .with_pixel_type(PixelType::UInt8);
-        let buffered = BufferedImageAssetProvider::new("buffered", config)
-            .with_source(source);
+        let buffered = BufferedImageAssetProvider::new("buffered", config).with_source(source);
 
         // Block (3, 0) starts at y=12, source is only 8 tall → fully outside
         let (data, shape) = buffered.get_block(3, 0, 0, None).unwrap();
@@ -1194,8 +1184,7 @@ mod retiling_tests {
             .with_bands(1)
             .with_block_size(8, 8)
             .with_pixel_type(PixelType::UInt8);
-        let buffered = BufferedImageAssetProvider::new("buffered", config)
-            .with_source(source);
+        let buffered = BufferedImageAssetProvider::new("buffered", config).with_source(source);
 
         let reference = build_reference(10, 10, 1, 1);
 
@@ -1231,8 +1220,7 @@ mod retiling_tests {
             .with_bands(1)
             .with_block_size(4, 4)
             .with_pixel_type(PixelType::UInt8);
-        let buffered = BufferedImageAssetProvider::new("buffered", config)
-            .with_source(source);
+        let buffered = BufferedImageAssetProvider::new("buffered", config).with_source(source);
 
         let reference = build_reference(16, 16, 1, 1);
 
@@ -1264,8 +1252,7 @@ mod retiling_tests {
             .with_bands(1)
             .with_block_size(4, 4)
             .with_pixel_type(PixelType::UInt16);
-        let buffered = BufferedImageAssetProvider::new("buffered", config)
-            .with_source(source);
+        let buffered = BufferedImageAssetProvider::new("buffered", config).with_source(source);
 
         let (data, shape) = buffered.get_block(1, 1, 0, None).unwrap();
         assert_eq!(shape, [1, 4, 4]);
@@ -1282,8 +1269,7 @@ mod retiling_tests {
             .with_bands(3)
             .with_block_size(8, 8)
             .with_pixel_type(PixelType::UInt8);
-        let buffered = BufferedImageAssetProvider::new("buffered", config)
-            .with_source(source);
+        let buffered = BufferedImageAssetProvider::new("buffered", config).with_source(source);
 
         // Request only band 1
         let (data, shape) = buffered.get_block(0, 0, 0, Some(&[1])).unwrap();
@@ -1306,8 +1292,7 @@ mod retiling_tests {
             .with_bands(1)
             .with_block_size(8, 8)
             .with_pixel_type(PixelType::UInt8);
-        let buffered = BufferedImageAssetProvider::new("buffered", config)
-            .with_source(source);
+        let buffered = BufferedImageAssetProvider::new("buffered", config).with_source(source);
 
         // Set a local override for block (0, 0)
         let override_data = vec![255u8; 8 * 8];
@@ -1327,8 +1312,7 @@ mod retiling_tests {
             .with_bands(3)
             .with_block_size(8, 8)
             .with_pixel_type(PixelType::UInt8);
-        let buffered = BufferedImageAssetProvider::new("buffered", config)
-            .with_source(source);
+        let buffered = BufferedImageAssetProvider::new("buffered", config).with_source(source);
 
         let reference = build_reference(8, 8, 3, 1);
 
@@ -1346,8 +1330,7 @@ mod retiling_tests {
             .with_bands(1)
             .with_block_size(4, 4)
             .with_pixel_type(PixelType::UInt8);
-        let buffered = BufferedImageAssetProvider::new("buffered", config)
-            .with_source(source);
+        let buffered = BufferedImageAssetProvider::new("buffered", config).with_source(source);
 
         let reference = build_reference(10, 10, 1, 1);
 

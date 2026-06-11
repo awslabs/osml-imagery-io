@@ -34,5 +34,5 @@ mod pad;
 mod tile_assembler;
 
 pub use pad::pad_pixel_bytes;
-pub use tile_assembler::TileAssembler;
 pub(crate) use tile_assembler::reassemble_full_image;
+pub use tile_assembler::TileAssembler;
