@@ -22,12 +22,12 @@ doc: |
     b27: BAD_BANDn (per-band)
     b26: NIIRSn (per-band)
     b25: FOCAL_LENn (per-band)
-    b24: CWAVEn (per-band) — also requires WAVE_LENGTH_UNIT
-    b23: FWHMn (per-band)
-    b22: FWHM_UNCn (per-band) — if set, b23 must also be set
-    b21: NOM_WAVEn (per-band)
-    b20: NOM_WAVE_UNCn (per-band) — if set, b21 must also be set
-    b19: LBOUNDn, UBOUNDn (per-band)
+    b24: CWAVEn (per-band), WAVE_LENGTH_UNIT
+    b23: FWHMn (per-band), WAVE_LENGTH_UNIT
+    b22: FWHM_UNCn (per-band), WAVE_LENGTH_UNIT — if set, b23 must also be set
+    b21: NOM_WAVEn (per-band), WAVE_LENGTH_UNIT
+    b20: NOM_WAVE_UNCn (per-band), WAVE_LENGTH_UNIT — if set, b21 must also be set
+    b19: LBOUNDn, UBOUNDn (per-band), WAVE_LENGTH_UNIT
     b18: SCALE_FACTORn, ADDITIVE_FACTORn (per-band, IEEE754)
     b17: START_TIMEn (per-band)
     b16: INT_TIMEn (per-band)
@@ -76,10 +76,24 @@ seq:
     encoding: BCS-A
     doc: |
       Unit of measure for radiometric data.
-      P = Percentage, E = W/m^2, K = kelvin, L = W/(m^2 sr),
-      F = Watts, X = W/(m^2 um), S = W/(m^2 sr um),
-      U = microflicks, I = J/(m^2 s^1/2 K), A = K^-1,
-      D = Digital Number, V = Volts, N = None
+      P = Percentage,
+      E = W/m^2,
+      H = photons/(s m^2),
+      X = W/(m^2 um),
+      Y = photons/(s m^2 um),
+      L = W/(m^2 sr),
+      Q = photons/(s m^2 sr),
+      S = W/(m^2 sr um),
+      U = microflicks = uW/(cm^2 sr um),
+      T = photons/(s m^2 sr um),
+      K = kelvin,
+      F = Watts,
+      H = photons/s,
+      I = J/(m^2 s^1/2 K),
+      A = 1/K,
+      V = Volts,
+      D = Digital Number,
+      N = None
 
   - id: SCALE_FACTOR
     size: 4
