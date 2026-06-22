@@ -17,6 +17,7 @@ use crate::error::CodecError;
 use crate::jpeg::ffi::TjDecompressor;
 use crate::jpeg::image::JPEGImageAssetProvider;
 use crate::jpeg::metadata::JPEGMetadataProvider;
+use crate::owned_buffer::OwnedBuffer;
 use crate::traits::asset::AssetMetadata;
 use crate::traits::asset::AssetProvider;
 use crate::traits::metadata::MetadataProvider;
@@ -31,7 +32,7 @@ const JPEG_SOI: [u8; 2] = [0xFF, 0xD8];
 /// JPEG dataset reader implementing the `DatasetReader` trait.
 ///
 /// Owns a single image asset provider and dataset-level metadata.
-/// Metadata is extracted eagerly during `from_bytes`; pixel decoding
+/// Metadata is extracted eagerly during `from_buffer`; pixel decoding
 /// is deferred to `get_block()` calls on the image asset provider.
 pub struct JPEGDatasetReader {
     image_asset: Option<Arc<JPEGImageAssetProvider>>,
@@ -47,16 +48,15 @@ impl std::fmt::Debug for JPEGDatasetReader {
 }
 
 impl JPEGDatasetReader {
-    /// Construct from a raw byte slice.
+    /// Construct from an `OwnedBuffer`.
     ///
     /// Validates the SOI marker (0xFFD8), then uses libjpeg-turbo to parse
     /// the JPEG header for metadata (dimensions, bands, color space). Does
     /// NOT decode pixel data — that is deferred to `get_block()` calls on
     /// the `ImageAssetProvider`.
-    ///
-    /// The input is copied once into an `Arc<[u8]>` that is shared with the
-    /// image asset provider.
-    pub fn from_bytes(data: &[u8]) -> Result<Self, CodecError> {
+    pub fn from_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
+        let data = buffer.as_bytes();
+
         // Validate minimum length
         if data.len() < 2 {
             return Err(CodecError::InvalidFormat(
@@ -107,9 +107,6 @@ impl JPEGDatasetReader {
         entries.insert("color_space".to_string(), json!(color_space));
 
         let metadata = Arc::new(JPEGMetadataProvider::new(entries));
-
-        // Single allocation: wrap the entire input buffer in an Arc
-        let buffer: Arc<[u8]> = Arc::from(data);
 
         let image_asset = JPEGImageAssetProvider::new(
             "image:0".to_string(),
@@ -192,6 +189,7 @@ impl DatasetReader for JPEGDatasetReader {
 mod tests {
     use super::*;
     use crate::jpeg::ffi::compress_8bit;
+    use crate::owned_buffer::OwnedBuffer;
     use crate::types::PixelType;
 
     // =========================================================================
@@ -200,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_from_bytes_empty_data() {
-        let result = JPEGDatasetReader::from_bytes(&[]);
+        let result = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(vec![]));
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("too short"), "got: {}", msg);
@@ -211,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_from_bytes_single_byte() {
-        let result = JPEGDatasetReader::from_bytes(&[0xFF]);
+        let result = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(vec![0xFF]));
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("too short"), "got: {}", msg);
@@ -223,7 +221,7 @@ mod tests {
     #[test]
     fn test_from_bytes_invalid_signature() {
         let data = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
-        let result = JPEGDatasetReader::from_bytes(&data);
+        let result = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(data));
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("invalid signature"), "got: {}", msg);
@@ -236,7 +234,7 @@ mod tests {
     fn test_from_bytes_soi_only_no_valid_header() {
         // SOI marker but no valid JPEG structure after it
         let data = vec![0xFF, 0xD8, 0x00, 0x00];
-        let result = JPEGDatasetReader::from_bytes(&data);
+        let result = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(data));
         assert!(result.is_err());
     }
 
@@ -262,7 +260,7 @@ mod tests {
     fn test_roundtrip_grayscale() {
         let (jpeg_data, _src) = make_jpeg(16, 16, 1, 95);
 
-        let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(jpeg_data)).unwrap();
         assert!(reader.has_asset("image:0"));
         assert!(!reader.has_asset("nonexistent"));
 
@@ -303,7 +301,7 @@ mod tests {
     fn test_roundtrip_rgb() {
         let (jpeg_data, _src) = make_jpeg(16, 16, 3, 95);
 
-        let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(jpeg_data)).unwrap();
 
         let meta = reader.metadata();
         let dict = meta.entries(None);
@@ -325,7 +323,7 @@ mod tests {
     #[test]
     fn test_get_asset_invalid_key() {
         let (jpeg_data, _) = make_jpeg(8, 8, 1, 90);
-        let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(jpeg_data)).unwrap();
 
         match reader.get_asset("nonexistent") {
             Err(CodecError::AssetNotFound(key)) => assert_eq!(key, "nonexistent"),
@@ -337,7 +335,7 @@ mod tests {
     #[test]
     fn test_close_clears_assets() {
         let (jpeg_data, _) = make_jpeg(8, 8, 1, 90);
-        let mut reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
+        let mut reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(jpeg_data)).unwrap();
 
         assert!(reader.has_asset("image:0"));
         reader.close().unwrap();
@@ -351,7 +349,7 @@ mod tests {
     #[test]
     fn test_invalid_block_coordinates() {
         let (jpeg_data, _) = make_jpeg(8, 8, 1, 90);
-        let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(jpeg_data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -365,7 +363,7 @@ mod tests {
     #[test]
     fn test_invalid_resolution_level() {
         let (jpeg_data, _) = make_jpeg(8, 8, 1, 90);
-        let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(jpeg_data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -376,7 +374,7 @@ mod tests {
     #[test]
     fn test_has_block() {
         let (jpeg_data, _) = make_jpeg(8, 8, 1, 90);
-        let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(jpeg_data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -389,7 +387,7 @@ mod tests {
     #[test]
     fn test_band_subset_rgb() {
         let (jpeg_data, _) = make_jpeg(8, 8, 3, 95);
-        let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(jpeg_data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -420,7 +418,7 @@ mod tests {
         let src: Vec<u8> = vec![128; width * height * num_bands];
         let jpeg_data = compress_8bit(&src, width, height, num_bands, 95).unwrap();
 
-        let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(jpeg_data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -452,7 +450,7 @@ mod tests {
         }
         let jpeg_data = compress_8bit(&src, width, height, 3, 100).unwrap();
 
-        let reader = JPEGDatasetReader::from_bytes(&jpeg_data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(jpeg_data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 

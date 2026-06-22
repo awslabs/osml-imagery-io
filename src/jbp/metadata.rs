@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::owned_buffer::OwnedBuffer;
 use crate::parser::{StructureAccessor, StructureDefinition, StructureRegistry, Value};
 use crate::traits::MetadataProvider;
 
@@ -41,32 +42,23 @@ use super::tre_fields;
 /// ```
 pub struct JBPFileMetadataProvider {
     tags: HashMap<String, serde_json::Value>,
-    raw_bytes: Arc<[u8]>,
+    raw_bytes: OwnedBuffer,
 }
 
 impl JBPFileMetadataProvider {
-    /// Create a new file metadata provider.
-    ///
-    /// Eagerly parses all fields from the accessor into a cached HashMap.
-    /// The definition is consumed during construction and not retained.
-    pub fn new(accessor: &StructureAccessor, raw_bytes: Arc<[u8]>) -> Self {
-        let tags = parse_fields_from_definition(&accessor.definition, &raw_bytes, None);
-        Self { tags, raw_bytes }
-    }
-
     /// Create from definition and raw bytes directly.
     ///
     /// Eagerly parses all fields into a cached HashMap. The definition is consumed
     /// during construction and not retained.
-    pub fn from_definition(definition: Arc<StructureDefinition>, raw_bytes: Arc<[u8]>) -> Self {
-        let tags = parse_fields_from_definition(&definition, &raw_bytes, None);
+    pub fn from_definition(definition: Arc<StructureDefinition>, raw_bytes: OwnedBuffer) -> Self {
+        let tags = parse_fields_from_definition(&definition, raw_bytes.as_bytes(), None);
         Self { tags, raw_bytes }
     }
 }
 
 impl MetadataProvider for JBPFileMetadataProvider {
     fn raw(&self) -> &[u8] {
-        &self.raw_bytes
+        self.raw_bytes.as_bytes()
     }
 
     fn get_value(&self, key: &str) -> Option<serde_json::Value> {
@@ -125,23 +117,15 @@ impl MetadataProvider for JBPFileMetadataProvider {
 /// ```
 pub struct JBPSegmentMetadataProvider {
     tags: HashMap<String, serde_json::Value>,
-    raw_bytes: Arc<[u8]>,
+    raw_bytes: OwnedBuffer,
 }
 
 impl JBPSegmentMetadataProvider {
-    /// Create a new segment metadata provider.
-    ///
-    /// Eagerly parses all subheader fields into a cached HashMap.
-    pub fn new(accessor: &StructureAccessor, raw_bytes: Arc<[u8]>) -> Self {
-        let tags = parse_fields_from_definition(&accessor.definition, &raw_bytes, None);
-        Self { tags, raw_bytes }
-    }
-
     /// Create from definition and raw bytes directly.
     ///
     /// Eagerly parses all subheader fields into a cached HashMap.
-    pub fn from_definition(definition: Arc<StructureDefinition>, raw_bytes: Arc<[u8]>) -> Self {
-        let tags = parse_fields_from_definition(&definition, &raw_bytes, None);
+    pub fn from_definition(definition: Arc<StructureDefinition>, raw_bytes: OwnedBuffer) -> Self {
+        let tags = parse_fields_from_definition(&definition, raw_bytes.as_bytes(), None);
         Self { tags, raw_bytes }
     }
 
@@ -152,11 +136,12 @@ impl JBPSegmentMetadataProvider {
     /// and not retained.
     pub fn with_tres(
         definition: Arc<StructureDefinition>,
-        raw_bytes: Arc<[u8]>,
+        raw_bytes: OwnedBuffer,
         tre_envelopes: Vec<TreEnvelope>,
         registry: Arc<StructureRegistry>,
     ) -> Self {
-        let mut tags = parse_fields_from_definition(&definition, &raw_bytes, Some(&registry));
+        let mut tags =
+            parse_fields_from_definition(&definition, raw_bytes.as_bytes(), Some(&registry));
         parse_tre_entries(&mut tags, &tre_envelopes, &registry);
         Self { tags, raw_bytes }
     }
@@ -164,7 +149,7 @@ impl JBPSegmentMetadataProvider {
 
 impl MetadataProvider for JBPSegmentMetadataProvider {
     fn raw(&self) -> &[u8] {
-        &self.raw_bytes
+        self.raw_bytes.as_bytes()
     }
 
     fn get_value(&self, key: &str) -> Option<serde_json::Value> {
@@ -389,9 +374,9 @@ mod tests {
     }
 
     /// Create test data matching the test definition.
-    fn create_test_data() -> Arc<[u8]> {
+    fn create_test_data() -> OwnedBuffer {
         // FHDR(4) + FVER(5) + FSCLAS(1) + FSCLSY(2) = 12 bytes
-        Arc::from(b"NITF02.10U  ".as_slice())
+        OwnedBuffer::from_vec(b"NITF02.10U  ".to_vec())
     }
 
     #[test]
@@ -400,7 +385,7 @@ mod tests {
         let raw_bytes = create_test_data();
         let provider = JBPFileMetadataProvider::from_definition(definition, raw_bytes.clone());
 
-        assert_eq!(provider.raw(), raw_bytes.as_ref());
+        assert_eq!(provider.raw(), raw_bytes.as_bytes());
     }
 
     #[test]
@@ -457,7 +442,7 @@ mod tests {
         let raw_bytes = create_test_data();
         let provider = JBPSegmentMetadataProvider::from_definition(definition, raw_bytes.clone());
 
-        assert_eq!(provider.raw(), raw_bytes.as_ref());
+        assert_eq!(provider.raw(), raw_bytes.as_bytes());
     }
 
     #[test]
@@ -814,7 +799,7 @@ mod property_tests {
     }
 
     /// Create raw bytes for the given field values (each 10 bytes, space-padded).
-    fn create_raw_bytes(values: &[String]) -> Arc<[u8]> {
+    fn create_raw_bytes(values: &[String]) -> OwnedBuffer {
         let mut bytes = Vec::new();
         for value in values {
             let mut field_bytes = value.as_bytes().to_vec();
@@ -822,7 +807,7 @@ mod property_tests {
             field_bytes.resize(10, b' ');
             bytes.extend_from_slice(&field_bytes);
         }
-        Arc::from(bytes)
+        OwnedBuffer::from_vec(bytes)
     }
 
     /// Property 8: Metadata Prefix Filtering
@@ -1014,7 +999,7 @@ mod property_tests {
                                 .with_size(SizeSpec::Fixed(10)),
                         )
                 );
-                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+                let subheader_bytes = OwnedBuffer::from_vec(b"TESTHEAD  ".to_vec());
 
                 // Create TRE definition and envelope
                 let tre_def = StructureDefinition::new("tre_geolob")
@@ -1123,7 +1108,7 @@ mod property_tests {
                     elem.resize(elem_size, b' ');
                     bytes.extend_from_slice(&elem);
                 }
-                let raw: Arc<[u8]> = Arc::from(bytes);
+                let raw = OwnedBuffer::from_vec(bytes);
 
                 let provider = JBPSegmentMetadataProvider::from_definition(def, raw);
 
@@ -1181,7 +1166,7 @@ mod property_tests {
 
                 let returned_raw = provider.raw();
 
-                prop_assert_eq!(returned_raw, raw_bytes.as_ref(),
+                prop_assert_eq!(returned_raw, raw_bytes.as_bytes(),
                     "raw() should return exact input bytes");
             }
 
@@ -1203,7 +1188,7 @@ mod property_tests {
 
                 let returned_raw = provider.raw();
 
-                prop_assert_eq!(returned_raw, raw_bytes.as_ref(),
+                prop_assert_eq!(returned_raw, raw_bytes.as_bytes(),
                     "raw() should return exact input bytes");
             }
 
@@ -1220,12 +1205,12 @@ mod property_tests {
                                 .with_size(SizeSpec::Fixed(bytes.len())),
                         ),
                 );
-                let raw_bytes: Arc<[u8]> = Arc::from(bytes.as_slice());
+                let raw_bytes = OwnedBuffer::from_vec(bytes.clone());
                 let provider = JBPFileMetadataProvider::from_definition(definition, raw_bytes.clone());
 
                 let returned_raw = provider.raw();
 
-                prop_assert_eq!(returned_raw, raw_bytes.as_ref(),
+                prop_assert_eq!(returned_raw, raw_bytes.as_bytes(),
                     "raw() should preserve arbitrary byte content");
             }
 
@@ -1310,7 +1295,7 @@ mod property_tests {
             ) {
                 // Create subheader
                 let subheader_def = create_subheader_definition();
-                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+                let subheader_bytes = OwnedBuffer::from_vec(b"TESTHEAD  ".to_vec());
 
                 // Create TRE definition and envelope
                 let tre_def = create_tre_definition("tre_geolob", 8, 6);
@@ -1382,7 +1367,7 @@ mod property_tests {
             ) {
                 // Create subheader
                 let subheader_def = create_subheader_definition();
-                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+                let subheader_bytes = OwnedBuffer::from_vec(b"TESTHEAD  ".to_vec());
 
                 // Create TRE definition and envelope
                 let tre_def = create_tre_definition("tre_geolob", 8, 6);
@@ -1445,7 +1430,7 @@ mod property_tests {
             ) {
                 // Create subheader
                 let subheader_def = create_subheader_definition();
-                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+                let subheader_bytes = OwnedBuffer::from_vec(b"TESTHEAD  ".to_vec());
 
                 // Create two TRE definitions
                 let tre1_def = create_tre_definition("tre_geolob", 8, 6);
@@ -1521,7 +1506,7 @@ mod property_tests {
             ) {
                 // Create subheader
                 let subheader_def = create_subheader_definition();
-                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+                let subheader_bytes = OwnedBuffer::from_vec(b"TESTHEAD  ".to_vec());
 
                 // Create known TRE
                 let tre_def = create_tre_definition("tre_geolob", 8, 6);
@@ -1682,11 +1667,11 @@ mod property_tests {
         }
 
         /// Create a minimal subheader definition and data
-        fn create_subheader() -> (Arc<StructureDefinition>, Arc<[u8]>) {
+        fn create_subheader() -> (Arc<StructureDefinition>, OwnedBuffer) {
             let def = Arc::new(StructureDefinition::new("TestSubheader").with_field(
                 FieldDefinition::new("HEADER", FieldType::String).with_size(SizeSpec::Fixed(10)),
             ));
-            let data: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+            let data = OwnedBuffer::from_vec(b"TESTHEAD  ".to_vec());
             (def, data)
         }
 
@@ -1819,11 +1804,11 @@ mod property_tests {
         }
 
         /// Create a minimal subheader definition and data
-        fn create_subheader() -> (Arc<StructureDefinition>, Arc<[u8]>) {
+        fn create_subheader() -> (Arc<StructureDefinition>, OwnedBuffer) {
             let def = Arc::new(StructureDefinition::new("TestSubheader").with_field(
                 FieldDefinition::new("HEADER", FieldType::String).with_size(SizeSpec::Fixed(10)),
             ));
-            let data: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+            let data = OwnedBuffer::from_vec(b"TESTHEAD  ".to_vec());
             (def, data)
         }
 
@@ -1967,7 +1952,7 @@ mod property_tests {
             count: u8,
             elem_values: &[String],
             elem_size: usize,
-        ) -> Arc<[u8]> {
+        ) -> OwnedBuffer {
             let mut bytes = Vec::new();
             // HEADER field: 10 bytes, space-padded
             let mut header = header_value.as_bytes().to_vec();
@@ -1981,7 +1966,7 @@ mod property_tests {
                 elem.resize(elem_size, b' ');
                 bytes.extend_from_slice(&elem);
             }
-            Arc::from(bytes)
+            OwnedBuffer::from_vec(bytes)
         }
 
         /// Build a TRE definition with a count field (BCS-N string) and a repeated field.
@@ -2184,7 +2169,7 @@ mod property_tests {
                                 .with_size(SizeSpec::Fixed(10)),
                         ),
                 );
-                let subheader_bytes: Arc<[u8]> = Arc::from(b"TESTHEAD  ".as_slice());
+                let subheader_bytes = OwnedBuffer::from_vec(b"TESTHEAD  ".to_vec());
 
                 let tre_envelope = TreEnvelope {
                     tag: "REPTEST".to_string(),
@@ -2331,9 +2316,9 @@ mod property_tests {
         }
 
         /// Create subheader raw bytes matching the definition above
-        fn create_subheader_bytes() -> Arc<[u8]> {
+        fn create_subheader_bytes() -> OwnedBuffer {
             // HEADER(10) + HEADTYPE(4) + FSCLAS(1) + FSCLSY(2) = 17 bytes
-            Arc::from(b"TESTHEAD  IMG U  ".as_slice())
+            OwnedBuffer::from_vec(b"TESTHEAD  IMG U  ".to_vec())
         }
 
         /// Build a provider with subheader fields and two known TREs (GEOLOB, SENSRB)

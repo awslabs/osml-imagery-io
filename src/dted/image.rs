@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::dted::metadata::DTEDMetadataProvider;
 use crate::dted::records::{decode_elevation, record_size, validate_record_checksum, DATA_OFFSET};
 use crate::error::CodecError;
+use crate::owned_buffer::OwnedBuffer;
 use crate::traits::asset::AssetMetadata;
 use crate::traits::image::ImageAssetProvider;
 use crate::traits::metadata::MetadataProvider;
@@ -20,7 +21,7 @@ use crate::types::PixelType;
 /// signed-magnitude big-endian values to native i16, and transposes
 /// to row-major BSQ output format.
 pub struct DTEDImageAssetProvider {
-    data: Arc<[u8]>,
+    source_data: OwnedBuffer,
     num_lon_lines: u32,
     num_lat_points: u32,
     record_size: usize,
@@ -30,13 +31,13 @@ pub struct DTEDImageAssetProvider {
 
 impl DTEDImageAssetProvider {
     pub fn new(
-        data: Arc<[u8]>,
+        source_data: OwnedBuffer,
         num_lon_lines: u16,
         num_lat_points: u16,
         metadata: Arc<DTEDMetadataProvider>,
     ) -> Self {
         Self {
-            data,
+            source_data,
             num_lon_lines: num_lon_lines as u32,
             num_lat_points: num_lat_points as u32,
             record_size: record_size(num_lat_points),
@@ -46,6 +47,7 @@ impl DTEDImageAssetProvider {
     }
 
     fn decode_full_grid(&self) -> Result<Vec<u8>, CodecError> {
+        let data = self.source_data.as_bytes();
         let cols = self.num_lon_lines as usize;
         let rows = self.num_lat_points as usize;
         let mut output = vec![0i16; rows * cols];
@@ -54,17 +56,17 @@ impl DTEDImageAssetProvider {
             let record_offset = DATA_OFFSET + col * self.record_size;
             let record_end = record_offset + self.record_size;
 
-            if record_end > self.data.len() {
+            if record_end > data.len() {
                 return Err(CodecError::Decode(format!(
                     "DTED data record {} extends beyond file (offset {} + size {} > file size {})",
                     col,
                     record_offset,
                     self.record_size,
-                    self.data.len()
+                    data.len()
                 )));
             }
 
-            let record = &self.data[record_offset..record_end];
+            let record = &data[record_offset..record_end];
 
             if record[0] != 0xAA {
                 return Err(CodecError::Decode(format!(
@@ -246,6 +248,7 @@ impl ImageAssetProvider for DTEDImageAssetProvider {
 mod tests {
     use super::*;
     use crate::dted::records::{Acc, Dsi, Uhl};
+    use crate::owned_buffer::OwnedBuffer;
 
     fn make_test_metadata() -> Arc<DTEDMetadataProvider> {
         let uhl = Uhl {
@@ -338,7 +341,7 @@ mod tests {
     fn test_image_provider_dimensions() {
         let data = make_synthetic_dted(3, 4);
         let metadata = make_test_metadata();
-        let provider = DTEDImageAssetProvider::new(Arc::from(data.as_slice()), 3, 4, metadata);
+        let provider = DTEDImageAssetProvider::new(OwnedBuffer::from_vec(data), 3, 4, metadata);
 
         assert_eq!(provider.num_columns(), 3);
         assert_eq!(provider.num_rows(), 4);
@@ -355,7 +358,7 @@ mod tests {
     fn test_image_provider_get_block() {
         let data = make_synthetic_dted(3, 4);
         let metadata = make_test_metadata();
-        let provider = DTEDImageAssetProvider::new(Arc::from(data.as_slice()), 3, 4, metadata);
+        let provider = DTEDImageAssetProvider::new(OwnedBuffer::from_vec(data), 3, 4, metadata);
 
         let (pixels, shape) = provider.get_block(0, 0, 0, None).unwrap();
         assert_eq!(shape, [1, 4, 3]);
@@ -387,7 +390,7 @@ mod tests {
     fn test_image_provider_has_block() {
         let data = make_synthetic_dted(3, 4);
         let metadata = make_test_metadata();
-        let provider = DTEDImageAssetProvider::new(Arc::from(data.as_slice()), 3, 4, metadata);
+        let provider = DTEDImageAssetProvider::new(OwnedBuffer::from_vec(data), 3, 4, metadata);
 
         assert!(provider.has_block(0, 0, 0).unwrap());
         assert!(!provider.has_block(1, 0, 0).unwrap());
@@ -399,7 +402,7 @@ mod tests {
     fn test_image_provider_invalid_block() {
         let data = make_synthetic_dted(3, 4);
         let metadata = make_test_metadata();
-        let provider = DTEDImageAssetProvider::new(Arc::from(data.as_slice()), 3, 4, metadata);
+        let provider = DTEDImageAssetProvider::new(OwnedBuffer::from_vec(data), 3, 4, metadata);
 
         assert!(matches!(
             provider.get_block(1, 0, 0, None),
@@ -415,7 +418,7 @@ mod tests {
     fn test_image_provider_asset_metadata() {
         let data = make_synthetic_dted(3, 4);
         let metadata = make_test_metadata();
-        let provider = DTEDImageAssetProvider::new(Arc::from(data.as_slice()), 3, 4, metadata);
+        let provider = DTEDImageAssetProvider::new(OwnedBuffer::from_vec(data), 3, 4, metadata);
 
         assert_eq!(provider.key(), "elevation");
         assert_eq!(provider.roles(), &["data", "elevation"]);

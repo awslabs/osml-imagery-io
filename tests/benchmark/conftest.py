@@ -540,6 +540,9 @@ def native_read_params(request):
 # ---------------------------------------------------------------------------
 
 
+_DATASET_FIXTURES = frozenset({"dataset_entry", "native_read_params", "zarr_read_params"})
+
+
 def pytest_collection_modifyitems(config, items):
     """Skip benchmark tests that require datasets when none are configured."""
     if _resolved_datasets:
@@ -550,10 +553,11 @@ def pytest_collection_modifyitems(config, items):
         "Add entries to data/benchmark/benchmark_datasets.yaml or set OSML_IO_BENCHMARK_DATA."
     )
     for item in items:
-        # Only skip tests explicitly marked @pytest.mark.benchmark, not all
-        # tests that happen to live under the tests/benchmark/ directory.
+        # Only skip benchmark-marked tests that depend on external dataset
+        # fixtures. Self-contained benchmarks (e.g. memory_usage) run regardless.
         if item.get_closest_marker("benchmark") is not None:
-            item.add_marker(skip_marker)
+            if _DATASET_FIXTURES & set(item.fixturenames):
+                item.add_marker(skip_marker)
 
 
 def pytest_configure(config):

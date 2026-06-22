@@ -255,6 +255,7 @@ mod tests {
     use super::*;
     use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
     use crate::jpeg::reader::JPEGDatasetReader;
+    use crate::owned_buffer::OwnedBuffer;
     use crate::traits::reader::DatasetReader;
 
     /// Helper: create a BufferedImageAssetProvider with the given config and BSQ data.
@@ -490,7 +491,7 @@ mod tests {
 
         // Read back
         let data = std::fs::read(&path).unwrap();
-        let reader = JPEGDatasetReader::from_bytes(&data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("Expected Image variant");
 
@@ -536,7 +537,7 @@ mod tests {
         writer.close().unwrap();
 
         let data = std::fs::read(&path).unwrap();
-        let reader = JPEGDatasetReader::from_bytes(&data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("Expected Image variant");
 
@@ -601,7 +602,7 @@ mod tests {
 
         // Read back and verify dimensions
         let data = std::fs::read(&path).unwrap();
-        let reader = JPEGDatasetReader::from_bytes(&data).unwrap();
+        let reader = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("Expected Image variant");
 

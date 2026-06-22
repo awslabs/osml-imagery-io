@@ -9,6 +9,7 @@ use crate::dted::image::DTEDImageAssetProvider;
 use crate::dted::metadata::DTEDMetadataProvider;
 use crate::dted::records::{record_size, Acc, Dsi, Uhl, DATA_OFFSET};
 use crate::error::CodecError;
+use crate::owned_buffer::OwnedBuffer;
 use crate::traits::asset::{AssetMetadata, AssetProvider};
 use crate::traits::image::ImageAssetProvider;
 use crate::traits::metadata::MetadataProvider;
@@ -33,12 +34,14 @@ impl std::fmt::Debug for DTEDDatasetReader {
 }
 
 impl DTEDDatasetReader {
-    /// Construct from a raw byte slice.
+    /// Construct from an `OwnedBuffer`.
     ///
     /// Validates the UHL, DSI, and ACC record sentinels, parses header
     /// metadata, and verifies the file length is consistent with the
     /// declared grid dimensions.
-    pub fn from_bytes(data: &[u8]) -> Result<Self, CodecError> {
+    pub fn from_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
+        let data = buffer.as_bytes();
+
         if data.len() < DATA_OFFSET {
             return Err(CodecError::InvalidFormat(
                 "DTED file too short: must be at least 3428 bytes for UHL+DSI+ACC".to_string(),
@@ -62,9 +65,8 @@ impl DTEDDatasetReader {
         let raw_header = &data[..DATA_OFFSET];
         let metadata = Arc::new(DTEDMetadataProvider::new(&uhl, &dsi, &acc, raw_header));
 
-        let owned_data: Arc<[u8]> = Arc::from(data);
         let image_asset = Arc::new(DTEDImageAssetProvider::new(
-            owned_data,
+            buffer,
             uhl.num_lon_lines,
             uhl.num_lat_points,
             metadata.clone(),
@@ -205,7 +207,7 @@ mod tests {
     #[test]
     fn test_from_bytes_valid() {
         let data = make_valid_dted(3, 4);
-        let reader = DTEDDatasetReader::from_bytes(&data).unwrap();
+        let reader = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         assert!(reader.has_asset("elevation"));
         assert!(!reader.has_asset("nonexistent"));
     }
@@ -213,36 +215,37 @@ mod tests {
     #[test]
     fn test_from_bytes_too_short() {
         let data = vec![0u8; 100];
-        let result = DTEDDatasetReader::from_bytes(&data);
+        let result = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(data));
         assert!(matches!(result, Err(CodecError::InvalidFormat(_))));
     }
 
     #[test]
     fn test_from_bytes_invalid_sentinel() {
-        let mut data = vec![0x20u8; DATA_OFFSET + 100];
+        let data = vec![0x20u8; DATA_OFFSET + 100];
         // No valid sentinels
-        let result = DTEDDatasetReader::from_bytes(&data);
+        let result = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(data));
         assert!(result.is_err());
 
         // Valid UHL but invalid DSI
-        data[0..3].copy_from_slice(b"UHL");
-        data[4..12].copy_from_slice(b"0000000E");
-        data[12..20].copy_from_slice(b"000000N ");
-        data[20..24].copy_from_slice(b"0030");
-        data[24..28].copy_from_slice(b"0030");
-        data[28..32].copy_from_slice(b"0020");
-        data[32] = b'U';
-        data[47..51].copy_from_slice(b"   3");
-        data[51..55].copy_from_slice(b"   4");
-        data[55] = b'0';
-        let result = DTEDDatasetReader::from_bytes(&data);
+        let mut data2 = vec![0x20u8; DATA_OFFSET + 100];
+        data2[0..3].copy_from_slice(b"UHL");
+        data2[4..12].copy_from_slice(b"0000000E");
+        data2[12..20].copy_from_slice(b"000000N ");
+        data2[20..24].copy_from_slice(b"0030");
+        data2[24..28].copy_from_slice(b"0030");
+        data2[28..32].copy_from_slice(b"0020");
+        data2[32] = b'U';
+        data2[47..51].copy_from_slice(b"   3");
+        data2[51..55].copy_from_slice(b"   4");
+        data2[55] = b'0';
+        let result = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(data2));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_get_asset_keys() {
         let data = make_valid_dted(3, 4);
-        let reader = DTEDDatasetReader::from_bytes(&data).unwrap();
+        let reader = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
 
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
         assert_eq!(keys, vec!["elevation"]);
@@ -263,7 +266,7 @@ mod tests {
     #[test]
     fn test_get_asset_valid() {
         let data = make_valid_dted(3, 4);
-        let reader = DTEDDatasetReader::from_bytes(&data).unwrap();
+        let reader = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("elevation").unwrap();
         assert_eq!(asset.key(), "elevation");
         assert_eq!(asset.asset_type(), AssetType::Image);
@@ -272,7 +275,7 @@ mod tests {
     #[test]
     fn test_get_asset_not_found() {
         let data = make_valid_dted(3, 4);
-        let reader = DTEDDatasetReader::from_bytes(&data).unwrap();
+        let reader = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let result = reader.get_asset("nonexistent");
         assert!(matches!(result, Err(CodecError::AssetNotFound(_))));
     }
@@ -280,7 +283,7 @@ mod tests {
     #[test]
     fn test_metadata() {
         let data = make_valid_dted(3, 4);
-        let reader = DTEDDatasetReader::from_bytes(&data).unwrap();
+        let reader = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let meta = reader.metadata();
         let dict = meta.entries(None);
         assert!(dict.contains_key("dted:origin_longitude"));
@@ -290,7 +293,7 @@ mod tests {
     #[test]
     fn test_close() {
         let data = make_valid_dted(3, 4);
-        let mut reader = DTEDDatasetReader::from_bytes(&data).unwrap();
+        let mut reader = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         assert!(reader.has_asset("elevation"));
         reader.close().unwrap();
         assert!(!reader.has_asset("elevation"));

@@ -3767,6 +3767,7 @@ mod tests {
     fn writer_round_trip_with_buffered_image_provider() {
         use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
         use crate::jbp::reader::JBPDatasetReader;
+        use crate::owned_buffer::OwnedBuffer;
         use crate::traits::DatasetReader;
         use crate::types::AssetType;
 
@@ -3806,7 +3807,7 @@ mod tests {
 
         // Read the file back
         let data = std::fs::read(&path).unwrap();
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
 
         // Verify we have one image asset
         let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
@@ -3863,6 +3864,7 @@ mod tests {
             BufferedImageAssetProvider, BufferedMetadataProvider, MemoryImageConfig,
         };
         use crate::jbp::reader::JBPDatasetReader;
+        use crate::owned_buffer::OwnedBuffer;
         use crate::traits::DatasetReader;
         use crate::types::AssetType;
 
@@ -3903,7 +3905,7 @@ mod tests {
         writer.close().unwrap();
 
         let data = std::fs::read(&path).unwrap();
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
         let asset = reader.get_asset(&asset_keys[0]).unwrap();
         let meta = asset.as_image().unwrap().metadata().entries(None);

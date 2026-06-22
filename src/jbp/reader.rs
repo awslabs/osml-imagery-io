@@ -21,6 +21,7 @@ use crate::jbp::tre::TreEnvelope;
 use crate::jbp::types::{
     JBPReaderOptions, NitfFormat, SegmentLocation, SegmentOffsets, SegmentType,
 };
+use crate::owned_buffer::OwnedBuffer;
 use crate::parser::{StructureAccessor, StructureDefinition, StructureRegistry};
 use crate::traits::{AssetProvider, DatasetReader, MetadataProvider};
 use crate::types::AssetType;
@@ -41,9 +42,11 @@ use crate::types::AssetType;
 ///
 /// ```ignore
 /// use osml_imagery_io::jbp::JBPDatasetReader;
+/// use osml_imagery_io::owned_buffer::OwnedBuffer;
 ///
 /// let data = std::fs::read("image.ntf")?;
-/// let reader = JBPDatasetReader::from_bytes(&data)?;
+/// let buffer = OwnedBuffer::from_vec(data);
+/// let reader = JBPDatasetReader::from_buffer(buffer)?;
 /// let keys = reader.get_asset_keys(None, None);
 /// for key in keys {
 ///     let asset = reader.get_asset(&key)?;
@@ -52,7 +55,7 @@ use crate::types::AssetType;
 /// ```
 pub struct JBPDatasetReader {
     /// File data (owned bytes)
-    data: Arc<[u8]>,
+    source_data: OwnedBuffer,
     /// Detected format (NITF 2.1 or NSIF 1.0)
     format: NitfFormat,
     /// Pre-calculated segment offsets
@@ -74,33 +77,18 @@ pub struct JBPDatasetReader {
 }
 
 impl JBPDatasetReader {
-    /// Create a new reader from a byte slice.
-    ///
-    /// This method creates a reader from in-memory data, useful for testing
-    /// or when the file is already loaded.
-    ///
-    /// # Arguments
-    /// * `data` - Byte slice containing the NITF/NSIF file data
-    ///
-    /// # Returns
-    /// A new `JBPDatasetReader` or an error if the data cannot be parsed.
-    pub fn from_bytes(data: &[u8]) -> Result<Self, CodecError> {
-        Self::from_bytes_with_options(data, JBPReaderOptions::default())
+    /// Create a new reader from an `OwnedBuffer`.
+    pub fn from_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
+        Self::from_buffer_with_options(buffer, JBPReaderOptions::default())
     }
 
-    /// Create a new reader from a byte slice with custom options.
-    ///
-    /// # Arguments
-    /// * `data` - Byte slice containing the NITF/NSIF file data
-    /// * `options` - Reader configuration options
-    ///
-    /// # Returns
-    /// A new `JBPDatasetReader` or an error if the data cannot be parsed.
-    pub fn from_bytes_with_options(
-        data: &[u8],
+    /// Create a new reader from an `OwnedBuffer` with custom options.
+    pub fn from_buffer_with_options(
+        buffer: OwnedBuffer,
         options: JBPReaderOptions,
     ) -> Result<Self, CodecError> {
         let mut warnings = Vec::new();
+        let data = buffer.as_bytes();
 
         // Validate magic number and detect format
         let format = validate_nitf_magic(data)?;
@@ -152,11 +140,8 @@ impl JBPDatasetReader {
         // Validate segment counts
         Self::validate_segment_counts(&accessor, &segment_offsets, &mut warnings)?;
 
-        // Create owned data
-        let data: Arc<[u8]> = Arc::from(data);
-
-        // Create file metadata provider
-        let raw_header_bytes: Arc<[u8]> = Arc::from(&data[..header_length]);
+        // Create file metadata provider (zero-copy slice of header)
+        let raw_header_bytes = buffer.slice(0..header_length);
         let file_metadata = Arc::new(JBPFileMetadataProvider::from_definition(
             file_header_definition.clone(),
             raw_header_bytes,
@@ -168,7 +153,7 @@ impl JBPDatasetReader {
         }
 
         Ok(Self {
-            data,
+            source_data: buffer,
             format,
             segment_offsets,
             segment_cache: RwLock::new(HashMap::new()),
@@ -443,11 +428,11 @@ impl JBPDatasetReader {
     ) -> Result<AssetProvider, CodecError> {
         let key = generate_asset_key(segment_type, index);
 
-        // Get subheader bytes
+        // Get subheader bytes (zero-copy slice)
         let subheader_start = location.subheader_offset as usize;
         let subheader_end = subheader_start + location.subheader_length as usize;
 
-        if subheader_end > self.data.len() {
+        if subheader_end > self.source_data.len() {
             return Err(JBPError::SegmentParseError {
                 offset: location.subheader_offset,
                 message: "Subheader extends beyond file".to_string(),
@@ -455,7 +440,7 @@ impl JBPDatasetReader {
             .into());
         }
 
-        let subheader_bytes: Arc<[u8]> = Arc::from(&self.data[subheader_start..subheader_end]);
+        let subheader_bytes = self.source_data.slice(subheader_start..subheader_end);
 
         // Create appropriate definition and provider based on segment type
         match segment_type {
@@ -472,7 +457,7 @@ impl JBPDatasetReader {
                         })?;
 
                 // Extract TREs from image subheader
-                let tre_envelopes = self.extract_image_tres(&subheader_bytes)?;
+                let tre_envelopes = self.extract_image_tres(subheader_bytes.as_bytes())?;
 
                 let metadata = Arc::new(JBPSegmentMetadataProvider::with_tres(
                     definition,
@@ -487,7 +472,7 @@ impl JBPDatasetReader {
                     format!("NITF image segment at index {}", index),
                     vec!["data".to_string()],
                     *location,
-                    self.data.clone(),
+                    self.source_data.clone(),
                     metadata,
                     self.registry.clone(),
                     self.format,
@@ -506,8 +491,11 @@ impl JBPDatasetReader {
                         })?;
 
                 // Use TextSubheaderFacade for validation and to extract TXTFMT
-                let facade =
-                    TextSubheaderFacade::from_bytes(&subheader_bytes, &self.registry, self.format)?;
+                let facade = TextSubheaderFacade::from_bytes(
+                    subheader_bytes.as_bytes(),
+                    &self.registry,
+                    self.format,
+                )?;
 
                 // Extract TXTFMT for encoding-aware text handling
                 let txtfmt = facade
@@ -524,7 +512,7 @@ impl JBPDatasetReader {
                     .unwrap_or_else(|| format!("Text Segment {}", index));
 
                 // Extract TREs from text subheader
-                let tre_envelopes = self.extract_text_tres(&subheader_bytes)?;
+                let tre_envelopes = self.extract_text_tres(subheader_bytes.as_bytes())?;
 
                 let metadata = Arc::new(JBPSegmentMetadataProvider::with_tres(
                     definition,
@@ -539,7 +527,7 @@ impl JBPDatasetReader {
                     format!("NITF text segment at index {}", index),
                     vec!["metadata".to_string()],
                     *location,
-                    self.data.clone(),
+                    self.source_data.clone(),
                     metadata,
                     txtfmt,
                 ))))
@@ -559,7 +547,7 @@ impl JBPDatasetReader {
                 // Use GraphicSubheaderFacade for validation (SY, SFMT, ENCRYP)
                 // and to extract title/description from SNAME/SID fields
                 let facade = GraphicSubheaderFacade::from_bytes(
-                    &subheader_bytes,
+                    subheader_bytes.as_bytes(),
                     &self.registry,
                     self.format,
                 )?;
@@ -581,7 +569,7 @@ impl JBPDatasetReader {
                     .unwrap_or_else(|| format!("NITF graphic segment at index {}", index));
 
                 // Extract TREs from graphic subheader
-                let tre_envelopes = self.extract_graphic_tres(&subheader_bytes)?;
+                let tre_envelopes = self.extract_graphic_tres(subheader_bytes.as_bytes())?;
 
                 let metadata = Arc::new(JBPSegmentMetadataProvider::with_tres(
                     definition,
@@ -597,7 +585,7 @@ impl JBPDatasetReader {
                         description,
                         vec!["graphic".to_string()],
                         *location,
-                        self.data.clone(),
+                        self.source_data.clone(),
                         metadata,
                     ),
                 )))
@@ -624,7 +612,7 @@ impl JBPDatasetReader {
                     format!("NITF data extension segment at index {}", index),
                     vec!["metadata".to_string()],
                     *location,
-                    self.data.clone(),
+                    self.source_data.clone(),
                     metadata,
                 ))))
             }
@@ -650,7 +638,7 @@ impl JBPDatasetReader {
                     format!("NITF reserved extension segment at index {}", index),
                     vec!["metadata".to_string()],
                     *location,
-                    self.data.clone(),
+                    self.source_data.clone(),
                     metadata,
                 ))))
             }
@@ -705,7 +693,7 @@ impl JBPDatasetReader {
                         if let Ok(overflow_tres) = overflow::fetch_overflow_tres(
                             udofl,
                             &self.segment_offsets.des,
-                            &self.data,
+                            self.source_data.as_bytes(),
                         ) {
                             tre_envelopes.extend(overflow_tres);
                         }
@@ -716,7 +704,7 @@ impl JBPDatasetReader {
                         if let Ok(overflow_tres) = overflow::fetch_overflow_tres(
                             ixsofl,
                             &self.segment_offsets.des,
-                            &self.data,
+                            self.source_data.as_bytes(),
                         ) {
                             tre_envelopes.extend(overflow_tres);
                         }
@@ -760,7 +748,7 @@ impl JBPDatasetReader {
                         if let Ok(overflow_tres) = overflow::fetch_overflow_tres(
                             sxsofl,
                             &self.segment_offsets.des,
-                            &self.data,
+                            self.source_data.as_bytes(),
                         ) {
                             tre_envelopes.extend(overflow_tres);
                         }
@@ -804,7 +792,7 @@ impl JBPDatasetReader {
                         if let Ok(overflow_tres) = overflow::fetch_overflow_tres(
                             txsofl,
                             &self.segment_offsets.des,
-                            &self.data,
+                            self.source_data.as_bytes(),
                         ) {
                             tre_envelopes.extend(overflow_tres);
                         }
@@ -1378,30 +1366,30 @@ mod tests {
     #[test]
     fn reader_from_bytes_valid_nitf() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data);
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec()));
         assert!(reader.is_ok());
         let reader = reader.unwrap();
         assert_eq!(reader.format(), NitfFormat::Nitf21);
     }
 
     #[test]
-    fn reader_from_bytes_invalid_magic() {
+    fn reader_from_buffer_invalid_magic() {
         let data = b"INVALID00rest of file";
-        let reader = JBPDatasetReader::from_bytes(data);
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec()));
         assert!(reader.is_err());
     }
 
     #[test]
-    fn reader_from_bytes_too_small() {
+    fn reader_from_buffer_too_small() {
         let data = b"NITF02.1";
-        let reader = JBPDatasetReader::from_bytes(data);
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec()));
         assert!(reader.is_err());
     }
 
     #[test]
     fn reader_get_asset_keys_all() {
         let data = create_minimal_nitf_header(2, 1, 1, 1, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let keys = reader.get_asset_keys(None, None);
         assert_eq!(keys.len(), 5); // 2 images + 1 graphic + 1 text + 1 des
@@ -1410,7 +1398,7 @@ mod tests {
     #[test]
     fn reader_get_asset_keys_images_only() {
         let data = create_minimal_nitf_header(3, 1, 1, 1, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
         assert_eq!(keys.len(), 3);
@@ -1420,7 +1408,7 @@ mod tests {
     #[test]
     fn reader_get_asset_keys_text_only() {
         let data = create_minimal_nitf_header(1, 0, 2, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let keys = reader.get_asset_keys(Some(AssetType::Text), None);
         assert_eq!(keys.len(), 2);
@@ -1430,7 +1418,7 @@ mod tests {
     #[test]
     fn reader_get_asset_keys_graphics_only() {
         let data = create_minimal_nitf_header(1, 2, 0, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let keys = reader.get_asset_keys(Some(AssetType::Graphics), None);
         assert_eq!(keys.len(), 2);
@@ -1440,7 +1428,7 @@ mod tests {
     #[test]
     fn reader_get_asset_keys_data_only() {
         let data = create_minimal_nitf_header(1, 0, 0, 2, 1);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let keys = reader.get_asset_keys(Some(AssetType::Data), None);
         assert_eq!(keys.len(), 3); // 2 DES + 1 RES
@@ -1449,7 +1437,7 @@ mod tests {
     #[test]
     fn reader_has_asset_valid_key() {
         let data = create_minimal_nitf_header(2, 0, 0, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         assert!(reader.has_asset("image:0"));
         assert!(reader.has_asset("image:1"));
@@ -1459,7 +1447,7 @@ mod tests {
     #[test]
     fn reader_has_asset_invalid_key() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         assert!(!reader.has_asset("invalid_key"));
         assert!(!reader.has_asset("text:0"));
@@ -1468,7 +1456,7 @@ mod tests {
     #[test]
     fn reader_get_asset_image() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let asset = reader.get_asset("image:0");
         assert!(asset.is_ok());
@@ -1481,7 +1469,7 @@ mod tests {
     #[test]
     fn reader_get_asset_not_found() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let asset = reader.get_asset("image:5");
         assert!(asset.is_err());
@@ -1490,7 +1478,7 @@ mod tests {
     #[test]
     fn reader_get_asset_caching() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         // First access
         let asset1 = reader.get_asset("image:0").unwrap();
@@ -1506,7 +1494,7 @@ mod tests {
     #[test]
     fn reader_metadata() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let metadata = reader.metadata();
         let dict = metadata.entries(None);
@@ -1520,7 +1508,7 @@ mod tests {
     #[test]
     fn reader_metadata_prefix_filter() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let metadata = reader.metadata();
         let dict = metadata.entries(Some("FS"));
@@ -1538,7 +1526,8 @@ mod tests {
     #[test]
     fn reader_close() {
         let data = create_minimal_nitf_header(1, 0, 0, 0, 0);
-        let mut reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let mut reader =
+            JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         // Access an asset to populate cache
         let _ = reader.get_asset("image:0");
@@ -1556,7 +1545,7 @@ mod tests {
         data[9] = b'9';
         data[10] = b'9';
 
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
         let warnings = reader.warnings();
 
         // Should have a warning about invalid CLEVEL
@@ -1568,7 +1557,7 @@ mod tests {
     #[test]
     fn reader_segment_offsets() {
         let data = create_minimal_nitf_header(2, 1, 1, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let offsets = reader.segment_offsets();
         assert_eq!(offsets.images.len(), 2);
@@ -1599,7 +1588,7 @@ mod property_tests {
             numdes in 0usize..5,
         ) {
             let file = create_minimal_nitf_header(numi, nums, numt, numdes, 0);
-            let reader = JBPDatasetReader::from_bytes(&file).unwrap();
+            let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(file.to_vec())).unwrap();
 
             // Get all keys
             let keys = reader.get_asset_keys(None, None);
@@ -1652,7 +1641,7 @@ mod property_tests {
             numdes in 0usize..3,
         ) {
             let file = create_minimal_nitf_header(numi, nums, numt, numdes, 0);
-            let reader = JBPDatasetReader::from_bytes(&file).unwrap();
+            let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(file.to_vec())).unwrap();
 
             // Test image segments
             for i in 0..numi {
@@ -1783,7 +1772,7 @@ mod debug_tests {
     fn test_des_only_file() {
         // Test case with only DES segments (no images, graphics, or text)
         let data = create_minimal_nitf_header(0, 0, 0, 2, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let offsets = reader.segment_offsets();
         assert_eq!(offsets.des.len(), 2);
@@ -1825,7 +1814,7 @@ mod validation_property_tests {
             numres in 0usize..5,
         ) {
             let data = create_minimal_nitf_header(numi, nums, numt, numdes, numres);
-            let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+            let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
             let offsets = reader.segment_offsets();
 
@@ -1882,7 +1871,7 @@ mod validation_property_tests {
 
             // Create reader with validation disabled (default)
             let options = JBPReaderOptions::new().with_file_length_validation(false);
-            let reader = JBPDatasetReader::from_bytes_with_options(&data, options).unwrap();
+            let reader = JBPDatasetReader::from_buffer_with_options(OwnedBuffer::from_vec(data.to_vec()), options).unwrap();
 
             // Should not have file length mismatch warnings when validation is disabled
             let warnings = reader.warnings();
@@ -1911,7 +1900,7 @@ mod validation_property_tests {
             ]
         ) {
             let data = create_nitf_with_clevel(clevel);
-            let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+            let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
             // Valid CLEVEL should not produce warnings
             let warnings = reader.warnings();
@@ -1943,7 +1932,7 @@ mod validation_property_tests {
             ]
         ) {
             let data = create_nitf_with_clevel(clevel);
-            let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+            let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
             // Invalid CLEVEL should produce a warning
             let warnings = reader.warnings();
@@ -1971,7 +1960,7 @@ mod validation_property_tests {
             // Set invalid CLEVEL
             data[9..11].copy_from_slice(invalid_clevel.as_bytes());
 
-            let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+            let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
             // Warnings should be accessible
             let warnings = reader.warnings();
@@ -2029,7 +2018,7 @@ mod tre_property_tests {
             let data = tests::create_minimal_nitf_header(numi, nums, numt, 0, 0);
 
             // Create reader - should succeed
-            let reader = JBPDatasetReader::from_bytes(&data);
+            let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec()));
             prop_assert!(reader.is_ok(), "Reader creation should succeed");
             let reader = reader.unwrap();
 
@@ -2095,7 +2084,7 @@ mod tre_property_tests {
             let data = tests::create_minimal_nitf_header(numi, 0, 0, 0, 0);
 
             // Create reader
-            let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+            let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
             // Access image segment
             let asset = reader.get_asset("image:0").unwrap();
@@ -2123,7 +2112,7 @@ mod tre_property_tests {
     fn tre_extraction_handles_empty_fields() {
         // Create a minimal NITF file (no TREs in subheaders)
         let data = tests::create_minimal_nitf_header(1, 1, 1, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         // Access each segment type - should succeed without TRE errors
         let image = reader.get_asset("image:0");
@@ -2140,7 +2129,7 @@ mod tre_property_tests {
     #[test]
     fn metadata_provider_has_tre_support() {
         let data = tests::create_minimal_nitf_header(1, 0, 0, 0, 0);
-        let reader = JBPDatasetReader::from_bytes(&data).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())).unwrap();
 
         let asset = reader.get_asset("image:0").unwrap();
         let metadata = asset.metadata();
@@ -2239,7 +2228,7 @@ mod nitf_integration_tests {
                     continue;
                 }
             };
-            let reader = match JBPDatasetReader::from_bytes(&data) {
+            let reader = match JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())) {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("Warning: Failed to parse {:?}: {}", file_path, e);
@@ -2353,7 +2342,7 @@ mod nitf_integration_tests {
                 Ok(d) => d,
                 Err(_) => continue,
             };
-            let reader = match JBPDatasetReader::from_bytes(&data) {
+            let reader = match JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())) {
                 Ok(r) => r,
                 Err(_) => continue,
             };

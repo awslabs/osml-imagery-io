@@ -979,7 +979,7 @@ mod tests {
         use crate::jbp::image::decoder::BlockDecoder;
         use crate::jbp::image::nc_decoder::UncompressedBlockDecoder;
         use crate::jbp::image::types::{PixelJustification, PixelValueType};
-        use std::sync::Arc;
+        use crate::owned_buffer::OwnedBuffer;
 
         #[test]
         fn encode_1bpp_single_band_roundtrip() {
@@ -1000,7 +1000,7 @@ mod tests {
 
             // Decode and verify round-trip
             let decoder = UncompressedBlockDecoder::from_raw_params(
-                Arc::from(encoded),
+                OwnedBuffer::from_vec(encoded),
                 4,
                 8,
                 1,
@@ -1037,7 +1037,7 @@ mod tests {
 
             // Decode and verify round-trip
             let decoder = UncompressedBlockDecoder::from_raw_params(
-                Arc::from(encoded),
+                OwnedBuffer::from_vec(encoded),
                 2,
                 4,
                 1,
@@ -1074,7 +1074,7 @@ mod tests {
 
             // Decode and verify round-trip
             let decoder = UncompressedBlockDecoder::from_raw_params(
-                Arc::from(encoded),
+                OwnedBuffer::from_vec(encoded),
                 2,
                 4,
                 1,
@@ -1107,7 +1107,7 @@ mod tests {
             assert_eq!(encoded.len(), 2);
 
             let decoder = UncompressedBlockDecoder::from_raw_params(
-                Arc::from(encoded),
+                OwnedBuffer::from_vec(encoded),
                 2,
                 4,
                 1,
@@ -1140,7 +1140,7 @@ mod tests {
             assert_eq!(encoded.len(), 2);
 
             let decoder = UncompressedBlockDecoder::from_raw_params(
-                Arc::from(encoded),
+                OwnedBuffer::from_vec(encoded),
                 2,
                 2,
                 1,
@@ -1198,7 +1198,7 @@ mod tests {
 
             // Decode and verify round-trip
             let decoder = UncompressedBlockDecoder::from_raw_params(
-                Arc::from(encoded),
+                OwnedBuffer::from_vec(encoded),
                 2,
                 2,
                 1,
@@ -1238,7 +1238,7 @@ mod tests {
             assert_eq!(encoded.len(), 12);
 
             let decoder = UncompressedBlockDecoder::from_raw_params(
-                Arc::from(encoded),
+                OwnedBuffer::from_vec(encoded),
                 2,
                 2,
                 1,
@@ -1277,7 +1277,7 @@ mod tests {
             assert_eq!(encoded.len(), 12);
 
             let decoder = UncompressedBlockDecoder::from_raw_params(
-                Arc::from(encoded),
+                OwnedBuffer::from_vec(encoded),
                 2,
                 2,
                 1,

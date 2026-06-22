@@ -17,6 +17,7 @@ pub mod j2k;
 pub mod jbp;
 #[cfg(feature = "libjpeg-turbo")]
 pub mod jpeg;
+pub mod owned_buffer;
 pub mod parser;
 pub mod png;
 #[cfg(feature = "libtiff")]
@@ -36,6 +37,7 @@ pub use buffered::{
     BufferedTextAssetProvider, MemoryImageConfig,
 };
 pub use composite::{CompositeDatasetReader, OverviewAssetWrapper};
+pub use owned_buffer::OwnedBuffer;
 pub use traits::{
     AssetMetadata, AssetProvider, DataAssetProvider, DatasetReader, DatasetWriter,
     GraphicsAssetProvider, ImageAssetProvider, MetadataProvider, TextAssetProvider,

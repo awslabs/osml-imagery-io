@@ -32,6 +32,7 @@ use crate::jbp::image::mask::ImageDataMask;
 use crate::jbp::metadata::JBPSegmentMetadataProvider;
 use crate::jbp::text::decode_and_normalize;
 use crate::jbp::types::{NitfFormat, SegmentLocation, SegmentType};
+use crate::owned_buffer::OwnedBuffer;
 use crate::parser::StructureRegistry;
 use crate::traits::{
     AssetMetadata, DataAssetProvider, GraphicsAssetProvider, ImageAssetProvider, MetadataProvider,
@@ -129,7 +130,7 @@ pub struct JBPImageAssetProvider {
     /// Segment location in the file
     location: SegmentLocation,
     /// Reference to the file data
-    data: Arc<[u8]>,
+    source_data: OwnedBuffer,
     /// Segment metadata provider
     metadata: Arc<JBPSegmentMetadataProvider>,
     /// Structure registry for parsing
@@ -164,7 +165,7 @@ impl JBPImageAssetProvider {
         description: String,
         roles: Vec<String>,
         location: SegmentLocation,
-        data: Arc<[u8]>,
+        source_data: OwnedBuffer,
         metadata: Arc<JBPSegmentMetadataProvider>,
         registry: Arc<StructureRegistry>,
         format: NitfFormat,
@@ -172,7 +173,7 @@ impl JBPImageAssetProvider {
         // Parse subheader to check if this is a masked image
         let subheader_start = location.subheader_offset as usize;
         let subheader_end = subheader_start + location.subheader_length as usize;
-        let subheader_bytes = &data[subheader_start..subheader_end];
+        let subheader_bytes = &source_data.as_bytes()[subheader_start..subheader_end];
 
         let facade = ImageSubheaderFacade::from_bytes(subheader_bytes, &registry, format)?;
         let ic = facade.ic()?;
@@ -184,15 +185,15 @@ impl JBPImageAssetProvider {
             let data_end = data_start.saturating_add(location.data_length as usize);
 
             // Bounds check to prevent panic on malformed files
-            if data_end > data.len() {
+            if data_end > source_data.len() {
                 return Err(CodecError::Decode(format!(
                     "Image data extends beyond file bounds: data_end={} > file_len={}",
                     data_end,
-                    data.len()
+                    source_data.len()
                 )));
             }
 
-            let image_data = &data[data_start..data_end];
+            let image_data = &source_data.as_bytes()[data_start..data_end];
 
             // Get block grid dimensions
             let nbpr = facade.nbpr()?;
@@ -215,7 +216,7 @@ impl JBPImageAssetProvider {
             description,
             roles,
             location,
-            data,
+            source_data,
             metadata,
             registry,
             format,
@@ -228,24 +229,22 @@ impl JBPImageAssetProvider {
     fn subheader_bytes(&self) -> &[u8] {
         let start = self.location.subheader_offset as usize;
         let end = start + self.location.subheader_length as usize;
-        &self.data[start..end]
+        &self.source_data.as_bytes()[start..end]
     }
 
-    /// Get the image data bytes for this image segment.
-    fn image_data(&self) -> Result<Arc<[u8]>, CodecError> {
+    /// Get the image data as a zero-copy slice of the source buffer.
+    fn image_data(&self) -> Result<OwnedBuffer, CodecError> {
         let start = self.location.data_offset as usize;
         let end = start + self.location.data_length as usize;
 
-        if end > self.data.len() {
-            return Err(CodecError::Decode(format!(
+        self.source_data.try_slice(start..end).map_err(|_| {
+            CodecError::Decode(format!(
                 "Image segment data extends beyond file: offset {} + length {} > file size {}",
                 start,
                 self.location.data_length,
-                self.data.len()
-            )));
-        }
-
-        Ok(Arc::from(&self.data[start..end]))
+                self.source_data.len()
+            ))
+        })
     }
 
     /// Get or create the block decoder.
@@ -301,16 +300,16 @@ impl AssetMetadata for JBPImageAssetProvider {
         let start = self.location.data_offset as usize;
         let end = start + self.location.data_length as usize;
 
-        if end > self.data.len() {
+        if end > self.source_data.len() {
             return Err(CodecError::Decode(format!(
                 "Image segment data extends beyond file: offset {} + length {} > file size {}",
                 start,
                 self.location.data_length,
-                self.data.len()
+                self.source_data.len()
             )));
         }
 
-        Ok(self.data[start..end].to_vec())
+        Ok(self.source_data.as_bytes()[start..end].to_vec())
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
@@ -574,7 +573,7 @@ pub struct JBPTextAssetProvider {
     /// Segment location in the file
     location: SegmentLocation,
     /// Reference to the file data
-    data: Arc<[u8]>,
+    source_data: OwnedBuffer,
     /// Segment metadata provider
     metadata: Arc<JBPSegmentMetadataProvider>,
     /// Text format code (STA, MTF, UT1, U8S)
@@ -583,23 +582,13 @@ pub struct JBPTextAssetProvider {
 
 impl JBPTextAssetProvider {
     /// Create a new text asset provider.
-    ///
-    /// # Arguments
-    /// * `key` - Unique identifier for this asset
-    /// * `title` - Human-readable title
-    /// * `description` - Detailed description
-    /// * `roles` - Semantic roles
-    /// * `location` - Segment location in the file
-    /// * `data` - Reference to the file data
-    /// * `metadata` - Segment metadata provider
-    /// * `txtfmt` - Text format code (STA, MTF, UT1, U8S)
     pub fn new(
         key: String,
         title: String,
         description: String,
         roles: Vec<String>,
         location: SegmentLocation,
-        data: Arc<[u8]>,
+        source_data: OwnedBuffer,
         metadata: Arc<JBPSegmentMetadataProvider>,
         txtfmt: String,
     ) -> Self {
@@ -609,7 +598,7 @@ impl JBPTextAssetProvider {
             description,
             roles,
             location,
-            data,
+            source_data,
             metadata,
             txtfmt,
         }
@@ -647,16 +636,16 @@ impl AssetMetadata for JBPTextAssetProvider {
         let start = self.location.data_offset as usize;
         let end = start + self.location.data_length as usize;
 
-        if end > self.data.len() {
+        if end > self.source_data.len() {
             return Err(CodecError::Decode(format!(
                 "Text segment data extends beyond file: offset {} + length {} > file size {}",
                 start,
                 self.location.data_length,
-                self.data.len()
+                self.source_data.len()
             )));
         }
 
-        Ok(self.data[start..end].to_vec())
+        Ok(self.source_data.as_bytes()[start..end].to_vec())
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
@@ -713,29 +702,20 @@ pub struct JBPGraphicsAssetProvider {
     /// Segment location in the file
     location: SegmentLocation,
     /// Reference to the file data
-    data: Arc<[u8]>,
+    source_data: OwnedBuffer,
     /// Segment metadata provider
     metadata: Arc<JBPSegmentMetadataProvider>,
 }
 
 impl JBPGraphicsAssetProvider {
     /// Create a new graphics asset provider.
-    ///
-    /// # Arguments
-    /// * `key` - Unique identifier for this asset
-    /// * `title` - Human-readable title
-    /// * `description` - Detailed description
-    /// * `roles` - Semantic roles
-    /// * `location` - Segment location in the file
-    /// * `data` - Reference to the file data
-    /// * `metadata` - Segment metadata provider
     pub fn new(
         key: String,
         title: String,
         description: String,
         roles: Vec<String>,
         location: SegmentLocation,
-        data: Arc<[u8]>,
+        source_data: OwnedBuffer,
         metadata: Arc<JBPSegmentMetadataProvider>,
     ) -> Self {
         Self {
@@ -744,7 +724,7 @@ impl JBPGraphicsAssetProvider {
             description,
             roles,
             location,
-            data,
+            source_data,
             metadata,
         }
     }
@@ -775,16 +755,16 @@ impl AssetMetadata for JBPGraphicsAssetProvider {
         let start = self.location.data_offset as usize;
         let end = start + self.location.data_length as usize;
 
-        if end > self.data.len() {
+        if end > self.source_data.len() {
             return Err(CodecError::Decode(format!(
                 "Graphic segment data extends beyond file: offset {} + length {} > file size {}",
                 start,
                 self.location.data_length,
-                self.data.len()
+                self.source_data.len()
             )));
         }
 
-        Ok(self.data[start..end].to_vec())
+        Ok(self.source_data.as_bytes()[start..end].to_vec())
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
@@ -822,29 +802,20 @@ pub struct JBPDataAssetProvider {
     /// Segment location in the file
     location: SegmentLocation,
     /// Reference to the file data
-    data: Arc<[u8]>,
+    source_data: OwnedBuffer,
     /// Segment metadata provider
     metadata: Arc<JBPSegmentMetadataProvider>,
 }
 
 impl JBPDataAssetProvider {
     /// Create a new data asset provider.
-    ///
-    /// # Arguments
-    /// * `key` - Unique identifier for this asset
-    /// * `title` - Human-readable title
-    /// * `description` - Detailed description
-    /// * `roles` - Semantic roles
-    /// * `location` - Segment location in the file
-    /// * `data` - Reference to the file data
-    /// * `metadata` - Segment metadata provider
     pub fn new(
         key: String,
         title: String,
         description: String,
         roles: Vec<String>,
         location: SegmentLocation,
-        data: Arc<[u8]>,
+        source_data: OwnedBuffer,
         metadata: Arc<JBPSegmentMetadataProvider>,
     ) -> Self {
         Self {
@@ -853,7 +824,7 @@ impl JBPDataAssetProvider {
             description,
             roles,
             location,
-            data,
+            source_data,
             metadata,
         }
     }
@@ -884,16 +855,16 @@ impl AssetMetadata for JBPDataAssetProvider {
         let start = self.location.data_offset as usize;
         let end = start + self.location.data_length as usize;
 
-        if end > self.data.len() {
+        if end > self.source_data.len() {
             return Err(CodecError::Decode(format!(
                 "DES segment data extends beyond file: offset {} + length {} > file size {}",
                 start,
                 self.location.data_length,
-                self.data.len()
+                self.source_data.len()
             )));
         }
 
-        Ok(self.data[start..end].to_vec())
+        Ok(self.source_data.as_bytes()[start..end].to_vec())
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
@@ -1065,19 +1036,19 @@ mod tests {
     }
 
     /// Create test data: subheader (30 bytes) + segment data
-    fn create_test_file_data(segment_data: &[u8]) -> Arc<[u8]> {
+    fn create_test_file_data(segment_data: &[u8]) -> OwnedBuffer {
         let mut data = Vec::new();
         // Subheader: ID (10 bytes) + TITLE (20 bytes) = 30 bytes
         data.extend_from_slice(b"IMG_00001 Test Image Title    ");
         // Segment data
         data.extend_from_slice(segment_data);
-        Arc::from(data)
+        OwnedBuffer::from_vec(data)
     }
 
     fn create_test_metadata(
         definition: Arc<StructureDefinition>,
     ) -> Arc<JBPSegmentMetadataProvider> {
-        let raw_bytes: Arc<[u8]> = Arc::from(b"IMG_00001 Test Image Title    ".as_slice());
+        let raw_bytes = OwnedBuffer::from_vec(b"IMG_00001 Test Image Title    ".to_vec());
         Arc::new(JBPSegmentMetadataProvider::from_definition(
             definition, raw_bytes,
         ))
@@ -1095,7 +1066,7 @@ mod tests {
 
     /// Create a valid NITF image segment for testing.
     /// Returns (file_data, subheader_length, image_data_length)
-    fn create_valid_image_segment() -> (Arc<[u8]>, u64, u64) {
+    fn create_valid_image_segment() -> (OwnedBuffer, u64, u64) {
         let mut subheader = Vec::new();
 
         // IM (2) - Image segment marker
@@ -1225,7 +1196,11 @@ mod tests {
         let mut file_data = subheader;
         file_data.extend_from_slice(&image_data);
 
-        (Arc::from(file_data), subheader_len, image_data_len)
+        (
+            OwnedBuffer::from_vec(file_data),
+            subheader_len,
+            image_data_len,
+        )
     }
 
     // JBPImageAssetProvider tests
@@ -1235,7 +1210,7 @@ mod tests {
         let definition = create_test_definition();
         let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
             definition,
-            Arc::from(&file_data[..subheader_len as usize]),
+            OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len as usize].to_vec()),
         ));
         let location = SegmentLocation::new(0, subheader_len, subheader_len, image_data_len);
         let registry = create_test_registry();
@@ -1262,7 +1237,7 @@ mod tests {
         let definition = create_test_definition();
         let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
             definition,
-            Arc::from(&file_data[..subheader_len as usize]),
+            OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len as usize].to_vec()),
         ));
         let location = SegmentLocation::new(0, subheader_len, subheader_len, image_data_len);
         let registry = create_test_registry();
@@ -1289,7 +1264,7 @@ mod tests {
         let definition = create_test_definition();
         let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
             definition,
-            Arc::from(&file_data[..subheader_len as usize]),
+            OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len as usize].to_vec()),
         ));
         let location = SegmentLocation::new(0, subheader_len, subheader_len, image_data_len);
         let registry = create_test_registry();
@@ -1316,7 +1291,7 @@ mod tests {
         let definition = create_test_definition();
         let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
             definition,
-            Arc::from(&file_data[..subheader_len as usize]),
+            OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len as usize].to_vec()),
         ));
         let location = SegmentLocation::new(0, subheader_len, subheader_len, image_data_len);
         let registry = create_test_registry();
@@ -1343,7 +1318,7 @@ mod tests {
         let definition = create_test_definition();
         let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
             definition,
-            Arc::from(&file_data[..subheader_len as usize]),
+            OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len as usize].to_vec()),
         ));
         let location = SegmentLocation::new(0, subheader_len, subheader_len, image_data_len);
         let registry = create_test_registry();
@@ -1370,7 +1345,7 @@ mod tests {
         let definition = create_test_definition();
         let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
             definition,
-            Arc::from(&file_data[..subheader_len as usize]),
+            OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len as usize].to_vec()),
         ));
         let location = SegmentLocation::new(0, subheader_len, subheader_len, image_data_len);
         let registry = create_test_registry();
@@ -1395,7 +1370,7 @@ mod tests {
         let definition = create_test_definition();
         let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
             definition,
-            Arc::from(&file_data[..subheader_len as usize]),
+            OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len as usize].to_vec()),
         ));
         let location = SegmentLocation::new(0, subheader_len, subheader_len, image_data_len);
         let registry = create_test_registry();
@@ -1425,7 +1400,7 @@ mod tests {
         let definition = create_test_definition();
         let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
             definition,
-            Arc::from(&file_data[..subheader_len as usize]),
+            OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len as usize].to_vec()),
         ));
         // Location claims more data than exists
         let location = SegmentLocation::new(0, subheader_len, subheader_len, 100000);
@@ -1454,7 +1429,7 @@ mod tests {
         let definition = create_test_definition();
         let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
             definition,
-            Arc::from(&file_data[..subheader_len as usize]),
+            OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len as usize].to_vec()),
         ));
         // Location claims more data than exists — triggers bounds check in image_data()
         let location = SegmentLocation::new(0, subheader_len, subheader_len, 100000);
@@ -1483,7 +1458,7 @@ mod tests {
         let definition = create_test_definition();
         let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
             definition,
-            Arc::from(&file_data[..subheader_len as usize]),
+            OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len as usize].to_vec()),
         ));
         let location = SegmentLocation::new(0, subheader_len, subheader_len, image_data_len);
         let registry = create_test_registry();
@@ -2645,12 +2620,12 @@ mod property_tests {
                 let subheader_len = subheader.len();
                 let mut file_data = subheader;
                 file_data.extend_from_slice(&image_data);
-                let file_data: Arc<[u8]> = Arc::from(file_data);
+                let file_data = OwnedBuffer::from_vec(file_data);
 
                 let definition = create_test_definition();
                 let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
                     definition,
-                    Arc::from(&file_data[..subheader_len]),
+                    OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len].to_vec()),
                 ));
                 let registry = create_test_registry();
                 let location = SegmentLocation::new(
@@ -2688,12 +2663,12 @@ mod property_tests {
                 let subheader_len = subheader.len();
                 let mut file_data = subheader;
                 file_data.extend_from_slice(&image_data);
-                let file_data: Arc<[u8]> = Arc::from(file_data);
+                let file_data = OwnedBuffer::from_vec(file_data);
 
                 let definition = create_test_definition();
                 let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
                     definition,
-                    Arc::from(&file_data[..subheader_len]),
+                    OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len].to_vec()),
                 ));
                 let registry = create_test_registry();
                 let location = SegmentLocation::new(
@@ -2732,12 +2707,12 @@ mod property_tests {
                 let subheader_len = subheader.len();
                 let mut file_data = subheader;
                 file_data.extend_from_slice(&image_data);
-                let file_data: Arc<[u8]> = Arc::from(file_data);
+                let file_data = OwnedBuffer::from_vec(file_data);
 
                 let definition = create_test_definition();
                 let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
                     definition,
-                    Arc::from(&file_data[..subheader_len]),
+                    OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len].to_vec()),
                 ));
                 let registry = create_test_registry();
                 let location = SegmentLocation::new(
@@ -2777,12 +2752,12 @@ mod property_tests {
                 let subheader_len = subheader.len();
                 let mut file_data = subheader;
                 file_data.extend_from_slice(&image_data);
-                let file_data: Arc<[u8]> = Arc::from(file_data);
+                let file_data = OwnedBuffer::from_vec(file_data);
 
                 let definition = create_test_definition();
                 let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
                     definition,
-                    Arc::from(&file_data[..subheader_len]),
+                    OwnedBuffer::from_vec(file_data.as_bytes()[..subheader_len].to_vec()),
                 ));
                 let registry = create_test_registry();
                 let location = SegmentLocation::new(
@@ -2851,10 +2826,10 @@ mod property_tests {
                 data_length_excess in 1usize..500,
             ) {
                 // Create file data smaller than the claimed segment data length
-                let file_data: Arc<[u8]> = Arc::from(vec![0u8; file_size]);
+                let file_data = OwnedBuffer::from_vec(vec![0u8; file_size]);
 
                 // Create metadata with minimal subheader bytes
-                let subheader_bytes: Arc<[u8]> = Arc::from(vec![b' '; 30]);
+                let subheader_bytes = OwnedBuffer::from_vec(vec![b' '; 30]);
                 let definition = create_test_definition();
                 let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
                     definition,
@@ -2905,10 +2880,10 @@ mod property_tests {
             ) {
                 // Create file data with enough space for the segment data
                 let total_size = 30 + data_size + padding; // subheader + data + padding
-                let file_data: Arc<[u8]> = Arc::from(vec![0u8; total_size]);
+                let file_data = OwnedBuffer::from_vec(vec![0u8; total_size]);
 
                 // Create metadata with minimal subheader bytes
-                let subheader_bytes: Arc<[u8]> = Arc::from(vec![b' '; 30]);
+                let subheader_bytes = OwnedBuffer::from_vec(vec![b' '; 30]);
                 let definition = create_test_definition();
                 let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
                     definition,

@@ -438,6 +438,7 @@ impl DatasetWriter for PNGDatasetWriter {
 mod tests {
     use super::*;
     use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
+    use crate::owned_buffer::OwnedBuffer;
     use crate::png::reader::PNGDatasetReader;
     use crate::traits::reader::DatasetReader;
     use std::sync::Arc;
@@ -624,7 +625,7 @@ mod tests {
 
         // Read back
         let data = std::fs::read(&path).unwrap();
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("Expected Image variant");
 
@@ -659,7 +660,7 @@ mod tests {
         writer.close().unwrap();
 
         let data = std::fs::read(&path).unwrap();
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("Expected Image variant");
 
@@ -721,7 +722,7 @@ mod tests {
         let expected: Vec<u8> = (0..16).collect();
 
         let data = std::fs::read(&path).unwrap();
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("Expected Image variant");
 
@@ -794,7 +795,7 @@ mod tests {
         }
 
         let data = std::fs::read(&path).unwrap();
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("Expected Image variant");
 

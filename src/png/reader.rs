@@ -12,6 +12,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::error::CodecError;
+use crate::owned_buffer::OwnedBuffer;
 use crate::png::image::PNGImageAssetProvider;
 use crate::png::metadata::PNGMetadataProvider;
 use crate::traits::asset::AssetMetadata;
@@ -26,7 +27,7 @@ const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 /// PNG dataset reader implementing the `DatasetReader` trait.
 ///
 /// Owns a single image asset provider and dataset-level metadata.
-/// The full image is eagerly decoded during `from_bytes`.
+/// The full image is eagerly decoded during `from_buffer`.
 pub struct PNGDatasetReader {
     image_asset: Option<Arc<PNGImageAssetProvider>>,
     metadata: Arc<PNGMetadataProvider>,
@@ -41,12 +42,14 @@ impl std::fmt::Debug for PNGDatasetReader {
 }
 
 impl PNGDatasetReader {
-    /// Construct from a raw byte slice.
+    /// Construct from an `OwnedBuffer`.
     ///
     /// Validates the PNG signature (first 8 bytes), decodes the full image
     /// eagerly, extracts metadata from ancillary chunks, and builds the
-    /// image asset provider with BSQ pixel data.
-    pub fn from_bytes(data: &[u8]) -> Result<Self, CodecError> {
+    /// image asset provider with BSQ pixel data. The buffer is not retained
+    /// after construction — PNG decodes eagerly into pixel data.
+    pub fn from_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
+        let data = buffer.as_bytes();
         // Validate PNG signature
         if data.len() < 8 || data[..8] != PNG_SIGNATURE {
             return Err(CodecError::InvalidFormat(
@@ -397,6 +400,7 @@ impl DatasetReader for PNGDatasetReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::owned_buffer::OwnedBuffer;
 
     /// Helper: create a minimal valid PNG in memory using the `png` crate encoder.
     fn make_png(
@@ -436,7 +440,7 @@ mod tests {
     #[test]
     fn test_from_bytes_valid_png() {
         let data = make_gray_2x2();
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
 
         assert!(reader.image_asset.is_some());
         assert!(reader.has_asset("image:0"));
@@ -453,7 +457,7 @@ mod tests {
     #[test]
     fn test_from_bytes_invalid_signature() {
         let data = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09];
-        let result = PNGDatasetReader::from_bytes(&data);
+        let result = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data));
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("invalid signature"));
@@ -468,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_from_bytes_empty_data() {
-        let result = PNGDatasetReader::from_bytes(&[]);
+        let result = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(vec![]));
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("invalid signature"));
@@ -486,7 +490,7 @@ mod tests {
         // Valid signature but truncated data
         let mut data = PNG_SIGNATURE.to_vec();
         data.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D]); // partial IHDR length
-        let result = PNGDatasetReader::from_bytes(&data);
+        let result = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data));
         assert!(result.is_err());
         match result {
             Err(CodecError::Decode(msg)) => {
@@ -503,7 +507,7 @@ mod tests {
     #[test]
     fn test_get_asset_valid_key() {
         let data = make_gray_2x2();
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0");
         assert!(asset.is_ok());
         assert_eq!(asset.unwrap().key(), "image:0");
@@ -516,7 +520,7 @@ mod tests {
     #[test]
     fn test_get_asset_invalid_key() {
         let data = make_gray_2x2();
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let result = reader.get_asset("nonexistent");
         match result {
             Err(CodecError::AssetNotFound(key)) => assert_eq!(key, "nonexistent"),
@@ -531,7 +535,7 @@ mod tests {
     #[test]
     fn test_get_asset_keys_image() {
         let data = make_gray_2x2();
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
         assert_eq!(keys, vec!["image:0"]);
 
@@ -547,7 +551,7 @@ mod tests {
     #[test]
     fn test_get_asset_keys_text_empty() {
         let data = make_gray_2x2();
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         assert!(reader
             .get_asset_keys(Some(AssetType::Text), None)
             .is_empty());
@@ -566,7 +570,7 @@ mod tests {
     #[test]
     fn test_close_clears_assets() {
         let data = make_gray_2x2();
-        let mut reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let mut reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         assert!(reader.has_asset("image:0"));
 
         reader.close().unwrap();
@@ -584,7 +588,7 @@ mod tests {
     #[test]
     fn test_grayscale_8bit_pixels() {
         let data = make_gray_2x2();
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -614,7 +618,7 @@ mod tests {
             png::BitDepth::Eight,
             &interleaved,
         );
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -641,7 +645,7 @@ mod tests {
             png::BitDepth::Eight,
             &interleaved,
         );
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -664,7 +668,7 @@ mod tests {
             png::BitDepth::Sixteen,
             &interleaved,
         );
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -696,7 +700,7 @@ mod tests {
             png::BitDepth::Sixteen,
             &interleaved,
         );
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -727,7 +731,7 @@ mod tests {
     #[test]
     fn test_metadata_contains_dataset_level() {
         let data = make_gray_2x2();
-        let reader = PNGDatasetReader::from_bytes(&data).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let meta = reader.metadata();
         let dict = meta.entries(None);
 
@@ -762,7 +766,7 @@ mod tests {
             writer.write_image_data(&[0, 1, 2, 0]).unwrap();
         }
 
-        let reader = PNGDatasetReader::from_bytes(&buf).unwrap();
+        let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(buf)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 

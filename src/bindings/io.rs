@@ -16,6 +16,7 @@ use pyo3::types::{PyBytes, PyList};
 use crate::bindings::stream::PyWriteStream;
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
 use crate::composite::{CompositeDatasetReader, CompositeDatasetWriter};
+use crate::owned_buffer::OwnedBuffer;
 
 /// Accepts a single string, a list of strings, a single file-like object,
 /// or a list of file-like objects from Python.
@@ -538,37 +539,37 @@ fn create_multi_path_reader_boxed(
             match rset_format {
                 Some("nitf") | Some("nitf21") | Some("nitf2.1") | Some("nsif") | Some("nsif10")
                 | Some("nsif1.0") | Some("jbp") => {
-                    let mmap = mmap_file(&rset_parsed.path)?;
-                    let reader = JBPDatasetReader::from_bytes(&mmap)?;
+                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
+                    let reader = JBPDatasetReader::from_buffer(buffer)?;
                     Box::new(reader)
                 }
                 #[cfg(feature = "libtiff")]
                 Some("tiff") | Some("tif") => {
-                    let mmap = mmap_file(&rset_parsed.path)?;
-                    let reader = tiff::TIFFDatasetReader::from_bytes(&mmap)?;
+                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
+                    let reader = tiff::TIFFDatasetReader::from_buffer(buffer)?;
                     Box::new(reader)
                 }
                 Some("png") => {
-                    let mmap = mmap_file(&rset_parsed.path)?;
-                    let reader = PNGDatasetReader::from_bytes(&mmap)?;
+                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
+                    let reader = PNGDatasetReader::from_buffer(buffer)?;
                     Box::new(reader)
                 }
                 #[cfg(feature = "openjpeg")]
                 Some("j2k") | Some("jp2") | Some("jpeg2000") => {
-                    let mmap = mmap_file(&rset_parsed.path)?;
-                    let reader = J2KDatasetReader::from_bytes(&mmap)?;
+                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
+                    let reader = J2KDatasetReader::from_buffer(buffer)?;
                     Box::new(reader)
                 }
                 #[cfg(feature = "libjpeg-turbo")]
                 Some("jpg") | Some("jpeg") => {
-                    let mmap = mmap_file(&rset_parsed.path)?;
-                    let reader = JPEGDatasetReader::from_bytes(&mmap)?;
+                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
+                    let reader = JPEGDatasetReader::from_buffer(buffer)?;
                     Box::new(reader)
                 }
                 Some("dted") | Some("dt0") | Some("dt1") | Some("dt2") | Some("dt3")
                 | Some("dt4") | Some("dt5") => {
-                    let mmap = mmap_file(&rset_parsed.path)?;
-                    let reader = DTEDDatasetReader::from_bytes(&mmap)?;
+                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
+                    let reader = DTEDDatasetReader::from_buffer(buffer)?;
                     Box::new(reader)
                 }
                 _ => {
@@ -699,36 +700,36 @@ fn create_reader_boxed(
     if let Some(fmt) = format {
         match fmt.to_lowercase().as_str() {
             "nitf" | "nitf21" | "nitf2.1" | "nsif" | "nsif10" | "nsif1.0" | "jbp" => {
-                let mmap = mmap_file(&parsed.path)?;
-                let reader = JBPDatasetReader::from_bytes(&mmap)?;
+                let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+                let reader = JBPDatasetReader::from_buffer(buffer)?;
                 return Ok(Box::new(reader));
             }
             #[cfg(feature = "libtiff")]
             "tiff" | "tif" => {
-                let mmap = mmap_file(&parsed.path)?;
-                let reader = tiff::TIFFDatasetReader::from_bytes(&mmap)?;
+                let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+                let reader = tiff::TIFFDatasetReader::from_buffer(buffer)?;
                 return Ok(Box::new(reader));
             }
             "png" => {
-                let mmap = mmap_file(&parsed.path)?;
-                let reader = PNGDatasetReader::from_bytes(&mmap)?;
+                let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+                let reader = PNGDatasetReader::from_buffer(buffer)?;
                 return Ok(Box::new(reader));
             }
             #[cfg(feature = "openjpeg")]
             "j2k" | "jp2" | "jpeg2000" => {
-                let mmap = mmap_file(&parsed.path)?;
-                let reader = J2KDatasetReader::from_bytes(&mmap)?;
+                let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+                let reader = J2KDatasetReader::from_buffer(buffer)?;
                 return Ok(Box::new(reader));
             }
             #[cfg(feature = "libjpeg-turbo")]
             "jpg" | "jpeg" => {
-                let mmap = mmap_file(&parsed.path)?;
-                let reader = JPEGDatasetReader::from_bytes(&mmap)?;
+                let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+                let reader = JPEGDatasetReader::from_buffer(buffer)?;
                 return Ok(Box::new(reader));
             }
             "dted" | "dt0" | "dt1" | "dt2" | "dt3" | "dt4" | "dt5" => {
-                let mmap = mmap_file(&parsed.path)?;
-                let reader = DTEDDatasetReader::from_bytes(&mmap)?;
+                let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+                let reader = DTEDDatasetReader::from_buffer(buffer)?;
                 return Ok(Box::new(reader));
             }
             _ => {
@@ -748,15 +749,15 @@ fn create_reader_boxed(
     match extension.as_deref() {
         Some("ntf") | Some("nitf") | Some("nsif") | Some("nsf") | Some("hr1") | Some("hr2")
         | Some("hr3") | Some("hr4") | Some("hr5") | Some("hr6") | Some("hr7") | Some("hr8") => {
-            let mmap = mmap_file(&parsed.path)?;
-            let reader = JBPDatasetReader::from_bytes(&mmap)?;
+            let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+            let reader = JBPDatasetReader::from_buffer(buffer)?;
             Ok(Box::new(reader))
         }
         Some("tif") | Some("tiff") | Some("gtif") | Some("gtiff") => {
             #[cfg(feature = "libtiff")]
             {
-                let mmap = mmap_file(&parsed.path)?;
-                let reader = tiff::TIFFDatasetReader::from_bytes(&mmap)?;
+                let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+                let reader = tiff::TIFFDatasetReader::from_buffer(buffer)?;
                 Ok(Box::new(reader))
             }
             #[cfg(not(feature = "libtiff"))]
@@ -769,15 +770,15 @@ fn create_reader_boxed(
             }
         }
         Some("png") => {
-            let mmap = mmap_file(&parsed.path)?;
-            let reader = PNGDatasetReader::from_bytes(&mmap)?;
+            let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+            let reader = PNGDatasetReader::from_buffer(buffer)?;
             Ok(Box::new(reader))
         }
         Some("j2k") | Some("jp2") => {
             #[cfg(feature = "openjpeg")]
             {
-                let mmap = mmap_file(&parsed.path)?;
-                let reader = J2KDatasetReader::from_bytes(&mmap)?;
+                let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+                let reader = J2KDatasetReader::from_buffer(buffer)?;
                 Ok(Box::new(reader))
             }
             #[cfg(not(feature = "openjpeg"))]
@@ -792,8 +793,8 @@ fn create_reader_boxed(
         Some("jpg") | Some("jpeg") => {
             #[cfg(feature = "libjpeg-turbo")]
             {
-                let mmap = mmap_file(&parsed.path)?;
-                let reader = JPEGDatasetReader::from_bytes(&mmap)?;
+                let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+                let reader = JPEGDatasetReader::from_buffer(buffer)?;
                 Ok(Box::new(reader))
             }
             #[cfg(not(feature = "libjpeg-turbo"))]
@@ -807,8 +808,8 @@ fn create_reader_boxed(
         }
         Some("dt0") | Some("dt1") | Some("dt2") | Some("dt3") | Some("dt4") | Some("dt5")
         | Some("avg") | Some("min") | Some("max") => {
-            let mmap = mmap_file(&parsed.path)?;
-            let reader = DTEDDatasetReader::from_bytes(&mmap)?;
+            let buffer = OwnedBuffer::from_mmap(mmap_file(&parsed.path)?);
+            let reader = DTEDDatasetReader::from_buffer(buffer)?;
             Ok(Box::new(reader))
         }
         Some(ext) => {
@@ -1051,8 +1052,7 @@ fn normalize_roles(
 /// result as an owned `Vec<u8>`. Copying to an owned buffer (rather than
 /// borrowing the `PyBytes` content) ensures the byte slice outlives the
 /// Python object for the duration of format parsing, which is important
-/// because some `from_bytes()` implementations store references into the
-/// input data.
+/// because format readers may store references into the input data.
 fn read_stream_bytes(py: Python<'_>, stream_obj: &Py<PyAny>) -> PyResult<Vec<u8>> {
     let bound = stream_obj.bind(py);
     if !bound.hasattr("read").unwrap_or(false) {
@@ -1077,41 +1077,41 @@ fn read_stream_bytes(py: Python<'_>, stream_obj: &Py<PyAny>) -> PyResult<Vec<u8>
     Ok(data)
 }
 
-/// Dispatches a format string to the appropriate `from_bytes()` constructor.
+/// Dispatches a format string to the appropriate `from_buffer()` constructor.
 ///
 /// Shared by [`create_reader_from_stream`] and [`open_multi_stream_with_roles`]
 /// so all format dispatch lives in one place.
-fn reader_from_bytes(format: &str, data: &[u8]) -> PyResult<Box<dyn DatasetReader>> {
+fn reader_from_buffer(format: &str, buffer: OwnedBuffer) -> PyResult<Box<dyn DatasetReader>> {
     match format.to_lowercase().as_str() {
         "nitf" | "nitf21" | "nitf2.1" | "nsif" | "nsif10" | "nsif1.0" | "jbp" => {
-            Ok(Box::new(JBPDatasetReader::from_bytes(data)?))
+            Ok(Box::new(JBPDatasetReader::from_buffer(buffer)?))
         }
         #[cfg(feature = "libtiff")]
         "tiff" | "tif" | "gtif" | "gtiff" | "geotiff" => {
-            Ok(Box::new(tiff::TIFFDatasetReader::from_bytes(data)?))
+            Ok(Box::new(tiff::TIFFDatasetReader::from_buffer(buffer)?))
         }
         #[cfg(not(feature = "libtiff"))]
         "tiff" | "tif" | "gtif" | "gtiff" | "geotiff" => Err(CodecError::Unsupported(
             "TIFF support not enabled (libtiff feature disabled)".to_string(),
         )
         .into()),
-        "png" => Ok(Box::new(PNGDatasetReader::from_bytes(data)?)),
+        "png" => Ok(Box::new(PNGDatasetReader::from_buffer(buffer)?)),
         #[cfg(feature = "openjpeg")]
-        "j2k" | "jp2" | "jpeg2000" => Ok(Box::new(J2KDatasetReader::from_bytes(data)?)),
+        "j2k" | "jp2" | "jpeg2000" => Ok(Box::new(J2KDatasetReader::from_buffer(buffer)?)),
         #[cfg(not(feature = "openjpeg"))]
         "j2k" | "jp2" | "jpeg2000" => Err(CodecError::Unsupported(
             "JPEG 2000 support not enabled (openjpeg feature disabled)".to_string(),
         )
         .into()),
         #[cfg(feature = "libjpeg-turbo")]
-        "jpg" | "jpeg" => Ok(Box::new(JPEGDatasetReader::from_bytes(data)?)),
+        "jpg" | "jpeg" => Ok(Box::new(JPEGDatasetReader::from_buffer(buffer)?)),
         #[cfg(not(feature = "libjpeg-turbo"))]
         "jpg" | "jpeg" => Err(CodecError::Unsupported(
             "JPEG support not enabled (libjpeg-turbo feature disabled)".to_string(),
         )
         .into()),
         "dted" | "dt0" | "dt1" | "dt2" | "dt3" | "dt4" | "dt5" => {
-            Ok(Box::new(DTEDDatasetReader::from_bytes(data)?))
+            Ok(Box::new(DTEDDatasetReader::from_buffer(buffer)?))
         }
         _ => Err(CodecError::InvalidFormat(format!("Unsupported format: '{}'", format)).into()),
     }
@@ -1120,7 +1120,7 @@ fn reader_from_bytes(format: &str, data: &[u8]) -> PyResult<Box<dyn DatasetReade
 /// Creates a `DatasetReader` from a Python stream.
 ///
 /// Calls `.read()` on the stream to obtain all bytes, validates the result,
-/// then dispatches to the appropriate format reader's `from_bytes()`.
+/// then dispatches to the appropriate format reader's `from_buffer()`.
 ///
 /// Note: reading from a stream loads the entire content into memory. For
 /// large files, prefer the file-path code path which uses memory-mapped I/O.
@@ -1130,7 +1130,8 @@ fn create_reader_from_stream(
     format: &str,
 ) -> PyResult<PyDatasetReader> {
     let data = read_stream_bytes(py, stream_obj)?;
-    let reader = reader_from_bytes(format, &data)?;
+    let buffer = OwnedBuffer::from_vec(data);
+    let reader = reader_from_buffer(format, buffer)?;
     Ok(PyDatasetReader::new(reader))
 }
 
@@ -1228,19 +1229,19 @@ fn open_multi_stream_with_roles(
 
     match mode {
         "r" => {
-            // Read all stream bytes up-front. Copying to owned buffers keeps
+            // Read all stream bytes up-front. Wrapping in OwnedBuffer keeps
             // the data valid for the lifetime of the format readers.
-            let mut per_source_bytes: Vec<Vec<u8>> = Vec::with_capacity(streams.len());
+            let mut per_source_buffers: Vec<OwnedBuffer> = Vec::with_capacity(streams.len());
             for stream_obj in &streams {
                 let data = read_stream_bytes(py, stream_obj)?;
-                per_source_bytes.push(data);
+                per_source_buffers.push(OwnedBuffer::from_vec(data));
             }
 
-            let base_reader = reader_from_bytes(format, &per_source_bytes[base_idx])?;
+            let base_reader = reader_from_buffer(format, per_source_buffers[base_idx].clone())?;
 
             let mut overviews: Vec<(u32, Arc<dyn ImageAssetProvider>)> = Vec::new();
             for (level, src_idx) in overview_entries {
-                let rset_reader = reader_from_bytes(format, &per_source_bytes[src_idx])?;
+                let rset_reader = reader_from_buffer(format, per_source_buffers[src_idx].clone())?;
                 let image = extract_primary_image(rset_reader.as_ref()).ok_or_else(|| {
                     PyValueError::new_err(format!(
                         "Overview source at index {} does not contain an image asset",

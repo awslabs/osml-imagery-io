@@ -20,6 +20,7 @@ use crate::j2k::codec::J2KCodec;
 use crate::j2k::image::J2KImageAssetProvider;
 use crate::j2k::markers::parse_main_header;
 use crate::j2k::metadata::J2KMetadataProvider;
+use crate::owned_buffer::OwnedBuffer;
 use crate::traits::asset::AssetMetadata;
 use crate::traits::asset::AssetProvider;
 use crate::traits::metadata::MetadataProvider;
@@ -46,7 +47,7 @@ const JP2C_BOX_TYPE: [u8; 4] = [0x6A, 0x70, 0x32, 0x63];
 /// JPEG 2000 dataset reader implementing the `DatasetReader` trait.
 ///
 /// Owns a single image asset provider and dataset-level metadata.
-/// Metadata is extracted eagerly during `from_bytes`; pixel decoding
+/// Metadata is extracted eagerly during `from_buffer`; pixel decoding
 /// is deferred to `get_block()` calls on the image asset provider.
 pub struct J2KDatasetReader {
     image_asset: Option<Arc<J2KImageAssetProvider>>,
@@ -62,28 +63,26 @@ impl std::fmt::Debug for J2KDatasetReader {
 }
 
 impl J2KDatasetReader {
-    /// Construct from a raw byte slice.
+    /// Construct from an `OwnedBuffer`.
     ///
     /// Validates the SOC marker (0xFF4F) for raw J2K codestreams or the JP2
     /// file signature for JP2 containers. Parses the SIZ marker to extract
     /// metadata (dimensions, bands, bit depth, tile grid). Does NOT decode
     /// pixel data — that is deferred to `get_block()` calls on the
     /// `ImageAssetProvider`.
-    ///
-    /// The input is copied once into an `Arc<[u8]>` that is shared with the
-    /// image asset provider. For JP2 files the codestream byte range within
-    /// that buffer is tracked so no additional copy is needed.
     #[cfg(feature = "openjpeg")]
-    pub fn from_bytes(data: &[u8]) -> Result<Self, CodecError> {
+    pub fn from_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
         let codec = get_j2k_codec();
-        Self::from_bytes_with_codec(data, codec)
+        Self::from_buffer_with_codec(buffer, codec)
     }
 
-    /// Construct from a raw byte slice using a specific codec.
-    pub(crate) fn from_bytes_with_codec(
-        data: &[u8],
+    /// Construct from an `OwnedBuffer` using a specific codec.
+    pub(crate) fn from_buffer_with_codec(
+        buffer: OwnedBuffer,
         codec: Arc<dyn J2KCodec>,
     ) -> Result<Self, CodecError> {
+        let data = buffer.as_bytes();
+
         // Validate minimum length
         if data.len() < 2 {
             return Err(CodecError::InvalidFormat(
@@ -92,8 +91,6 @@ impl J2KDatasetReader {
         }
 
         // Detect format and locate the codestream byte range.
-        // We work on the raw slice first (before creating the Arc) so that
-        // signature checks and SIZ parsing don't require an allocation.
         let (cs_range, compression_type) = if data.len() >= 12 && data[..12] == JP2_SIGNATURE {
             let range = Self::find_jp2_codestream_range(data)?;
             (range, "jp2")
@@ -136,17 +133,16 @@ impl J2KDatasetReader {
 
         let metadata = Arc::new(J2KMetadataProvider::new(entries));
 
-        // Single allocation: wrap the entire input buffer in an Arc.
-        // The image provider will slice into it using cs_range.
-        let buffer: Arc<[u8]> = Arc::from(data);
-
         // Parse main header for tile-part extraction
-        let codestream_bytes = &buffer[cs_range.clone()];
-        let header_info = parse_main_header(codestream_bytes)?;
+        let header_info = parse_main_header(codestream)?;
         let tile_part_table = std::sync::OnceLock::new();
         if let Some(tlm_table) = header_info.tlm_offset_table {
             let _ = tile_part_table.set(tlm_table);
         }
+
+        // Slice the buffer to the codestream region (zero-copy)
+        let codestream_file_offset = cs_range.start;
+        let source_data = buffer.slice(cs_range);
 
         let image_asset = J2KImageAssetProvider::new(
             "image:0".to_string(),
@@ -159,8 +155,8 @@ impl J2KDatasetReader {
             tile_height,
             num_tiles_x,
             num_tiles_y,
-            buffer,
-            cs_range,
+            source_data,
+            codestream_file_offset,
             vec!["data".to_string()],
             metadata.clone(),
             num_resolution_levels,
@@ -394,7 +390,7 @@ mod tests {
     // =========================================================================
     // Signature validation tests
     //
-    // These use from_bytes_with_codec with a stub codec so they compile and
+    // These use from_buffer_with_codec with a stub codec so they compile and
     // run regardless of feature flags. The validation logic rejects the input
     // before any codec method is called.
     // =========================================================================
@@ -402,6 +398,7 @@ mod tests {
     use crate::j2k::codec::{
         J2KCodecCapabilities, J2KDecodeParams, J2KDecodeResult, J2KEncodeParams, J2KEncodeState,
     };
+    use crate::owned_buffer::OwnedBuffer;
 
     /// Stub codec for tests that exercise pre-codec validation paths.
     /// All methods panic because they should never be reached.
@@ -442,7 +439,8 @@ mod tests {
 
     #[test]
     fn test_from_bytes_empty_data() {
-        let result = J2KDatasetReader::from_bytes_with_codec(&[], stub_codec());
+        let result =
+            J2KDatasetReader::from_buffer_with_codec(OwnedBuffer::from_vec(vec![]), stub_codec());
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("too short"), "got: {}", msg);
@@ -453,7 +451,10 @@ mod tests {
 
     #[test]
     fn test_from_bytes_single_byte() {
-        let result = J2KDatasetReader::from_bytes_with_codec(&[0xFF], stub_codec());
+        let result = J2KDatasetReader::from_buffer_with_codec(
+            OwnedBuffer::from_vec(vec![0xFF]),
+            stub_codec(),
+        );
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("too short"), "got: {}", msg);
@@ -465,7 +466,8 @@ mod tests {
     #[test]
     fn test_from_bytes_invalid_signature() {
         let data = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
-        let result = J2KDatasetReader::from_bytes_with_codec(&data, stub_codec());
+        let result =
+            J2KDatasetReader::from_buffer_with_codec(OwnedBuffer::from_vec(data), stub_codec());
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("invalid signature"), "got: {}", msg);
@@ -630,7 +632,7 @@ mod tests {
         let pixels: Vec<u8> = (0..npix).map(|i| (i % 256) as u8).collect();
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
 
-        let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
+        let reader = J2KDatasetReader::from_buffer(OwnedBuffer::from_vec(cs)).unwrap();
         assert!(reader.has_asset("image:0"));
         assert!(!reader.has_asset("nonexistent"));
 
@@ -682,7 +684,7 @@ mod tests {
         }
         let cs = make_j2k_codestream(64, 64, 3, 8, false, &pixels);
 
-        let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
+        let reader = J2KDatasetReader::from_buffer(OwnedBuffer::from_vec(cs)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -697,7 +699,7 @@ mod tests {
     fn test_get_asset_invalid_key() {
         let pixels: Vec<u8> = vec![0; 64 * 64];
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
-        let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
+        let reader = J2KDatasetReader::from_buffer(OwnedBuffer::from_vec(cs)).unwrap();
 
         match reader.get_asset("nonexistent") {
             Err(CodecError::AssetNotFound(key)) => assert_eq!(key, "nonexistent"),
@@ -711,7 +713,7 @@ mod tests {
     fn test_close_clears_assets() {
         let pixels: Vec<u8> = vec![0; 64 * 64];
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
-        let mut reader = J2KDatasetReader::from_bytes(&cs).unwrap();
+        let mut reader = J2KDatasetReader::from_buffer(OwnedBuffer::from_vec(cs)).unwrap();
 
         assert!(reader.has_asset("image:0"));
         reader.close().unwrap();
@@ -727,7 +729,7 @@ mod tests {
     fn test_invalid_block_coordinates() {
         let pixels: Vec<u8> = vec![0; 64 * 64];
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
-        let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
+        let reader = J2KDatasetReader::from_buffer(OwnedBuffer::from_vec(cs)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -743,7 +745,7 @@ mod tests {
     fn test_invalid_resolution_level() {
         let pixels: Vec<u8> = vec![0; 64 * 64];
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
-        let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
+        let reader = J2KDatasetReader::from_buffer(OwnedBuffer::from_vec(cs)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -763,7 +765,7 @@ mod tests {
             }
         }
         let cs = make_j2k_codestream(64, 64, 3, 8, false, &pixels);
-        let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
+        let reader = J2KDatasetReader::from_buffer(OwnedBuffer::from_vec(cs)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -784,7 +786,7 @@ mod tests {
     fn test_has_block() {
         let pixels: Vec<u8> = vec![0; 64 * 64];
         let cs = make_j2k_codestream(64, 64, 1, 8, false, &pixels);
-        let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
+        let reader = J2KDatasetReader::from_buffer(OwnedBuffer::from_vec(cs)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().expect("expected Image variant");
 
@@ -804,7 +806,7 @@ mod tests {
             pixels.extend_from_slice(&i.wrapping_mul(100).to_ne_bytes());
         }
         let cs = make_j2k_codestream(64, 64, 1, 16, false, &pixels);
-        let reader = J2KDatasetReader::from_bytes(&cs).unwrap();
+        let reader = J2KDatasetReader::from_buffer(OwnedBuffer::from_vec(cs)).unwrap();
 
         let meta = reader.metadata();
         let dict = meta.entries(None);

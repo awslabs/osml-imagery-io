@@ -437,6 +437,7 @@ mod tests {
     };
     use crate::dted::reader::DTEDDatasetReader;
     use crate::dted::records::DATA_OFFSET;
+    use crate::owned_buffer::OwnedBuffer;
     use crate::traits::reader::DatasetReader;
     use serde_json::json;
 
@@ -588,7 +589,7 @@ mod tests {
         let written = shared_buf.lock().unwrap().clone();
 
         // Verify we can read it back
-        let reader = DTEDDatasetReader::from_bytes(&written).unwrap();
+        let reader = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(written)).unwrap();
         let asset = reader.get_asset("elevation").unwrap();
         let image = asset.as_image().unwrap();
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
@@ -624,7 +625,7 @@ mod tests {
 
         let written = shared_buf.lock().unwrap().clone();
 
-        let reader = DTEDDatasetReader::from_bytes(&written).unwrap();
+        let reader = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(written)).unwrap();
         let asset = reader.get_asset("elevation").unwrap();
         let image = asset.as_image().unwrap();
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();
@@ -746,7 +747,7 @@ mod tests {
         let written = shared_buf.lock().unwrap().clone();
 
         // Read back and check metadata
-        let reader = DTEDDatasetReader::from_bytes(&written).unwrap();
+        let reader = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(written)).unwrap();
         let meta = reader.metadata();
         let dict = meta.entries(None);
         assert_eq!(
@@ -800,7 +801,7 @@ mod tests {
 
         let written = shared_buf.lock().unwrap().clone();
 
-        let reader = DTEDDatasetReader::from_bytes(&written).unwrap();
+        let reader = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(written)).unwrap();
         let asset = reader.get_asset("elevation").unwrap();
         let image = asset.as_image().unwrap();
         let (read_pixels, shape) = image.get_block(0, 0, 0, None).unwrap();

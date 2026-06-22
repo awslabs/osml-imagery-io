@@ -668,7 +668,7 @@ mod property_tests {
 
             // Create decoder with same parameters (use real decoder)
             let decoder = crate::jbp::image::nc_decoder::UncompressedBlockDecoder::from_raw_params(
-                Arc::from(encoded_data),
+                crate::owned_buffer::OwnedBuffer::from_vec(encoded_data),
                 nrows, ncols, 1, 1, ncols, nrows, nbands, nbpp, nbpp,
                 crate::jbp::image::types::PixelValueType::UnsignedInt,
                 crate::jbp::image::types::PixelJustification::Right,
@@ -977,6 +977,7 @@ mod round_trip_property_tests {
     use crate::jbp::reader::JBPDatasetReader;
     use crate::jbp::types::NitfFormat;
     use crate::jbp::writer::JBPDatasetWriter;
+    use crate::owned_buffer::OwnedBuffer;
     use crate::traits::{AssetProvider, DatasetReader, DatasetWriter};
     use crate::types::AssetType;
     use proptest::prelude::*;
@@ -1044,7 +1045,7 @@ mod round_trip_property_tests {
 
             // Read the file back
             let file_data = std::fs::read(&path).unwrap();
-            let reader = JBPDatasetReader::from_bytes(&file_data).unwrap();
+            let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(file_data)).unwrap();
 
             // Verify we have one image asset
             let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
@@ -1195,7 +1196,7 @@ mod round_trip_property_tests {
 
             // Read the file back
             let file_data = std::fs::read(&path).unwrap();
-            let reader = JBPDatasetReader::from_bytes(&file_data).unwrap();
+            let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(file_data)).unwrap();
             let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
             let asset = reader.get_asset(&asset_keys[0]).unwrap();
 
@@ -1331,7 +1332,7 @@ mod round_trip_property_tests {
 
             // Read the file back
             let file_data = std::fs::read(&path).unwrap();
-            let reader = JBPDatasetReader::from_bytes(&file_data).unwrap();
+            let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(file_data)).unwrap();
             let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
             let asset = reader.get_asset(&asset_keys[0]).unwrap();
 

@@ -27,6 +27,7 @@ use crate::error::CodecError;
 use crate::jbp::image::decoder::BlockDecoder;
 use crate::jbp::image::facade::ImageSubheaderFacade;
 use crate::jbp::image::types::{InterleaveMode, PixelValueType};
+use crate::owned_buffer::OwnedBuffer;
 
 use crate::j2k::markers::{
     build_minimal_codestream, parse_main_header, scan_sot_markers, TilePartOffsetTable,
@@ -60,7 +61,7 @@ use crate::j2k::{J2KCodec, J2KDecodeParams};
 /// to query available levels, and pass the desired level in `J2KDecodeParams`.
 pub struct Jpeg2000BlockDecoder {
     /// The J2K codestream data (from image segment)
-    codestream: Arc<[u8]>,
+    codestream: OwnedBuffer,
     /// Image dimensions from subheader
     nrows: u32,
     ncols: u32,
@@ -117,7 +118,7 @@ impl Jpeg2000BlockDecoder {
     /// - 6.1, 6.2, 6.3, 6.4, 6.5: BPJ2K01.20 profile compliance
     pub fn new(
         subheader: &ImageSubheaderFacade,
-        codestream: Arc<[u8]>,
+        codestream: OwnedBuffer,
         codec: Arc<dyn J2KCodec>,
     ) -> Result<Self, CodecError> {
         let ic = subheader.ic()?.trim().to_string();
@@ -173,14 +174,15 @@ impl Jpeg2000BlockDecoder {
         // For masked images, the codestream starts with the mask table, not the SOC marker.
         // The actual J2K codestreams are at offsets specified in the mask table.
         if !is_masked {
-            if codestream.len() < 2 {
+            let cs_bytes = codestream.as_bytes();
+            if cs_bytes.len() < 2 {
                 return Err(CodecError::InvalidFormat(
                     "Invalid JPEG 2000 codestream: too short (less than 2 bytes)".into(),
                 ));
             }
-            if codestream[0] != 0xFF || codestream[1] != 0x4F {
+            if cs_bytes[0] != 0xFF || cs_bytes[1] != 0x4F {
                 // Detect JP2 file format container (signature box: 0x0000000C 6A502020)
-                if codestream.len() >= 12 && codestream[4..8] == [0x6A, 0x50, 0x20, 0x20] {
+                if cs_bytes.len() >= 12 && cs_bytes[4..8] == [0x6A, 0x50, 0x20, 0x20] {
                     return Err(CodecError::Unsupported(
                         "JPEG 2000 image data contains a JP2 file format container \
                          (detected JP2 signature box) instead of a raw J2K codestream. \
@@ -191,7 +193,7 @@ impl Jpeg2000BlockDecoder {
                 return Err(CodecError::InvalidFormat(format!(
                     "Invalid JPEG 2000 codestream: missing SOC marker at offset 0 \
                      (found 0x{:02X}{:02X}, expected 0xFF4F)",
-                    codestream[0], codestream[1]
+                    cs_bytes[0], cs_bytes[1]
                 )));
             }
         }
@@ -207,7 +209,7 @@ impl Jpeg2000BlockDecoder {
 
         // Extract main header for non-masked images
         let (decode_header, first_sot_offset, tile_part_table) = if !is_masked {
-            let header_info = parse_main_header(&codestream)?;
+            let header_info = parse_main_header(codestream.as_bytes())?;
             let table = OnceLock::new();
             // If TLM markers present, populate tile_part_table eagerly
             if let Some(tlm_table) = header_info.tlm_offset_table {
@@ -262,7 +264,9 @@ impl Jpeg2000BlockDecoder {
             return Ok(1);
         }
 
-        let levels = self.codec.get_resolution_levels(&self.codestream)?;
+        let levels = self
+            .codec
+            .get_resolution_levels(self.codestream.as_bytes())?;
         // Ignore the result of set() - if another thread set it first, that's fine
         let _ = self.num_resolution_levels.set(levels);
         Ok(levels)
@@ -287,7 +291,7 @@ impl Jpeg2000BlockDecoder {
             return Ok(info);
         }
 
-        let info = self.codec.get_tile_info(&self.codestream)?;
+        let info = self.codec.get_tile_info(self.codestream.as_bytes())?;
         // Ignore the result of set() - if another thread set it first, that's fine
         let _ = self.tile_info.set(info);
         Ok(info)
@@ -308,7 +312,7 @@ impl Jpeg2000BlockDecoder {
         let first_sot = self.first_sot_offset.ok_or_else(|| {
             CodecError::InvalidFormat("Cannot scan SOT markers for masked images".to_string())
         })?;
-        let table = scan_sot_markers(&self.codestream, first_sot)?;
+        let table = scan_sot_markers(self.codestream.as_bytes(), first_sot)?;
         // Ignore set result — if another thread set it first, that's fine
         let _ = self.tile_part_table.set(table);
         Ok(self.tile_part_table.get().unwrap())
@@ -447,12 +451,12 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
             }
             let decode_header = self.decode_header.as_ref().unwrap();
             let minimal_codestream =
-                build_minimal_codestream(decode_header, &tile_parts, &self.codestream);
+                build_minimal_codestream(decode_header, &tile_parts, self.codestream.as_bytes());
             self.codec.decode_tile(&minimal_codestream, 0, &params)?
         } else {
             // Masked path: fall through to existing full-codestream path
             self.codec
-                .decode_tile(&self.codestream, tile_index, &params)?
+                .decode_tile(self.codestream.as_bytes(), tile_index, &params)?
         };
 
         // Calculate expected tile dimensions at this resolution level
@@ -593,17 +597,17 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
 
         // Validate offset is within bounds
         let offset_usize = offset as usize;
-        if offset_usize >= self.codestream.len() {
+        if offset_usize >= self.codestream.as_bytes().len() {
             return Err(CodecError::Decode(format!(
                 "Block offset {} exceeds codestream length {}",
                 offset,
-                self.codestream.len()
+                self.codestream.as_bytes().len()
             )));
         }
 
         // Extract the J2K codestream starting at the offset
         // For masked J2K images, each block has its own complete codestream
-        let block_codestream = &self.codestream[offset_usize..];
+        let block_codestream = &self.codestream.as_bytes()[offset_usize..];
 
         // Validate codestream magic bytes (SOC marker: 0xFF4F)
         if block_codestream.len() < 2 {
@@ -721,7 +725,7 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
 }
 
 // Safety: Jpeg2000BlockDecoder is thread-safe
-// - codestream is Arc<[u8]> (immutable, shared)
+// - codestream is OwnedBuffer (immutable, shared via Arc internally)
 // - codec is Arc<dyn J2KCodec> (thread-safe by trait bound)
 // - num_resolution_levels uses OnceLock for lazy init
 unsafe impl Send for Jpeg2000BlockDecoder {}
@@ -882,10 +886,10 @@ mod tests {
     // =========================================================================
 
     /// Create a minimal valid J2K codestream (just SOC marker + padding)
-    fn create_mock_codestream() -> Arc<[u8]> {
+    fn create_mock_codestream() -> OwnedBuffer {
         // SOC marker (0xFF4F) followed by some padding
         let data = vec![0xFF, 0x4F, 0xFF, 0x51, 0x00, 0x00, 0x00, 0x00];
-        Arc::from(data)
+        OwnedBuffer::from_vec(data)
     }
 
     // =========================================================================
@@ -895,30 +899,30 @@ mod tests {
     #[test]
     fn test_invalid_codestream_too_short() {
         // Test that codestream validation catches short data
-        let short_data: Arc<[u8]> = Arc::from(vec![0xFF]);
+        let short_data = OwnedBuffer::from_vec(vec![0xFF]);
 
         // We can't easily create a mock subheader, so we test the validation
         // logic directly by checking the error message
-        assert!(short_data.len() < 2);
+        assert!(short_data.as_bytes().len() < 2);
     }
 
     #[test]
     fn test_invalid_codestream_bad_magic() {
         // Test that codestream validation catches bad magic bytes
-        let bad_magic: Arc<[u8]> = Arc::from(vec![0x00, 0x00, 0x00, 0x00]);
+        let bad_magic = OwnedBuffer::from_vec(vec![0x00, 0x00, 0x00, 0x00]);
 
         // Verify the magic bytes are wrong
-        assert!(bad_magic[0] != 0xFF || bad_magic[1] != 0x4F);
+        assert!(bad_magic.as_bytes()[0] != 0xFF || bad_magic.as_bytes()[1] != 0x4F);
     }
 
     #[test]
     fn test_valid_codestream_magic() {
         // Test that valid SOC marker is recognized
-        let valid: Arc<[u8]> = create_mock_codestream();
+        let valid = create_mock_codestream();
 
         // Verify the magic bytes are correct
-        assert_eq!(valid[0], 0xFF);
-        assert_eq!(valid[1], 0x4F);
+        assert_eq!(valid.as_bytes()[0], 0xFF);
+        assert_eq!(valid.as_bytes()[1], 0x4F);
     }
 
     // =========================================================================

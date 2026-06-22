@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use serde_json;
 
 use crate::error::CodecError;
+use crate::owned_buffer::OwnedBuffer;
 use crate::tiff::ffi::TiffHandle;
 use crate::tiff::image::TIFFImageAssetProvider;
 use crate::tiff::metadata::TIFFMetadataProvider;
@@ -38,7 +39,7 @@ const SUPPORTED_COMPRESSIONS: &[u16] = &[
 /// lifetime), a shared `TiffHandle`, one `TIFFImageAssetProvider` per
 /// full-resolution IFD, and dataset-level metadata.
 pub struct TIFFDatasetReader {
-    /// Shared libtiff handle protected by a mutex.
+    /// Dropped first — holds a raw pointer into `_source_data`'s bytes.
     #[allow(dead_code)]
     handle: Arc<Mutex<TiffHandle>>,
     /// One image asset provider per IFD (full-resolution and overview).
@@ -47,8 +48,8 @@ pub struct TIFFDatasetReader {
     asset_keys: Vec<String>,
     /// Dataset-level metadata (byte order, directory count, segment count).
     dataset_metadata: Arc<TIFFMetadataProvider>,
-    /// Owns the byte buffer so it outlives the TiffHandle.
-    _data: Vec<u8>,
+    /// Dropped last — keeps backing bytes alive for the TiffHandle's raw pointer.
+    _source_data: OwnedBuffer,
 }
 
 impl std::fmt::Debug for TIFFDatasetReader {
@@ -60,13 +61,15 @@ impl std::fmt::Debug for TIFFDatasetReader {
 }
 
 impl TIFFDatasetReader {
-    /// Open a TIFF from an in-memory byte slice.
+    /// Open a TIFF from an `OwnedBuffer`.
     ///
     /// Validates the TIFF magic bytes, opens via `TIFFClientOpen` with memory
     /// callbacks, enumerates IFDs, checks compression support, classifies by
     /// `NewSubfileType`, and creates one `TIFFImageAssetProvider` per
     /// full-resolution IFD.
-    pub fn from_bytes(data: &[u8]) -> Result<Self, CodecError> {
+    pub fn from_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
+        let data = buffer.as_bytes();
+
         // Validate magic bytes before handing to libtiff
         if data.len() < 4 {
             return Err(CodecError::InvalidFormat(
@@ -85,10 +88,7 @@ impl TIFFDatasetReader {
             }
         };
 
-        // We must own the data so it outlives the TiffHandle
-        let owned_data = data.to_vec();
-
-        let handle = TiffHandle::from_bytes(&owned_data)?;
+        let handle = TiffHandle::from_bytes(data)?;
         let handle = Arc::new(Mutex::new(handle));
 
         let num_directories = {
@@ -209,7 +209,7 @@ impl TIFFDatasetReader {
             image_assets,
             asset_keys,
             dataset_metadata,
-            _data: owned_data,
+            _source_data: buffer,
         })
     }
 }
@@ -282,6 +282,7 @@ fn compression_name(code: u16) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::owned_buffer::OwnedBuffer;
 
     /// Helper: write a single IFD entry (12 bytes) in little-endian format.
     fn write_ifd_entry(buf: &mut Vec<u8>, tag: u16, dtype: u16, count: u32, value: u32) {
@@ -323,9 +324,9 @@ mod tests {
     }
 
     #[test]
-    fn test_from_bytes_valid_single_ifd() {
+    fn test_from_buffer_valid_single_ifd() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
 
         assert_eq!(reader.asset_keys.len(), 1);
         assert_eq!(reader.asset_keys[0], "image:0");
@@ -333,9 +334,9 @@ mod tests {
     }
 
     #[test]
-    fn test_from_bytes_invalid_magic() {
+    fn test_from_buffer_invalid_magic() {
         let data = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05];
-        let result = TIFFDatasetReader::from_bytes(&data);
+        let result = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data));
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("Invalid TIFF magic bytes"));
@@ -345,8 +346,8 @@ mod tests {
     }
 
     #[test]
-    fn test_from_bytes_empty_data() {
-        let result = TIFFDatasetReader::from_bytes(&[]);
+    fn test_from_buffer_empty_data() {
+        let result = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(vec![]));
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
                 assert!(msg.contains("too short"));
@@ -356,8 +357,8 @@ mod tests {
     }
 
     #[test]
-    fn test_from_bytes_truncated_magic() {
-        let result = TIFFDatasetReader::from_bytes(&[0x49, 0x49]);
+    fn test_from_buffer_truncated_magic() {
+        let result = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(vec![0x49, 0x49]));
         match result {
             Err(CodecError::InvalidFormat(_)) => {}
             other => panic!("Expected InvalidFormat, got: {:?}", other),
@@ -367,7 +368,7 @@ mod tests {
     #[test]
     fn test_get_asset_valid_key() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0");
         assert!(asset.is_ok());
         assert_eq!(asset.unwrap().key(), "image:0");
@@ -376,7 +377,7 @@ mod tests {
     #[test]
     fn test_get_asset_invalid_key() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let result = reader.get_asset("image:99");
         match result {
             Err(CodecError::AssetNotFound(key)) => assert_eq!(key, "image:99"),
@@ -387,7 +388,7 @@ mod tests {
     #[test]
     fn test_get_asset_keys_image() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let keys = reader.get_asset_keys(Some(AssetType::Image), None);
         assert_eq!(keys, vec!["image:0"]);
     }
@@ -395,7 +396,7 @@ mod tests {
     #[test]
     fn test_get_asset_keys_text_empty() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         assert!(reader
             .get_asset_keys(Some(AssetType::Text), None)
             .is_empty());
@@ -404,7 +405,7 @@ mod tests {
     #[test]
     fn test_get_asset_keys_graphics_empty() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         assert!(reader
             .get_asset_keys(Some(AssetType::Graphics), None)
             .is_empty());
@@ -413,7 +414,7 @@ mod tests {
     #[test]
     fn test_get_asset_keys_data_empty() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         assert!(reader
             .get_asset_keys(Some(AssetType::Data), None)
             .is_empty());
@@ -422,7 +423,7 @@ mod tests {
     #[test]
     fn test_get_asset_keys_none_returns_all() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let keys = reader.get_asset_keys(None, None);
         assert_eq!(keys, vec!["image:0"]);
     }
@@ -430,7 +431,7 @@ mod tests {
     #[test]
     fn test_has_asset() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         assert!(reader.has_asset("image:0"));
         assert!(!reader.has_asset("image:1"));
         assert!(!reader.has_asset("bogus_key"));
@@ -439,7 +440,7 @@ mod tests {
     #[test]
     fn test_dataset_metadata() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let meta = reader.metadata();
         let dict = meta.entries(None);
 
@@ -460,7 +461,7 @@ mod tests {
     #[test]
     fn test_close_clears_assets() {
         let data = make_single_ifd_tiff();
-        let mut reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let mut reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         assert!(!reader.asset_keys.is_empty());
 
         reader.close().unwrap();
@@ -471,7 +472,7 @@ mod tests {
     #[test]
     fn test_image_asset_provider_accessible() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
 
         // Use typed accessor to get the ImageAssetProvider
@@ -497,15 +498,10 @@ mod tests {
 
         // libtiff will likely fail to parse the LE data with BE header,
         // but the magic check itself should pass (not InvalidFormat for magic).
-        let result = TIFFDatasetReader::from_bytes(&data);
+        let result = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data));
         // The error should be from libtiff, not from our magic check
-        if let Err(e) = result {
-            match e {
-                CodecError::InvalidFormat(msg) => {
-                    assert!(!msg.contains("Invalid TIFF magic bytes"));
-                }
-                _ => {} // Other errors are fine (libtiff parse failure)
-            }
+        if let Err(CodecError::InvalidFormat(msg)) = result {
+            assert!(!msg.contains("Invalid TIFF magic bytes"));
         }
     }
 
@@ -547,7 +543,7 @@ mod tests {
         // First IFD offset = 8
         buf.extend_from_slice(&8u32.to_le_bytes());
 
-        for i in 0..num_ifds {
+        for (i, &subfile_type) in new_subfile_types.iter().enumerate() {
             let ifd_start = buf.len() as u32;
             let pixel_data_offset = ifd_start + ifd_byte_size;
             let next_ifd_offset = if i + 1 < num_ifds {
@@ -559,7 +555,7 @@ mod tests {
             buf.extend_from_slice(&num_entries.to_le_bytes());
 
             // Tag 254: NewSubfileType (LONG)
-            write_ifd_entry(&mut buf, 254, 4, 1, new_subfile_types[i]);
+            write_ifd_entry(&mut buf, 254, 4, 1, subfile_type);
             // Tag 256: ImageWidth
             write_ifd_entry(&mut buf, 256, 3, 1, width);
             // Tag 257: ImageLength
@@ -594,7 +590,7 @@ mod tests {
     #[test]
     fn test_single_ifd_overview_bit_treated_as_primary() {
         let data = make_multi_ifd_tiff(&[1]); // single IFD, NewSubfileType=1
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
 
         assert_eq!(reader.asset_keys.len(), 1);
         assert_eq!(reader.asset_keys[0], "image:0");
@@ -611,7 +607,7 @@ mod tests {
         // IFD 1: overview (NewSubfileType=1)
         // IFD 2: overview (NewSubfileType=1)
         let data = make_multi_ifd_tiff(&[0, 1, 1]);
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
 
         assert_eq!(
             reader.asset_keys,
@@ -633,7 +629,7 @@ mod tests {
     #[test]
     fn test_old_format_key_returns_asset_not_found() {
         let data = make_single_ifd_tiff();
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
 
         let result = reader.get_asset("image_segment_0");
         match result {
@@ -649,7 +645,7 @@ mod tests {
     #[test]
     fn test_role_based_filtering() {
         let data = make_multi_ifd_tiff(&[0, 1, 1]);
-        let reader = TIFFDatasetReader::from_bytes(&data).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
 
         // Filter by "overview" role → only overview keys
         let overview_keys =

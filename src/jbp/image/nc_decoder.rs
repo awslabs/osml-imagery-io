@@ -6,7 +6,7 @@
 //! conversions as needed.
 
 use std::borrow::Cow;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use crate::error::CodecError;
 use crate::jbp::image::facade::ImageSubheaderFacade;
@@ -14,6 +14,7 @@ use crate::jbp::image::interleave::{
     fused_bip_to_bsq_swap, fused_bip_to_bsq_swap_parallel, to_band_sequential,
 };
 use crate::jbp::image::types::{InterleaveMode, PixelJustification, PixelValueType};
+use crate::owned_buffer::OwnedBuffer;
 
 use super::decoder::{swap_be_to_ne, BlockDecoder};
 
@@ -31,7 +32,7 @@ const PARALLEL_THRESHOLD: usize = 4 * 1024 * 1024; // 4 MB
 /// from the image data buffer and converts it to band-sequential format.
 pub struct UncompressedBlockDecoder {
     /// The raw image data
-    image_data: Arc<[u8]>,
+    image_data: OwnedBuffer,
     /// Number of rows in the image
     nrows: u32,
     /// Number of columns in the image
@@ -73,7 +74,7 @@ impl UncompressedBlockDecoder {
     /// A new `UncompressedBlockDecoder` or an error if parameters are invalid.
     pub fn new(
         subheader: &ImageSubheaderFacade,
-        image_data: Arc<[u8]>,
+        image_data: OwnedBuffer,
     ) -> Result<Self, CodecError> {
         let nrows = subheader.nrows()?;
         let ncols = subheader.ncols()?;
@@ -114,7 +115,7 @@ impl UncompressedBlockDecoder {
     /// This bypasses subheader parsing and constructs the decoder directly.
     #[doc(hidden)]
     pub fn from_raw_params(
-        image_data: Arc<[u8]>,
+        image_data: OwnedBuffer,
         nrows: u32,
         ncols: u32,
         nbpr: u32,
@@ -334,16 +335,16 @@ impl UncompressedBlockDecoder {
                 let block_offset = band_offset + block_index * single_band_block_size;
                 let end = block_offset + single_band_block_size;
 
-                if end > self.image_data.len() {
+                if end > self.image_data.as_bytes().len() {
                     return Err(CodecError::Decode(format!(
                         "Block data out of bounds: offset {} + {} > {}",
                         block_offset,
                         single_band_block_size,
-                        self.image_data.len()
+                        self.image_data.as_bytes().len()
                     )));
                 }
 
-                let packed = &self.image_data[block_offset..end];
+                let packed = &self.image_data.as_bytes()[block_offset..end];
                 let unpacked = self.unpack_bitstream(packed, num_pixels);
                 output.extend_from_slice(&unpacked);
             }
@@ -361,16 +362,18 @@ impl UncompressedBlockDecoder {
                     let row_offset = block_offset + (row as usize) * (self.nppbh as usize) * bpp;
                     let row_bytes = (actual_cols as usize) * bpp;
 
-                    if row_offset + row_bytes > self.image_data.len() {
+                    if row_offset + row_bytes > self.image_data.as_bytes().len() {
                         return Err(CodecError::Decode(format!(
                             "Block data out of bounds: offset {} + {} > {}",
                             row_offset,
                             row_bytes,
-                            self.image_data.len()
+                            self.image_data.as_bytes().len()
                         )));
                     }
 
-                    output.extend_from_slice(&self.image_data[row_offset..row_offset + row_bytes]);
+                    output.extend_from_slice(
+                        &self.image_data.as_bytes()[row_offset..row_offset + row_bytes],
+                    );
                 }
             }
 
@@ -393,12 +396,12 @@ impl UncompressedBlockDecoder {
 
         // Bit-packed path: unpack bitstream bands into container-sized pixels
         if self.is_bit_packed() {
-            if offset + nominal_block_size > self.image_data.len() {
+            if offset + nominal_block_size > self.image_data.as_bytes().len() {
                 return Err(CodecError::Decode(format!(
                     "Block data out of bounds: offset {} + {} > {}",
                     offset,
                     nominal_block_size,
-                    self.image_data.len()
+                    self.image_data.as_bytes().len()
                 )));
             }
 
@@ -411,7 +414,7 @@ impl UncompressedBlockDecoder {
             for band in 0..self.nbands as usize {
                 let band_start = offset + band * packed_band_size;
                 let band_end = band_start + packed_band_size;
-                let packed = &self.image_data[band_start..band_end];
+                let packed = &self.image_data.as_bytes()[band_start..band_end];
                 let unpacked = self.unpack_bitstream(packed, num_pixels);
                 output.extend_from_slice(&unpacked);
             }
@@ -421,18 +424,18 @@ impl UncompressedBlockDecoder {
 
         let bpp = self.bytes_per_pixel();
 
-        // For full blocks, borrow directly from the Arc — zero-copy
+        // For full blocks, borrow directly from the buffer — zero-copy
         if actual_rows == self.nppbv && actual_cols == self.nppbh {
-            if offset + nominal_block_size > self.image_data.len() {
+            if offset + nominal_block_size > self.image_data.as_bytes().len() {
                 return Err(CodecError::Decode(format!(
                     "Block data out of bounds: offset {} + {} > {}",
                     offset,
                     nominal_block_size,
-                    self.image_data.len()
+                    self.image_data.as_bytes().len()
                 )));
             }
             return Ok(Cow::Borrowed(
-                &self.image_data[offset..offset + nominal_block_size],
+                &self.image_data.as_bytes()[offset..offset + nominal_block_size],
             ));
         }
 
@@ -449,17 +452,17 @@ impl UncompressedBlockDecoder {
                     for row in 0..actual_rows {
                         let row_offset = band_offset + (row as usize) * (self.nppbh as usize) * bpp;
                         let row_bytes = (actual_cols as usize) * bpp;
-                        if row_offset + row_bytes > self.image_data.len() {
+                        if row_offset + row_bytes > self.image_data.as_bytes().len() {
                             return Err(CodecError::Decode(format!(
                                 "Block data out of bounds at row {}: offset {} + {} > {}",
                                 row,
                                 row_offset,
                                 row_bytes,
-                                self.image_data.len()
+                                self.image_data.as_bytes().len()
                             )));
                         }
                         output.extend_from_slice(
-                            &self.image_data[row_offset..row_offset + row_bytes],
+                            &self.image_data.as_bytes()[row_offset..row_offset + row_bytes],
                         );
                     }
                 }
@@ -472,18 +475,18 @@ impl UncompressedBlockDecoder {
                         let pixel_offset = offset
                             + ((row as usize) * (self.nppbh as usize) + (col as usize))
                                 * pixel_size;
-                        if pixel_offset + pixel_size > self.image_data.len() {
+                        if pixel_offset + pixel_size > self.image_data.as_bytes().len() {
                             return Err(CodecError::Decode(format!(
                                 "Pixel data out of bounds at ({}, {}): offset {} + {} > {}",
                                 row,
                                 col,
                                 pixel_offset,
                                 pixel_size,
-                                self.image_data.len()
+                                self.image_data.as_bytes().len()
                             )));
                         }
                         output.extend_from_slice(
-                            &self.image_data[pixel_offset..pixel_offset + pixel_size],
+                            &self.image_data.as_bytes()[pixel_offset..pixel_offset + pixel_size],
                         );
                     }
                 }
@@ -497,18 +500,18 @@ impl UncompressedBlockDecoder {
                             + ((row as usize) * (self.nbands as usize) + (band as usize))
                                 * row_size;
                         let actual_row_bytes = (actual_cols as usize) * bpp;
-                        if row_offset + actual_row_bytes > self.image_data.len() {
+                        if row_offset + actual_row_bytes > self.image_data.as_bytes().len() {
                             return Err(CodecError::Decode(format!(
                                 "Row data out of bounds at row {}, band {}: offset {} + {} > {}",
                                 row,
                                 band,
                                 row_offset,
                                 actual_row_bytes,
-                                self.image_data.len()
+                                self.image_data.as_bytes().len()
                             )));
                         }
                         output.extend_from_slice(
-                            &self.image_data[row_offset..row_offset + actual_row_bytes],
+                            &self.image_data.as_bytes()[row_offset..row_offset + actual_row_bytes],
                         );
                     }
                 }
@@ -751,17 +754,17 @@ impl BlockDecoder for UncompressedBlockDecoder {
 
         // Validate offset is within bounds
         let offset_usize = offset as usize;
-        if offset_usize + block_size > self.image_data.len() {
+        if offset_usize + block_size > self.image_data.as_bytes().len() {
             return Err(CodecError::Decode(format!(
                 "Block offset {} + size {} exceeds image data length {}",
                 offset,
                 block_size,
-                self.image_data.len()
+                self.image_data.as_bytes().len()
             )));
         }
 
-        // Borrow directly from the Arc — zero-copy
-        let raw_data: &[u8] = &self.image_data[offset_usize..offset_usize + block_size];
+        // Borrow directly from the buffer — zero-copy
+        let raw_data: &[u8] = &self.image_data.as_bytes()[offset_usize..offset_usize + block_size];
         let pixels_per_band = (actual_rows as usize) * (actual_cols as usize);
 
         match self.imode {
@@ -901,7 +904,7 @@ mod tests {
         image_data: Vec<u8>,
     ) -> UncompressedBlockDecoder {
         UncompressedBlockDecoder {
-            image_data: Arc::from(image_data),
+            image_data: OwnedBuffer::from_vec(image_data),
             nrows,
             ncols,
             nbpr,
@@ -1802,7 +1805,7 @@ mod property_tests {
         };
 
         let decoder = UncompressedBlockDecoder {
-            image_data: Arc::from(data.clone()),
+            image_data: OwnedBuffer::from_vec(data.clone()),
             nrows,
             ncols,
             nbpr,

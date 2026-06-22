@@ -1,7 +1,7 @@
 //! JPEGImageAssetProvider — implements ImageAssetProvider for standalone JPEG images.
 //!
 //! Provides access to JPEG image data. The raw JPEG bytes are retained as
-//! `Arc<[u8]>` and decoded on demand when `get_block()` is called.
+//! an `OwnedBuffer` and decoded on demand when `get_block()` is called.
 //! JPEG images are always a 1×1 block grid with a single resolution level.
 //!
 //! On decode, pixel-interleaved RGB data from libjpeg-turbo is converted
@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::error::CodecError;
 use crate::jpeg::ffi::TjDecompressor;
 use crate::jpeg::metadata::JPEGMetadataProvider;
+use crate::owned_buffer::OwnedBuffer;
 use crate::traits::asset::AssetMetadata;
 use crate::traits::image::ImageAssetProvider;
 use crate::traits::metadata::MetadataProvider;
@@ -31,7 +32,7 @@ pub struct JPEGImageAssetProvider {
     /// Number of bands (1 for grayscale, 3 for RGB)
     num_bands: u32,
     /// Raw JPEG file bytes, retained for on-demand decode
-    jpeg_data: Arc<[u8]>,
+    source_data: OwnedBuffer,
     /// STAC-aligned roles (e.g., "data")
     roles: Vec<String>,
     /// Per-image metadata
@@ -45,7 +46,7 @@ impl JPEGImageAssetProvider {
         width: u32,
         height: u32,
         num_bands: u32,
-        jpeg_data: Arc<[u8]>,
+        source_data: OwnedBuffer,
         roles: Vec<String>,
         metadata: Arc<JPEGMetadataProvider>,
     ) -> Self {
@@ -54,7 +55,7 @@ impl JPEGImageAssetProvider {
             width,
             height,
             num_bands,
-            jpeg_data,
+            source_data,
             roles,
             metadata,
         }
@@ -161,7 +162,8 @@ impl ImageAssetProvider for JPEGImageAssetProvider {
 
         // Decompress the JPEG data via libjpeg-turbo
         let decompressor = TjDecompressor::new()?;
-        let interleaved = decompressor.decompress(&self.jpeg_data, self.num_bands as usize)?;
+        let interleaved =
+            decompressor.decompress(self.source_data.as_bytes(), self.num_bands as usize)?;
 
         // Convert pixel-interleaved to BSQ
         let bsq = Self::interleaved_to_bsq(

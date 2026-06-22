@@ -21,12 +21,11 @@
 //! - 1.5: Decode YCbCr601 24-bit JPEG blocks with color space conversion
 //! - 1.6: Decode multiband JPEG (IMODE=B or S)
 
-use std::sync::Arc;
-
 use crate::error::CodecError;
 use crate::jbp::image::decoder::BlockDecoder;
 use crate::jbp::image::facade::ImageSubheaderFacade;
 use crate::jbp::image::types::{ImageRepresentation, InterleaveMode};
+use crate::owned_buffer::OwnedBuffer;
 
 use crate::jpeg::JpegCodec;
 
@@ -365,7 +364,7 @@ impl JpegBlockDecoder {
 #[cfg(feature = "libjpeg-turbo")]
 pub struct JpegNitfBlockDecoder {
     /// The raw image data (JPEG compressed blocks)
-    image_data: Arc<[u8]>,
+    image_data: OwnedBuffer,
     /// The underlying JPEG decoder
     jpeg_decoder: JpegBlockDecoder,
     /// Number of rows in the image
@@ -409,7 +408,7 @@ impl JpegNitfBlockDecoder {
     /// - 4.2: I1 dimension constraint validation (≤2048×2048)
     pub fn new(
         subheader: &ImageSubheaderFacade,
-        image_data: Arc<[u8]>,
+        image_data: OwnedBuffer,
     ) -> Result<Self, CodecError> {
         if image_data.is_empty() {
             return Err(CodecError::InvalidFormat(
@@ -507,7 +506,7 @@ impl JpegNitfBlockDecoder {
 
         // For single-block images, the entire data is one JPEG stream
         if total_blocks == 1 {
-            offsets.push((0, self.image_data.len()));
+            offsets.push((0, self.image_data.as_bytes().len()));
             return offsets;
         }
 
@@ -520,7 +519,7 @@ impl JpegNitfBlockDecoder {
         let mut current_offset = 0;
 
         for _ in 0..total_blocks {
-            if current_offset >= self.image_data.len() {
+            if current_offset >= self.image_data.as_bytes().len() {
                 // No more data - remaining blocks will have invalid offsets
                 offsets.push((current_offset, current_offset));
                 continue;
@@ -531,26 +530,27 @@ impl JpegNitfBlockDecoder {
                 // [4-byte len BE][JPEG stream] repeated per band
                 let block_start = current_offset;
                 for band in 0..self.nbands {
-                    if current_offset + 4 > self.image_data.len() {
+                    if current_offset + 4 > self.image_data.as_bytes().len() {
                         break;
                     }
+                    let image_bytes = self.image_data.as_bytes();
                     let length = u32::from_be_bytes([
-                        self.image_data[current_offset],
-                        self.image_data[current_offset + 1],
-                        self.image_data[current_offset + 2],
-                        self.image_data[current_offset + 3],
+                        image_bytes[current_offset],
+                        image_bytes[current_offset + 1],
+                        image_bytes[current_offset + 2],
+                        image_bytes[current_offset + 3],
                     ]) as usize;
                     current_offset += 4 + length;
-                    if current_offset > self.image_data.len() {
+                    if current_offset > self.image_data.as_bytes().len() {
                         // Truncated stream — clamp to data length
-                        current_offset = self.image_data.len();
+                        current_offset = self.image_data.as_bytes().len();
                         break;
                     }
                     let _ = band; // suppress unused warning
                 }
                 offsets.push((block_start, current_offset));
             } else {
-                let remaining_data = &self.image_data[current_offset..];
+                let remaining_data = &self.image_data.as_bytes()[current_offset..];
 
                 // Find the end of this JPEG stream (EOI marker)
                 if let Some(jpeg_len) = find_jpeg_end(remaining_data) {
@@ -559,8 +559,8 @@ impl JpegNitfBlockDecoder {
                     current_offset = end_offset;
                 } else {
                     // No EOI found - use remaining data as the last block
-                    offsets.push((current_offset, self.image_data.len()));
-                    current_offset = self.image_data.len();
+                    offsets.push((current_offset, self.image_data.as_bytes().len()));
+                    current_offset = self.image_data.as_bytes().len();
                 }
             }
         }
@@ -655,16 +655,16 @@ impl BlockDecoder for JpegNitfBlockDecoder {
 
         let (start_offset, end_offset) = block_offsets[block_index];
 
-        if start_offset >= end_offset || end_offset > self.image_data.len() {
+        if start_offset >= end_offset || end_offset > self.image_data.as_bytes().len() {
             return Err(CodecError::Decode(format!(
                 "Invalid block offsets: start={}, end={}, data_len={}",
                 start_offset,
                 end_offset,
-                self.image_data.len()
+                self.image_data.as_bytes().len()
             )));
         }
 
-        let block_jpeg_data = &self.image_data[start_offset..end_offset];
+        let block_jpeg_data = &self.image_data.as_bytes()[start_offset..end_offset];
 
         // Decode the JPEG data
         // For single-band or RGB/YCbCr with IMODE=P, use decode_block
@@ -752,16 +752,16 @@ impl BlockDecoder for JpegNitfBlockDecoder {
         // For masked JPEG (M3), the offset points to the start of the JPEG stream
         // We need to find the end of the JPEG stream (look for EOI marker 0xFFD9)
         let offset_usize = offset as usize;
-        if offset_usize >= self.image_data.len() {
+        if offset_usize >= self.image_data.as_bytes().len() {
             return Err(CodecError::Decode(format!(
                 "Block offset {} exceeds image data length {}",
                 offset,
-                self.image_data.len()
+                self.image_data.as_bytes().len()
             )));
         }
 
         // Find the end of the JPEG stream by looking for EOI marker
-        let jpeg_data = &self.image_data[offset_usize..];
+        let jpeg_data = &self.image_data.as_bytes()[offset_usize..];
         let jpeg_end = find_jpeg_end(jpeg_data).ok_or_else(|| {
             CodecError::Decode("Could not find JPEG EOI marker in block data".into())
         })?;
@@ -844,7 +844,7 @@ impl BlockDecoder for JpegNitfBlockDecoder {
 }
 
 // Safety: JpegNitfBlockDecoder is thread-safe
-// - image_data is Arc<[u8]> (immutable, shared)
+// - image_data is OwnedBuffer (immutable, shared via Arc internally)
 // - jpeg_decoder contains only primitive types and JpegCodec (which is Send+Sync)
 // - All other fields are primitive types
 #[cfg(feature = "libjpeg-turbo")]
@@ -1483,7 +1483,7 @@ mod tests {
                 }
             };
 
-            let empty_data: Arc<[u8]> = Arc::from(Vec::<u8>::new().into_boxed_slice());
+            let empty_data = OwnedBuffer::from_vec(Vec::new());
             let result = JpegNitfBlockDecoder::new(&facade, empty_data);
 
             assert!(result.is_err(), "Expected error for empty image data");

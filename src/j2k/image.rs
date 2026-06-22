@@ -1,19 +1,19 @@
 //! J2KImageAssetProvider — implements ImageAssetProvider for standalone JPEG 2000 images.
 //!
 //! Provides blocked/tiled access to JPEG 2000 image data. The file buffer is
-//! retained as `Arc<[u8]>` with a byte range identifying the raw codestream
-//! within it. Tiles are decoded on demand when `get_block()` is called.
+//! retained as an `OwnedBuffer` with a sub-slice identifying the raw codestream.
+//! Tiles are decoded on demand when `get_block()` is called.
 //! The tile grid is derived from the SIZ marker.
 //!
 //! Supports multi-resolution decoding via the `resolution_level` parameter.
 
-use std::ops::Range;
 use std::sync::{Arc, OnceLock};
 
 use crate::error::CodecError;
 use crate::j2k::codec::{J2KCodec, J2KDecodeParams};
 use crate::j2k::markers::{scan_sot_markers, TilePartOffsetTable};
 use crate::j2k::metadata::J2KMetadataProvider;
+use crate::owned_buffer::OwnedBuffer;
 use crate::traits::asset::AssetMetadata;
 use crate::traits::image::ImageAssetProvider;
 use crate::traits::metadata::MetadataProvider;
@@ -21,10 +21,10 @@ use crate::types::PixelType;
 
 /// Image asset provider for a standalone JPEG 2000 image.
 ///
-/// Retains the file buffer and a byte range identifying the raw codestream
-/// within it. Tiles are decoded on demand when `get_block()` is called.
-/// For raw `.j2k` files the range spans the entire buffer; for `.jp2` files
-/// it points to the contents of the `jp2c` box, avoiding a copy.
+/// Retains the file buffer as an `OwnedBuffer` sliced to the codestream region.
+/// Tiles are decoded on demand when `get_block()` is called.
+/// For raw `.j2k` files the slice spans the entire buffer; for `.jp2` files
+/// it covers only the `jp2c` box contents, avoiding a copy.
 pub struct J2KImageAssetProvider {
     /// Unique key identifying this asset (always "image:0")
     key: String,
@@ -46,10 +46,10 @@ pub struct J2KImageAssetProvider {
     num_tiles_x: u32,
     /// Number of tiles vertically
     num_tiles_y: u32,
-    /// Shared file buffer (entire file bytes)
-    buffer: Arc<[u8]>,
-    /// Byte range within `buffer` that contains the raw J2K codestream
-    codestream_range: Range<usize>,
+    /// Owned buffer sliced to the codestream region
+    source_data: OwnedBuffer,
+    /// Byte offset of codestream start within the original file (for tile_byte_ranges)
+    codestream_file_offset: usize,
     /// STAC-aligned roles (e.g., "data")
     roles: Vec<String>,
     /// Per-image metadata
@@ -80,8 +80,8 @@ impl J2KImageAssetProvider {
         tile_height: u32,
         num_tiles_x: u32,
         num_tiles_y: u32,
-        buffer: Arc<[u8]>,
-        codestream_range: Range<usize>,
+        source_data: OwnedBuffer,
+        codestream_file_offset: usize,
         roles: Vec<String>,
         metadata: Arc<J2KMetadataProvider>,
         num_resolution_levels: u32,
@@ -101,8 +101,8 @@ impl J2KImageAssetProvider {
             tile_height,
             num_tiles_x,
             num_tiles_y,
-            buffer,
-            codestream_range,
+            source_data,
+            codestream_file_offset,
             roles,
             metadata,
             num_resolution_levels,
@@ -113,10 +113,10 @@ impl J2KImageAssetProvider {
         }
     }
 
-    /// Returns a reference to the raw codestream bytes within the shared buffer.
+    /// Returns a reference to the raw codestream bytes.
     #[inline]
     fn codestream(&self) -> &[u8] {
-        &self.buffer[self.codestream_range.clone()]
+        self.source_data.as_bytes()
     }
 
     /// Ensure the tile-part offset table is populated, triggering a SOT scan if needed.
@@ -288,7 +288,7 @@ impl ImageAssetProvider for J2KImageAssetProvider {
 
     fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), Vec<(u64, u64)>>> {
         let table = self.ensure_tile_part_table().ok()?;
-        let base_offset = self.codestream_range.start as u64;
+        let base_offset = self.codestream_file_offset as u64;
         let mut ranges: std::collections::HashMap<(u32, u32), Vec<(u64, u64)>> =
             std::collections::HashMap::new();
         for entry in table {

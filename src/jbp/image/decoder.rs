@@ -27,11 +27,10 @@
 //! let (block_data, shape) = decoder.decode_block(0, 0, 0, None)?;
 //! ```
 
-use std::sync::Arc;
-
 use crate::error::CodecError;
 use crate::jbp::image::facade::ImageSubheaderFacade;
 use crate::jbp::image::nc_decoder::UncompressedBlockDecoder;
+use crate::owned_buffer::OwnedBuffer;
 
 #[cfg(feature = "openjpeg")]
 use crate::j2k::get_j2k_codec;
@@ -211,7 +210,7 @@ pub trait BlockDecoder: Send + Sync {
 /// - `CD`, `MD`: JPEG 2000 Part 15 HTJ2K (requires `openjpeg` feature)
 pub fn create_block_decoder(
     subheader: &ImageSubheaderFacade,
-    image_data: Arc<[u8]>,
+    image_data: OwnedBuffer,
 ) -> Result<Box<dyn BlockDecoder>, CodecError> {
     use crate::jbp::image::{is_masked_ic, unmask_ic};
 

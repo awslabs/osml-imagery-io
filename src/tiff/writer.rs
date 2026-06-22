@@ -1206,6 +1206,7 @@ mod tests {
         BufferedImageAssetProvider, BufferedMetadataProvider, BufferedTextAssetProvider,
         MemoryImageConfig,
     };
+    use crate::owned_buffer::OwnedBuffer;
 
     /// Helper: create a minimal 1-band 256×256 UInt8 image provider with block data populated.
     fn make_image_provider(key: &str) -> Arc<BufferedImageAssetProvider> {
@@ -1769,7 +1770,7 @@ mod tests {
         meta.set("33550", serde_json::json!([0.5, 0.5, 0.0]));
 
         let bytes = write_tiff_with_metadata(&meta);
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.entries(None);
@@ -1811,7 +1812,7 @@ mod tests {
         writer.close().unwrap();
 
         let bytes = std::fs::read(&path).unwrap();
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.entries(None);
@@ -1858,7 +1859,7 @@ mod tests {
         writer.close().unwrap();
 
         let bytes = std::fs::read(&path).unwrap();
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.entries(None);
@@ -1890,7 +1891,7 @@ mod tests {
         meta.set("Compression", serde_json::json!("None"));
 
         let bytes = write_tiff_with_metadata(&meta);
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.entries(None);
@@ -2072,7 +2073,7 @@ mod tests {
         meta.set("42113", serde_json::json!("nan"));
 
         let bytes = write_tiff_with_metadata(&meta);
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.entries(None);
@@ -2089,7 +2090,7 @@ mod tests {
         meta.set("65000", serde_json::json!(42));
 
         let bytes = write_tiff_with_metadata(&meta);
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.entries(None);
@@ -2107,7 +2108,7 @@ mod tests {
         meta.set("42113", serde_json::json!("test"));
 
         let bytes = write_tiff_with_metadata(&meta);
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.entries(None);
@@ -2135,7 +2136,7 @@ mod tests {
         );
 
         let bytes = write_tiff_with_metadata(&meta);
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.entries(None);
@@ -2159,7 +2160,7 @@ mod tests {
         meta.set("256", serde_json::json!(9999));
 
         let bytes = write_tiff_with_metadata(&meta);
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.entries(None);
@@ -2193,7 +2194,7 @@ mod tests {
         writer.close().unwrap();
 
         let bytes = std::fs::read(&path).unwrap();
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.entries(None);
@@ -2237,7 +2238,7 @@ mod tests {
         writer.close().unwrap();
 
         let bytes = std::fs::read(&path).unwrap();
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         // Single-IFD file → reader assigns key "image:0" regardless of NewSubfileType
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
@@ -2291,7 +2292,7 @@ mod tests {
         writer.close().unwrap();
 
         let bytes = std::fs::read(&path).unwrap();
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let ifd_meta = asset.metadata();
         let dict = ifd_meta.entries(None);
@@ -2627,7 +2628,7 @@ mod tests {
                 meta.set(&tag_key, tag_value);
 
                 let bytes = write_tiff_with_metadata(&meta);
-                let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+                let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
                 let asset = reader.get_asset("image:0").unwrap();
                 let ifd_meta = asset.metadata();
                 let dict = ifd_meta.entries(None);
@@ -2715,7 +2716,7 @@ mod tests {
 
         // Read back and verify pixel data
         let bytes = std::fs::read(&path).unwrap();
-        let reader = TIFFDatasetReader::from_bytes(&bytes).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
         let asset = reader.get_asset("image:0").unwrap();
         let image = asset.as_image().unwrap();
 
