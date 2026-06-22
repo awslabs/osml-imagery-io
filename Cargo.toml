@@ -1,6 +1,6 @@
 [package]
 name = "osml-imagery-io"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Geospatial image format codecs (NITF, GeoTIFF) for the OversightML ecosystem"
 license = "Apache-2.0"
