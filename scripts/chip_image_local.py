@@ -165,10 +165,7 @@ def save_as_png(chip: np.ndarray, output_path: Path) -> None:
         description="Extracted chip",
     )
 
-    if pixel_type == PixelType.UInt8:
-        provider.set_full_image(bsq)
-    else:
-        provider.set_full_image_u16(bsq)
+    provider.set_full_image(bsq)
 
     writer = IO.open([str(output_path)], "w", "png")
     writer.add_asset(

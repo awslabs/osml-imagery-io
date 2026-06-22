@@ -676,11 +676,7 @@ class ImageWriter:
                     image_provider, bsq_image, config, provided_blocks
                 )
             else:
-                # For non-masked images, set the full image
-                if config.pixel_type == "uint8":
-                    image_provider.set_full_image(bsq_image)
-                else:
-                    image_provider.set_full_image_u16(bsq_image)
+                image_provider.set_full_image(bsq_image)
         except Exception as e:
             raise RuntimeError(f"Failed to set image data: {e}")
 
@@ -802,11 +798,7 @@ class ImageWriter:
                 # Ensure contiguous array
                 block_data = np.ascontiguousarray(block_data)
 
-                # Set block on provider
-                if config.pixel_type == "uint8":
-                    image_provider.set_block(tile_y, tile_x, block_data)
-                else:
-                    image_provider.set_block_u16(tile_y, tile_x, block_data)
+                image_provider.set_block(tile_y, tile_x, block_data)
 
 
 def parse_args(args: Optional[list] = None) -> ImageConfig:
