@@ -88,7 +88,7 @@ seq:
       T = photons/(s m^2 sr um),
       K = kelvin,
       F = Watts,
-      H = photons/s,
+      G = photons/s,
       I = J/(m^2 s^1/2 K),
       A = 1/K,
       V = Volts,
@@ -163,7 +163,8 @@ seq:
     type: str
     size: 1
     encoding: BCS-A
-    doc: "Wavelength unit. U = micrometers, W = wavenumber (cm^-1)"
+    if: "EXISTENCE_MASK & 0x01F80000 != 0"
+    doc: "Wavelength unit. U = micrometers, W = wavenumber (cm^-1). Conditional: present only when any of bits b24-b19 are set."
 
   # --- Bit 31 (0x80000000): Radiometric adjustment surface and atmospheric altitude ---
   - id: RADIOMETRIC_ADJUSTMENT_SURFACE
