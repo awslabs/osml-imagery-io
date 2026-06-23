@@ -78,8 +78,8 @@ impl TIFFDatasetReader {
         }
         let magic = &data[0..4];
         let byte_order = match magic {
-            [0x49, 0x49, 0x2A, 0x00] => "LittleEndian",
-            [0x4D, 0x4D, 0x00, 0x2A] => "BigEndian",
+            [0x49, 0x49, 0x2A, 0x00] | [0x49, 0x49, 0x2B, 0x00] => "LittleEndian",
+            [0x4D, 0x4D, 0x00, 0x2A] | [0x4D, 0x4D, 0x00, 0x2B] => "BigEndian",
             _ => {
                 return Err(CodecError::InvalidFormat(
                     "Invalid TIFF magic bytes: expected II*\\0 (little-endian) or MM\\0* (big-endian)"
@@ -197,7 +197,7 @@ impl TIFFDatasetReader {
             }
         }
 
-        let num_image_segments = image_assets.len() as u16;
+        let num_image_segments = image_assets.len() as u32;
         let dataset_metadata = Arc::new(TIFFMetadataProvider::dataset_level(
             byte_order,
             num_directories,
@@ -638,6 +638,41 @@ mod tests {
             }
             Ok(_) => panic!("Expected AssetNotFound for old-format key, got Ok"),
             Err(e) => panic!("Expected AssetNotFound for old-format key, got: {:?}", e),
+        }
+    }
+
+    /// BigTIFF LE magic bytes (II + version 43) pass validation.
+    #[test]
+    fn test_bigtiff_le_magic_passes_validation() {
+        let mut data = make_single_ifd_tiff();
+        // Change version byte from 42 to 43 (BigTIFF)
+        data[2] = 0x2B;
+        data[3] = 0x00;
+
+        let result = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data));
+        // The magic check should pass — the error (if any) comes from libtiff
+        // failing to parse classic IFD data as BigTIFF, not from our magic check.
+        if let Err(CodecError::InvalidFormat(msg)) = &result {
+            assert!(
+                !msg.contains("Invalid TIFF magic bytes"),
+                "BigTIFF LE magic should not be rejected: {}",
+                msg
+            );
+        }
+    }
+
+    /// BigTIFF BE magic bytes (MM + version 43) pass validation.
+    #[test]
+    fn test_bigtiff_be_magic_passes_validation() {
+        let data = vec![0x4D, 0x4D, 0x00, 0x2B, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let result = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data));
+        // Should not fail with "Invalid TIFF magic bytes"
+        if let Err(CodecError::InvalidFormat(msg)) = &result {
+            assert!(
+                !msg.contains("Invalid TIFF magic bytes"),
+                "BigTIFF BE magic should not be rejected: {}",
+                msg
+            );
         }
     }
 

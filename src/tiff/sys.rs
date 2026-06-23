@@ -209,6 +209,12 @@ extern "C" {
     /// Non-zero if tiled, 0 if stripped
     pub fn TIFFIsTiled(tif: *mut c_void) -> c_int;
 
+    /// Return whether the file is BigTIFF format.
+    ///
+    /// # Returns
+    /// Non-zero if BigTIFF, 0 if classic TIFF
+    pub fn TIFFIsBigTIFF(tif: *mut c_void) -> c_int;
+
     // -------------------------------------------------------------------------
     // Directory (IFD) Navigation Functions
     // -------------------------------------------------------------------------
@@ -217,13 +223,13 @@ extern "C" {
     ///
     /// # Returns
     /// 1 on success, 0 on failure
-    pub fn TIFFSetDirectory(tif: *mut c_void, dirnum: u16) -> c_int;
+    pub fn TIFFSetDirectory(tif: *mut c_void, dirnum: u32) -> c_int;
 
     /// Return the index of the current directory.
-    pub fn TIFFCurrentDirectory(tif: *mut c_void) -> u16;
+    pub fn TIFFCurrentDirectory(tif: *mut c_void) -> u32;
 
     /// Return the number of directories in the file.
-    pub fn TIFFNumberOfDirectories(tif: *mut c_void) -> u16;
+    pub fn TIFFNumberOfDirectories(tif: *mut c_void) -> u32;
 
     // -------------------------------------------------------------------------
     // Error/Warning Handler Functions
@@ -342,6 +348,14 @@ pub const TIFF_SRATIONAL: u32 = 10;
 pub const TIFF_FLOAT: u32 = 11;
 /// TIFF DOUBLE (f64) data type
 pub const TIFF_DOUBLE: u32 = 12;
+/// TIFF IFD (u32 sub-IFD offset) data type
+pub const TIFF_IFD: u32 = 13;
+/// TIFF LONG8 (u64) data type (BigTIFF)
+pub const TIFF_LONG8: u32 = 16;
+/// TIFF SLONG8 (i64) data type (BigTIFF)
+pub const TIFF_SLONG8: u32 = 17;
+/// TIFF IFD8 (u64 sub-IFD offset) data type (BigTIFF)
+pub const TIFF_IFD8: u32 = 18;
 
 /// Field bit value for custom (non-standard) tags
 pub const FIELD_CUSTOM: u16 = 65;

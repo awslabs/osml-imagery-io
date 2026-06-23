@@ -57,7 +57,7 @@ pub struct TIFFImageAssetProvider {
     /// Unique key identifying this asset (e.g., "image:0")
     key: String,
     /// IFD index within the TIFF file
-    ifd_index: u16,
+    ifd_index: u32,
     /// Image width in pixels
     width: u32,
     /// Image height in pixels
@@ -95,7 +95,7 @@ impl TIFFImageAssetProvider {
     /// The caller must hold the mutex lock when calling this.
     pub fn new(
         key: String,
-        ifd_index: u16,
+        ifd_index: u32,
         handle: Arc<Mutex<TiffHandle>>,
         metadata: Arc<TIFFMetadataProvider>,
         roles: Vec<String>,
@@ -1417,7 +1417,7 @@ mod tests {
     #[test]
     fn test_codec_config_jpeg_with_tables() {
         // Build a JPEG TIFF using from_write() so libtiff generates valid JPEGTables
-        let handle = TiffHandle::from_write().unwrap();
+        let handle = TiffHandle::from_write(false).unwrap();
         handle.set_field_u32(tags::IMAGE_WIDTH, 256).unwrap();
         handle.set_field_u32(tags::IMAGE_LENGTH, 256).unwrap();
         handle.set_field_u16(tags::BITS_PER_SAMPLE, 8).unwrap();

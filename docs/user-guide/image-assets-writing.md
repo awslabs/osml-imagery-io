@@ -557,6 +557,13 @@ The GeoTIFF writer reads encoding hints from the asset's metadata using numeric 
 tag IDs as keys. Use `TagNameResolver` for convenient name-based access. The writer
 supports uncompressed, LZW, Deflate, and PackBits compression.
 
+#### BigTIFF Auto-Promotion
+
+When the estimated uncompressed output size exceeds approximately 3.5 GB, the writer
+automatically produces a BigTIFF file (64-bit offsets) instead of classic TIFF. No
+configuration is needed — small outputs use classic TIFF for maximum compatibility, and
+large outputs use BigTIFF to avoid the 4 GB file-size limit.
+
 #### TIFF Encoding Hints
 
 Standard TIFF tags that control how the image is stored on disk:

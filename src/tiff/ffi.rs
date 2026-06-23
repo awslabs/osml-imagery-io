@@ -416,16 +416,6 @@ fn install_geotiff_extender() {
 }
 
 // =============================================================================
-// TiffHandle — Safe RAII Wrapper
-// =============================================================================
-
-/// Safe RAII wrapper around a libtiff `TIFF*` handle.
-///
-/// `Drop` calls `TIFFClose` to release all libtiff resources.
-/// Implements `Send` (not `Sync`) — libtiff is not thread-safe for concurrent
-/// access to the same handle, so callers must serialize access via `Mutex`.
-///
-// =============================================================================
 // IFD Tag Entry
 // =============================================================================
 
@@ -437,10 +427,346 @@ fn install_geotiff_extender() {
 pub(crate) struct IfdTagEntry {
     /// TIFF tag number (e.g. 256 for ImageWidth).
     pub tag: u32,
-    /// TIFF field type (1=BYTE, 2=ASCII, … 12=DOUBLE).
+    /// TIFF field type (1=BYTE, 2=ASCII, … 12=DOUBLE, 16=LONG8, etc).
     pub field_type: u16,
-    /// Number of values for this tag.
-    pub count: u32,
+    /// Number of values for this tag (u64 for BigTIFF, capped at u64::MAX).
+    pub count: u64,
+}
+
+// =============================================================================
+// IfdReader — Format-aware IFD navigation
+// =============================================================================
+
+const MAX_IFD_ENTRIES: u64 = 4096;
+
+struct IfdReader<'a> {
+    raw: &'a [u8],
+    is_little_endian: bool,
+    is_bigtiff: bool,
+}
+
+impl<'a> IfdReader<'a> {
+    fn new(raw: &'a [u8], is_bigtiff: bool) -> Result<Self, CodecError> {
+        let min_header = if is_bigtiff { 16 } else { 8 };
+        if raw.len() < min_header {
+            return Err(CodecError::Decode(
+                "TIFF data too short for header".to_string(),
+            ));
+        }
+
+        let is_little_endian = match (raw[0], raw[1]) {
+            (0x49, 0x49) => true,
+            (0x4D, 0x4D) => false,
+            _ => {
+                return Err(CodecError::Decode(
+                    "Invalid TIFF byte order marker".to_string(),
+                ));
+            }
+        };
+
+        Ok(Self {
+            raw,
+            is_little_endian,
+            is_bigtiff,
+        })
+    }
+
+    fn read_u16(&self, offset: usize) -> Result<u16, CodecError> {
+        if offset + 2 > self.raw.len() {
+            return Err(CodecError::Decode(format!(
+                "Read u16 out of bounds at offset {}",
+                offset
+            )));
+        }
+        let bytes: [u8; 2] = [self.raw[offset], self.raw[offset + 1]];
+        Ok(if self.is_little_endian {
+            u16::from_le_bytes(bytes)
+        } else {
+            u16::from_be_bytes(bytes)
+        })
+    }
+
+    fn read_i16(&self, offset: usize) -> Result<i16, CodecError> {
+        if offset + 2 > self.raw.len() {
+            return Err(CodecError::Decode(format!(
+                "Read i16 out of bounds at offset {}",
+                offset
+            )));
+        }
+        let bytes: [u8; 2] = [self.raw[offset], self.raw[offset + 1]];
+        Ok(if self.is_little_endian {
+            i16::from_le_bytes(bytes)
+        } else {
+            i16::from_be_bytes(bytes)
+        })
+    }
+
+    fn read_u32(&self, offset: usize) -> Result<u32, CodecError> {
+        if offset + 4 > self.raw.len() {
+            return Err(CodecError::Decode(format!(
+                "Read u32 out of bounds at offset {}",
+                offset
+            )));
+        }
+        let bytes: [u8; 4] = [
+            self.raw[offset],
+            self.raw[offset + 1],
+            self.raw[offset + 2],
+            self.raw[offset + 3],
+        ];
+        Ok(if self.is_little_endian {
+            u32::from_le_bytes(bytes)
+        } else {
+            u32::from_be_bytes(bytes)
+        })
+    }
+
+    fn read_i32(&self, offset: usize) -> Result<i32, CodecError> {
+        if offset + 4 > self.raw.len() {
+            return Err(CodecError::Decode(format!(
+                "Read i32 out of bounds at offset {}",
+                offset
+            )));
+        }
+        let bytes: [u8; 4] = [
+            self.raw[offset],
+            self.raw[offset + 1],
+            self.raw[offset + 2],
+            self.raw[offset + 3],
+        ];
+        Ok(if self.is_little_endian {
+            i32::from_le_bytes(bytes)
+        } else {
+            i32::from_be_bytes(bytes)
+        })
+    }
+
+    fn read_u64(&self, offset: usize) -> Result<u64, CodecError> {
+        if offset + 8 > self.raw.len() {
+            return Err(CodecError::Decode(format!(
+                "Read u64 out of bounds at offset {}",
+                offset
+            )));
+        }
+        let bytes: [u8; 8] = [
+            self.raw[offset],
+            self.raw[offset + 1],
+            self.raw[offset + 2],
+            self.raw[offset + 3],
+            self.raw[offset + 4],
+            self.raw[offset + 5],
+            self.raw[offset + 6],
+            self.raw[offset + 7],
+        ];
+        Ok(if self.is_little_endian {
+            u64::from_le_bytes(bytes)
+        } else {
+            u64::from_be_bytes(bytes)
+        })
+    }
+
+    fn read_i64(&self, offset: usize) -> Result<i64, CodecError> {
+        if offset + 8 > self.raw.len() {
+            return Err(CodecError::Decode(format!(
+                "Read i64 out of bounds at offset {}",
+                offset
+            )));
+        }
+        let bytes: [u8; 8] = [
+            self.raw[offset],
+            self.raw[offset + 1],
+            self.raw[offset + 2],
+            self.raw[offset + 3],
+            self.raw[offset + 4],
+            self.raw[offset + 5],
+            self.raw[offset + 6],
+            self.raw[offset + 7],
+        ];
+        Ok(if self.is_little_endian {
+            i64::from_le_bytes(bytes)
+        } else {
+            i64::from_be_bytes(bytes)
+        })
+    }
+
+    fn read_f32(&self, offset: usize) -> Result<f32, CodecError> {
+        if offset + 4 > self.raw.len() {
+            return Err(CodecError::Decode(format!(
+                "Read f32 out of bounds at offset {}",
+                offset
+            )));
+        }
+        let bytes: [u8; 4] = [
+            self.raw[offset],
+            self.raw[offset + 1],
+            self.raw[offset + 2],
+            self.raw[offset + 3],
+        ];
+        Ok(if self.is_little_endian {
+            f32::from_le_bytes(bytes)
+        } else {
+            f32::from_be_bytes(bytes)
+        })
+    }
+
+    fn read_f64(&self, offset: usize) -> Result<f64, CodecError> {
+        if offset + 8 > self.raw.len() {
+            return Err(CodecError::Decode(format!(
+                "Read f64 out of bounds at offset {}",
+                offset
+            )));
+        }
+        let bytes: [u8; 8] = [
+            self.raw[offset],
+            self.raw[offset + 1],
+            self.raw[offset + 2],
+            self.raw[offset + 3],
+            self.raw[offset + 4],
+            self.raw[offset + 5],
+            self.raw[offset + 6],
+            self.raw[offset + 7],
+        ];
+        Ok(if self.is_little_endian {
+            f64::from_le_bytes(bytes)
+        } else {
+            f64::from_be_bytes(bytes)
+        })
+    }
+
+    fn first_ifd_offset(&self) -> Result<u64, CodecError> {
+        if self.is_bigtiff {
+            self.read_u64(8)
+        } else {
+            self.read_u32(4).map(|v| v as u64)
+        }
+    }
+
+    fn entry_size(&self) -> usize {
+        if self.is_bigtiff {
+            20
+        } else {
+            12
+        }
+    }
+
+    fn read_entry_count(&self, ifd_offset: usize) -> Result<u64, CodecError> {
+        if self.is_bigtiff {
+            self.read_u64(ifd_offset)
+        } else {
+            self.read_u16(ifd_offset).map(|v| v as u64)
+        }
+    }
+
+    fn entry_count_size(&self) -> usize {
+        if self.is_bigtiff {
+            8
+        } else {
+            2
+        }
+    }
+
+    fn read_next_ifd_offset(&self, ifd_offset: usize, entry_count: u64) -> Result<u64, CodecError> {
+        let pos = ifd_offset + self.entry_count_size() + entry_count as usize * self.entry_size();
+        if self.is_bigtiff {
+            self.read_u64(pos)
+        } else {
+            self.read_u32(pos).map(|v| v as u64)
+        }
+    }
+
+    fn walk_to_ifd(&self, target_dir: u32) -> Result<usize, CodecError> {
+        let mut ifd_offset = self.first_ifd_offset()? as usize;
+        for _ in 0..target_dir {
+            if ifd_offset == 0 {
+                return Err(CodecError::Decode(format!(
+                    "IFD chain broken before directory {}",
+                    target_dir
+                )));
+            }
+            let entry_count = self.read_entry_count(ifd_offset)?;
+            ifd_offset = self.read_next_ifd_offset(ifd_offset, entry_count)? as usize;
+        }
+        if ifd_offset == 0 {
+            return Err(CodecError::Decode(format!(
+                "Invalid IFD offset 0 for directory {}",
+                target_dir
+            )));
+        }
+        Ok(ifd_offset)
+    }
+
+    fn enumerate_entries(&self, ifd_offset: usize) -> Result<Vec<IfdTagEntry>, CodecError> {
+        let entry_count = self.read_entry_count(ifd_offset)?;
+        let capped_count = entry_count.min(MAX_IFD_ENTRIES) as usize;
+        let entries_start = ifd_offset + self.entry_count_size();
+        let entry_size = self.entry_size();
+
+        let mut entries = Vec::with_capacity(capped_count);
+        for i in 0..capped_count {
+            let eo = entries_start + i * entry_size;
+            if eo + entry_size > self.raw.len() {
+                break;
+            }
+            let tag = self.read_u16(eo)? as u32;
+            let field_type = self.read_u16(eo + 2)?;
+            let count = if self.is_bigtiff {
+                self.read_u64(eo + 4)?
+            } else {
+                self.read_u32(eo + 4)? as u64
+            };
+            entries.push(IfdTagEntry {
+                tag,
+                field_type,
+                count,
+            });
+        }
+
+        Ok(entries)
+    }
+
+    fn inline_threshold(&self) -> usize {
+        if self.is_bigtiff {
+            8
+        } else {
+            4
+        }
+    }
+
+    fn value_field_offset_in_entry(&self) -> usize {
+        if self.is_bigtiff {
+            12
+        } else {
+            8
+        }
+    }
+
+    fn read_data_offset(&self, entry_file_offset: usize) -> Result<u64, CodecError> {
+        let vfo = entry_file_offset + self.value_field_offset_in_entry();
+        if self.is_bigtiff {
+            self.read_u64(vfo)
+        } else {
+            self.read_u32(vfo).map(|v| v as u64)
+        }
+    }
+
+    fn find_entry_offset(&self, ifd_offset: usize, tag: u32) -> Result<Option<usize>, CodecError> {
+        let entry_count = self.read_entry_count(ifd_offset)?;
+        let capped_count = entry_count.min(MAX_IFD_ENTRIES) as usize;
+        let entries_start = ifd_offset + self.entry_count_size();
+        let entry_size = self.entry_size();
+
+        for i in 0..capped_count {
+            let eo = entries_start + i * entry_size;
+            if eo + entry_size > self.raw.len() {
+                break;
+            }
+            let t = self.read_u16(eo)? as u32;
+            if t == tag {
+                return Ok(Some(eo));
+            }
+        }
+        Ok(None)
+    }
 }
 
 // =============================================================================
@@ -457,6 +783,11 @@ fn json_f64(v: f64) -> serde_json::Value {
     }
 }
 
+/// Safe RAII wrapper around a libtiff `TIFF*` handle.
+///
+/// `Drop` calls `TIFFClose` to release all libtiff resources.
+/// Implements `Send` (not `Sync`) — libtiff is not thread-safe for concurrent
+/// access to the same handle, so callers must serialize access via `Mutex`.
 pub(crate) struct TiffHandle {
     handle: *mut c_void,
     /// Prevent deallocation of the stream data while the handle is alive.
@@ -627,7 +958,7 @@ impl TiffHandle {
     // =========================================================================
 
     /// Set the current directory (IFD) to the given index.
-    pub fn set_directory(&self, index: u16) -> Result<(), CodecError> {
+    pub fn set_directory(&self, index: u32) -> Result<(), CodecError> {
         let ret = unsafe { sys::TIFFSetDirectory(self.handle, index) };
         if ret == 1 {
             Ok(())
@@ -640,12 +971,12 @@ impl TiffHandle {
     }
 
     /// Return the index of the current directory.
-    pub fn current_directory(&self) -> u16 {
+    pub fn current_directory(&self) -> u32 {
         unsafe { sys::TIFFCurrentDirectory(self.handle) }
     }
 
     /// Return the total number of directories (IFDs) in the file.
-    pub fn number_of_directories(&self) -> u16 {
+    pub fn number_of_directories(&self) -> u32 {
         unsafe { sys::TIFFNumberOfDirectories(self.handle) }
     }
 
@@ -670,104 +1001,9 @@ impl TiffHandle {
             }
         };
 
-        if raw.len() < 8 {
-            return Err(CodecError::Decode(
-                "TIFF data too short for header".to_string(),
-            ));
-        }
-
-        // Determine byte order from the TIFF header (bytes 0–1).
-        let is_little_endian = match (raw[0], raw[1]) {
-            (0x49, 0x49) => true,  // "II" = little-endian
-            (0x4D, 0x4D) => false, // "MM" = big-endian
-            _ => {
-                return Err(CodecError::Decode(
-                    "Invalid TIFF byte order marker".to_string(),
-                ));
-            }
-        };
-
-        // Helper closures for endian-aware reads.
-        let read_u16 = |offset: usize| -> Result<u16, CodecError> {
-            if offset + 2 > raw.len() {
-                return Err(CodecError::Decode(format!(
-                    "Read u16 out of bounds at offset {}",
-                    offset
-                )));
-            }
-            let bytes: [u8; 2] = [raw[offset], raw[offset + 1]];
-            Ok(if is_little_endian {
-                u16::from_le_bytes(bytes)
-            } else {
-                u16::from_be_bytes(bytes)
-            })
-        };
-
-        let read_u32 = |offset: usize| -> Result<u32, CodecError> {
-            if offset + 4 > raw.len() {
-                return Err(CodecError::Decode(format!(
-                    "Read u32 out of bounds at offset {}",
-                    offset
-                )));
-            }
-            let bytes: [u8; 4] = [
-                raw[offset],
-                raw[offset + 1],
-                raw[offset + 2],
-                raw[offset + 3],
-            ];
-            Ok(if is_little_endian {
-                u32::from_le_bytes(bytes)
-            } else {
-                u32::from_be_bytes(bytes)
-            })
-        };
-
-        // Walk the IFD chain to find the current directory.
-        let current_dir = self.current_directory() as usize;
-        let mut ifd_offset = read_u32(4)? as usize;
-
-        for _ in 0..current_dir {
-            if ifd_offset == 0 || ifd_offset + 2 > raw.len() {
-                return Err(CodecError::Decode(format!(
-                    "IFD chain broken before directory {}",
-                    current_dir
-                )));
-            }
-            let entry_count = read_u16(ifd_offset)? as usize;
-            // Next IFD offset is after the entries: offset + 2 + entry_count * 12
-            let next_offset_pos = ifd_offset + 2 + entry_count * 12;
-            ifd_offset = read_u32(next_offset_pos)? as usize;
-        }
-
-        if ifd_offset == 0 || ifd_offset + 2 > raw.len() {
-            return Err(CodecError::Decode(format!(
-                "Invalid IFD offset {} for directory {}",
-                ifd_offset, current_dir
-            )));
-        }
-
-        // Parse the IFD entries.
-        let entry_count = read_u16(ifd_offset)? as usize;
-        let entries_start = ifd_offset + 2;
-
-        let mut entries = Vec::with_capacity(entry_count);
-        for i in 0..entry_count {
-            let entry_offset = entries_start + i * 12;
-            if entry_offset + 12 > raw.len() {
-                break; // Truncated IFD — return what we have
-            }
-            let tag = read_u16(entry_offset)? as u32;
-            let field_type = read_u16(entry_offset + 2)?;
-            let count = read_u32(entry_offset + 4)?;
-            entries.push(IfdTagEntry {
-                tag,
-                field_type,
-                count,
-            });
-        }
-
-        Ok(entries)
+        let reader = IfdReader::new(raw, self.is_bigtiff())?;
+        let ifd_offset = reader.walk_to_ifd(self.current_directory())?;
+        reader.enumerate_entries(ifd_offset)
     }
 
     /// Read a tag value from the current IFD given its [`IfdTagEntry`].
@@ -779,8 +1015,10 @@ impl TiffHandle {
     /// - RATIONAL, SRATIONAL → float (num/denom) or array of floats
     /// - FLOAT, DOUBLE → float (or array for count > 1)
     /// - UNDEFINED → always array of byte integers
+    /// - IFD (13), LONG8 (16), IFD8 (18) → u64 integer (or array)
+    /// - SLONG8 (17) → i64 integer (or array)
     ///
-    /// Returns `Err(CodecError::Decode)` for unknown field types (>12) or corrupt data.
+    /// Returns `Err(CodecError::Decode)` for unknown field types or corrupt data.
     pub fn read_tag_value(&self, entry: &IfdTagEntry) -> Result<serde_json::Value, CodecError> {
         use serde_json::Value;
 
@@ -793,121 +1031,7 @@ impl TiffHandle {
             }
         };
 
-        if raw.len() < 8 {
-            return Err(CodecError::Decode("TIFF data too short".to_string()));
-        }
-
-        let is_little_endian = raw[0] == 0x49;
-
-        // Endian-aware read helpers
-        let read_u16_at = |offset: usize| -> Result<u16, CodecError> {
-            if offset + 2 > raw.len() {
-                return Err(CodecError::Decode(format!(
-                    "u16 out of bounds at {}",
-                    offset
-                )));
-            }
-            let b: [u8; 2] = [raw[offset], raw[offset + 1]];
-            Ok(if is_little_endian {
-                u16::from_le_bytes(b)
-            } else {
-                u16::from_be_bytes(b)
-            })
-        };
-        let read_i16_at = |offset: usize| -> Result<i16, CodecError> {
-            if offset + 2 > raw.len() {
-                return Err(CodecError::Decode(format!(
-                    "i16 out of bounds at {}",
-                    offset
-                )));
-            }
-            let b: [u8; 2] = [raw[offset], raw[offset + 1]];
-            Ok(if is_little_endian {
-                i16::from_le_bytes(b)
-            } else {
-                i16::from_be_bytes(b)
-            })
-        };
-        let read_u32_at = |offset: usize| -> Result<u32, CodecError> {
-            if offset + 4 > raw.len() {
-                return Err(CodecError::Decode(format!(
-                    "u32 out of bounds at {}",
-                    offset
-                )));
-            }
-            let b: [u8; 4] = [
-                raw[offset],
-                raw[offset + 1],
-                raw[offset + 2],
-                raw[offset + 3],
-            ];
-            Ok(if is_little_endian {
-                u32::from_le_bytes(b)
-            } else {
-                u32::from_be_bytes(b)
-            })
-        };
-        let read_i32_at = |offset: usize| -> Result<i32, CodecError> {
-            if offset + 4 > raw.len() {
-                return Err(CodecError::Decode(format!(
-                    "i32 out of bounds at {}",
-                    offset
-                )));
-            }
-            let b: [u8; 4] = [
-                raw[offset],
-                raw[offset + 1],
-                raw[offset + 2],
-                raw[offset + 3],
-            ];
-            Ok(if is_little_endian {
-                i32::from_le_bytes(b)
-            } else {
-                i32::from_be_bytes(b)
-            })
-        };
-        let read_f32_at = |offset: usize| -> Result<f32, CodecError> {
-            if offset + 4 > raw.len() {
-                return Err(CodecError::Decode(format!(
-                    "f32 out of bounds at {}",
-                    offset
-                )));
-            }
-            let b: [u8; 4] = [
-                raw[offset],
-                raw[offset + 1],
-                raw[offset + 2],
-                raw[offset + 3],
-            ];
-            Ok(if is_little_endian {
-                f32::from_le_bytes(b)
-            } else {
-                f32::from_be_bytes(b)
-            })
-        };
-        let read_f64_at = |offset: usize| -> Result<f64, CodecError> {
-            if offset + 8 > raw.len() {
-                return Err(CodecError::Decode(format!(
-                    "f64 out of bounds at {}",
-                    offset
-                )));
-            }
-            let b: [u8; 8] = [
-                raw[offset],
-                raw[offset + 1],
-                raw[offset + 2],
-                raw[offset + 3],
-                raw[offset + 4],
-                raw[offset + 5],
-                raw[offset + 6],
-                raw[offset + 7],
-            ];
-            Ok(if is_little_endian {
-                f64::from_le_bytes(b)
-            } else {
-                f64::from_be_bytes(b)
-            })
-        };
+        let reader = IfdReader::new(raw, self.is_bigtiff())?;
 
         // TIFF field type sizes in bytes
         let type_size = match entry.field_type {
@@ -923,6 +1047,10 @@ impl TiffHandle {
             10 => 8, // SRATIONAL
             11 => 4, // FLOAT
             12 => 8, // DOUBLE
+            13 => 4, // IFD (u32 sub-IFD pointer)
+            16 => 8, // LONG8
+            17 => 8, // SLONG8
+            18 => 8, // IFD8
             other => {
                 return Err(CodecError::Decode(format!(
                     "Unknown TIFF field type {} for tag {}",
@@ -934,40 +1062,16 @@ impl TiffHandle {
         let total_bytes = entry.count as usize * type_size;
 
         // Find the IFD entry for this tag to get the value/offset field.
-        // Walk the IFD chain to the current directory, then scan entries.
-        let current_dir = self.current_directory() as usize;
-        let mut ifd_offset = read_u32_at(4)? as usize;
-        for _ in 0..current_dir {
-            let ec = read_u16_at(ifd_offset)? as usize;
-            ifd_offset = read_u32_at(ifd_offset + 2 + ec * 12)? as usize;
-        }
-        let entry_count = read_u16_at(ifd_offset)? as usize;
-        let entries_start = ifd_offset + 2;
-
-        // Find the 12-byte IFD entry for this tag
-        let mut entry_file_offset = None;
-        for i in 0..entry_count {
-            let eo = entries_start + i * 12;
-            if eo + 12 > raw.len() {
-                break;
-            }
-            let t = read_u16_at(eo)? as u32;
-            if t == entry.tag {
-                entry_file_offset = Some(eo);
-                break;
-            }
-        }
-        let entry_offset = entry_file_offset
+        let ifd_offset = reader.walk_to_ifd(self.current_directory())?;
+        let entry_offset = reader
+            .find_entry_offset(ifd_offset, entry.tag)?
             .ok_or_else(|| CodecError::Decode(format!("Tag {} not found in IFD", entry.tag)))?;
 
-        // The value/offset field is at bytes 8–11 of the 12-byte entry.
-        // If total_bytes <= 4, the value is stored inline in those 4 bytes.
-        // Otherwise, those 4 bytes are an offset to the actual data.
-        let value_field_offset = entry_offset + 8;
-        let data_offset = if total_bytes <= 4 {
+        let value_field_offset = entry_offset + reader.value_field_offset_in_entry();
+        let data_offset = if total_bytes <= reader.inline_threshold() {
             value_field_offset
         } else {
-            read_u32_at(value_field_offset)? as usize
+            reader.read_data_offset(entry_offset)? as usize
         };
 
         if data_offset + total_bytes > raw.len() {
@@ -998,7 +1102,6 @@ impl TiffHandle {
             2 => {
                 let end = data_offset + count;
                 let slice = &raw[data_offset..end];
-                // Strip trailing NUL bytes
                 let s = std::str::from_utf8(slice)
                     .unwrap_or("")
                     .trim_end_matches('\0');
@@ -1007,21 +1110,29 @@ impl TiffHandle {
             // SHORT (3)
             3 => {
                 if count == 1 {
-                    Ok(Value::from(read_u16_at(data_offset)? as u64))
+                    Ok(Value::from(reader.read_u16(data_offset)? as u64))
                 } else {
                     let arr: Result<Vec<Value>, _> = (0..count)
-                        .map(|i| read_u16_at(data_offset + i * 2).map(|v| Value::from(v as u64)))
+                        .map(|i| {
+                            reader
+                                .read_u16(data_offset + i * 2)
+                                .map(|v| Value::from(v as u64))
+                        })
                         .collect();
                     Ok(Value::Array(arr?))
                 }
             }
-            // LONG (4)
-            4 => {
+            // LONG (4) or IFD (13) — both u32
+            4 | 13 => {
                 if count == 1 {
-                    Ok(Value::from(read_u32_at(data_offset)? as u64))
+                    Ok(Value::from(reader.read_u32(data_offset)? as u64))
                 } else {
                     let arr: Result<Vec<Value>, _> = (0..count)
-                        .map(|i| read_u32_at(data_offset + i * 4).map(|v| Value::from(v as u64)))
+                        .map(|i| {
+                            reader
+                                .read_u32(data_offset + i * 4)
+                                .map(|v| Value::from(v as u64))
+                        })
                         .collect();
                     Ok(Value::Array(arr?))
                 }
@@ -1029,8 +1140,8 @@ impl TiffHandle {
             // RATIONAL (5) — two u32: numerator / denominator → float
             5 => {
                 let read_rational = |off: usize| -> Result<Value, CodecError> {
-                    let num = read_u32_at(off)? as f64;
-                    let den = read_u32_at(off + 4)? as f64;
+                    let num = reader.read_u32(off)? as f64;
+                    let den = reader.read_u32(off + 4)? as f64;
                     let val = if den == 0.0 { f64::NAN } else { num / den };
                     Ok(json_f64(val))
                 };
@@ -1064,10 +1175,14 @@ impl TiffHandle {
             // SSHORT (8)
             8 => {
                 if count == 1 {
-                    Ok(Value::from(read_i16_at(data_offset)? as i64))
+                    Ok(Value::from(reader.read_i16(data_offset)? as i64))
                 } else {
                     let arr: Result<Vec<Value>, _> = (0..count)
-                        .map(|i| read_i16_at(data_offset + i * 2).map(|v| Value::from(v as i64)))
+                        .map(|i| {
+                            reader
+                                .read_i16(data_offset + i * 2)
+                                .map(|v| Value::from(v as i64))
+                        })
                         .collect();
                     Ok(Value::Array(arr?))
                 }
@@ -1075,10 +1190,14 @@ impl TiffHandle {
             // SLONG (9)
             9 => {
                 if count == 1 {
-                    Ok(Value::from(read_i32_at(data_offset)? as i64))
+                    Ok(Value::from(reader.read_i32(data_offset)? as i64))
                 } else {
                     let arr: Result<Vec<Value>, _> = (0..count)
-                        .map(|i| read_i32_at(data_offset + i * 4).map(|v| Value::from(v as i64)))
+                        .map(|i| {
+                            reader
+                                .read_i32(data_offset + i * 4)
+                                .map(|v| Value::from(v as i64))
+                        })
                         .collect();
                     Ok(Value::Array(arr?))
                 }
@@ -1086,8 +1205,8 @@ impl TiffHandle {
             // SRATIONAL (10) — two i32: numerator / denominator → float
             10 => {
                 let read_srational = |off: usize| -> Result<Value, CodecError> {
-                    let num = read_i32_at(off)? as f64;
-                    let den = read_i32_at(off + 4)? as f64;
+                    let num = reader.read_i32(off)? as f64;
+                    let den = reader.read_i32(off + 4)? as f64;
                     let val = if den == 0.0 { f64::NAN } else { num / den };
                     Ok(json_f64(val))
                 };
@@ -1103,10 +1222,14 @@ impl TiffHandle {
             // FLOAT (11)
             11 => {
                 if count == 1 {
-                    Ok(json_f64(read_f32_at(data_offset)? as f64))
+                    Ok(json_f64(reader.read_f32(data_offset)? as f64))
                 } else {
                     let arr: Result<Vec<Value>, _> = (0..count)
-                        .map(|i| read_f32_at(data_offset + i * 4).map(|v| json_f64(v as f64)))
+                        .map(|i| {
+                            reader
+                                .read_f32(data_offset + i * 4)
+                                .map(|v| json_f64(v as f64))
+                        })
                         .collect();
                     Ok(Value::Array(arr?))
                 }
@@ -1114,15 +1237,37 @@ impl TiffHandle {
             // DOUBLE (12)
             12 => {
                 if count == 1 {
-                    Ok(json_f64(read_f64_at(data_offset)?))
+                    Ok(json_f64(reader.read_f64(data_offset)?))
                 } else {
                     let arr: Result<Vec<Value>, _> = (0..count)
-                        .map(|i| read_f64_at(data_offset + i * 8).map(json_f64))
+                        .map(|i| reader.read_f64(data_offset + i * 8).map(json_f64))
                         .collect();
                     Ok(Value::Array(arr?))
                 }
             }
-            _ => unreachable!(), // Already handled above
+            // LONG8 (16) or IFD8 (18) — u64
+            16 | 18 => {
+                if count == 1 {
+                    Ok(Value::from(reader.read_u64(data_offset)?))
+                } else {
+                    let arr: Result<Vec<Value>, _> = (0..count)
+                        .map(|i| reader.read_u64(data_offset + i * 8).map(Value::from))
+                        .collect();
+                    Ok(Value::Array(arr?))
+                }
+            }
+            // SLONG8 (17) — i64
+            17 => {
+                if count == 1 {
+                    Ok(Value::from(reader.read_i64(data_offset)?))
+                } else {
+                    let arr: Result<Vec<Value>, _> = (0..count)
+                        .map(|i| reader.read_i64(data_offset + i * 8).map(Value::from))
+                        .collect();
+                    Ok(Value::Array(arr?))
+                }
+            }
+            _ => unreachable!(),
         }
     }
 
@@ -1213,11 +1358,19 @@ impl TiffHandle {
         unsafe { sys::TIFFIsTiled(self.handle) != 0 }
     }
 
+    /// Return whether the file is BigTIFF format.
+    pub fn is_bigtiff(&self) -> bool {
+        unsafe { sys::TIFFIsBigTIFF(self.handle) != 0 }
+    }
+
     // =========================================================================
     // Write-Mode Constructor and Methods
     // =========================================================================
 
     /// Open a new TIFF for writing using `TIFFClientOpen` with memory write callbacks.
+    ///
+    /// When `bigtiff` is true, produces BigTIFF output (mode `"w8"`); otherwise
+    /// produces classic TIFF (mode `"w"`).
     ///
     /// Returns a `TiffHandle` backed by a growable `Vec<u8>` buffer. Use
     /// `set_field_u16()` / `set_field_u32()` to set tags, `write_encoded_tile()`
@@ -1225,7 +1378,7 @@ impl TiffHandle {
     /// `into_bytes()` to close the handle and extract the assembled TIFF bytes.
     ///
     /// Returns `CodecError::Encode` if `TIFFClientOpen` fails.
-    pub fn from_write() -> Result<Self, CodecError> {
+    pub fn from_write(bigtiff: bool) -> Result<Self, CodecError> {
         install_error_handlers();
 
         let _ = take_last_error();
@@ -1239,7 +1392,7 @@ impl TiffHandle {
         let clientdata = &*stream_data as *const MemoryWriteStreamData as *mut c_void;
 
         let name = CString::new("memory").unwrap();
-        let mode = CString::new("w").unwrap();
+        let mode = CString::new(if bigtiff { "w8" } else { "w" }).unwrap();
 
         let handle = unsafe {
             sys::TIFFClientOpen(
@@ -1941,7 +2094,7 @@ mod tests {
         f64_array: Option<(u32, &[f64])>,
         string_tag: Option<(u32, &str)>,
     ) -> Vec<u8> {
-        let handle = TiffHandle::from_write().unwrap();
+        let handle = TiffHandle::from_write(false).unwrap();
 
         // Minimal 1×1 grayscale tiled image
         handle.set_field_u32(tags::IMAGE_WIDTH, 1).unwrap();
@@ -2655,7 +2808,7 @@ mod tests {
     /// Helper: create a JPEG-compressed tiled TIFF with a known JPEGTables tag
     /// via the write path, then return the assembled bytes.
     fn make_jpeg_tiff_with_tables(jpeg_tables: &[u8]) -> Vec<u8> {
-        let handle = TiffHandle::from_write().unwrap();
+        let handle = TiffHandle::from_write(false).unwrap();
 
         // Minimal 16×16 RGB tiled image with JPEG compression
         handle.set_field_u32(tags::IMAGE_WIDTH, 16).unwrap();
@@ -2744,5 +2897,398 @@ mod tests {
             }
             other => panic!("Expected CodecError::Decode, got: {:?}", other),
         }
+    }
+
+    // =========================================================================
+    // BigTIFF Tests
+    // =========================================================================
+
+    /// Build a minimal BigTIFF byte buffer (little-endian): 4x2 grayscale, uncompressed.
+    ///
+    /// BigTIFF header layout (16 bytes):
+    ///   0-1: byte order "II"
+    ///   2-3: version 43 (0x2B)
+    ///   4-5: offset size = 8
+    ///   6-7: reserved = 0
+    ///   8-15: first IFD offset (u64)
+    ///
+    /// BigTIFF IFD layout:
+    ///   entry count: u64
+    ///   each entry: 20 bytes (tag u16, type u16, count u64, value/offset u64)
+    ///   next IFD: u64
+    fn make_minimal_bigtiff_le() -> Vec<u8> {
+        let mut buf = Vec::new();
+
+        // Header (16 bytes)
+        buf.extend_from_slice(&[0x49, 0x49]); // LE
+        buf.extend_from_slice(&43u16.to_le_bytes()); // Version 43
+        buf.extend_from_slice(&8u16.to_le_bytes()); // Offset size
+        buf.extend_from_slice(&0u16.to_le_bytes()); // Reserved
+        buf.extend_from_slice(&16u64.to_le_bytes()); // First IFD at offset 16
+
+        // IFD at offset 16
+        let num_entries: u64 = 9;
+        buf.extend_from_slice(&num_entries.to_le_bytes()); // entry count (u64)
+
+        // Calculate pixel data offset:
+        // header(16) + entry_count(8) + entries(9*20) + next_ifd(8)
+        let pixel_data_offset: u64 = 16 + 8 + (num_entries * 20) + 8;
+
+        let width: u64 = 4;
+        let height: u64 = 2;
+
+        // Helper: write a 20-byte BigTIFF IFD entry
+        let write_entry = |b: &mut Vec<u8>, tag: u16, typ: u16, count: u64, value: u64| {
+            b.extend_from_slice(&tag.to_le_bytes());
+            b.extend_from_slice(&typ.to_le_bytes());
+            b.extend_from_slice(&count.to_le_bytes());
+            b.extend_from_slice(&value.to_le_bytes());
+        };
+
+        // Entries (sorted by tag)
+        write_entry(&mut buf, 256, 3, 1, width); // ImageWidth (SHORT)
+        write_entry(&mut buf, 257, 3, 1, height); // ImageLength (SHORT)
+        write_entry(&mut buf, 258, 3, 1, 8); // BitsPerSample
+        write_entry(&mut buf, 259, 3, 1, 1); // Compression=None
+        write_entry(&mut buf, 262, 3, 1, 1); // PhotometricInterpretation
+        write_entry(&mut buf, 273, 16, 1, pixel_data_offset); // StripOffsets (LONG8)
+        write_entry(&mut buf, 277, 3, 1, 1); // SamplesPerPixel
+        write_entry(&mut buf, 278, 3, 1, height); // RowsPerStrip
+        write_entry(&mut buf, 279, 16, 1, width * height); // StripByteCounts (LONG8)
+
+        // Next IFD offset: 0 (no more IFDs)
+        buf.extend_from_slice(&0u64.to_le_bytes());
+
+        // Pixel data
+        assert_eq!(buf.len(), pixel_data_offset as usize);
+        buf.extend_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80]);
+
+        buf
+    }
+
+    /// Build a minimal BigTIFF byte buffer (big-endian): 4x2 grayscale, uncompressed.
+    ///
+    /// In BE BigTIFF, inline values are left-justified in the 8-byte value field:
+    /// a SHORT value of 4 is stored as [0x00, 0x04, 0, 0, 0, 0, 0, 0].
+    fn make_minimal_bigtiff_be() -> Vec<u8> {
+        let mut buf = Vec::new();
+
+        // Header (16 bytes)
+        buf.extend_from_slice(&[0x4D, 0x4D]); // BE
+        buf.extend_from_slice(&43u16.to_be_bytes()); // Version 43
+        buf.extend_from_slice(&8u16.to_be_bytes()); // Offset size
+        buf.extend_from_slice(&0u16.to_be_bytes()); // Reserved
+        buf.extend_from_slice(&16u64.to_be_bytes()); // First IFD at offset 16
+
+        // IFD at offset 16
+        let num_entries: u64 = 9;
+        buf.extend_from_slice(&num_entries.to_be_bytes());
+
+        let pixel_data_offset: u64 = 16 + 8 + (num_entries * 20) + 8;
+        let width: u16 = 4;
+        let height: u16 = 2;
+
+        // BE BigTIFF entry: inline values are left-justified in the 8-byte field
+        let write_entry_short = |b: &mut Vec<u8>, tag: u16, value: u16| {
+            b.extend_from_slice(&tag.to_be_bytes());
+            b.extend_from_slice(&3u16.to_be_bytes()); // SHORT
+            b.extend_from_slice(&1u64.to_be_bytes()); // count
+                                                      // Left-justify: SHORT in first 2 bytes, zero-pad remaining 6
+            b.extend_from_slice(&value.to_be_bytes());
+            b.extend(std::iter::repeat_n(0u8, 6));
+        };
+
+        let write_entry_long8 = |b: &mut Vec<u8>, tag: u16, value: u64| {
+            b.extend_from_slice(&tag.to_be_bytes());
+            b.extend_from_slice(&16u16.to_be_bytes()); // LONG8
+            b.extend_from_slice(&1u64.to_be_bytes()); // count
+            b.extend_from_slice(&value.to_be_bytes()); // full 8 bytes
+        };
+
+        write_entry_short(&mut buf, 256, width);
+        write_entry_short(&mut buf, 257, height);
+        write_entry_short(&mut buf, 258, 8);
+        write_entry_short(&mut buf, 259, 1);
+        write_entry_short(&mut buf, 262, 1);
+        write_entry_long8(&mut buf, 273, pixel_data_offset);
+        write_entry_short(&mut buf, 277, 1);
+        write_entry_short(&mut buf, 278, height);
+        write_entry_long8(&mut buf, 279, (width as u64) * (height as u64));
+
+        buf.extend_from_slice(&0u64.to_be_bytes());
+
+        assert_eq!(buf.len(), pixel_data_offset as usize);
+        buf.extend_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80]);
+
+        buf
+    }
+
+    #[test]
+    fn test_bigtiff_le_magic_accepted() {
+        let data = make_minimal_bigtiff_le();
+        let handle = TiffHandle::from_bytes(&data);
+        assert!(handle.is_ok(), "BigTIFF LE should open: {:?}", handle.err());
+        let handle = handle.unwrap();
+        assert!(handle.is_bigtiff());
+    }
+
+    #[test]
+    fn test_bigtiff_be_magic_accepted() {
+        let data = make_minimal_bigtiff_be();
+        let handle = TiffHandle::from_bytes(&data);
+        assert!(handle.is_ok(), "BigTIFF BE should open: {:?}", handle.err());
+        let handle = handle.unwrap();
+        assert!(handle.is_bigtiff());
+    }
+
+    #[test]
+    fn test_classic_tiff_is_not_bigtiff() {
+        let data = make_minimal_tiff();
+        let handle = TiffHandle::from_bytes(&data).unwrap();
+        assert!(!handle.is_bigtiff());
+    }
+
+    #[test]
+    fn test_bigtiff_le_enumerate_ifd_tags() {
+        let data = make_minimal_bigtiff_le();
+        let handle = TiffHandle::from_bytes(&data).unwrap();
+        let entries = handle.enumerate_ifd_tags().unwrap();
+
+        assert_eq!(entries.len(), 9);
+
+        let find = |tag: u32| entries.iter().find(|e| e.tag == tag);
+
+        let iw = find(256).expect("ImageWidth not found");
+        assert_eq!(iw.field_type, 3); // SHORT
+        assert_eq!(iw.count, 1);
+
+        let so = find(273).expect("StripOffsets not found");
+        assert_eq!(so.field_type, 16); // LONG8
+        assert_eq!(so.count, 1);
+
+        let sbc = find(279).expect("StripByteCounts not found");
+        assert_eq!(sbc.field_type, 16); // LONG8
+        assert_eq!(sbc.count, 1);
+    }
+
+    #[test]
+    fn test_bigtiff_be_enumerate_ifd_tags() {
+        let data = make_minimal_bigtiff_be();
+        let handle = TiffHandle::from_bytes(&data).unwrap();
+        let entries = handle.enumerate_ifd_tags().unwrap();
+
+        assert_eq!(entries.len(), 9);
+
+        let iw = entries.iter().find(|e| e.tag == 256).unwrap();
+        assert_eq!(iw.field_type, 3);
+        assert_eq!(iw.count, 1);
+    }
+
+    #[test]
+    fn test_bigtiff_le_read_tag_value_short() {
+        let data = make_minimal_bigtiff_le();
+        let handle = TiffHandle::from_bytes(&data).unwrap();
+        let entries = handle.enumerate_ifd_tags().unwrap();
+
+        let iw = entries.iter().find(|e| e.tag == 256).unwrap();
+        let val = handle.read_tag_value(iw).unwrap();
+        assert_eq!(val, serde_json::json!(4)); // ImageWidth = 4
+    }
+
+    #[test]
+    fn test_bigtiff_le_read_tag_value_long8() {
+        let data = make_minimal_bigtiff_le();
+        let handle = TiffHandle::from_bytes(&data).unwrap();
+        let entries = handle.enumerate_ifd_tags().unwrap();
+
+        // StripByteCounts (LONG8) = 8 (4*2 pixels)
+        let sbc = entries.iter().find(|e| e.tag == 279).unwrap();
+        let val = handle.read_tag_value(sbc).unwrap();
+        assert_eq!(val, serde_json::json!(8));
+    }
+
+    #[test]
+    fn test_bigtiff_be_read_tag_value() {
+        let data = make_minimal_bigtiff_be();
+        let handle = TiffHandle::from_bytes(&data).unwrap();
+        let entries = handle.enumerate_ifd_tags().unwrap();
+
+        let iw = entries.iter().find(|e| e.tag == 256).unwrap();
+        let val = handle.read_tag_value(iw).unwrap();
+        assert_eq!(val, serde_json::json!(4));
+
+        let sbc = entries.iter().find(|e| e.tag == 279).unwrap();
+        let val = handle.read_tag_value(sbc).unwrap();
+        assert_eq!(val, serde_json::json!(8));
+    }
+
+    #[test]
+    fn test_bigtiff_ifd_entry_count_cap() {
+        // Test IfdReader directly: craft a BigTIFF buffer with entry count > 4096
+        let mut data = make_minimal_bigtiff_le();
+        // Overwrite entry count at offset 16 with 5000
+        let count_bytes = 5000u64.to_le_bytes();
+        data[16..24].copy_from_slice(&count_bytes);
+
+        // Use IfdReader directly to verify capping (libtiff rejects large counts)
+        let reader = IfdReader::new(&data, true).unwrap();
+        let entries = reader.enumerate_entries(16).unwrap();
+        // IfdReader caps at 4096 entries but only parses what fits in the buffer
+        assert!(entries.len() <= MAX_IFD_ENTRIES as usize);
+    }
+
+    #[test]
+    fn test_bigtiff_roundtrip_via_from_write() {
+        // Write a BigTIFF via from_write(true), read it back
+        let handle = TiffHandle::from_write(true).unwrap();
+
+        handle.set_field_u32(tags::IMAGE_WIDTH, 4).unwrap();
+        handle.set_field_u32(tags::IMAGE_LENGTH, 2).unwrap();
+        handle.set_field_u16(tags::BITS_PER_SAMPLE, 8).unwrap();
+        handle.set_field_u16(tags::SAMPLES_PER_PIXEL, 1).unwrap();
+        handle
+            .set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT)
+            .unwrap();
+        handle
+            .set_field_u16(
+                tags::PHOTOMETRIC_INTERPRETATION,
+                tags::PHOTOMETRIC_MINISBLACK,
+            )
+            .unwrap();
+        handle.set_field_u32(tags::TILE_WIDTH, 16).unwrap();
+        handle.set_field_u32(tags::TILE_LENGTH, 16).unwrap();
+        handle
+            .set_field_u16(tags::COMPRESSION, tags::COMPRESSION_NONE)
+            .unwrap();
+        handle
+            .set_field_u16(tags::PLANAR_CONFIGURATION, tags::PLANAR_CONFIG_CONTIG)
+            .unwrap();
+
+        let tile_data = vec![42u8; 16 * 16];
+        handle.write_encoded_tile(0, &tile_data).unwrap();
+        handle.write_directory().unwrap();
+
+        let bytes = handle.into_bytes().unwrap();
+
+        // Verify header magic
+        assert_eq!(bytes[0], 0x49); // 'I'
+        assert_eq!(bytes[1], 0x49); // 'I'
+        assert_eq!(u16::from_le_bytes([bytes[2], bytes[3]]), 43); // version 43
+
+        // Read it back
+        let reader = TiffHandle::from_bytes(&bytes).unwrap();
+        assert!(reader.is_bigtiff());
+        assert_eq!(reader.number_of_directories(), 1);
+
+        let entries = reader.enumerate_ifd_tags().unwrap();
+        let iw = entries.iter().find(|e| e.tag == 256).unwrap();
+        let val = reader.read_tag_value(iw).unwrap();
+        assert_eq!(val, serde_json::json!(4));
+    }
+
+    #[test]
+    fn test_bigtiff_field_type_13_ifd() {
+        // Build a BigTIFF with a tag of type 13 (IFD - u32 sub-IFD pointer)
+        let mut buf = Vec::new();
+
+        // Header
+        buf.extend_from_slice(&[0x49, 0x49]);
+        buf.extend_from_slice(&43u16.to_le_bytes());
+        buf.extend_from_slice(&8u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&16u64.to_le_bytes());
+
+        let num_entries: u64 = 10;
+        buf.extend_from_slice(&num_entries.to_le_bytes());
+
+        let pixel_data_offset: u64 = 16 + 8 + (num_entries * 20) + 8;
+        let width: u64 = 4;
+        let height: u64 = 2;
+
+        let write_entry = |b: &mut Vec<u8>, tag: u16, typ: u16, count: u64, value: u64| {
+            b.extend_from_slice(&tag.to_le_bytes());
+            b.extend_from_slice(&typ.to_le_bytes());
+            b.extend_from_slice(&count.to_le_bytes());
+            b.extend_from_slice(&value.to_le_bytes());
+        };
+
+        write_entry(&mut buf, 256, 3, 1, width);
+        write_entry(&mut buf, 257, 3, 1, height);
+        write_entry(&mut buf, 258, 3, 1, 8);
+        write_entry(&mut buf, 259, 3, 1, 1);
+        write_entry(&mut buf, 262, 3, 1, 1);
+        write_entry(&mut buf, 273, 16, 1, pixel_data_offset);
+        write_entry(&mut buf, 277, 3, 1, 1);
+        write_entry(&mut buf, 278, 3, 1, height);
+        write_entry(&mut buf, 279, 16, 1, width * height);
+        // SubIFDs tag (330) with type 13 (IFD), value = 0 (dummy pointer)
+        write_entry(&mut buf, 330, 13, 1, 0);
+
+        buf.extend_from_slice(&0u64.to_le_bytes());
+
+        assert_eq!(buf.len(), pixel_data_offset as usize);
+        buf.extend_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80]);
+
+        let handle = TiffHandle::from_bytes(&buf).unwrap();
+        let entries = handle.enumerate_ifd_tags().unwrap();
+
+        let sub_ifd = entries.iter().find(|e| e.tag == 330).unwrap();
+        assert_eq!(sub_ifd.field_type, 13);
+        assert_eq!(sub_ifd.count, 1);
+
+        let val = handle.read_tag_value(sub_ifd).unwrap();
+        assert_eq!(val, serde_json::json!(0));
+    }
+
+    #[test]
+    fn test_bigtiff_field_type_17_slong8() {
+        // Build a BigTIFF with a SLONG8 tag (type 17)
+        let mut buf = Vec::new();
+
+        buf.extend_from_slice(&[0x49, 0x49]);
+        buf.extend_from_slice(&43u16.to_le_bytes());
+        buf.extend_from_slice(&8u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&16u64.to_le_bytes());
+
+        let num_entries: u64 = 10;
+        buf.extend_from_slice(&num_entries.to_le_bytes());
+
+        let pixel_data_offset: u64 = 16 + 8 + (num_entries * 20) + 8;
+        let width: u64 = 4;
+        let height: u64 = 2;
+
+        let write_entry = |b: &mut Vec<u8>, tag: u16, typ: u16, count: u64, value: u64| {
+            b.extend_from_slice(&tag.to_le_bytes());
+            b.extend_from_slice(&typ.to_le_bytes());
+            b.extend_from_slice(&count.to_le_bytes());
+            b.extend_from_slice(&value.to_le_bytes());
+        };
+
+        write_entry(&mut buf, 256, 3, 1, width);
+        write_entry(&mut buf, 257, 3, 1, height);
+        write_entry(&mut buf, 258, 3, 1, 8);
+        write_entry(&mut buf, 259, 3, 1, 1);
+        write_entry(&mut buf, 262, 3, 1, 1);
+        write_entry(&mut buf, 273, 16, 1, pixel_data_offset);
+        write_entry(&mut buf, 277, 3, 1, 1);
+        write_entry(&mut buf, 278, 3, 1, height);
+        write_entry(&mut buf, 279, 16, 1, width * height);
+        // Custom tag 700 with type 17 (SLONG8), value = -42 (as i64 bitcast to u64)
+        write_entry(&mut buf, 700, 17, 1, (-42i64) as u64);
+
+        buf.extend_from_slice(&0u64.to_le_bytes());
+
+        assert_eq!(buf.len(), pixel_data_offset as usize);
+        buf.extend_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80]);
+
+        let handle = TiffHandle::from_bytes(&buf).unwrap();
+        let entries = handle.enumerate_ifd_tags().unwrap();
+
+        let custom = entries.iter().find(|e| e.tag == 700).unwrap();
+        assert_eq!(custom.field_type, 17);
+
+        let val = handle.read_tag_value(custom).unwrap();
+        assert_eq!(val, serde_json::json!(-42));
     }
 }

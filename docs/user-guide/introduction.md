@@ -98,7 +98,7 @@ and integrate with the broader cloud-native geospatial ecosystem.
 |--------|------|-------|-------|
 | NITF 2.1 / NSIF 1.0 (JBP) | ✅ | ✅ | Primary implementation |
 | NITF 2.0 | 🚧 | ❌ | In progress; legacy format |
-| TIFF | ✅ | ✅ | Tiled and stripped layouts; includes GeoTIFF metadata and COG support |
+| TIFF | ✅ | ✅ | Tiled and stripped layouts; includes BigTIFF, GeoTIFF metadata, and COG support |
 | PNG | ✅ | ✅ | Lossless; Deflate compression |
 | JPEG 2000 (.j2k, .jp2) | ✅ | ✅ | Lossless and lossy; multi-resolution decode; via OpenJPEG |
 | DTED (.dt0–.dt5) | ✅ | ✅ | Single-band Int16 elevation; signed-magnitude encoding; WGS84/MSL |
@@ -113,7 +113,9 @@ elevation datasets and are auto-detected from their file extensions.
 TIFF support includes GeoTIFF metadata (GeoKeys, ModelTiepoint, ModelPixelScale,
 ModelTransformation) and Cloud Optimized GeoTIFF (COG) conventions. These are not
 separate formats — GeoTIFF adds geospatial tags to a standard TIFF, and COG defines
-a layout convention for efficient range-request access.
+a layout convention for efficient range-request access. BigTIFF (the 64-bit offset
+extension that removes the 4 GB file-size limit) is handled transparently — no user
+action is required to read or write BigTIFF files.
 
 DTED (Digital Terrain Elevation Data) is a U.S. DoD standard elevation format
 (MIL-PRF-89020B) commonly found alongside NITF in geospatial workflows. Each file
@@ -168,6 +170,7 @@ Maintained by the [NSG Standards Registry (NGA)](https://nsgreg.nga.mil/):
 ### TIFF / GeoTIFF
 
 - **TIFF Revision 6.0** — Base TIFF file format (Adobe)
+- **BigTIFF** — 64-bit offset extension for files >4 GB ([bigtiff.org](https://www.awaresystems.be/imaging/tiff/bigtiff.html))
 - **OGC GeoTIFF Standard** — Geospatial extensions for TIFF ([OGC](https://www.ogc.org/standards/))
 - **OGC Cloud Optimized GeoTIFF (COG)** — Cloud-native GeoTIFF conventions ([OGC](https://www.ogc.org/standards/))
 

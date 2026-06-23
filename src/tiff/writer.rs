@@ -28,6 +28,11 @@ const DEFAULT_TILE_WIDTH: u32 = 256;
 /// Default tile height in pixels.
 const DEFAULT_TILE_HEIGHT: u32 = 256;
 
+/// Estimated uncompressed size threshold for BigTIFF auto-promotion (3.5 GB).
+/// When the sum of (width × height × bands × bytes_per_sample) across all
+/// queued IFDs exceeds this, the writer produces BigTIFF output.
+const BIGTIFF_THRESHOLD: u64 = 3_500_000_000;
+
 // =============================================================================
 // Encoding Hints
 // =============================================================================
@@ -1149,8 +1154,21 @@ impl DatasetWriter for TIFFDatasetWriter {
         // Sort assets for COG-compliant IFD ordering before writing
         self.sort_assets_for_cog();
 
-        // Open libtiff in write mode
-        let handle = TiffHandle::from_write()?;
+        // Compute estimated uncompressed size to decide classic vs BigTIFF
+        let estimated_size: u64 = self
+            .assets
+            .iter()
+            .filter_map(|a| a.provider.as_image())
+            .map(|img| {
+                img.num_columns() as u64
+                    * img.num_rows() as u64
+                    * img.num_bands() as u64
+                    * img.pixel_value_type().bytes_per_pixel() as u64
+            })
+            .sum();
+        let bigtiff = estimated_size > BIGTIFF_THRESHOLD;
+
+        let handle = TiffHandle::from_write(bigtiff)?;
 
         // Write each queued image as a separate IFD
         for asset in &self.assets {
@@ -2657,6 +2675,85 @@ mod tests {
                 }
             }
         }
+    }
+
+    // =========================================================================
+    // TileAssembler integration: mismatched source grid
+    // =========================================================================
+
+    // =========================================================================
+    // BigTIFF auto-promotion tests
+    // =========================================================================
+
+    #[test]
+    fn writer_small_image_produces_classic_tiff() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("small_classic.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        let provider = make_image_provider("image:0");
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(provider),
+                "Image",
+                "desc",
+                &[],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        // Classic TIFF LE magic: II (0x49, 0x49) + version 42 (0x2A, 0x00)
+        assert_eq!(&bytes[0..4], &[0x49, 0x49, 0x2A, 0x00]);
+    }
+
+    #[test]
+    fn writer_bigtiff_threshold_computation() {
+        // Verify the estimated size calculation produces the expected value.
+        // A 256×256 UInt8 1-band image = 65,536 bytes — well under 3.5 GB.
+        let provider = make_image_provider("image:0");
+        let image = provider.as_ref() as &dyn crate::traits::ImageAssetProvider;
+        let estimated: u64 = image.num_columns() as u64
+            * image.num_rows() as u64
+            * image.num_bands() as u64
+            * image.pixel_value_type().bytes_per_pixel() as u64;
+        assert_eq!(estimated, 65_536);
+        assert!(estimated <= BIGTIFF_THRESHOLD);
+    }
+
+    #[test]
+    fn writer_bigtiff_roundtrip_via_close() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        // Force BigTIFF by directly using from_write(true) and verifying
+        // the reader can parse it. This exercises the same code path that
+        // close() would use when estimated_size > BIGTIFF_THRESHOLD.
+        let config = MemoryImageConfig::new(64, 64)
+            .with_bands(3)
+            .with_block_size(64, 64)
+            .with_pixel_type(PixelType::UInt8);
+        let provider = BufferedImageAssetProvider::new("image:0", config);
+        let data = vec![128u8; 64 * 64 * 3];
+        provider.set_block(0, 0, &data).unwrap();
+        let provider = Arc::new(provider);
+
+        let handle = TiffHandle::from_write(true).unwrap();
+        let image = provider.as_ref() as &dyn crate::traits::ImageAssetProvider;
+        let hints = TiffEncodingHints::default();
+        TIFFDatasetWriter::write_image_ifd(&handle, image, &hints, None, &[], "image:0").unwrap();
+
+        let bytes = handle.into_bytes().unwrap();
+        // Verify BigTIFF magic: II + version 43 (0x2B)
+        assert_eq!(&bytes[0..4], &[0x49, 0x49, 0x2B, 0x00]);
+
+        // Verify reader can parse it
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
+        let asset = reader.get_asset("image:0").unwrap();
+        let img = asset.as_image().unwrap();
+        assert_eq!(img.num_columns(), 64);
+        assert_eq!(img.num_rows(), 64);
+        assert_eq!(img.num_bands(), 3);
     }
 
     // =========================================================================

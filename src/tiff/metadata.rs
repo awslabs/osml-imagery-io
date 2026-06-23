@@ -35,7 +35,7 @@ impl TIFFMetadataProvider {
     /// Uses `enumerate_ifd_tags` to discover every tag present, then `read_tag_value`
     /// to read each one. Tags are stored under their numeric string key (e.g. `"256"`).
     /// Unreadable tags are silently skipped.
-    pub fn from_handle(handle: &TiffHandle, ifd_index: u16) -> Result<Self, CodecError> {
+    pub fn from_handle(handle: &TiffHandle, ifd_index: u32) -> Result<Self, CodecError> {
         handle.set_directory(ifd_index)?;
 
         let mut tags = HashMap::new();
@@ -72,7 +72,7 @@ impl TIFFMetadataProvider {
     /// - `byte_order`: `"LittleEndian"` or `"BigEndian"` (detected from TIFF magic bytes)
     /// - `num_directories`: total number of IFDs in the file
     /// - `num_image_segments`: count of full-resolution IFDs
-    pub fn dataset_level(byte_order: &str, num_directories: u16, num_image_segments: u16) -> Self {
+    pub fn dataset_level(byte_order: &str, num_directories: u32, num_image_segments: u32) -> Self {
         let mut tags = HashMap::new();
         tags.insert("ByteOrder".to_string(), Value::from(byte_order));
         tags.insert(
@@ -208,7 +208,7 @@ mod tests {
         tiepoints: Option<&[f64]>,
         transformation: Option<&[f64]>,
     ) -> Vec<u8> {
-        let handle = TiffHandle::from_write().unwrap();
+        let handle = TiffHandle::from_write(false).unwrap();
         handle.set_field_u32(tags::IMAGE_WIDTH, 1).unwrap();
         handle.set_field_u32(tags::IMAGE_LENGTH, 1).unwrap();
         handle.set_field_u16(tags::BITS_PER_SAMPLE, 8).unwrap();
