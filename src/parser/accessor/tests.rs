@@ -1572,3 +1572,39 @@ fn accessor_reads_bcs_npi_field_with_plus_sign() {
     let fields: Vec<String> = accessor.fields().collect();
     assert!(fields.contains(&"HEIGHT_SCALE".to_string()));
 }
+
+// ==================== SizeSpec::Eos Tests ====================
+
+#[test]
+fn accessor_size_eos_string_returns_remaining_bytes() {
+    let def = Arc::new(
+        StructureDefinition::new("test_struct")
+            .with_field(
+                FieldDefinition::new("header", FieldType::String).with_size(SizeSpec::Fixed(4)),
+            )
+            .with_field(
+                FieldDefinition::new("comment", FieldType::String).with_size(SizeSpec::Eos),
+            ),
+    );
+    let data = b"HDRRsome comment text here";
+    let accessor = StructureAccessor::new(def, data).unwrap();
+
+    let header = accessor.get("header").unwrap();
+    assert_eq!(header.as_str().unwrap(), "HDRR");
+
+    let comment = accessor.get("comment").unwrap();
+    assert_eq!(comment.as_str().unwrap(), "some comment text here");
+}
+
+#[test]
+fn accessor_size_eos_empty_data() {
+    let def =
+        Arc::new(StructureDefinition::new("test_struct").with_field(
+            FieldDefinition::new("comment", FieldType::String).with_size(SizeSpec::Eos),
+        ));
+    let data = b"";
+    let accessor = StructureAccessor::new(def, data).unwrap();
+
+    let comment = accessor.get("comment").unwrap();
+    assert_eq!(comment.as_str().unwrap(), "");
+}

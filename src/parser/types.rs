@@ -257,6 +257,8 @@ pub enum SizeSpec {
     Fixed(usize),
     /// Size determined by expression
     Expression(Expression),
+    /// Consume all remaining bytes from current offset to end of data
+    Eos,
 }
 
 impl SizeSpec {
@@ -274,7 +276,7 @@ impl SizeSpec {
     pub fn as_fixed(&self) -> Option<usize> {
         match self {
             SizeSpec::Fixed(size) => Some(*size),
-            SizeSpec::Expression(_) => None,
+            SizeSpec::Expression(_) | SizeSpec::Eos => None,
         }
     }
 }

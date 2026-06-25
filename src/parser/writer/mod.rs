@@ -13,13 +13,14 @@ use std::sync::Arc;
 
 use super::error::WriteError;
 use super::expression::{EvalContext, EvalResult, ExpressionEvaluator};
-use super::types::{FieldDefinition, StructureDefinition};
+use super::types::{FieldDefinition, SizeSpec, StructureDefinition};
 
 use encode::encode_value;
 use streaming::{
     get_expected_streaming_field, get_last_written_field, get_repeat_count,
     get_streaming_field_size,
 };
+use validation::validate_encoding;
 
 /// Value types accepted for writing.
 #[derive(Debug, Clone)]
@@ -282,14 +283,18 @@ impl StructureWriter {
         let ctx = self.build_eval_context();
         let size = get_streaming_field_size(field, &self.evaluator, &ctx)?;
 
-        let encoded = encode_value(
-            &value,
-            field,
-            size,
-            self.definition.endian,
-            path,
-            self.strict_encoding,
-        )?;
+        let encoded = if matches!(field.size, SizeSpec::Eos) {
+            encode_eos_value(&value, field, path, self.strict_encoding)?
+        } else {
+            encode_value(
+                &value,
+                field,
+                size,
+                self.definition.endian,
+                path,
+                self.strict_encoding,
+            )?
+        };
 
         let actual_size = encoded.len();
         self.buffer.extend_from_slice(&encoded);
@@ -345,6 +350,35 @@ impl StructureWriter {
 
         ctx
     }
+}
+
+/// Encode a value for a size-eos field (writes verbatim without padding or truncation).
+fn encode_eos_value(
+    value: &WriteValue,
+    field: &FieldDefinition,
+    path: &str,
+    strict: bool,
+) -> Result<Vec<u8>, WriteError> {
+    let bytes = match value {
+        WriteValue::String(s) => {
+            let b = s.as_bytes();
+            if let Some(encoding) = field.encoding {
+                validate_encoding(b, encoding, path, strict)?;
+            }
+            b.to_vec()
+        }
+        WriteValue::Bytes(b) => b.clone(),
+        _ => {
+            return Err(WriteError::ConversionError {
+                path: path.to_string(),
+                message: format!(
+                    "Cannot write {:?} to size-eos field (expected String or Bytes)",
+                    std::mem::discriminant(value)
+                ),
+            });
+        }
+    };
+    Ok(bytes)
 }
 
 #[cfg(test)]

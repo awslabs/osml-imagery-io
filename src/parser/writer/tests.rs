@@ -426,3 +426,41 @@ fn write_to_outputs_to_writer() {
     assert_eq!(bytes_written, 17);
     assert_eq!(output.len(), 17);
 }
+
+// ==================== SizeSpec::Eos tests ====================
+
+#[test]
+fn eos_field_writes_verbatim_no_padding() {
+    let def = Arc::new(
+        StructureDefinition::new("test_struct")
+            .with_field(
+                FieldDefinition::new("tag", FieldType::String).with_size(SizeSpec::fixed(6)),
+            )
+            .with_field(
+                FieldDefinition::new("comment", FieldType::String).with_size(SizeSpec::Eos),
+            ),
+    );
+    let mut writer = StructureWriter::new(def);
+
+    writer.set("tag", "HEADER").unwrap();
+    writer.set("comment", "Hello, world!").unwrap();
+    let data = writer.finish().unwrap();
+
+    assert_eq!(&data[..6], b"HEADER");
+    assert_eq!(&data[6..], b"Hello, world!");
+    assert_eq!(data.len(), 19);
+}
+
+#[test]
+fn eos_field_writes_empty_string() {
+    let def =
+        Arc::new(StructureDefinition::new("test_struct").with_field(
+            FieldDefinition::new("comment", FieldType::String).with_size(SizeSpec::Eos),
+        ));
+    let mut writer = StructureWriter::new(def);
+
+    writer.set("comment", "").unwrap();
+    let data = writer.finish().unwrap();
+
+    assert_eq!(data.len(), 0);
+}

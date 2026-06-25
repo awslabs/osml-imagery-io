@@ -78,6 +78,7 @@ pub fn get_streaming_field_size(
                 }),
             }
         }
+        SizeSpec::Eos => Ok(0),
     }
 }
 

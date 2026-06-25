@@ -234,6 +234,7 @@ pub fn get_simple_field_size(
                 }),
             }
         }
+        SizeSpec::Eos => Ok(data.len().saturating_sub(base_offset)),
     }
 }
 

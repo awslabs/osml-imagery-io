@@ -552,6 +552,7 @@ impl<'a> StructureAccessor<'a> {
                     }),
                 }
             }
+            SizeSpec::Eos => Ok(self.data.len().saturating_sub(offset)),
         }
     }
 
@@ -695,6 +696,7 @@ impl<'a> StructureAccessor<'a> {
                     }),
                 }
             }
+            SizeSpec::Eos => Ok(self.data.len().saturating_sub(offset)),
         }
     }
 
@@ -883,6 +885,7 @@ impl<'a> StructureAccessor<'a> {
                     }
                     let size = match &f.size {
                         SizeSpec::Fixed(s) => *s,
+                        SizeSpec::Eos => struct_val.data.len().saturating_sub(offset),
                         _ => match &f.field_type {
                             FieldType::UnsignedInt(bytes) | FieldType::SignedInt(bytes) => {
                                 *bytes as usize
@@ -895,6 +898,7 @@ impl<'a> StructureAccessor<'a> {
 
                 let size = match &field.size {
                     SizeSpec::Fixed(s) => *s,
+                    SizeSpec::Eos => struct_val.data.len().saturating_sub(offset),
                     _ => match &field.field_type {
                         FieldType::UnsignedInt(bytes) | FieldType::SignedInt(bytes) => {
                             *bytes as usize

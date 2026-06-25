@@ -274,7 +274,7 @@ impl DefinitionLoader {
                     _ => {
                         // For strings without size, check if there's a size-eos flag
                         if raw.size_eos.unwrap_or(false) {
-                            Ok(SizeSpec::Fixed(0)) // Will be determined at runtime
+                            Ok(SizeSpec::Eos)
                         } else {
                             Err(LoadError::MissingField {
                                 field: "size".to_string(),
