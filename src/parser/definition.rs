@@ -307,7 +307,7 @@ impl DefinitionLoader {
             Some("ECS-A") | Some("ecs-a") | Some("ECS_A") | Some("ecs_a") => {
                 Ok(Some(Encoding::EcsA))
             }
-            Some("UTF-8") | Some("utf-8") | Some("utf8") => Ok(Some(Encoding::Ascii)), // Treat UTF-8 as ASCII for now
+            Some("UTF-8") | Some("utf-8") | Some("utf8") => Ok(Some(Encoding::Utf8)),
             Some(_) => Ok(None), // Unknown encodings default to None
         }
     }
@@ -597,6 +597,31 @@ seq:
         assert_eq!(def.fields[0].encoding, Some(Encoding::BcsA));
         assert_eq!(def.fields[1].encoding, Some(Encoding::BcsN));
         assert_eq!(def.fields[2].encoding, Some(Encoding::EcsA));
+    }
+
+    #[test]
+    fn load_ksy_with_utf8_encoding() {
+        let yaml = r#"
+meta:
+  id: test_struct
+seq:
+  - id: utf8_field
+    type: str
+    size: 20
+    encoding: UTF-8
+  - id: utf8_lower_field
+    type: str
+    size: 10
+    encoding: utf-8
+  - id: utf8_no_dash_field
+    type: str
+    size: 10
+    encoding: utf8
+"#;
+        let def = DefinitionLoader::load_str(yaml).unwrap();
+        assert_eq!(def.fields[0].encoding, Some(Encoding::Utf8));
+        assert_eq!(def.fields[1].encoding, Some(Encoding::Utf8));
+        assert_eq!(def.fields[2].encoding, Some(Encoding::Utf8));
     }
 
     #[test]
@@ -970,6 +995,7 @@ mod proptests {
             Just("BCS-N"),
             Just("BCS-NPI"),
             Just("ECS-A"),
+            Just("UTF-8"),
         ]
     }
 
@@ -1049,6 +1075,7 @@ mod proptests {
                             Encoding::BcsN => "BCS-N",
                             Encoding::BcsNPI => "BCS-NPI",
                             Encoding::EcsA => "ECS-A",
+                            Encoding::Utf8 => "UTF-8",
                         };
                         yaml.push_str(&format!("    encoding: {}\n", enc_str));
                     }
@@ -1133,6 +1160,7 @@ mod proptests {
                     "BCS-N" => Some(Encoding::BcsN),
                     "BCS-NPI" => Some(Encoding::BcsNPI),
                     "ECS-A" => Some(Encoding::EcsA),
+                    "UTF-8" => Some(Encoding::Utf8),
                     _ => None,
                 };
                 prop_assert_eq!(def.fields[0].encoding, expected);

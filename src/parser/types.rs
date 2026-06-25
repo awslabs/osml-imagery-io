@@ -201,18 +201,24 @@ pub enum Encoding {
     BcsNPI,
     /// NITF Extended Character Set - Alphanumeric
     EcsA,
+    /// Full UTF-8 (multi-byte sequences valid; validated at sequence level)
+    Utf8,
 }
 
 impl Encoding {
     /// Get the default padding character for this encoding.
     pub fn default_pad(&self) -> u8 {
         match self {
-            Encoding::Ascii | Encoding::BcsA | Encoding::EcsA => 0x20, // space
-            Encoding::BcsN | Encoding::BcsNPI => 0x30,                 // '0'
+            Encoding::Ascii | Encoding::BcsA | Encoding::EcsA | Encoding::Utf8 => 0x20, // space
+            Encoding::BcsN | Encoding::BcsNPI => 0x30,                                  // '0'
         }
     }
 
     /// Validate that a byte is valid for this encoding.
+    ///
+    /// For `Encoding::Utf8`, always returns `true` because multi-byte continuation
+    /// bytes (0x80–0xBF) are valid in context but not in isolation. Use `validate()`
+    /// for sequence-level UTF-8 correctness.
     pub fn is_valid_byte(&self, byte: u8) -> bool {
         match self {
             Encoding::Ascii => byte.is_ascii(),
@@ -231,12 +237,18 @@ impl Encoding {
                 (0x30..=0x39).contains(&byte) || byte == 0x20
             }
             Encoding::EcsA => byte >= 0x20, // Extended allows broader range
+            Encoding::Utf8 => true,         // sequence-level check done in validate()
         }
     }
 
     /// Validate that all bytes are valid for this encoding.
+    ///
+    /// For `Encoding::Utf8`, performs a sequence-level check via `std::str::from_utf8`.
     pub fn validate(&self, data: &[u8]) -> bool {
-        data.iter().all(|&b| self.is_valid_byte(b))
+        match self {
+            Encoding::Utf8 => std::str::from_utf8(data).is_ok(),
+            _ => data.iter().all(|&b| self.is_valid_byte(b)),
+        }
     }
 }
 
@@ -404,6 +416,7 @@ mod tests {
         assert_eq!(Encoding::BcsN.default_pad(), 0x30);
         assert_eq!(Encoding::BcsNPI.default_pad(), 0x30);
         assert_eq!(Encoding::EcsA.default_pad(), 0x20);
+        assert_eq!(Encoding::Utf8.default_pad(), 0x20);
     }
 
     #[test]
@@ -449,6 +462,23 @@ mod tests {
         assert!(!Encoding::BcsNPI.is_valid_byte(0x2E)); // '.'
         assert!(!Encoding::BcsNPI.is_valid_byte(0x2F)); // '/'
         assert!(!Encoding::BcsNPI.is_valid_byte(0x41)); // 'A'
+    }
+
+    #[test]
+    fn encoding_utf8_validation() {
+        // Valid UTF-8: ASCII subset
+        assert!(Encoding::Utf8.validate(b"Hello, world!"));
+        // Valid UTF-8: multi-byte sequences
+        assert!(Encoding::Utf8.validate("Hello 世界!".as_bytes()));
+        assert!(Encoding::Utf8.validate("Ünïcödé".as_bytes()));
+        assert!(Encoding::Utf8.validate("emoji: 🌍".as_bytes()));
+        // Invalid UTF-8: lone continuation byte
+        assert!(!Encoding::Utf8.validate(b"\x80"));
+        // Invalid UTF-8: truncated sequence
+        assert!(!Encoding::Utf8.validate(b"\xC3"));
+        // is_valid_byte always true (sequence context required)
+        assert!(Encoding::Utf8.is_valid_byte(0x80));
+        assert!(Encoding::Utf8.is_valid_byte(0xFF));
     }
 
     #[test]
