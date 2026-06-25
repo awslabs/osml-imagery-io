@@ -1,6 +1,7 @@
 //! Unit tests for the structure writer.
 
 use super::*;
+use crate::parser::expression::ExpressionEvaluator;
 use crate::parser::types::{
     Encoding, Endian, FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition,
 };
@@ -425,6 +426,61 @@ fn write_to_outputs_to_writer() {
 
     assert_eq!(bytes_written, 17);
     assert_eq!(output.len(), 17);
+}
+
+// ==================== Conditional field tests ====================
+
+fn create_conditional_definition() -> Arc<StructureDefinition> {
+    // len (1 byte): controls whether data is present
+    // data (len bytes): conditional on len.to_i > 0
+    // tail (3 bytes): always present
+    Arc::new(
+        StructureDefinition::new("cond_test")
+            .with_field(
+                FieldDefinition::new("len", FieldType::String).with_size(SizeSpec::fixed(1)),
+            )
+            .with_field(
+                FieldDefinition::new("data", FieldType::String)
+                    .with_size(SizeSpec::expr(
+                        ExpressionEvaluator::parse("len.to_i").unwrap(),
+                    ))
+                    .with_condition(ExpressionEvaluator::parse("len.to_i > 0").unwrap()),
+            )
+            .with_field(
+                FieldDefinition::new("tail", FieldType::String).with_size(SizeSpec::fixed(3)),
+            ),
+    )
+}
+
+#[test]
+fn conditional_field_skipped_when_condition_false() {
+    let def = create_conditional_definition();
+    let mut writer = StructureWriter::new(def);
+    writer.set("len", "0").unwrap();
+    writer.set("tail", "END").unwrap();
+    let bytes = writer.finish().unwrap();
+    assert_eq!(&bytes, b"0END");
+}
+
+#[test]
+fn conditional_field_required_when_condition_true() {
+    let def = create_conditional_definition();
+    let mut writer = StructureWriter::new(def);
+    writer.set("len", "3").unwrap();
+    writer.set("data", "ABC").unwrap();
+    writer.set("tail", "END").unwrap();
+    let bytes = writer.finish().unwrap();
+    assert_eq!(&bytes, b"3ABCEND");
+}
+
+#[test]
+fn out_of_order_still_fails_for_unconditional_field() {
+    let def = create_conditional_definition();
+    let mut writer = StructureWriter::new(def);
+    // tail cannot be written before len even with the auto-advance
+    let result = writer.set("tail", "END");
+    assert!(result.is_err());
+    assert!(matches!(result.unwrap_err(), WriteError::OutOfOrder { .. }));
 }
 
 // ==================== SizeSpec::Eos tests ====================

@@ -7,6 +7,32 @@ use crate::parser::error::WriteError;
 use crate::parser::expression::{EvalContext, EvalResult, ExpressionEvaluator};
 use crate::parser::types::{FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition};
 
+/// Advance `next_field_index` past any consecutive fields whose `if:` condition
+/// evaluates to `false` given `ctx`.  Returns the index of the first field that
+/// is either unconditional or whose condition is true (or indeterminate).
+pub fn advance_past_false_conditions(
+    definition: &StructureDefinition,
+    mut index: usize,
+    evaluator: &ExpressionEvaluator,
+    ctx: &EvalContext,
+) -> usize {
+    loop {
+        let Some(field) = definition.fields.get(index) else {
+            break;
+        };
+        let Some(ref condition) = field.condition else {
+            break;
+        };
+        match evaluator.evaluate(condition, ctx) {
+            Ok(EvalResult::Boolean(false)) => {
+                index += 1;
+            }
+            _ => break,
+        }
+    }
+    index
+}
+
 /// Get the expected field for streaming mode at the given index.
 pub fn get_expected_streaming_field(
     definition: &StructureDefinition,

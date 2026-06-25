@@ -17,8 +17,8 @@ use super::types::{FieldDefinition, SizeSpec, StructureDefinition};
 
 use encode::encode_value;
 use streaming::{
-    get_expected_streaming_field, get_last_written_field, get_repeat_count,
-    get_streaming_field_size,
+    advance_past_false_conditions, get_expected_streaming_field, get_last_written_field,
+    get_repeat_count, get_streaming_field_size,
 };
 use validation::validate_encoding;
 
@@ -265,6 +265,14 @@ impl StructureWriter {
         value: WriteValue,
         path: &str,
     ) -> Result<(), WriteError> {
+        let ctx = self.build_eval_context();
+        self.next_field_index = advance_past_false_conditions(
+            &self.definition,
+            self.next_field_index,
+            &self.evaluator,
+            &ctx,
+        );
+
         let expected_field = get_expected_streaming_field(&self.definition, self.next_field_index)?;
 
         let is_expected = if let Some(idx) = index {
@@ -280,7 +288,6 @@ impl StructureWriter {
             });
         }
 
-        let ctx = self.build_eval_context();
         let size = get_streaming_field_size(field, &self.evaluator, &ctx)?;
 
         let encoded = if matches!(field.size, SizeSpec::Eos) {

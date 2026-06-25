@@ -117,6 +117,16 @@ impl ExpressionEvaluator {
             },
             Expression::BinaryOp { left, op, right } => {
                 let left_val = self.evaluate(left, context)?;
+                // Short-circuit: false and <anything> = false, true or <anything> = true
+                match (op, &left_val) {
+                    (BinaryOperator::And, EvalResult::Boolean(false)) => {
+                        return Ok(EvalResult::Boolean(false));
+                    }
+                    (BinaryOperator::Or, EvalResult::Boolean(true)) => {
+                        return Ok(EvalResult::Boolean(true));
+                    }
+                    _ => {}
+                }
                 let right_val = self.evaluate(right, context)?;
                 self.eval_binary_op(*op, left_val, right_val)
             }
