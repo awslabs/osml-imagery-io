@@ -249,6 +249,27 @@ impl StructureWriter {
         field: &FieldDefinition,
         elements: Vec<WriteValue>,
     ) -> Result<(), WriteError> {
+        if elements.is_empty() {
+            // Zero-element array: verify ordering then advance past this field.
+            let ctx = self.build_eval_context();
+            self.next_field_index = advance_past_false_conditions(
+                &self.definition,
+                self.next_field_index,
+                &self.evaluator,
+                &ctx,
+            );
+            let expected_field =
+                get_expected_streaming_field(&self.definition, self.next_field_index)?;
+            if expected_field.id != field_name {
+                return Err(WriteError::OutOfOrder {
+                    path: field_name.to_string(),
+                    expected_after: get_last_written_field(&self.definition, self.next_field_index),
+                });
+            }
+            self.written.insert(field_name.to_string());
+            self.next_field_index += 1;
+            return Ok(());
+        }
         for (i, elem) in elements.into_iter().enumerate() {
             let path = format!("{}_{}", field_name, i);
             self.write_streaming(field_name, Some(i), field, elem, &path)?;

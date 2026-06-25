@@ -26,6 +26,12 @@ UNIT_DATA_DIR = Path("data/unit")
 STRUCTURES_DIR = Path("data/structures")
 SYNTHETIC_NITF = UNIT_DATA_DIR / "nitf21-256x256-3band-8bit-nc.ntf"
 
+# IMRFCA has 4 repeated BCS-N fields, each with repeat-expr: 20 and size: 22.
+_IMRFCA_ELEM = "0" * 22
+_IMRFCA_LIST = [_IMRFCA_ELEM] * 20
+_IMRFCA_TUPLE = tuple(_IMRFCA_LIST)
+_IMRFCA_RAW = (_IMRFCA_ELEM.encode() * 20) * 4  # 4 fields × 20 elems × 22 bytes
+
 
 # =============================================================================
 # StructureRegistry Tests (Requirement 14.1)
@@ -290,6 +296,34 @@ class TestStructureWriter:
         assert isinstance(buffer, bytes)
         assert b"NITF" in buffer
 
+    def test_writer_set_repeated_field_list(self):
+        """Test set() accepts a list for a repeated field."""
+        registry = StructureRegistry()
+        registry.add_search_path(str(STRUCTURES_DIR))
+        defn = registry.get("tre_imrfca")
+
+        writer = StructureWriter.new_streaming(defn)
+        writer.set("XINC", _IMRFCA_LIST)
+        writer.set("XIDC", _IMRFCA_LIST)
+        writer.set("YINC", _IMRFCA_LIST)
+        writer.set("YIDC", _IMRFCA_LIST)
+
+        assert writer.finish() == _IMRFCA_RAW
+
+    def test_writer_set_repeated_field_tuple(self):
+        """Test set() accepts a tuple for a repeated field."""
+        registry = StructureRegistry()
+        registry.add_search_path(str(STRUCTURES_DIR))
+        defn = registry.get("tre_imrfca")
+
+        writer = StructureWriter.new_streaming(defn)
+        writer.set("XINC", _IMRFCA_TUPLE)
+        writer.set("XIDC", _IMRFCA_TUPLE)
+        writer.set("YINC", _IMRFCA_TUPLE)
+        writer.set("YIDC", _IMRFCA_TUPLE)
+
+        assert writer.finish() == _IMRFCA_RAW
+
 
 # =============================================================================
 # Value Tests (Requirement 14.4)
@@ -362,6 +396,25 @@ class TestValue:
         """Test len() on Value."""
         value = accessor["FHDR"]
         assert len(value) == 4
+
+    def test_value_as_array_returns_list(self):
+        """Test as_array() returns a list of Value objects for a repeated field."""
+        registry = StructureRegistry()
+        registry.add_search_path(str(STRUCTURES_DIR))
+        defn = registry.get("tre_imrfca")
+        accessor = StructureAccessor(defn, _IMRFCA_RAW)
+
+        elements = accessor["XINC"].as_array()
+
+        assert isinstance(elements, list)
+        assert len(elements) == 20
+        for elem in elements:
+            assert elem.as_str() == _IMRFCA_ELEM
+
+    def test_value_as_array_raises_for_scalar(self, accessor):
+        """Test as_array() raises TypeError on a non-array Value."""
+        with pytest.raises(TypeError):
+            accessor["FHDR"].as_array()
 
 
 # =============================================================================
@@ -491,3 +544,21 @@ class TestRoundTrip:
         buffer = writer.buffer()
         assert buffer[:4] == b"NITF"
         assert buffer[4:9] == b"02.10"
+
+    def test_repeated_field_round_trip(self):
+        """Test that a list written for a repeated field reads back via as_array()."""
+        registry = StructureRegistry()
+        registry.add_search_path(str(STRUCTURES_DIR))
+        defn = registry.get("tre_imrfca")
+
+        writer = StructureWriter.new_streaming(defn)
+        writer.set("XINC", _IMRFCA_LIST)
+        writer.set("XIDC", _IMRFCA_LIST)
+        writer.set("YINC", _IMRFCA_LIST)
+        writer.set("YIDC", _IMRFCA_LIST)
+        raw = writer.finish()
+
+        accessor = StructureAccessor(defn, raw)
+        elements = accessor["XINC"].as_array()
+        assert len(elements) == 20
+        assert all(e.as_str() == _IMRFCA_ELEM for e in elements)

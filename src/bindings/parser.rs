@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyList, PyTuple};
 
 use crate::parser::writer::WriteValue;
 use crate::parser::{
@@ -254,6 +254,23 @@ impl PyValue {
             OwnedValue::Unsigned(_) => 1,
             OwnedValue::Array(arr) => arr.len(),
             OwnedValue::Struct { data, .. } => data.len(),
+        }
+    }
+
+    /// Return the elements of an array value as a list of :class:`Value` objects.
+    ///
+    /// :returns: List of ``Value`` objects, one per array element.
+    /// :rtype: list[Value]
+    /// :raises TypeError: If the value is not an array.
+    fn as_array(&self) -> PyResult<Vec<PyValue>> {
+        match &self.inner {
+            OwnedValue::Array(arr) => Ok(arr
+                .iter()
+                .map(|elem| PyValue {
+                    inner: elem.clone(),
+                })
+                .collect()),
+            _ => Err(PyTypeError::new_err("Value is not an array")),
         }
     }
 }
@@ -769,14 +786,32 @@ fn python_to_write_value(value: &Bound<'_, PyAny>) -> PyResult<WriteValue> {
         return Ok(WriteValue::Float(f));
     }
 
-    // Try bytes
-    if let Ok(bytes) = value.extract::<Vec<u8>>() {
-        return Ok(WriteValue::Bytes(bytes));
+    // Try list → WriteValue::Array (before Vec<u8> since an empty list also matches Vec<u8>)
+    if let Ok(list) = value.cast::<PyList>() {
+        let elements: PyResult<Vec<WriteValue>> = list
+            .iter()
+            .map(|item| python_to_write_value(&item))
+            .collect();
+        return Ok(WriteValue::Array(elements?));
+    }
+
+    // Try tuple → WriteValue::Array
+    if let Ok(tup) = value.cast::<PyTuple>() {
+        let elements: PyResult<Vec<WriteValue>> = tup
+            .iter()
+            .map(|item| python_to_write_value(&item))
+            .collect();
+        return Ok(WriteValue::Array(elements?));
     }
 
     // Try PyBytes
     if let Ok(bytes_obj) = value.cast::<PyBytes>() {
         return Ok(WriteValue::Bytes(bytes_obj.as_bytes().to_vec()));
+    }
+
+    // Try bytes-like (bytearray, memoryview, etc.)
+    if let Ok(bytes) = value.extract::<Vec<u8>>() {
+        return Ok(WriteValue::Bytes(bytes));
     }
 
     Err(PyTypeError::new_err(format!(
