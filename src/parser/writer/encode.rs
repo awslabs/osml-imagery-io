@@ -62,6 +62,9 @@ pub fn encode_value(
             }
             encode_signed(*n as i64, *byte_size, endian, path)
         }
+        (FieldType::Float(byte_size), WriteValue::Float(f)) => {
+            encode_float(*f, *byte_size, endian, path)
+        }
         // TypeRef fields accept raw bytes (pre-serialized nested structures).
         // The bytes are already the correct size from the sub-writer, so we
         // return them directly without size validation or padding.
@@ -260,6 +263,29 @@ fn format_numeric_to_fit(
             });
         }
         Ok(formatted)
+    }
+}
+
+/// Encode an IEEE 754 float to bytes with the given endianness.
+///
+/// Mirrors [`encode_unsigned`]: the be/le suffix on the KSY type is advisory,
+/// and the actual byte order comes from the structure's `meta.endian`. NITF/BIIF
+/// always serializes big-endian, but the encoder is generic.
+pub fn encode_float(
+    f: f64,
+    byte_size: u8,
+    endian: Endian,
+    path: &str,
+) -> Result<Vec<u8>, WriteError> {
+    match (byte_size, endian) {
+        (4, Endian::Big) => Ok((f as f32).to_be_bytes().to_vec()),
+        (4, Endian::Little) => Ok((f as f32).to_le_bytes().to_vec()),
+        (8, Endian::Big) => Ok(f.to_be_bytes().to_vec()),
+        (8, Endian::Little) => Ok(f.to_le_bytes().to_vec()),
+        _ => Err(WriteError::ValidationError {
+            path: path.to_string(),
+            message: format!("unsupported float size: {}", byte_size),
+        }),
     }
 }
 

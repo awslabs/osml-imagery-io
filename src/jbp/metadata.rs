@@ -289,6 +289,7 @@ fn value_to_json(
             }
         }
         Value::Unsigned(n) => Some(serde_json::Value::Number((*n).into())),
+        Value::Float(f) => serde_json::Number::from_f64(*f).map(serde_json::Value::Number),
         Value::Array(arr) => {
             let json_arr: Vec<serde_json::Value> = arr
                 .iter()

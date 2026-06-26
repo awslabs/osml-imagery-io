@@ -10,9 +10,9 @@ use super::error::ConversionError;
 
 /// A parsed field value with type conversion methods.
 ///
-/// Values can represent strings, raw bytes, unsigned integers, nested structures,
-/// or arrays of values. String values use `Cow<str>` for zero-copy references
-/// when possible.
+/// Values can represent strings, raw bytes, unsigned integers, IEEE 754 floats,
+/// nested structures, or arrays of values. String values use `Cow<str>` for
+/// zero-copy references when possible.
 #[derive(Debug, Clone)]
 pub enum Value<'a> {
     /// String value (may reference source buffer for zero-copy)
@@ -21,6 +21,8 @@ pub enum Value<'a> {
     Bytes(&'a [u8]),
     /// Unsigned integer value
     Unsigned(u64),
+    /// IEEE 754 floating-point value (decoded from binary)
+    Float(f64),
     /// Nested structure (boxed to avoid infinite size)
     Struct(Box<StructValue<'a>>),
     /// Array of values
@@ -58,6 +60,11 @@ impl<'a> Value<'a> {
     /// Create an unsigned integer value.
     pub fn from_unsigned(n: u64) -> Self {
         Value::Unsigned(n)
+    }
+
+    /// Create a float value.
+    pub fn from_float(f: f64) -> Self {
+        Value::Float(f)
     }
 
     /// Create an array value.
@@ -110,6 +117,10 @@ impl<'a> Value<'a> {
                 from_type: "Unsigned",
                 to_type: "str",
             }),
+            Value::Float(_) => Err(ConversionError::TypeMismatch {
+                from_type: "Float",
+                to_type: "str",
+            }),
             Value::Struct(_) => Err(ConversionError::TypeMismatch {
                 from_type: "Struct",
                 to_type: "str",
@@ -140,6 +151,10 @@ impl<'a> Value<'a> {
                 }),
             Value::Unsigned(_) => Err(ConversionError::TypeMismatch {
                 from_type: "Unsigned",
+                to_type: "str",
+            }),
+            Value::Float(_) => Err(ConversionError::TypeMismatch {
+                from_type: "Float",
                 to_type: "str",
             }),
             Value::Struct(_) => Err(ConversionError::TypeMismatch {
@@ -214,6 +229,7 @@ impl<'a> Value<'a> {
                     })
                 }
             }
+            Value::Float(f) => Ok(*f as i64),
             Value::Struct(_) => Err(ConversionError::TypeMismatch {
                 from_type: "Struct",
                 to_type: "i64",
@@ -273,6 +289,7 @@ impl<'a> Value<'a> {
                     })
             }
             Value::Unsigned(n) => Ok(*n),
+            Value::Float(f) => Ok(*f as u64),
             Value::Struct(_) => Err(ConversionError::TypeMismatch {
                 from_type: "Struct",
                 to_type: "u64",
@@ -335,6 +352,7 @@ impl<'a> Value<'a> {
                     })
             }
             Value::Unsigned(n) => Ok(*n as f64),
+            Value::Float(f) => Ok(*f),
             Value::Struct(_) => Err(ConversionError::TypeMismatch {
                 from_type: "Struct",
                 to_type: "f64",
@@ -373,6 +391,7 @@ impl<'a> Value<'a> {
                 let _ = n;
                 &[]
             }
+            Value::Float(_) => &[],
             Value::Struct(s) => s.data,
             Value::Array(_) => &[],
         }
@@ -391,6 +410,11 @@ impl<'a> Value<'a> {
     /// Check if this value is an unsigned integer type.
     pub fn is_unsigned(&self) -> bool {
         matches!(self, Value::Unsigned(_))
+    }
+
+    /// Check if this value is a float type.
+    pub fn is_float(&self) -> bool {
+        matches!(self, Value::Float(_))
     }
 
     /// Check if this value is a struct type.
@@ -414,6 +438,7 @@ impl<'a> Value<'a> {
             Value::String(cow) => cow.len(),
             Value::Bytes(bytes) => bytes.len(),
             Value::Unsigned(_) => 1,
+            Value::Float(_) => 1,
             Value::Struct(_) => 1,
             Value::Array(arr) => arr.len(),
         }
@@ -580,6 +605,23 @@ mod tests {
     fn as_f64_from_unsigned() {
         let value = Value::from_unsigned(100);
         assert_eq!(value.as_f64().unwrap(), 100.0);
+    }
+
+    #[test]
+    fn as_f64_from_float() {
+        let value = Value::from_float(2.5);
+        assert_eq!(value.as_f64().unwrap(), 2.5);
+    }
+
+    #[test]
+    fn float_value_conversions() {
+        let value = Value::from_float(42.75);
+        assert!(value.is_float());
+        assert_eq!(value.as_f64().unwrap(), 42.75);
+        assert_eq!(value.as_i64().unwrap(), 42);
+        assert_eq!(value.as_u64().unwrap(), 42);
+        // Floats have no meaningful string interpretation in the parser layer
+        assert!(value.as_str().is_err());
     }
 
     #[test]

@@ -22,14 +22,14 @@ use std::sync::Arc;
 use crate::parser::error::AccessError;
 use crate::parser::expression::{EvalContext, EvalResult, ExpressionEvaluator};
 use crate::parser::types::{
-    Encoding, FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition,
+    Encoding, Endian, FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition,
 };
 use crate::parser::value::Value;
 
 pub use iterator::FieldIterator;
 
 use context::{add_value_to_context_impl, build_context_from_definition, get_simple_field_size};
-use read::{read_field_value_from_bytes, read_signed, read_unsigned};
+use read::{read_field_value_from_bytes, read_float, read_signed, read_unsigned};
 
 /// Information about a field's location and type.
 #[derive(Debug, Clone)]
@@ -735,6 +735,17 @@ impl<'a> StructureAccessor<'a> {
                 };
                 Ok(Value::Unsigned(n))
             }
+            FieldType::Float(byte_size) => {
+                // Like the integer arms above, this probing helper assumes
+                // big-endian (every NITF/BIIF structure is BE). The authoritative
+                // read paths honor the structure's declared endian via read_float.
+                if data.len() < *byte_size as usize {
+                    return Err(AccessError::UnknownField {
+                        path: field.id.clone(),
+                    });
+                }
+                Ok(Value::Float(read_float(data, *byte_size, Endian::Big)?))
+            }
             FieldType::TypeRef(_) => Err(AccessError::UnknownField {
                 path: field.id.clone(),
             }),
@@ -935,6 +946,10 @@ impl<'a> StructureAccessor<'a> {
                     FieldType::SignedInt(byte_size) => {
                         let val = read_signed(bytes, *byte_size, nested_def.endian)?;
                         Value::Unsigned(val as u64)
+                    }
+                    FieldType::Float(byte_size) => {
+                        let val = read_float(bytes, *byte_size, nested_def.endian)?;
+                        Value::Float(val)
                     }
                     FieldType::TypeRef(type_name) => Value::from_struct(bytes, type_name.clone()),
                 };

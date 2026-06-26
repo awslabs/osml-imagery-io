@@ -5,8 +5,12 @@
 
 use crate::parser::error::AccessError;
 use crate::parser::expression::{EvalContext, EvalResult, ExpressionEvaluator};
-use crate::parser::types::{FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition};
+use crate::parser::types::{
+    Endian, FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition,
+};
 use crate::parser::value::Value;
+
+use super::read::read_float;
 
 /// Calculate the size of a nested type instance.
 ///
@@ -148,6 +152,19 @@ fn read_simple_value<'a>(
                 _ => 0,
             };
             Ok(Value::Unsigned(n))
+        }
+        FieldType::Float(byte_size) => {
+            // Best-effort, like the integer arms above: this helper runs during
+            // offset probing and may see truncated data, so a short/odd-size read
+            // yields 0.0 rather than erroring (the authoritative read paths use
+            // read_float and surface UnexpectedEof). Big-endian to match integers.
+            if data.len() >= *byte_size as usize {
+                Ok(Value::Float(
+                    read_float(data, *byte_size, Endian::Big).unwrap_or(0.0),
+                ))
+            } else {
+                Ok(Value::Float(0.0))
+            }
         }
         FieldType::TypeRef(_) => {
             // TypeRef fields are structs, not simple values
@@ -335,6 +352,9 @@ pub fn add_value_to_context_impl<'a>(
         Value::String(s) => EvalResult::String(s.to_string()),
         Value::Bytes(b) => EvalResult::Bytes(b.to_vec()),
         Value::Unsigned(n) => EvalResult::Integer(*n as i64),
+        // Floats are usable in expressions: the evaluator supports float
+        // comparisons and arithmetic (e.g. `SCALE_FACTOR > 4.5`).
+        Value::Float(f) => EvalResult::Float(*f),
         Value::Array(_) => return Ok(()), // Arrays not directly usable in expressions
         Value::Struct(_) => return Ok(()), // Structs not directly usable in expressions
     };

@@ -221,6 +221,12 @@ impl DefinitionLoader {
             Some("s2") | Some("s2be") | Some("s2le") => Ok(FieldType::SignedInt(2)),
             Some("s4") | Some("s4be") | Some("s4le") => Ok(FieldType::SignedInt(4)),
             Some("s8") | Some("s8be") | Some("s8le") => Ok(FieldType::SignedInt(8)),
+            // Like integers, the be/le suffix is accepted but the actual byte
+            // order is governed by the structure's `meta.endian` at read/write
+            // time (see read_float / encode_value). The bare f4/f8 forms are the
+            // canonical "follow meta.endian" spelling.
+            Some("f4") | Some("f4be") | Some("f4le") => Ok(FieldType::Float(4)),
+            Some("f8") | Some("f8be") | Some("f8le") => Ok(FieldType::Float(8)),
             Some(s) if s.starts_with("b") && s[1..].parse::<u32>().is_ok() => {
                 // Bit fields like b1, b4, etc. - treat as bytes for now
                 Ok(FieldType::Bytes)
@@ -267,6 +273,8 @@ impl DefinitionLoader {
                     | Some("s4le") => Ok(SizeSpec::Fixed(4)),
                     Some("u8") | Some("u8be") | Some("u8le") | Some("s8") | Some("s8be")
                     | Some("s8le") => Ok(SizeSpec::Fixed(8)),
+                    Some("f4") | Some("f4be") | Some("f4le") => Ok(SizeSpec::Fixed(4)),
+                    Some("f8") | Some("f8be") | Some("f8le") => Ok(SizeSpec::Fixed(8)),
                     Some(type_name) if !type_name.starts_with("str") => {
                         // Type references don't need explicit size - size comes from the type
                         Ok(SizeSpec::Fixed(0))
@@ -944,6 +952,36 @@ seq:
     }
 
     #[test]
+    fn load_ksy_with_float_types() {
+        let yaml = r#"
+meta:
+  id: test_struct
+seq:
+  - id: bare4
+    type: f4
+  - id: scale
+    type: f4be
+  - id: altitude
+    type: f4le
+  - id: bare8
+    type: f8
+  - id: precise
+    type: f8be
+"#;
+        let def = DefinitionLoader::load_str(yaml).unwrap();
+        // Bare f4/f8 and the be/le suffix aliases all collapse to Float(size);
+        // byte order is governed by meta.endian at read/write time.
+        assert_eq!(def.fields[0].field_type, FieldType::Float(4));
+        assert_eq!(def.fields[1].field_type, FieldType::Float(4));
+        assert_eq!(def.fields[2].field_type, FieldType::Float(4));
+        assert_eq!(def.fields[3].field_type, FieldType::Float(8));
+        assert_eq!(def.fields[4].field_type, FieldType::Float(8));
+        // Size is implicit from the float type when not explicitly specified
+        assert!(matches!(def.fields[0].size, SizeSpec::Fixed(4)));
+        assert!(matches!(def.fields[3].size, SizeSpec::Fixed(8)));
+    }
+
+    #[test]
     fn load_ksy_with_type_reference() {
         let yaml = r#"
 meta:
@@ -1055,6 +1093,8 @@ mod proptests {
                         FieldType::SignedInt(2) => yaml.push_str("    type: s2\n"),
                         FieldType::SignedInt(4) => yaml.push_str("    type: s4\n"),
                         FieldType::SignedInt(8) => yaml.push_str("    type: s8\n"),
+                        FieldType::Float(4) => yaml.push_str("    type: f4\n"),
+                        FieldType::Float(8) => yaml.push_str("    type: f8\n"),
                         FieldType::TypeRef(name) => yaml.push_str(&format!("    type: {}\n", name)),
                         _ => {}
                     }

@@ -99,6 +99,7 @@ enum OwnedValue {
     String(String),
     Bytes(Vec<u8>),
     Unsigned(u64),
+    Float(f64),
     Array(Vec<OwnedValue>),
     Struct { data: Vec<u8>, type_name: String },
 }
@@ -109,6 +110,7 @@ impl<'a> From<Value<'a>> for OwnedValue {
             Value::String(cow) => OwnedValue::String(cow.into_owned()),
             Value::Bytes(bytes) => OwnedValue::Bytes(bytes.to_vec()),
             Value::Unsigned(n) => OwnedValue::Unsigned(n),
+            Value::Float(f) => OwnedValue::Float(f),
             Value::Array(arr) => OwnedValue::Array(arr.into_iter().map(OwnedValue::from).collect()),
             Value::Struct(s) => OwnedValue::Struct {
                 data: s.data.to_vec(),
@@ -143,6 +145,7 @@ impl PyValue {
                 Ok(s.trim_end_matches(' ').to_string())
             }
             OwnedValue::Unsigned(n) => Ok(n.to_string()),
+            OwnedValue::Float(f) => Ok(f.to_string()),
             _ => Err(PyTypeError::new_err("Cannot convert to string")),
         }
     }
@@ -183,6 +186,7 @@ impl PyValue {
                     Err(PyTypeError::new_err("Value exceeds i64::MAX"))
                 }
             }
+            OwnedValue::Float(f) => Ok(*f as i64),
             _ => Err(PyTypeError::new_err("Cannot convert to int")),
         }
     }
@@ -217,6 +221,7 @@ impl PyValue {
                     .map_err(|e| PyTypeError::new_err(format!("Cannot parse as float: {}", e)))
             }
             OwnedValue::Unsigned(n) => Ok(*n as f64),
+            OwnedValue::Float(f) => Ok(*f),
             _ => Err(PyTypeError::new_err("Cannot convert to float")),
         }
     }
@@ -230,6 +235,7 @@ impl PyValue {
             OwnedValue::String(s) => Ok(PyBytes::new(py, s.as_bytes())),
             OwnedValue::Bytes(bytes) => Ok(PyBytes::new(py, bytes)),
             OwnedValue::Unsigned(n) => Ok(PyBytes::new(py, &n.to_be_bytes())),
+            OwnedValue::Float(f) => Ok(PyBytes::new(py, &(*f as f32).to_be_bytes())),
             OwnedValue::Struct { data, .. } => Ok(PyBytes::new(py, data)),
             OwnedValue::Array(_) => Err(PyTypeError::new_err("Cannot get bytes from array")),
         }
@@ -241,6 +247,7 @@ impl PyValue {
             OwnedValue::String(s) => format!("Value('{}')", s.trim_end_matches(' ')),
             OwnedValue::Bytes(bytes) => format!("Value(<{} bytes>)", bytes.len()),
             OwnedValue::Unsigned(n) => format!("Value({})", n),
+            OwnedValue::Float(f) => format!("Value({})", f),
             OwnedValue::Array(arr) => format!("Value([{} items])", arr.len()),
             OwnedValue::Struct { type_name, .. } => format!("Value(<struct {}>)", type_name),
         }
@@ -252,6 +259,7 @@ impl PyValue {
             OwnedValue::String(s) => s.len(),
             OwnedValue::Bytes(bytes) => bytes.len(),
             OwnedValue::Unsigned(_) => 1,
+            OwnedValue::Float(_) => 1,
             OwnedValue::Array(arr) => arr.len(),
             OwnedValue::Struct { data, .. } => data.len(),
         }

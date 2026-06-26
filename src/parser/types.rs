@@ -142,7 +142,7 @@ impl FieldDefinition {
 }
 
 /// Supported field types.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FieldType {
     /// Fixed-size string with encoding
     String,
@@ -152,6 +152,8 @@ pub enum FieldType {
     UnsignedInt(u8),
     /// Signed integer (1, 2, or 4 bytes)
     SignedInt(u8),
+    /// IEEE 754 big-endian float (4 or 8 bytes)
+    Float(u8),
     /// Reference to a nested type
     TypeRef(String),
 }
@@ -185,6 +187,16 @@ impl FieldType {
     /// Create a signed 32-bit integer type (s4).
     pub fn s4() -> Self {
         Self::SignedInt(4)
+    }
+
+    /// Create a 32-bit big-endian float type (f4be).
+    pub fn f4be() -> Self {
+        Self::Float(4)
+    }
+
+    /// Create a 64-bit big-endian float type (f8be).
+    pub fn f8be() -> Self {
+        Self::Float(8)
     }
 }
 

@@ -578,6 +578,9 @@ mod prop_2_binary_data_round_trip {
                 Value::Unsigned(n) => {
                     writer.set(&path, n)?;
                 }
+                Value::Float(f) => {
+                    writer.set(&path, f)?;
+                }
                 Value::Array(elements) => {
                     let write_values: Vec<WriteValue> = elements
                         .iter()
@@ -585,6 +588,7 @@ mod prop_2_binary_data_round_trip {
                             Value::String(cow) => Some(WriteValue::String(cow.to_string())),
                             Value::Bytes(bytes) => Some(WriteValue::Bytes(bytes.to_vec())),
                             Value::Unsigned(n) => Some(WriteValue::Unsigned(*n)),
+                            Value::Float(f) => Some(WriteValue::Float(*f)),
                             _ => None,
                         })
                         .collect();

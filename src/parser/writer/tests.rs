@@ -346,6 +346,56 @@ fn signed_integer_encoding() {
     assert_eq!(writer.buffer(), &[0xFF, 0xFF]);
 }
 
+// ==================== Float encoding tests ====================
+
+#[test]
+fn float_f4be_encoding() {
+    let def = Arc::new(StructureDefinition::new("test").with_field(
+        FieldDefinition::new("value", FieldType::Float(4)).with_size(SizeSpec::fixed(4)),
+    ));
+    let mut writer = StructureWriter::new(def);
+
+    writer.set("value", 1.0f64).unwrap();
+
+    // 1.0 as IEEE 754 single-precision big-endian is 0x3F800000
+    assert_eq!(writer.buffer(), &1.0f32.to_be_bytes());
+    assert_eq!(writer.buffer(), &[0x3F, 0x80, 0x00, 0x00]);
+}
+
+#[test]
+fn float_f8be_encoding() {
+    let def = Arc::new(StructureDefinition::new("test").with_field(
+        FieldDefinition::new("value", FieldType::Float(8)).with_size(SizeSpec::fixed(8)),
+    ));
+    let mut writer = StructureWriter::new(def);
+
+    writer.set("value", 2.5f64).unwrap();
+
+    // 2.5 as IEEE 754 double-precision big-endian
+    assert_eq!(writer.buffer(), &2.5f64.to_be_bytes());
+}
+
+#[test]
+fn float_honors_little_endian_structure() {
+    // A float field in an `endian: le` structure must serialize little-endian,
+    // exactly as integer fields do. This guards against the float encoder
+    // ignoring meta.endian and always emitting big-endian.
+    let def = Arc::new(
+        StructureDefinition::new("test")
+            .with_endian(Endian::Little)
+            .with_field(
+                FieldDefinition::new("value", FieldType::Float(4)).with_size(SizeSpec::fixed(4)),
+            ),
+    );
+    let mut writer = StructureWriter::new(def);
+
+    writer.set("value", 1.0f64).unwrap();
+
+    // 1.0 LE is the byte-reverse of BE 0x3F800000
+    assert_eq!(writer.buffer(), &1.0f32.to_le_bytes());
+    assert_eq!(writer.buffer(), &[0x00, 0x00, 0x80, 0x3F]);
+}
+
 // ==================== Growable buffer tests ====================
 
 #[test]

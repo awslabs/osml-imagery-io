@@ -71,9 +71,9 @@ pub fn get_streaming_field_size(
         SizeSpec::Fixed(size) => {
             if *size == 0 {
                 match &field.field_type {
-                    FieldType::UnsignedInt(bytes) | FieldType::SignedInt(bytes) => {
-                        Ok(*bytes as usize)
-                    }
+                    FieldType::UnsignedInt(bytes)
+                    | FieldType::SignedInt(bytes)
+                    | FieldType::Float(bytes) => Ok(*bytes as usize),
                     // TypeRef fields have variable size determined by the nested
                     // structure's serialized bytes, not by a fixed size spec.
                     FieldType::TypeRef(_) => Ok(0),

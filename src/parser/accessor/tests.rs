@@ -450,6 +450,40 @@ fn accessor_conditional_fields_iterator() {
     assert!(fields2.contains(&"trailer".to_string()));
 }
 
+#[test]
+fn accessor_float_field_usable_in_conditional() {
+    // A conditional that compares against a float field. This exercises the
+    // float -> EvalResult::Float path in the expression context: the parser
+    // evaluator supports float comparisons, so `scale > 4.5` must work.
+    use crate::parser::expression::ExpressionEvaluator;
+
+    let condition = ExpressionEvaluator::parse("scale > 4.5").unwrap();
+    let def = Arc::new(
+        StructureDefinition::new("float_cond")
+            .with_field(
+                FieldDefinition::new("scale", FieldType::Float(4)).with_size(SizeSpec::Fixed(4)),
+            )
+            .with_field(
+                FieldDefinition::new("big_only", FieldType::String)
+                    .with_size(SizeSpec::Fixed(3))
+                    .with_condition(condition),
+            ),
+    );
+
+    // scale = 10.0 (> 4.5) -> big_only present
+    let mut data = 10.0f32.to_be_bytes().to_vec();
+    data.extend_from_slice(b"YES");
+    let accessor = StructureAccessor::new(Arc::clone(&def), &data).unwrap();
+    assert_eq!(accessor.get("scale").unwrap().as_f64().unwrap(), 10.0);
+    assert!(accessor.has("big_only"));
+    assert_eq!(accessor.get("big_only").unwrap().as_str().unwrap(), "YES");
+
+    // scale = 1.0 (< 4.5) -> big_only absent
+    let data2 = 1.0f32.to_be_bytes().to_vec();
+    let accessor2 = StructureAccessor::new(def, &data2).unwrap();
+    assert!(!accessor2.has("big_only"));
+}
+
 // ==================== Repetition Tests ====================
 
 fn create_repeat_expr_definition() -> StructureDefinition {
