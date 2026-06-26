@@ -115,7 +115,7 @@ class TestBuildManifestArrayBehaviorPreserving:
         )
 
         # Chunk shape: (bands, block_height, block_width)
-        chunks = array.chunks
+        chunks = array.metadata.chunks
         assert chunks[0] == num_bands, (
             f"Expected bands chunk {num_bands}, got {chunks[0]}"
         )
