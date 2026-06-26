@@ -138,20 +138,31 @@ fn read_simple_value<'a>(
                 4 if data.len() >= 4 => {
                     u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as u64
                 }
+                8 if data.len() >= 8 => u64::from_be_bytes([
+                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                ]),
                 _ => 0,
             };
             Ok(Value::Unsigned(n))
         }
         FieldType::SignedInt(bytes) => {
-            let n = match bytes {
-                1 => data.first().map(|&b| b as i8 as i64 as u64).unwrap_or(0),
-                2 if data.len() >= 2 => i16::from_be_bytes([data[0], data[1]]) as i64 as u64,
-                4 if data.len() >= 4 => {
-                    i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64 as u64
+            let n: i64 = match bytes {
+                1 => data.first().map(|&b| b as i8 as i64).unwrap_or(0),
+                2 if data.len() >= 2 => i16::from_be_bytes([data[0], data[1]]) as i64,
+                3 if data.len() >= 3 => {
+                    // Sign-extend a 24-bit value into i32 before widening.
+                    let raw = u32::from_be_bytes([0, data[0], data[1], data[2]]);
+                    ((raw << 8) as i32 >> 8) as i64
                 }
+                4 if data.len() >= 4 => {
+                    i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64
+                }
+                8 if data.len() >= 8 => i64::from_be_bytes([
+                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                ]),
                 _ => 0,
             };
-            Ok(Value::Unsigned(n))
+            Ok(Value::Signed(n))
         }
         FieldType::Float(byte_size) => {
             // Best-effort, like the integer arms above: this helper runs during
@@ -352,6 +363,7 @@ pub fn add_value_to_context_impl<'a>(
         Value::String(s) => EvalResult::String(s.to_string()),
         Value::Bytes(b) => EvalResult::Bytes(b.to_vec()),
         Value::Unsigned(n) => EvalResult::Integer(*n as i64),
+        Value::Signed(n) => EvalResult::Integer(*n),
         // Floats are usable in expressions: the evaluator supports float
         // comparisons and arithmetic (e.g. `SCALE_FACTOR > 4.5`).
         Value::Float(f) => EvalResult::Float(*f),
@@ -415,4 +427,58 @@ where
     }
 
     Ok(ctx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn signed_field(id: &str, size: u8) -> FieldDefinition {
+        FieldDefinition::new(id, FieldType::SignedInt(size))
+    }
+
+    #[test]
+    fn read_simple_value_signed_negative_s4() {
+        // The probing helper must produce a Signed value carrying the sign,
+        // not a bit-cast Unsigned.
+        let field = signed_field("DELTA", 4);
+        let bytes = (-5i32).to_be_bytes();
+        let value = read_simple_value(&field, &bytes).unwrap();
+        assert!(value.is_signed());
+        assert_eq!(value.as_i64().unwrap(), -5);
+    }
+
+    #[test]
+    fn read_simple_value_signed_s8_not_dropped() {
+        // Regression: size 8 previously fell through to 0 in this helper.
+        let field = signed_field("BIG", 8);
+        let bytes = (-9_000_000_000i64).to_be_bytes();
+        let value = read_simple_value(&field, &bytes).unwrap();
+        assert_eq!(value.as_i64().unwrap(), -9_000_000_000);
+    }
+
+    #[test]
+    fn read_simple_value_unsigned_s8_not_dropped() {
+        // Parallel gap: the unsigned arm also lacked size 8.
+        let field = FieldDefinition::new("BIG_U", FieldType::UnsignedInt(8));
+        let n = 0x0102_0304_0506_0708u64;
+        let bytes = n.to_be_bytes();
+        let value = read_simple_value(&field, &bytes).unwrap();
+        assert_eq!(value.as_u64().unwrap(), n);
+    }
+
+    #[test]
+    fn read_simple_value_signed_s8_feeds_context_as_integer() {
+        // The s8 value must reach the expression context as a signed Integer
+        // (this is the path that drives offset/size/condition expressions).
+        let field = signed_field("BIG", 8);
+        let bytes = (-42i64).to_be_bytes();
+        let value = read_simple_value(&field, &bytes).unwrap();
+        let mut ctx = EvalContext::new();
+        add_value_to_context_impl(&mut ctx, "BIG", &value).unwrap();
+        match ctx.fields.get("BIG") {
+            Some(EvalResult::Integer(n)) => assert_eq!(*n, -42),
+            other => panic!("expected Integer(-42), got {:?}", other),
+        }
+    }
 }

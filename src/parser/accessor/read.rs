@@ -112,8 +112,7 @@ pub fn read_field_value_from_bytes<'a>(
         }
         FieldType::SignedInt(byte_size) => {
             let value = read_signed(bytes, *byte_size, endian)?;
-            // Store as unsigned but preserve sign through conversion
-            Ok(Value::Unsigned(value as u64))
+            Ok(Value::Signed(value))
         }
         FieldType::Float(byte_size) => {
             if bytes.len() < *byte_size as usize {
@@ -140,6 +139,50 @@ mod tests {
 
     fn float_field(id: &str, size: u8) -> FieldDefinition {
         FieldDefinition::new(id, FieldType::Float(size)).with_size(SizeSpec::fixed(size as usize))
+    }
+
+    fn signed_field(id: &str, size: u8) -> FieldDefinition {
+        FieldDefinition::new(id, FieldType::SignedInt(size))
+            .with_size(SizeSpec::fixed(size as usize))
+    }
+
+    #[test]
+    fn read_field_value_signed_negative_s2() {
+        // Regression: a negative s2 field must read back as a negative i64,
+        // not error out (it previously bit-cast through Value::Unsigned).
+        let field = signed_field("DELTA", 2);
+        let bytes = (-1i16).to_be_bytes();
+        let value = read_field_value_from_bytes(&field, &bytes, Endian::Big).unwrap();
+        assert!(value.is_signed());
+        assert_eq!(value.as_i64().unwrap(), -1);
+        assert_eq!(value.as_f64().unwrap(), -1.0);
+    }
+
+    #[test]
+    fn read_field_value_signed_negative_s4() {
+        let field = signed_field("OFFSET", 4);
+        let bytes = (-123456i32).to_be_bytes();
+        let value = read_field_value_from_bytes(&field, &bytes, Endian::Big).unwrap();
+        assert_eq!(value.as_i64().unwrap(), -123456);
+    }
+
+    #[test]
+    fn read_field_value_signed_negative_s8() {
+        let field = signed_field("BIG", 8);
+        let bytes = (-9_000_000_000i64).to_be_bytes();
+        let value = read_field_value_from_bytes(&field, &bytes, Endian::Big).unwrap();
+        assert_eq!(value.as_i64().unwrap(), -9_000_000_000);
+    }
+
+    #[test]
+    fn read_field_value_signed_honors_endian() {
+        let field = signed_field("DELTA", 2);
+        let be_bytes = (-2i16).to_be_bytes();
+        let value_be = read_field_value_from_bytes(&field, &be_bytes, Endian::Big).unwrap();
+        let value_le = read_field_value_from_bytes(&field, &be_bytes, Endian::Little).unwrap();
+        assert_eq!(value_be.as_i64().unwrap(), -2);
+        // Same bytes read little-endian are NOT -2 (proves endian is threaded).
+        assert_ne!(value_le.as_i64().unwrap(), -2);
     }
 
     #[test]

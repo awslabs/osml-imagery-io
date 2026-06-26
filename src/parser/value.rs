@@ -21,6 +21,8 @@ pub enum Value<'a> {
     Bytes(&'a [u8]),
     /// Unsigned integer value
     Unsigned(u64),
+    /// Signed integer value (decoded from binary)
+    Signed(i64),
     /// IEEE 754 floating-point value (decoded from binary)
     Float(f64),
     /// Nested structure (boxed to avoid infinite size)
@@ -60,6 +62,11 @@ impl<'a> Value<'a> {
     /// Create an unsigned integer value.
     pub fn from_unsigned(n: u64) -> Self {
         Value::Unsigned(n)
+    }
+
+    /// Create a signed integer value.
+    pub fn from_signed(n: i64) -> Self {
+        Value::Signed(n)
     }
 
     /// Create a float value.
@@ -117,6 +124,10 @@ impl<'a> Value<'a> {
                 from_type: "Unsigned",
                 to_type: "str",
             }),
+            Value::Signed(_) => Err(ConversionError::TypeMismatch {
+                from_type: "Signed",
+                to_type: "str",
+            }),
             Value::Float(_) => Err(ConversionError::TypeMismatch {
                 from_type: "Float",
                 to_type: "str",
@@ -151,6 +162,10 @@ impl<'a> Value<'a> {
                 }),
             Value::Unsigned(_) => Err(ConversionError::TypeMismatch {
                 from_type: "Unsigned",
+                to_type: "str",
+            }),
+            Value::Signed(_) => Err(ConversionError::TypeMismatch {
+                from_type: "Signed",
                 to_type: "str",
             }),
             Value::Float(_) => Err(ConversionError::TypeMismatch {
@@ -229,6 +244,7 @@ impl<'a> Value<'a> {
                     })
                 }
             }
+            Value::Signed(n) => Ok(*n),
             Value::Float(f) => Ok(*f as i64),
             Value::Struct(_) => Err(ConversionError::TypeMismatch {
                 from_type: "Struct",
@@ -289,6 +305,17 @@ impl<'a> Value<'a> {
                     })
             }
             Value::Unsigned(n) => Ok(*n),
+            Value::Signed(n) => {
+                if *n >= 0 {
+                    Ok(*n as u64)
+                } else {
+                    Err(ConversionError::ParseError {
+                        value: n.to_string(),
+                        target_type: "u64",
+                        message: "negative value cannot be represented as u64".to_string(),
+                    })
+                }
+            }
             Value::Float(f) => Ok(*f as u64),
             Value::Struct(_) => Err(ConversionError::TypeMismatch {
                 from_type: "Struct",
@@ -352,6 +379,7 @@ impl<'a> Value<'a> {
                     })
             }
             Value::Unsigned(n) => Ok(*n as f64),
+            Value::Signed(n) => Ok(*n as f64),
             Value::Float(f) => Ok(*f),
             Value::Struct(_) => Err(ConversionError::TypeMismatch {
                 from_type: "Struct",
@@ -391,6 +419,7 @@ impl<'a> Value<'a> {
                 let _ = n;
                 &[]
             }
+            Value::Signed(_) => &[],
             Value::Float(_) => &[],
             Value::Struct(s) => s.data,
             Value::Array(_) => &[],
@@ -410,6 +439,11 @@ impl<'a> Value<'a> {
     /// Check if this value is an unsigned integer type.
     pub fn is_unsigned(&self) -> bool {
         matches!(self, Value::Unsigned(_))
+    }
+
+    /// Check if this value is a signed integer type.
+    pub fn is_signed(&self) -> bool {
+        matches!(self, Value::Signed(_))
     }
 
     /// Check if this value is a float type.
@@ -438,6 +472,7 @@ impl<'a> Value<'a> {
             Value::String(cow) => cow.len(),
             Value::Bytes(bytes) => bytes.len(),
             Value::Unsigned(_) => 1,
+            Value::Signed(_) => 1,
             Value::Float(_) => 1,
             Value::Struct(_) => 1,
             Value::Array(arr) => arr.len(),
@@ -628,6 +663,55 @@ mod tests {
     fn as_f64_invalid_string() {
         let value = Value::from_borrowed("not a number");
         assert!(value.as_f64().is_err());
+    }
+
+    // ==================== Value::Signed tests ====================
+
+    #[test]
+    fn signed_negative_conversions() {
+        // Regression: a negative signed field must survive as_i64/as_f64
+        // (previously bit-cast through Value::Unsigned, which errored/garbled).
+        let value = Value::from_signed(-1);
+        assert!(value.is_signed());
+        assert_eq!(value.as_i64().unwrap(), -1);
+        assert_eq!(value.as_f64().unwrap(), -1.0);
+        // Negative values cannot be represented as u64.
+        assert!(value.as_u64().is_err());
+    }
+
+    #[test]
+    fn signed_positive_conversions() {
+        let value = Value::from_signed(12345);
+        assert_eq!(value.as_i64().unwrap(), 12345);
+        assert_eq!(value.as_u64().unwrap(), 12345);
+        assert_eq!(value.as_f64().unwrap(), 12345.0);
+    }
+
+    #[test]
+    fn signed_min_value() {
+        let value = Value::from_signed(i64::MIN);
+        assert_eq!(value.as_i64().unwrap(), i64::MIN);
+        assert!(value.as_u64().is_err());
+        assert_eq!(value.as_f64().unwrap(), i64::MIN as f64);
+    }
+
+    #[test]
+    fn signed_is_not_unsigned() {
+        let value = Value::from_signed(5);
+        assert!(value.is_signed());
+        assert!(!value.is_unsigned());
+        assert!(!value.is_float());
+    }
+
+    #[test]
+    fn signed_as_str_fails() {
+        let value = Value::from_signed(-1);
+        assert!(value.as_str().is_err());
+    }
+
+    #[test]
+    fn signed_len_is_one() {
+        assert_eq!(Value::from_signed(-7).len(), 1);
     }
 
     // ==================== as_bytes() tests ====================
@@ -865,6 +949,45 @@ mod property_tests {
                 let value = Value::from_unsigned(n);
                 let parsed = value.as_f64().unwrap();
                 prop_assert_eq!(n as f64, parsed);
+            }
+
+            /// Signed values (including negatives) round-trip through as_i64
+            #[test]
+            fn signed_to_i64_round_trip(n in any::<i64>()) {
+                let value = Value::from_signed(n);
+                prop_assert_eq!(value.as_i64().unwrap(), n);
+            }
+
+            /// 32-bit signed values round-trip through as_i64 (matches s4 fields)
+            #[test]
+            fn signed_i32_round_trip(n in any::<i32>()) {
+                let value = Value::from_signed(n as i64);
+                prop_assert_eq!(value.as_i64().unwrap(), n as i64);
+            }
+
+            /// 16-bit signed values round-trip through as_i64 (matches s2 fields)
+            #[test]
+            fn signed_i16_round_trip(n in any::<i16>()) {
+                let value = Value::from_signed(n as i64);
+                prop_assert_eq!(value.as_i64().unwrap(), n as i64);
+            }
+
+            /// Signed values convert to f64 correctly, including negatives
+            #[test]
+            fn signed_to_f64(n in any::<i64>()) {
+                let value = Value::from_signed(n);
+                prop_assert_eq!(value.as_f64().unwrap(), n as f64);
+            }
+
+            /// Negative signed values fail as_u64; non-negative succeed
+            #[test]
+            fn signed_to_u64_guards_negatives(n in any::<i64>()) {
+                let value = Value::from_signed(n);
+                if n >= 0 {
+                    prop_assert_eq!(value.as_u64().unwrap(), n as u64);
+                } else {
+                    prop_assert!(value.as_u64().is_err());
+                }
             }
 
             /// Empty string parses as zero

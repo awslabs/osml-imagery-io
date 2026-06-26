@@ -723,23 +723,37 @@ impl<'a> StructureAccessor<'a> {
                 let n = match bytes {
                     1 => data.first().map(|&b| b as u64).unwrap_or(0),
                     2 if data.len() >= 2 => u16::from_be_bytes([data[0], data[1]]) as u64,
+                    3 if data.len() >= 3 => {
+                        u32::from_be_bytes([0, data[0], data[1], data[2]]) as u64
+                    }
                     4 if data.len() >= 4 => {
                         u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as u64
                     }
+                    8 if data.len() >= 8 => u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                    ]),
                     _ => 0,
                 };
                 Ok(Value::Unsigned(n))
             }
             FieldType::SignedInt(bytes) => {
-                let n = match bytes {
-                    1 => data.first().map(|&b| b as i8 as i64 as u64).unwrap_or(0),
-                    2 if data.len() >= 2 => i16::from_be_bytes([data[0], data[1]]) as i64 as u64,
-                    4 if data.len() >= 4 => {
-                        i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64 as u64
+                let n: i64 = match bytes {
+                    1 => data.first().map(|&b| b as i8 as i64).unwrap_or(0),
+                    2 if data.len() >= 2 => i16::from_be_bytes([data[0], data[1]]) as i64,
+                    3 if data.len() >= 3 => {
+                        // Sign-extend a 24-bit value into i32 before widening.
+                        let raw = u32::from_be_bytes([0, data[0], data[1], data[2]]);
+                        ((raw << 8) as i32 >> 8) as i64
                     }
+                    4 if data.len() >= 4 => {
+                        i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64
+                    }
+                    8 if data.len() >= 8 => i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                    ]),
                     _ => 0,
                 };
-                Ok(Value::Unsigned(n))
+                Ok(Value::Signed(n))
             }
             FieldType::Float(byte_size) => {
                 // Like the integer arms above, this probing helper assumes
@@ -951,7 +965,7 @@ impl<'a> StructureAccessor<'a> {
                     }
                     FieldType::SignedInt(byte_size) => {
                         let val = read_signed(bytes, *byte_size, nested_def.endian)?;
-                        Value::Unsigned(val as u64)
+                        Value::Signed(val)
                     }
                     FieldType::Float(byte_size) => {
                         let val = read_float(bytes, *byte_size, nested_def.endian)?;
