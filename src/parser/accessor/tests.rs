@@ -577,6 +577,46 @@ fn accessor_repeat_expr_zero_count() {
 }
 
 #[test]
+fn accessor_repeat_expr_huge_count_truncated_buffer_does_not_overrun() {
+    // Regression: a repeat-expr count drawn from (untrusted) field data can be
+    // enormous while the buffer holds only a few elements. The parse loop must
+    // stop at buffer exhaustion rather than spinning through the full declared
+    // count — otherwise a malformed TRE wedges the parser for billions of
+    // no-op iterations (observed ~5s for a single 8-byte buffer).
+    use crate::parser::expression::ExpressionEvaluator;
+
+    let repeat_expr = ExpressionEvaluator::parse("count").unwrap();
+    let def = Arc::new(
+        StructureDefinition::new("huge_count")
+            .with_field(
+                FieldDefinition::new("count", FieldType::UnsignedInt(4))
+                    .with_size(SizeSpec::Fixed(4)),
+            )
+            .with_field(
+                FieldDefinition::new("items", FieldType::UnsignedInt(4))
+                    .with_size(SizeSpec::Fixed(4))
+                    .with_repeat(RepeatSpec::Expression(repeat_expr)),
+            ),
+    );
+
+    // count = 0x7FFFFFFF (~2.1 billion) but only two 4-byte items follow.
+    let mut data = vec![0x7F, 0xFF, 0xFF, 0xFF];
+    data.extend_from_slice(&[0, 0, 0, 1]);
+    data.extend_from_slice(&[0, 0, 0, 2]);
+
+    let accessor = StructureAccessor::new(def, &data).unwrap();
+    let items = accessor.get("items").unwrap();
+    if let Value::Array(arr) = items {
+        // Only the elements actually present in the buffer are returned.
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0].as_u64().unwrap(), 1);
+        assert_eq!(arr[1].as_u64().unwrap(), 2);
+    } else {
+        panic!("Expected array");
+    }
+}
+
+#[test]
 fn accessor_repeat_expr_out_of_bounds() {
     let def = Arc::new(create_repeat_expr_definition());
     let data = b"\x03AAAABBBBCCCCDONE";

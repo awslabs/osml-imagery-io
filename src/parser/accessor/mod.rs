@@ -168,7 +168,10 @@ impl<'a> StructureAccessor<'a> {
                 match repeat {
                     RepeatSpec::Count(_) | RepeatSpec::Expression(_) => {
                         let mut elem_offset = current_offset;
-                        let mut elem_offsets = Vec::with_capacity(count);
+                        // `count` is derived from (untrusted) field data, so don't
+                        // pre-allocate for the full declared count — cap the initial
+                        // capacity and let the vector grow as elements are read.
+                        let mut elem_offsets = Vec::with_capacity(count.min(1000));
                         // Store base field offset
                         self.offset_cache
                             .borrow_mut()
@@ -180,15 +183,18 @@ impl<'a> StructureAccessor<'a> {
                                     .unwrap_or(size),
                                 _ => size,
                             };
-                            if elem_offset + elem_size <= self.data.len() {
-                                // Read value for eval context
-                                if let Ok(value) =
-                                    self.read_field_value(field, elem_offset, elem_size)
-                                {
-                                    let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
-                                }
-                                elem_offsets.push((elem_offset, elem_size));
+                            // Once an element no longer fits, no later element can
+                            // either (offsets only advance) — stop instead of spinning
+                            // through a huge declared count against a short buffer.
+                            if elem_offset + elem_size > self.data.len() {
+                                break;
                             }
+                            // Read value for eval context
+                            if let Ok(value) = self.read_field_value(field, elem_offset, elem_size)
+                            {
+                                let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
+                            }
+                            elem_offsets.push((elem_offset, elem_size));
                             elem_offset += elem_size;
                         }
                         self.repeat_offsets
