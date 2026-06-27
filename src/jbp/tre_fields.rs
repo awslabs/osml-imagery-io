@@ -29,10 +29,9 @@
 use std::sync::Arc;
 
 use super::tre::{TreEnvelope, TreFieldGroup};
-use crate::parser::writer::WriteValue;
+use crate::parser::codec;
 use crate::parser::{
-    AccessError, FieldType, StructureAccessor, StructureDefinition, StructureRegistry,
-    StructureWriter, WriteError,
+    AccessError, StructureAccessor, StructureDefinition, StructureRegistry, WriteError,
 };
 
 /// Look up a TRE definition from the registry by CETAG.
@@ -147,168 +146,9 @@ pub fn serialize_tre_fields(
         None => return Ok(None),
     };
 
-    let mut writer = StructureWriter::new(Arc::clone(&definition));
-    writer.set_strict_encoding(strict);
-
-    // Write fields in definition order by iterating the definition's fields
-    // and looking up values from the group
-    write_fields_to_writer(&mut writer, &definition, &group.fields)?;
-
-    // Finish and return the serialized bytes
-    let cedata = writer.finish()?;
+    // Delegate the format-agnostic recursion to the parser codec layer.
+    let cedata = codec::encode_fields(&definition, &group.fields, strict)?;
     Ok(Some(cedata))
-}
-
-/// Convert a serde_json::Value to a WriteValue for scalar types.
-fn json_to_write_value(value: &serde_json::Value) -> Option<WriteValue> {
-    match value {
-        serde_json::Value::String(s) => Some(WriteValue::String(s.clone())),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Some(WriteValue::Integer(i))
-            } else if let Some(u) = n.as_u64() {
-                Some(WriteValue::Unsigned(u))
-            } else {
-                n.as_f64().map(WriteValue::Float)
-            }
-        }
-        serde_json::Value::Bool(b) => Some(WriteValue::String(if *b {
-            "1".to_string()
-        } else {
-            "0".to_string()
-        })),
-        _ => None,
-    }
-}
-
-/// Serialize a JSON object's fields into a StructureWriter using the given definition.
-///
-/// This handles scalar fields directly and recurses for arrays and nested objects.
-fn write_fields_to_writer(
-    writer: &mut StructureWriter,
-    definition: &StructureDefinition,
-    fields: &std::collections::HashMap<String, serde_json::Value>,
-) -> Result<(), WriteError> {
-    for field_def in &definition.fields {
-        let field_id_lower = field_def.id.to_lowercase();
-
-        // Find the matching value in the group (case-insensitive)
-        let value = fields.iter().find_map(|(name, val)| {
-            if name.to_lowercase() == field_id_lower {
-                Some(val)
-            } else {
-                None
-            }
-        });
-
-        if let Some(value) = value {
-            match value {
-                serde_json::Value::String(_)
-                | serde_json::Value::Number(_)
-                | serde_json::Value::Bool(_) => {
-                    if let Some(wv) = json_to_write_value(value) {
-                        writer.set(&field_def.id, wv)?;
-                    }
-                }
-                serde_json::Value::Array(arr) => {
-                    match &field_def.field_type {
-                        FieldType::TypeRef(type_name) => {
-                            // Array of nested objects: serialize each element
-                            // using a sub-writer for the nested type definition
-                            let nested_def = definition.types.get(type_name).ok_or_else(|| {
-                                WriteError::ValidationError {
-                                    path: field_def.id.clone(),
-                                    message: format!(
-                                        "Nested type '{}' not found in definition",
-                                        type_name
-                                    ),
-                                }
-                            })?;
-                            let mut bytes_array = Vec::with_capacity(arr.len());
-                            for (i, elem) in arr.iter().enumerate() {
-                                let elem_bytes =
-                                    serialize_nested_value(elem, nested_def, &field_def.id, i)?;
-                                bytes_array.push(WriteValue::Bytes(elem_bytes));
-                            }
-                            writer.set(&field_def.id, WriteValue::Array(bytes_array))?;
-                        }
-                        _ => {
-                            // Array of scalars: convert each element to WriteValue
-                            let write_values: Vec<WriteValue> =
-                                arr.iter().filter_map(json_to_write_value).collect();
-                            writer.set(&field_def.id, WriteValue::Array(write_values))?;
-                        }
-                    }
-                }
-                serde_json::Value::Object(obj) => {
-                    // Single nested object (non-repeated TypeRef field)
-                    if let FieldType::TypeRef(type_name) = &field_def.field_type {
-                        let nested_def = definition.types.get(type_name).ok_or_else(|| {
-                            WriteError::ValidationError {
-                                path: field_def.id.clone(),
-                                message: format!(
-                                    "Nested type '{}' not found in definition",
-                                    type_name
-                                ),
-                            }
-                        })?;
-                        let nested_fields: std::collections::HashMap<String, serde_json::Value> =
-                            obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                        let nested_bytes =
-                            serialize_nested_fields(nested_def, &nested_fields, &field_def.id)?;
-                        writer.set(&field_def.id, WriteValue::Bytes(nested_bytes))?;
-                    }
-                }
-                _ => {
-                    // Skip null values
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Serialize a single JSON value as a nested structure, returning raw bytes.
-fn serialize_nested_value(
-    value: &serde_json::Value,
-    nested_def: &StructureDefinition,
-    parent_field: &str,
-    index: usize,
-) -> Result<Vec<u8>, WriteError> {
-    match value {
-        serde_json::Value::Object(obj) => {
-            let fields: std::collections::HashMap<String, serde_json::Value> =
-                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            serialize_nested_fields(nested_def, &fields, parent_field)
-        }
-        _ => Err(WriteError::ValidationError {
-            path: format!("{}_{}", parent_field, index),
-            message: "Expected object value for nested type".to_string(),
-        }),
-    }
-}
-
-/// Serialize a set of fields using a nested StructureDefinition, returning raw bytes.
-///
-/// Creates a sub-writer for the nested definition and recursively writes all fields.
-fn serialize_nested_fields(
-    definition: &StructureDefinition,
-    fields: &std::collections::HashMap<String, serde_json::Value>,
-    parent_path: &str,
-) -> Result<Vec<u8>, WriteError> {
-    let mut sub_writer = StructureWriter::new(Arc::new(definition.clone()));
-    write_fields_to_writer(&mut sub_writer, definition, fields).map_err(|e| {
-        WriteError::ValidationError {
-            path: parent_path.to_string(),
-            message: format!("Failed to serialize nested structure: {}", e),
-        }
-    })?;
-    sub_writer
-        .finish()
-        .map_err(|e| WriteError::ValidationError {
-            path: parent_path.to_string(),
-            message: format!("Failed to finalize nested structure: {}", e),
-        })
 }
 
 /// Serialize a TRE field group to a TreEnvelope.

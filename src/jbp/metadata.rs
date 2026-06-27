@@ -17,7 +17,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::owned_buffer::OwnedBuffer;
-use crate::parser::{StructureAccessor, StructureDefinition, StructureRegistry, Value};
+use crate::parser::codec::{self, value_to_json};
+use crate::parser::{StructureDefinition, StructureRegistry};
 use crate::traits::MetadataProvider;
 
 use super::tre::TreEnvelope;
@@ -183,28 +184,14 @@ impl MetadataProvider for JBPSegmentMetadataProvider {
 
 /// Eagerly parse all fields from a structure definition into a HashMap.
 ///
-/// Creates a `StructureAccessor` from the definition and raw bytes, then iterates
-/// all fields (respecting conditions and repeated fields) to build the cached map.
+/// Thin wrapper over [`codec::decode_fields`]; the format-agnostic recursion
+/// lives in the parser codec layer.
 fn parse_fields_from_definition(
     definition: &StructureDefinition,
     raw_bytes: &[u8],
     registry: Option<&StructureRegistry>,
 ) -> HashMap<String, serde_json::Value> {
-    let mut result = HashMap::new();
-    if let Ok(accessor) = StructureAccessor::new(Arc::new(definition.clone()), raw_bytes) {
-        for field in &definition.fields {
-            let field_id = &field.id;
-            if field.condition.is_some() && !accessor.has(field_id) {
-                continue;
-            }
-            if let Ok(value) = accessor.get(field_id) {
-                if let Some(json_value) = value_to_json(&value, registry, Some(definition)) {
-                    result.insert(field_id.clone(), json_value);
-                }
-            }
-        }
-    }
-    result
+    codec::decode_fields(definition, raw_bytes, registry)
 }
 
 /// Parse TRE envelopes into an existing tags HashMap.
@@ -247,106 +234,14 @@ fn parse_tre_entries(
     }
 }
 
-/// Convert a parsed Value to a serde_json::Value.
-///
-/// This function handles the conversion of all Value variants to their
-/// JSON equivalents:
-/// - String → JSON string
-/// - Bytes → JSON string (hex-encoded if not valid UTF-8)
-/// - Unsigned → JSON number
-/// - Array → JSON array
-/// - Struct → Resolves to a nested JSON object with named fields when the type
-///   can be found in the parent definition's local types, the global registry,
-///   or both. Falls back to `{"_type": "...", "_data": "..."}` otherwise.
-///
-/// # Arguments
-/// * `value` - The parsed Value to convert
-/// * `registry` - Optional structure registry for resolving Value::Struct types
-/// * `definition` - Optional parent structure definition whose `types` map
-///   contains local type definitions (e.g., `image_segment_info`, `band_info_type`)
-fn value_to_json(
-    value: &Value,
-    registry: Option<&StructureRegistry>,
-    definition: Option<&StructureDefinition>,
-) -> Option<serde_json::Value> {
-    match value {
-        Value::String(cow) => {
-            // Trim trailing spaces (standard NITF padding)
-            let trimmed = cow.trim_end_matches(' ');
-            Some(serde_json::Value::String(trimmed.to_string()))
-        }
-        Value::Bytes(bytes) => {
-            // Try to interpret as UTF-8 string first
-            match std::str::from_utf8(bytes) {
-                Ok(s) => Some(serde_json::Value::String(
-                    s.trim_end_matches(' ').to_string(),
-                )),
-                Err(_) => {
-                    // Fall back to hex encoding for binary data
-                    let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
-                    Some(serde_json::Value::String(hex))
-                }
-            }
-        }
-        Value::Unsigned(n) => Some(serde_json::Value::Number((*n).into())),
-        Value::Signed(n) => Some(serde_json::Value::Number((*n).into())),
-        Value::Float(f) => serde_json::Number::from_f64(*f).map(serde_json::Value::Number),
-        Value::Array(arr) => {
-            let json_arr: Vec<serde_json::Value> = arr
-                .iter()
-                .filter_map(|v| value_to_json(v, registry, definition))
-                .collect();
-            Some(serde_json::Value::Array(json_arr))
-        }
-        Value::Struct(struct_val) => {
-            // Try to resolve the struct type from local types first, then registry.
-            // Local types (definition.types) hold types like image_segment_info,
-            // band_info_type that are defined within the parent KSY structure.
-            let resolved_def: Option<Arc<StructureDefinition>> = definition
-                .and_then(|def| def.types.get(&struct_val.type_name))
-                .map(|local_def| Arc::new(local_def.clone()))
-                .or_else(|| registry.and_then(|reg| reg.get(&struct_val.type_name)));
-
-            if let Some(def) = resolved_def {
-                if let Ok(accessor) = StructureAccessor::new(Arc::clone(&def), struct_val.data) {
-                    let mut obj = serde_json::Map::new();
-                    // Use the resolved definition as the new parent for nested structs
-                    for field_path in accessor.fields() {
-                        if let Ok(field_value) = accessor.get(&field_path) {
-                            if let Some(json_val) =
-                                value_to_json(&field_value, registry, Some(&def))
-                            {
-                                obj.insert(field_path, json_val);
-                            }
-                        }
-                    }
-                    return Some(serde_json::Value::Object(obj));
-                }
-            }
-
-            // Fall back to opaque representation when type not found
-            // or accessor creation fails
-            let mut obj = serde_json::Map::new();
-            obj.insert(
-                "_type".to_string(),
-                serde_json::Value::String(struct_val.type_name.clone()),
-            );
-            // Include hex-encoded data for debugging
-            let hex: String = struct_val
-                .data
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect();
-            obj.insert("_data".to_string(), serde_json::Value::String(hex));
-            Some(serde_json::Value::Object(obj))
-        }
-    }
-}
+// The format-agnostic `value_to_json` conversion has been relocated to
+// `crate::parser::codec` (imported above) so the encode/decode recursion is
+// reachable from the public `StructureDefinition` API without TRE coupling.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{FieldDefinition, FieldType, SizeSpec, StructureDefinition};
+    use crate::parser::{FieldDefinition, FieldType, SizeSpec, StructureDefinition, Value};
 
     /// Create a simple test structure definition with a few fields.
     fn create_test_definition() -> Arc<StructureDefinition> {
@@ -491,9 +386,12 @@ mod tests {
 
     #[test]
     fn value_to_json_bytes_utf8() {
+        // `bytes`-typed fields always hex-encode (no UTF-8-first interpretation),
+        // so that `encode_fields` can hex-decode them back symmetrically. See the
+        // bytes round-trip note in `parser::codec::value_to_json`.
         let value = Value::from_bytes(b"WORLD   ");
         let json = value_to_json(&value, None, None).unwrap();
-        assert_eq!(json, serde_json::json!("WORLD"));
+        assert_eq!(json, serde_json::json!("574f524c44202020"));
     }
 
     #[test]
@@ -785,7 +683,7 @@ mod tests {
 #[cfg(test)]
 mod property_tests {
     use super::*;
-    use crate::parser::{FieldDefinition, FieldType, SizeSpec, StructureDefinition};
+    use crate::parser::{FieldDefinition, FieldType, SizeSpec, StructureDefinition, Value};
     use proptest::prelude::*;
 
     /// Create a structure definition with the given field names.

@@ -15,6 +15,7 @@
 
 mod accessor;
 mod builtins;
+pub mod codec;
 mod definition;
 pub mod encoding;
 mod error;

@@ -6,12 +6,14 @@
 //! to read fields from binary data, :class:`StructureWriter` to encode values,
 //! and :class:`Value` to interpret parsed field values.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
+use crate::bindings::metadata::json_value_to_py;
 use crate::parser::writer::WriteValue;
 use crate::parser::{
     AccessError, ConversionError, LoadError, StructureAccessor, StructureDefinition,
@@ -458,6 +460,75 @@ impl PyStructureDefinition {
         self.inner.fields.len()
     }
 
+    /// Serialize a nested dict of field values to bytes.
+    ///
+    /// Walks the definition's fields in order, drawing matching values from
+    /// ``values`` (matched case-insensitively). Scalars become field values,
+    /// ``list`` values become repeated fields, and ``dict`` values become single
+    /// nested (TypeRef) fields. Fields absent from ``values`` and not required are
+    /// skipped; conditional fields are governed by the values present, exactly as
+    /// in the NITF metadata write path. ``bytes``-typed fields accept a lowercase
+    /// hex string (the same representation :meth:`decode` produces).
+    ///
+    /// :param values: Mapping of field name to value
+    ///     (``str``/``int``/``float``/``list``/``dict``).
+    /// :type values: Mapping
+    /// :param strict: When ``True``, numeric encodings are validated exactly; when
+    ///     ``False`` (default), numeric fields are relaxed to BCS-A — matching the
+    ///     metadata write default.
+    /// :type strict: bool
+    /// :returns: The encoded bytes.
+    /// :rtype: bytes
+    /// :raises ValueError: On a missing required field, an over-large value, or an
+    ///     out-of-spec value under ``strict``.
+    ///
+    /// Example:
+    ///
+    /// ```python
+    /// raw = definition.encode({"ARV": "000360000", "BRV": "000360000"})
+    /// ```
+    #[pyo3(signature = (values, strict=None))]
+    fn encode<'py>(
+        &self,
+        py: Python<'py>,
+        values: &Bound<'_, PyDict>,
+        strict: Option<bool>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let fields = python_dict_to_json(values)?;
+        let bytes = crate::parser::codec::encode_fields(&self.inner, &fields, strict.unwrap_or(false))?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Parse bytes into a nested dict.
+    ///
+    /// Repeated fields are returned as lists and nested types as dicts, using the
+    /// same recursion as the NITF metadata read path. ``bytes``-typed fields are
+    /// returned as a lowercase hex string (which :meth:`encode` accepts back).
+    ///
+    /// :param data: The binary data to parse. Accepts ``bytes``, ``bytearray``,
+    ///     ``memoryview``, or any object supporting the buffer protocol.
+    /// :type data: bytes-like
+    /// :returns: A dict of field names to parsed values.
+    /// :rtype: dict
+    ///
+    /// Example:
+    ///
+    /// ```python
+    /// fields = definition.decode(raw)
+    /// ```
+    fn decode<'py>(&self, py: Python<'py>, data: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyDict>> {
+        let bytes = extract_bytes(data)?;
+        // Local `types` cover all current TRE KSY files (every nested type is
+        // defined in the same file), so no registry is threaded through. See
+        // DESIGN_TRE_ROUND_TRIP_TESTING.md Open Question 1.
+        let fields = crate::parser::codec::decode_fields(&self.inner, &bytes, None);
+        let dict = PyDict::new(py);
+        for (key, value) in &fields {
+            dict.set_item(key, json_value_to_py(py, value)?)?;
+        }
+        Ok(dict)
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "StructureDefinition(id='{}', fields={})",
@@ -834,4 +905,91 @@ fn python_to_write_value(value: &Bound<'_, PyAny>) -> PyResult<WriteValue> {
         "Cannot convert {} to a writable value",
         value.get_type().name()?
     )))
+}
+
+/// Extract raw bytes from a Python buffer-like object.
+///
+/// Accepts ``bytes``, ``bytearray``, ``memoryview``, or any object supporting
+/// the buffer protocol (including ``mmap``). Mirrors the extraction logic in
+/// [`PyStructureAccessor::py_new`].
+fn extract_bytes(data: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
+    if let Ok(bytes) = data.extract::<Vec<u8>>() {
+        Ok(bytes)
+    } else if let Ok(bytes_obj) = data.cast::<PyBytes>() {
+        Ok(bytes_obj.as_bytes().to_vec())
+    } else if data.hasattr("tobytes")? {
+        let buffer = data.call_method0("tobytes")?;
+        buffer.extract::<Vec<u8>>()
+    } else {
+        let py = data.py();
+        let slice = pyo3::types::PySlice::full(py);
+        let sliced = data.get_item(&slice)?;
+        sliced.extract::<Vec<u8>>()
+    }
+}
+
+/// Convert a Python mapping to a `serde_json::Value` map for `encode_fields`.
+///
+/// Keys are stringified; values are converted recursively via
+/// [`python_value_to_json`]. This is the input adapter for
+/// :meth:`StructureDefinition.encode`, mirroring `python_to_write_value` but
+/// producing the `serde_json::Value` interchange type the codec layer consumes.
+fn python_dict_to_json(values: &Bound<'_, PyDict>) -> PyResult<HashMap<String, serde_json::Value>> {
+    let mut map = HashMap::with_capacity(values.len());
+    for (key, value) in values.iter() {
+        let key: String = key.str()?.extract()?;
+        map.insert(key, python_value_to_json(&value)?);
+    }
+    Ok(map)
+}
+
+/// Convert a single Python value to a `serde_json::Value`.
+///
+/// Handles ``None``, ``bool``, ``int``, ``float``, ``str``, ``list``/``tuple``,
+/// and ``dict``. Floats preserve fractional representation via
+/// `Number::from_f64`. ``bytes``-typed fields are passed as hex strings (see
+/// :meth:`StructureDefinition.encode`), so raw ``bytes`` objects are not a
+/// supported input type here.
+fn python_value_to_json(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
+    use pyo3::types::{PyBool, PyFloat, PyInt, PyString};
+
+    if value.is_none() {
+        Ok(serde_json::Value::Null)
+    } else if let Ok(b) = value.cast::<PyBool>() {
+        Ok(serde_json::Value::Bool(b.is_true()))
+    } else if let Ok(i) = value.cast::<PyInt>() {
+        let n: i64 = i.extract()?;
+        Ok(serde_json::json!(n))
+    } else if let Ok(f) = value.cast::<PyFloat>() {
+        let n: f64 = f.extract()?;
+        serde_json::Number::from_f64(n)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| PyValueError::new_err(format!("Cannot convert float {} to JSON", n)))
+    } else if let Ok(s) = value.cast::<PyString>() {
+        Ok(serde_json::Value::String(s.extract()?))
+    } else if let Ok(list) = value.cast::<PyList>() {
+        let mut arr = Vec::with_capacity(list.len());
+        for item in list.iter() {
+            arr.push(python_value_to_json(&item)?);
+        }
+        Ok(serde_json::Value::Array(arr))
+    } else if let Ok(tup) = value.cast::<PyTuple>() {
+        let mut arr = Vec::with_capacity(tup.len());
+        for item in tup.iter() {
+            arr.push(python_value_to_json(&item)?);
+        }
+        Ok(serde_json::Value::Array(arr))
+    } else if let Ok(dict) = value.cast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in dict.iter() {
+            let key: String = k.str()?.extract()?;
+            map.insert(key, python_value_to_json(&v)?);
+        }
+        Ok(serde_json::Value::Object(map))
+    } else {
+        Err(PyTypeError::new_err(format!(
+            "Cannot convert {} to an encodable value",
+            value.get_type().name()?
+        )))
+    }
 }
