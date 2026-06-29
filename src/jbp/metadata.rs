@@ -372,9 +372,12 @@ mod tests {
 
     #[test]
     fn value_to_json_string() {
+        // Faithful decode preserves trailing-space padding verbatim — the spaces
+        // are part of the on-disk BCS-A value Inspection callers that
+        // want a trimmed display strip it themselves.
         let value = Value::from_borrowed("HELLO   ");
         let json = value_to_json(&value, None, None).unwrap();
-        assert_eq!(json, serde_json::json!("HELLO"));
+        assert_eq!(json, serde_json::json!("HELLO   "));
     }
 
     #[test]

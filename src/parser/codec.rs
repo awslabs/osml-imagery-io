@@ -401,9 +401,14 @@ fn value_to_json_seeded(
 ) -> Option<serde_json::Value> {
     match value {
         Value::String(cow) => {
-            // Trim trailing spaces (standard NITF padding)
-            let trimmed = cow.trim_end_matches(' ');
-            Some(serde_json::Value::String(trimmed.to_string()))
+            // Return the field's bytes verbatim — no trailing-space trim. The
+            // padding is part of the on-disk value (BCS-A fields are left
+            // justified and right-padded with spaces per JBP §4.6.4), so
+            // returning it faithfully makes `encode(decode(bytes)) == bytes` and
+            // preserves spec-significant all-spaces sentinels (e.g. ACCPOB
+            // `UNIAAH`, whose spaces gate a conditional). Inspection callers that
+            // want trimmed display call `.strip()` themselves.
+            Some(serde_json::Value::String(cow.to_string()))
         }
         Value::Bytes(bytes) => {
             // A `bytes`-typed field always decodes to a lowercase hex string, and
@@ -739,6 +744,61 @@ mod tests {
         let decoded = decode_fields(&def, &encoded, None);
         let reencoded = encode_fields(&def, &decoded, false).expect("re-encode");
         assert_eq!(reencoded, encoded);
+    }
+
+    /// An ACCPOB-shaped definition: a BCS-A discriminator field (`UNIAAH`) whose
+    /// all-spaces value is a spec-significant sentinel gating a conditional
+    /// (`AAH`, present only when `UNIAAH != "   "`). Used to prove faithful decode
+    /// preserves the padding so the round trip does not flip the conditional.
+    fn sentinel_conditional_def() -> StructureDefinition {
+        StructureDefinition::new("tre_accpob_like")
+            .with_field(
+                FieldDefinition::new("UNIAAH", FieldType::String)
+                    .with_size(SizeSpec::fixed(3))
+                    .with_encoding(Encoding::BcsA),
+            )
+            .with_field(
+                FieldDefinition::new("AAH", FieldType::String)
+                    .with_size(SizeSpec::fixed(5))
+                    .with_encoding(Encoding::BcsN)
+                    .with_condition(ExpressionEvaluator::parse("UNIAAH != \"   \"").unwrap()),
+            )
+    }
+
+    #[test]
+    fn sentinel_all_spaces_round_trips_faithfully() {
+        // Faithful bytes: UNIAAH = "   " (all spaces) means AAH is not present,
+        // so the encoded form is just the 3-byte discriminator.
+        let def = sentinel_conditional_def();
+        let raw = b"   ".to_vec();
+
+        // Decode must preserve the all-spaces sentinel, not trim it to "".
+        let decoded = decode_fields(&def, &raw, None);
+        assert_eq!(decoded.get("UNIAAH"), Some(&serde_json::json!("   ")));
+        // The conditional stays inactive, so AAH is absent.
+        assert!(!decoded.contains_key("AAH"));
+
+        // encode(decode(bytes)) == bytes, with no canonicalization cycle.
+        let reencoded = encode_fields(&def, &decoded, false).expect("re-encode");
+        assert_eq!(reencoded, raw);
+    }
+
+    #[test]
+    fn sentinel_present_round_trips_faithfully() {
+        // When UNIAAH carries a real value, AAH is present. The BCS-N AAH field
+        // is left-padded with zeros ("00123"), and faithful decode keeps it
+        // exactly so the round trip is byte-exact.
+        let def = sentinel_conditional_def();
+        let raw = b"M  00123".to_vec();
+
+        let decoded = decode_fields(&def, &raw, None);
+        // BCS-A discriminator keeps its trailing-space padding verbatim.
+        assert_eq!(decoded.get("UNIAAH"), Some(&serde_json::json!("M  ")));
+        // BCS-N field keeps its leading zeros verbatim (no integer normalization).
+        assert_eq!(decoded.get("AAH"), Some(&serde_json::json!("00123")));
+
+        let reencoded = encode_fields(&def, &decoded, false).expect("re-encode");
+        assert_eq!(reencoded, raw);
     }
 
     #[test]

@@ -238,8 +238,10 @@ class TestProviderWithMetadata:
             asset = reader.get_asset("image:0")
             meta_dict = asset.metadata.entries()
 
-        # The IREP value from the provider's metadata should be present
-        assert meta_dict.get("IREP") == "MONO"
+        # The IREP value from the provider's metadata should be present. Decode is
+        # faithful: the BCS-A field is surfaced with its on-disk space padding
+        # (IREP is 8 bytes), so strip before comparing the logical value.
+        assert meta_dict.get("IREP").strip() == "MONO"
 
 
 # =========================================================================
