@@ -124,6 +124,12 @@ pub struct StructureWriter {
     /// When true, enforce strict spec-compliant encoding validation on write.
     /// When false (default), numeric fields accept any printable ASCII.
     strict_encoding: bool,
+    /// Field values inherited from the enclosing scope(s) when this writer
+    /// serializes a nested structure. Seeded once before writing and overlaid by
+    /// locally-written values in [`Self::build_eval_context`] (local wins). This
+    /// is the "stack" of enclosing scalar values that nested `size`/`repeat-expr`
+    /// expressions (including `_root.`/`_parent.` navigators) resolve against.
+    inherited: HashMap<String, EvalResult>,
 }
 
 impl StructureWriter {
@@ -143,6 +149,7 @@ impl StructureWriter {
             next_field_index: 0,
             current_repeat_written: 0,
             strict_encoding: false,
+            inherited: HashMap::new(),
         }
     }
 
@@ -158,6 +165,27 @@ impl StructureWriter {
     /// numeric fields accept any printable ASCII.
     pub fn set_strict_encoding(&mut self, strict: bool) {
         self.strict_encoding = strict;
+    }
+
+    /// Seed the values inherited from the enclosing scope(s).
+    ///
+    /// Used when this writer serializes a nested structure: the caller passes a
+    /// snapshot of the enclosing scope's scalar values so this writer's nested
+    /// `size`/`repeat-expr` expressions can reference them. Locally-written
+    /// values overlay these in [`Self::build_eval_context`] (local wins).
+    pub fn set_inherited_context(&mut self, inherited: HashMap<String, EvalResult>) {
+        self.inherited = inherited;
+    }
+
+    /// Snapshot the scalar values written so far, as an eval context map.
+    ///
+    /// This is the enclosing scope a nested sub-writer inherits: it combines the
+    /// values inherited by this writer with everything written locally so far
+    /// (local wins), so the snapshot reflects the full flat scope visible at the
+    /// current point. Only scalar values participate, matching
+    /// [`Self::build_eval_context`].
+    pub fn eval_snapshot(&self) -> HashMap<String, EvalResult> {
+        self.build_eval_context().fields
     }
 
     /// Write a value to a field.
@@ -182,6 +210,32 @@ impl StructureWriter {
     /// Check if a field has been written.
     pub fn is_set(&self, path: &str) -> bool {
         self.written.contains(path)
+    }
+
+    /// Determine whether a field should be written given what has been written so far.
+    ///
+    /// An unconditional field is always active. A conditional field is active
+    /// unless its `if:` expression evaluates to exactly `Ok(Boolean(false))`
+    /// against the current write context. This deliberately mirrors
+    /// [`advance_past_false_conditions`]: a condition the evaluator cannot resolve
+    /// (e.g. an unsupported `_root.`/`_parent.` reference) is treated as active by
+    /// both the streaming cursor and this query, so callers and the cursor never
+    /// disagree about field presence.
+    ///
+    /// This lets [`crate::parser::codec::encode_fields`] gate writes on the same
+    /// notion of presence the cursor uses, instead of inferring presence from
+    /// which keys happen to be in the input map.
+    pub fn is_field_active(&self, field: &FieldDefinition) -> bool {
+        match &field.condition {
+            None => true,
+            Some(condition) => {
+                let ctx = self.build_eval_context();
+                !matches!(
+                    self.evaluator.evaluate(condition, &ctx),
+                    Ok(EvalResult::Boolean(false))
+                )
+            }
+        }
     }
 
     /// Finalize and return encoded bytes.
@@ -355,6 +409,13 @@ impl StructureWriter {
     /// Build an evaluation context from written values.
     fn build_eval_context(&self) -> EvalContext {
         let mut ctx = EvalContext::new();
+
+        // Seed inherited (enclosing-scope) values first; locally-written values
+        // below overlay them on name collision so a local field shadows an
+        // inherited one of the same name.
+        for (name, value) in &self.inherited {
+            ctx.fields.insert(name.clone(), value.clone());
+        }
 
         for (name, value) in &self.written_values {
             match value {

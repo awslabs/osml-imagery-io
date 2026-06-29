@@ -74,6 +74,13 @@ pub struct StructureAccessor<'a> {
     /// Base offset within parent data
     #[allow(dead_code)]
     base_offset: usize,
+    /// Field values inherited from the enclosing scope(s) when this accessor
+    /// reads a nested structure. Seeded before parsing and overlaid by locally
+    /// parsed values (local wins). Lets a nested `size`/`repeat-expr` — including
+    /// `_root.`/`_parent.` navigators — resolve against enclosing field values,
+    /// the decode-side mirror of [`crate::parser::writer::StructureWriter`]'s
+    /// inherited context.
+    inherited: HashMap<String, EvalResult>,
 }
 
 impl<'a> StructureAccessor<'a> {
@@ -89,6 +96,32 @@ impl<'a> StructureAccessor<'a> {
             evaluator: ExpressionEvaluator::new(),
             parent: None,
             base_offset: 0,
+            inherited: HashMap::new(),
+        })
+    }
+
+    /// Create an accessor seeded with values inherited from the enclosing scope.
+    ///
+    /// Used when decoding a nested structure: the caller passes a snapshot of
+    /// the enclosing scope's scalar values so this accessor's nested
+    /// `size`/`repeat-expr` expressions can reference them. Locally parsed values
+    /// overlay the inherited ones (local wins).
+    pub fn new_with_inherited(
+        definition: Arc<StructureDefinition>,
+        data: &'a [u8],
+        inherited: HashMap<String, EvalResult>,
+    ) -> Result<Self, AccessError> {
+        Ok(Self {
+            definition,
+            data,
+            offset_cache: RefCell::new(HashMap::new()),
+            repeat_offsets: RefCell::new(HashMap::new()),
+            parsed_context: RefCell::new(None),
+            parsed: RefCell::new(false),
+            evaluator: ExpressionEvaluator::new(),
+            parent: None,
+            base_offset: 0,
+            inherited,
         })
     }
 
@@ -109,7 +142,22 @@ impl<'a> StructureAccessor<'a> {
             evaluator: ExpressionEvaluator::new(),
             parent: Some(parent),
             base_offset,
+            inherited: HashMap::new(),
         })
+    }
+
+    /// Snapshot the scalar field values parsed from this accessor.
+    ///
+    /// This is the enclosing scope a nested sub-accessor inherits: it combines
+    /// the values this accessor inherited with everything it parsed locally
+    /// (local wins, since locally parsed values overlay inherited ones in the
+    /// eval context). Mirrors
+    /// [`crate::parser::writer::StructureWriter::eval_snapshot`].
+    pub fn eval_snapshot(&self) -> HashMap<String, EvalResult> {
+        match self.build_eval_context() {
+            Ok(ctx) => ctx.fields,
+            Err(_) => self.inherited.clone(),
+        }
     }
 
     /// Get the structure definition.
@@ -129,7 +177,7 @@ impl<'a> StructureAccessor<'a> {
             return Ok(());
         }
 
-        let mut ctx = EvalContext::new();
+        let mut ctx = self.seeded_context();
         let mut current_offset = 0;
 
         for field in &self.definition.fields {
@@ -854,6 +902,18 @@ impl<'a> StructureAccessor<'a> {
         read_field_value_from_bytes(field, bytes, self.definition.endian)
     }
 
+    /// A fresh eval context pre-seeded with inherited (enclosing-scope) values.
+    ///
+    /// Locally parsed values overlay these as parsing proceeds, so a local field
+    /// shadows an inherited one of the same name.
+    fn seeded_context(&self) -> EvalContext {
+        let mut ctx = EvalContext::new();
+        for (name, value) in &self.inherited {
+            ctx.fields.insert(name.clone(), value.clone());
+        }
+        ctx
+    }
+
     /// Build evaluation context with all parsed fields.
     pub(crate) fn build_eval_context(&self) -> Result<EvalContext, AccessError> {
         if let Some(ref ctx) = *self.parsed_context.borrow() {
@@ -874,6 +934,7 @@ impl<'a> StructureAccessor<'a> {
             self.data,
             &self.evaluator,
             stop_at,
+            &self.inherited,
             |field, offset, size| self.read_field_value(field, offset, size),
         )
     }

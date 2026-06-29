@@ -16,8 +16,8 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use crate::bindings::metadata::json_value_to_py;
 use crate::parser::writer::WriteValue;
 use crate::parser::{
-    AccessError, ConversionError, LoadError, StructureAccessor, StructureDefinition,
-    StructureRegistry, StructureWriter, Value, WriteError,
+    AccessError, ConversionError, FieldDefinition, FieldType, LoadError, StructureAccessor,
+    StructureDefinition, StructureRegistry, StructureWriter, Value, WriteError,
 };
 
 // ==================== Error Conversion ====================
@@ -460,6 +460,55 @@ impl PyStructureDefinition {
         self.inner.fields.len()
     }
 
+    /// Describe this structure's fields as the parser actually loaded them.
+    ///
+    /// Returns a dict with two keys:
+    ///
+    /// - ``"fields"``: a list of per-field dicts for the top-level sequence, in
+    ///   definition order.
+    /// - ``"types"``: a dict mapping each nested type name to its list of
+    ///   per-field dicts.
+    ///
+    /// Each per-field dict carries the parser's authoritative classification —
+    /// not a re-parse of the source YAML — so callers (e.g. the property-test
+    /// generator) can decide how to treat a field without maintaining their own
+    /// copy of the type table, which is prone to drifting out of sync with the
+    /// parser. Keys:
+    ///
+    /// - ``"id"`` (str): field identifier.
+    /// - ``"kind"`` (str): one of ``"string"``, ``"bytes"``, ``"uint"``,
+    ///   ``"sint"``, ``"float"``, ``"typeref"``.
+    /// - ``"width"`` (int or None): byte width for ``uint``/``sint``/``float``.
+    /// - ``"type_name"`` (str or None): referenced type name for ``typeref``.
+    /// - ``"type_resolved"`` (bool or None): for ``typeref``, whether the name
+    ///   resolves to a definition in this structure's local ``types`` map.
+    /// - ``"conditional"`` (bool): whether the field has an ``if:`` condition.
+    /// - ``"repeated"`` (bool): whether the field repeats.
+    ///
+    /// :returns: A description of the loaded structure.
+    /// :rtype: dict
+    fn describe<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let result = PyDict::new(py);
+
+        let fields = PyList::empty(py);
+        for field in &self.inner.fields {
+            fields.append(field_descriptor(py, field, &self.inner)?)?;
+        }
+        result.set_item("fields", fields)?;
+
+        let types = PyDict::new(py);
+        for (name, nested) in &self.inner.types {
+            let nested_fields = PyList::empty(py);
+            for field in &nested.fields {
+                nested_fields.append(field_descriptor(py, field, nested)?)?;
+            }
+            types.set_item(name, nested_fields)?;
+        }
+        result.set_item("types", types)?;
+
+        Ok(result)
+    }
+
     /// Serialize a nested dict of field values to bytes.
     ///
     /// Walks the definition's fields in order, drawing matching values from
@@ -495,7 +544,8 @@ impl PyStructureDefinition {
         strict: Option<bool>,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let fields = python_dict_to_json(values)?;
-        let bytes = crate::parser::codec::encode_fields(&self.inner, &fields, strict.unwrap_or(false))?;
+        let bytes =
+            crate::parser::codec::encode_fields(&self.inner, &fields, strict.unwrap_or(false))?;
         Ok(PyBytes::new(py, &bytes))
     }
 
@@ -516,7 +566,11 @@ impl PyStructureDefinition {
     /// ```python
     /// fields = definition.decode(raw)
     /// ```
-    fn decode<'py>(&self, py: Python<'py>, data: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyDict>> {
+    fn decode<'py>(
+        &self,
+        py: Python<'py>,
+        data: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
         let bytes = extract_bytes(data)?;
         // Local `types` cover all current TRE KSY files (every nested type is
         // defined in the same file), so no registry is threaded through. See
@@ -926,6 +980,45 @@ fn extract_bytes(data: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
         let sliced = data.get_item(&slice)?;
         sliced.extract::<Vec<u8>>()
     }
+}
+
+/// Build a per-field descriptor dict for [`PyStructureDefinition::describe`].
+///
+/// Reads classification directly off the parser's [`FieldDefinition`] so the
+/// result reflects how the parser loaded the field, not how the source YAML
+/// spelled it. `parent` is the structure the field belongs to (the top-level
+/// definition or a nested type), used to report whether a `TypeRef` resolves
+/// against the local `types` map.
+fn field_descriptor<'py>(
+    py: Python<'py>,
+    field: &FieldDefinition,
+    parent: &StructureDefinition,
+) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("id", &field.id)?;
+
+    let (kind, width, type_name, type_resolved): (&str, Option<u8>, Option<String>, Option<bool>) =
+        match &field.field_type {
+            FieldType::String => ("string", None, None, None),
+            FieldType::Bytes => ("bytes", None, None, None),
+            FieldType::UnsignedInt(w) => ("uint", Some(*w), None, None),
+            FieldType::SignedInt(w) => ("sint", Some(*w), None, None),
+            FieldType::Float(w) => ("float", Some(*w), None, None),
+            FieldType::TypeRef(name) => (
+                "typeref",
+                None,
+                Some(name.clone()),
+                Some(parent.types.contains_key(name)),
+            ),
+        };
+
+    d.set_item("kind", kind)?;
+    d.set_item("width", width)?;
+    d.set_item("type_name", type_name)?;
+    d.set_item("type_resolved", type_resolved)?;
+    d.set_item("conditional", field.condition.is_some())?;
+    d.set_item("repeated", field.repeat.is_some())?;
+    Ok(d)
 }
 
 /// Convert a Python mapping to a `serde_json::Value` map for `encode_fields`.

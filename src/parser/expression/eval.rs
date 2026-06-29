@@ -11,6 +11,23 @@ use super::parser::Parser;
 use super::{BinaryOperator, EvalResult, Expression, Literal, SpecialVariable, UnaryOperator};
 use crate::parser::error::ExpressionError;
 
+/// Strip leading `_root.`/`_parent.` navigator segments from a field path,
+/// returning the trailing bare field name.
+///
+/// `_root.`/`_parent.` may chain (e.g. `_parent._parent.NPAR`), so all leading
+/// navigator segments are removed. With a single flat value scope per structure
+/// the level a navigator points at is irrelevant — only the final name matters.
+fn strip_scope_navigators(path: &str) -> &str {
+    let mut rest = path;
+    while let Some(tail) = rest
+        .strip_prefix("_root.")
+        .or_else(|| rest.strip_prefix("_parent."))
+    {
+        rest = tail;
+    }
+    rest
+}
+
 /// Context for expression evaluation containing field values.
 #[derive(Debug, Clone)]
 pub struct EvalContext {
@@ -94,9 +111,19 @@ impl ExpressionEvaluator {
                 Literal::Boolean(b) => EvalResult::Boolean(*b),
             }),
             Expression::FieldRef(path) => {
+                // Try an exact match first. On miss, fall back to the bare field
+                // name with any leading `_root.`/`_parent.` navigator segments
+                // stripped. These structures use a single flat value scope per
+                // structure (no lexically-nested types, no shadowing), so a
+                // navigator like `_root.LEN` or `_parent.N` resolves to the same
+                // `LEN`/`N` that lives in the shared scope. See
+                // `StructureWriter::build_eval_context` and
+                // `StructureAccessor` for how that scope is seeded with
+                // inherited (enclosing) field values.
                 context
                     .fields
                     .get(path)
+                    .or_else(|| context.fields.get(strip_scope_navigators(path)))
                     .cloned()
                     .ok_or_else(|| ExpressionError::UnknownField {
                         field: path.clone(),

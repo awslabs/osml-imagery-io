@@ -672,3 +672,46 @@ fn eval_strip_on_non_string_is_error() {
     let result = evaluator.evaluate(&expr, &ctx);
     assert!(result.is_err());
 }
+
+#[test]
+fn eval_root_navigator_resolves_to_bare_field() {
+    // `_root.LEN.to_i` resolves against a flat scope holding `LEN`: the parser
+    // lowers `_root.LEN` to FieldRef("_root.LEN"), and eval strips the
+    // navigator prefix to find the bare `LEN`.
+    let expr = ExpressionEvaluator::parse("_root.LEN.to_i").unwrap();
+    let evaluator = ExpressionEvaluator::new();
+    let ctx = EvalContext::new().with_field("LEN", EvalResult::String("3".to_string()));
+    let result = evaluator.evaluate(&expr, &ctx).unwrap();
+    assert_eq!(result, EvalResult::Integer(3));
+}
+
+#[test]
+fn eval_parent_navigator_resolves_to_bare_field() {
+    let expr = ExpressionEvaluator::parse("_parent.NPAR.to_i").unwrap();
+    let evaluator = ExpressionEvaluator::new();
+    let ctx = EvalContext::new().with_field("NPAR", EvalResult::Integer(5));
+    let result = evaluator.evaluate(&expr, &ctx).unwrap();
+    assert_eq!(result, EvalResult::Integer(5));
+}
+
+#[test]
+fn eval_exact_field_match_wins_over_navigator_strip() {
+    // An exact key takes precedence over the navigator-stripped fallback.
+    let expr = ExpressionEvaluator::parse("_root.X").unwrap();
+    let evaluator = ExpressionEvaluator::new();
+    let ctx = EvalContext::new()
+        .with_field("_root.X", EvalResult::Integer(1))
+        .with_field("X", EvalResult::Integer(2));
+    let result = evaluator.evaluate(&expr, &ctx).unwrap();
+    assert_eq!(result, EvalResult::Integer(1));
+}
+
+#[test]
+fn eval_unknown_navigator_field_still_errors() {
+    // Stripping the navigator must not invent a value when the bare name is
+    // also absent.
+    let expr = ExpressionEvaluator::parse("_parent.MISSING").unwrap();
+    let evaluator = ExpressionEvaluator::new();
+    let ctx = EvalContext::new();
+    assert!(evaluator.evaluate(&expr, &ctx).is_err());
+}

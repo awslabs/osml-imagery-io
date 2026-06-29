@@ -14,11 +14,30 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::expression::EvalResult;
 use super::writer::WriteValue;
 use super::{
     FieldType, StructureAccessor, StructureDefinition, StructureRegistry, StructureWriter, Value,
     WriteError,
 };
+
+/// Collect every nested type definition into a single flat map keyed by type
+/// name.
+///
+/// These structures use one type namespace per top-level definition: in
+/// practice all types are declared flat under the root `types:` map, and type
+/// names are unique within a structure. The builder API nonetheless allows a
+/// type to be declared lexically inside another type's `types`, so this walks
+/// the tree and lifts every type to one map. A nested TypeRef then resolves
+/// against this flat map regardless of where the type was declared or how deep
+/// the reference sits. Name collisions (which the formats don't produce) resolve
+/// last-writer-wins, an accepted simplification of full lexical scoping.
+fn flatten_types(definition: &StructureDefinition, out: &mut HashMap<String, StructureDefinition>) {
+    for (name, nested) in &definition.types {
+        flatten_types(nested, out);
+        out.insert(name.clone(), nested.clone());
+    }
+}
 
 /// Serialize a nested dict of field values to bytes using the given definition.
 ///
@@ -38,9 +57,13 @@ pub fn encode_fields(
     let mut writer = StructureWriter::new(Arc::new(definition.clone()));
     writer.set_strict_encoding(strict);
 
-    // Write fields in definition order by iterating the definition's fields
-    // and looking up values from the provided map.
-    write_fields_to_writer(&mut writer, definition, fields)?;
+    // Write fields in definition order by iterating the definition's fields and
+    // looking up values from the provided map. `root_types` is the structure's
+    // flattened type map: every nested TypeRef — at any depth — resolves against
+    // this one map (see `flatten_types`).
+    let mut root_types = HashMap::new();
+    flatten_types(definition, &mut root_types);
+    write_fields_to_writer(&mut writer, definition, fields, &root_types)?;
 
     writer.finish()
 }
@@ -93,8 +116,21 @@ fn write_fields_to_writer(
     writer: &mut StructureWriter,
     definition: &StructureDefinition,
     fields: &HashMap<String, serde_json::Value>,
+    root_types: &HashMap<String, StructureDefinition>,
 ) -> Result<(), WriteError> {
     for field_def in &definition.fields {
+        // Gate writes on the writer's own notion of field presence rather than on
+        // whether a key happens to be in the input map. A field whose `if:`
+        // condition is currently false is skipped regardless of what the map
+        // contains — this lets callers over-provide values (every maybe-present
+        // field) and have `encode` emit exactly the fields the definition says
+        // are present, matching what `decode` produces. A field that is active
+        // but absent from the map stays unwritten and is surfaced by
+        // `finish()` as `MissingRequired`.
+        if !writer.is_field_active(field_def) {
+            continue;
+        }
+
         let field_id_lower = field_def.id.to_lowercase();
 
         // Find the matching value in the group (case-insensitive)
@@ -133,9 +169,11 @@ fn write_fields_to_writer(
                 serde_json::Value::Array(arr) => {
                     match &field_def.field_type {
                         FieldType::TypeRef(type_name) => {
-                            // Array of nested objects: serialize each element
-                            // using a sub-writer for the nested type definition
-                            let nested_def = definition.types.get(type_name).ok_or_else(|| {
+                            // Array of nested objects: serialize each element with
+                            // a sub-writer for the nested type. Types are flat —
+                            // resolve against the structure's single `root_types`
+                            // map regardless of nesting depth.
+                            let nested_def = root_types.get(type_name).ok_or_else(|| {
                                 WriteError::ValidationError {
                                     path: field_def.id.clone(),
                                     message: format!(
@@ -144,13 +182,54 @@ fn write_fields_to_writer(
                                     ),
                                 }
                             })?;
+                            // Snapshot the enclosing scope once: every element
+                            // shares the same parent scope (the array field itself
+                            // is not written until the loop completes).
+                            let inherited = writer.eval_snapshot();
                             let mut bytes_array = Vec::with_capacity(arr.len());
                             for (i, elem) in arr.iter().enumerate() {
-                                let elem_bytes =
-                                    serialize_nested_value(elem, nested_def, &field_def.id, i)?;
+                                let elem_bytes = serialize_nested_value(
+                                    elem,
+                                    nested_def,
+                                    &field_def.id,
+                                    i,
+                                    root_types,
+                                    &inherited,
+                                )?;
                                 bytes_array.push(WriteValue::Bytes(elem_bytes));
                             }
                             writer.set(&field_def.id, WriteValue::Array(bytes_array))?;
+                        }
+                        FieldType::Bytes => {
+                            // Repeated `bytes` field: each element is a hex string
+                            // (the same representation `value_to_json` emits per
+                            // element). Hex-decode each back to raw bytes, mirroring
+                            // the scalar Bytes branch above.
+                            let mut write_values = Vec::with_capacity(arr.len());
+                            for elem in arr {
+                                let bytes = match elem {
+                                    serde_json::Value::String(s) => {
+                                        decode_hex(s).ok_or_else(|| WriteError::ValidationError {
+                                            path: field_def.id.clone(),
+                                            message: format!(
+                                                "Field '{}' is a bytes field; each value must be a hex string",
+                                                field_def.id
+                                            ),
+                                        })?
+                                    }
+                                    _ => {
+                                        return Err(WriteError::ValidationError {
+                                            path: field_def.id.clone(),
+                                            message: format!(
+                                                "Field '{}' is a bytes field; each value must be a hex string",
+                                                field_def.id
+                                            ),
+                                        })
+                                    }
+                                };
+                                write_values.push(WriteValue::Bytes(bytes));
+                            }
+                            writer.set(&field_def.id, WriteValue::Array(write_values))?;
                         }
                         _ => {
                             // Array of scalars: convert each element to WriteValue
@@ -163,7 +242,8 @@ fn write_fields_to_writer(
                 serde_json::Value::Object(obj) => {
                     // Single nested object (non-repeated TypeRef field)
                     if let FieldType::TypeRef(type_name) = &field_def.field_type {
-                        let nested_def = definition.types.get(type_name).ok_or_else(|| {
+                        // Types are flat — resolve against `root_types`.
+                        let nested_def = root_types.get(type_name).ok_or_else(|| {
                             WriteError::ValidationError {
                                 path: field_def.id.clone(),
                                 message: format!(
@@ -174,8 +254,14 @@ fn write_fields_to_writer(
                         })?;
                         let nested_fields: HashMap<String, serde_json::Value> =
                             obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                        let nested_bytes =
-                            serialize_nested_fields(nested_def, &nested_fields, &field_def.id)?;
+                        let inherited = writer.eval_snapshot();
+                        let nested_bytes = serialize_nested_fields(
+                            nested_def,
+                            &nested_fields,
+                            &field_def.id,
+                            root_types,
+                            &inherited,
+                        )?;
                         writer.set(&field_def.id, WriteValue::Bytes(nested_bytes))?;
                     }
                 }
@@ -194,12 +280,14 @@ fn serialize_nested_value(
     nested_def: &StructureDefinition,
     parent_field: &str,
     index: usize,
+    root_types: &HashMap<String, StructureDefinition>,
+    inherited: &HashMap<String, EvalResult>,
 ) -> Result<Vec<u8>, WriteError> {
     match value {
         serde_json::Value::Object(obj) => {
             let fields: HashMap<String, serde_json::Value> =
                 obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            serialize_nested_fields(nested_def, &fields, parent_field)
+            serialize_nested_fields(nested_def, &fields, parent_field, root_types, inherited)
         }
         _ => Err(WriteError::ValidationError {
             path: format!("{}_{}", parent_field, index),
@@ -210,14 +298,24 @@ fn serialize_nested_value(
 
 /// Serialize a set of fields using a nested StructureDefinition, returning raw bytes.
 ///
-/// Creates a sub-writer for the nested definition and recursively writes all fields.
+/// Creates a sub-writer for the nested definition and recursively writes all
+/// fields. `root_types` is the structure's flat type map (these structures never
+/// nest `types:` blocks, so every TypeRef resolves against it at any depth).
+/// `inherited` is a snapshot of the enclosing scope's scalar values, seeded into
+/// the sub-writer so nested `size`/`repeat-expr` expressions — including
+/// `_root.`/`_parent.` navigators — can reference enclosing fields. The
+/// sub-writer is discarded when this function returns, so its locally-written
+/// values never leak back to the parent (the "pop").
 fn serialize_nested_fields(
     definition: &StructureDefinition,
     fields: &HashMap<String, serde_json::Value>,
     parent_path: &str,
+    root_types: &HashMap<String, StructureDefinition>,
+    inherited: &HashMap<String, EvalResult>,
 ) -> Result<Vec<u8>, WriteError> {
     let mut sub_writer = StructureWriter::new(Arc::new(definition.clone()));
-    write_fields_to_writer(&mut sub_writer, definition, fields).map_err(|e| {
+    sub_writer.set_inherited_context(inherited.clone());
+    write_fields_to_writer(&mut sub_writer, definition, fields, root_types).map_err(|e| {
         WriteError::ValidationError {
             path: parent_path.to_string(),
             message: format!("Failed to serialize nested structure: {}", e),
@@ -242,13 +340,19 @@ pub fn decode_fields(
 ) -> HashMap<String, serde_json::Value> {
     let mut result = HashMap::new();
     if let Ok(accessor) = StructureAccessor::new(Arc::new(definition.clone()), raw_bytes) {
+        // The root scope's scalar fields are inherited by any nested struct at
+        // this level, so a nested `size`/`repeat-expr` referencing a root field
+        // (e.g. `_root.LEN`) resolves.
+        let root_scope = accessor.eval_snapshot();
         for field in &definition.fields {
             let field_id = &field.id;
             if field.condition.is_some() && !accessor.has(field_id) {
                 continue;
             }
             if let Ok(value) = accessor.get(field_id) {
-                if let Some(json_value) = value_to_json(&value, registry, Some(definition)) {
+                if let Some(json_value) =
+                    value_to_json_seeded(&value, registry, Some(definition), &root_scope)
+                {
                     result.insert(field_id.clone(), json_value);
                 }
             }
@@ -279,6 +383,22 @@ pub fn value_to_json(
     registry: Option<&StructureRegistry>,
     definition: Option<&StructureDefinition>,
 ) -> Option<serde_json::Value> {
+    value_to_json_seeded(value, registry, definition, &HashMap::new())
+}
+
+/// [`value_to_json`] with an inherited (enclosing-scope) value map.
+///
+/// `inherited` carries the scalar field values of the scope enclosing `value`,
+/// so a nested struct's `size`/`repeat-expr` — including `_root.`/`_parent.`
+/// navigators — resolves against enclosing fields when the sub-accessor is
+/// built. This is the decode-side mirror of the writer's inherited context. The
+/// public [`value_to_json`] seeds it empty (top-level fields need no parent).
+fn value_to_json_seeded(
+    value: &Value,
+    registry: Option<&StructureRegistry>,
+    definition: Option<&StructureDefinition>,
+    inherited: &HashMap<String, EvalResult>,
+) -> Option<serde_json::Value> {
     match value {
         Value::String(cow) => {
             // Trim trailing spaces (standard NITF padding)
@@ -302,30 +422,59 @@ pub fn value_to_json(
         Value::Signed(n) => Some(serde_json::Value::Number((*n).into())),
         Value::Float(f) => serde_json::Number::from_f64(*f).map(serde_json::Value::Number),
         Value::Array(arr) => {
+            // Every element shares the same enclosing scope.
             let json_arr: Vec<serde_json::Value> = arr
                 .iter()
-                .filter_map(|v| value_to_json(v, registry, definition))
+                .filter_map(|v| value_to_json_seeded(v, registry, definition, inherited))
                 .collect();
             Some(serde_json::Value::Array(json_arr))
         }
         Value::Struct(struct_val) => {
-            // Try to resolve the struct type from local types first, then registry.
-            // Local types (definition.types) hold types like image_segment_info,
-            // band_info_type that are defined within the parent KSY structure.
+            // Resolve the struct type from local types first, then registry.
+            // `definition.types` is the structure's single flat type map (these
+            // structures never nest `types:` blocks), so it holds every type at
+            // every depth — e.g. both `acpo_record` and the `accuracy_point`
+            // that `acpo_record` references.
             let resolved_def: Option<Arc<StructureDefinition>> = definition
                 .and_then(|def| def.types.get(&struct_val.type_name))
-                .map(|local_def| Arc::new(local_def.clone()))
+                .map(|local_def| {
+                    // Propagate the flattened type map into the resolved
+                    // definition so the sub-accessor below can size and resolve
+                    // sibling types its own `types` map would otherwise miss.
+                    // Without this, a second-level nested TypeRef (e.g.
+                    // `accuracy_point` inside `acpo_record`) fails to resolve on
+                    // decode, mirroring the encode-side sibling-scope gap.
+                    let mut with_types = local_def.clone();
+                    if let Some(parent) = definition {
+                        let mut flat = HashMap::new();
+                        flatten_types(parent, &mut flat);
+                        with_types.types = flat;
+                    }
+                    Arc::new(with_types)
+                })
                 .or_else(|| registry.and_then(|reg| reg.get(&struct_val.type_name)));
 
             if let Some(def) = resolved_def {
-                if let Ok(accessor) = StructureAccessor::new(Arc::clone(&def), struct_val.data) {
+                // Seed the sub-accessor with the enclosing scope so nested
+                // `size`/`repeat-expr` navigators resolve.
+                if let Ok(accessor) = StructureAccessor::new_with_inherited(
+                    Arc::clone(&def),
+                    struct_val.data,
+                    inherited.clone(),
+                ) {
                     let mut obj = serde_json::Map::new();
-                    // Use the resolved definition as the new parent for nested structs
+                    // The scope visible to this struct's own nested children is
+                    // this accessor's snapshot (inherited values plus the fields
+                    // it just parsed) — thread it down as their inherited map.
+                    let child_inherited = accessor.eval_snapshot();
                     for field_path in accessor.fields() {
                         if let Ok(field_value) = accessor.get(&field_path) {
-                            if let Some(json_val) =
-                                value_to_json(&field_value, registry, Some(&def))
-                            {
+                            if let Some(json_val) = value_to_json_seeded(
+                                &field_value,
+                                registry,
+                                Some(&def),
+                                &child_inherited,
+                            ) {
                                 obj.insert(field_path, json_val);
                             }
                         }
@@ -350,5 +499,259 @@ pub fn value_to_json(
             obj.insert("_data".to_string(), serde_json::Value::String(hex));
             Some(serde_json::Value::Object(obj))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::expression::ExpressionEvaluator;
+    use crate::parser::types::{Encoding, FieldDefinition, RepeatSpec, SizeSpec};
+
+    /// A definition with a count field and a repeated 2-byte `bytes` field whose
+    /// count is fixed at 3. Exercises the repeated-`bytes` hex round-trip.
+    fn repeated_bytes_def() -> StructureDefinition {
+        StructureDefinition::new("repeated_bytes")
+            .with_field(
+                FieldDefinition::new("N", FieldType::String)
+                    .with_size(SizeSpec::fixed(1))
+                    .with_encoding(Encoding::BcsN),
+            )
+            .with_field(
+                FieldDefinition::new("DATA", FieldType::Bytes)
+                    .with_size(SizeSpec::fixed(2))
+                    .with_repeat(RepeatSpec::count(3)),
+            )
+    }
+
+    #[test]
+    fn repeated_bytes_round_trip_via_hex() {
+        let def = repeated_bytes_def();
+        let mut fields = HashMap::new();
+        fields.insert("N".to_string(), serde_json::json!("3"));
+        // Each repeated `bytes` element is a 2-byte hex string (4 hex chars),
+        // mirroring what `value_to_json` emits per element.
+        fields.insert(
+            "DATA".to_string(),
+            serde_json::json!(["00ff", "1234", "abcd"]),
+        );
+
+        let encoded = encode_fields(&def, &fields, false).expect("encode");
+        // 1 byte (N) + 3 * 2 bytes (DATA) = 7 bytes.
+        assert_eq!(encoded.len(), 7);
+
+        let decoded = decode_fields(&def, &encoded, None);
+        assert_eq!(
+            decoded.get("DATA"),
+            Some(&serde_json::json!(["00ff", "1234", "abcd"]))
+        );
+
+        // Re-encoding the decoded dict reproduces the same bytes (idempotent).
+        let reencoded = encode_fields(&def, &decoded, false).expect("re-encode");
+        assert_eq!(reencoded, encoded);
+    }
+
+    /// A *flat* definition modeled on ACCPOB: the TRE declares both
+    /// `acpo_record` and `accuracy_point` under its single `types` map, and
+    /// `acpo_record` references `accuracy_point` from its own (empty) scope.
+    /// Resolving the inner `POINTS` TypeRef therefore requires falling back to
+    /// the enclosing TRE-level `types` map. Returns (outer, acpo_record,
+    /// accuracy_point) wired into one flat definition.
+    fn sibling_scope_def() -> StructureDefinition {
+        // Inner-inner: a 2-byte point.
+        let accuracy_point = StructureDefinition::new("accuracy_point")
+            .with_field(
+                FieldDefinition::new("LAT", FieldType::String)
+                    .with_size(SizeSpec::fixed(1))
+                    .with_encoding(Encoding::BcsN),
+            )
+            .with_field(
+                FieldDefinition::new("LON", FieldType::String)
+                    .with_size(SizeSpec::fixed(1))
+                    .with_encoding(Encoding::BcsN),
+            );
+
+        // Inner: a record whose POINTS field references the SIBLING type
+        // `accuracy_point`. Note `acpo_record.types` is intentionally empty —
+        // the reference must resolve via the enclosing map.
+        let acpo_record = StructureDefinition::new("acpo_record").with_field(
+            FieldDefinition::new("POINTS", FieldType::TypeRef("accuracy_point".to_string()))
+                .with_repeat(RepeatSpec::count(2)),
+        );
+
+        // Outer: ACPO_DATA is a single `acpo_record`. Both nested types are
+        // declared flat under the TRE-level `types` map.
+        StructureDefinition::new("tre_accpob_like")
+            .with_field(FieldDefinition::new(
+                "ACPO_DATA",
+                FieldType::TypeRef("acpo_record".to_string()),
+            ))
+            .with_type("acpo_record", acpo_record)
+            .with_type("accuracy_point", accuracy_point)
+    }
+
+    #[test]
+    fn sibling_scope_nested_typeref_resolves() {
+        let def = sibling_scope_def();
+        let mut fields = HashMap::new();
+        fields.insert(
+            "ACPO_DATA".to_string(),
+            serde_json::json!({
+                "POINTS": [
+                    {"LAT": "1", "LON": "2"},
+                    {"LAT": "3", "LON": "4"},
+                ]
+            }),
+        );
+
+        // Before the flat-types resolution, this raised:
+        //   "Nested type 'accuracy_point' not found in definition".
+        let encoded = encode_fields(&def, &fields, false).expect("encode");
+        // 2 points * 2 bytes each = 4 bytes.
+        assert_eq!(encoded.len(), 4);
+        assert_eq!(&encoded, b"1234");
+
+        // Decode resolves the second-level sibling type and re-encode reproduces
+        // the same bytes (the decode path has the same flat-types resolution).
+        let decoded = decode_fields(&def, &encoded, None);
+        assert_eq!(
+            decoded.get("ACPO_DATA"),
+            Some(&serde_json::json!({
+                "POINTS": [
+                    {"LAT": "1", "LON": "2"},
+                    {"LAT": "3", "LON": "4"},
+                ]
+            }))
+        );
+        let reencoded = encode_fields(&def, &decoded, false).expect("re-encode");
+        assert_eq!(reencoded, encoded);
+    }
+
+    /// A MITOCA-shaped definition: the TRE declares a root-level `LEN` field,
+    /// then a repeated `component_entry` whose `COMPONENT_ID` is sized by
+    /// `_root.LEN.to_i` — a navigator out of the nested scope to the TRE top.
+    fn root_navigator_def() -> StructureDefinition {
+        // Inner: COMPONENT_ID's width comes from the root LEN field.
+        let component_entry = StructureDefinition::new("component_entry").with_field(
+            FieldDefinition::new("COMPONENT_ID", FieldType::String)
+                .with_size(SizeSpec::expr(
+                    ExpressionEvaluator::parse("_root.LEN.to_i").unwrap(),
+                ))
+                .with_encoding(Encoding::BcsA),
+        );
+
+        StructureDefinition::new("tre_mitoca_like")
+            .with_field(
+                FieldDefinition::new("LEN", FieldType::String)
+                    .with_size(SizeSpec::fixed(1))
+                    .with_encoding(Encoding::BcsN),
+            )
+            .with_field(
+                FieldDefinition::new(
+                    "COMPONENTS",
+                    FieldType::TypeRef("component_entry".to_string()),
+                )
+                .with_repeat(RepeatSpec::count(2)),
+            )
+            .with_type("component_entry", component_entry)
+    }
+
+    #[test]
+    fn root_navigator_in_nested_size_resolves() {
+        let def = root_navigator_def();
+        let mut fields = HashMap::new();
+        fields.insert("LEN".to_string(), serde_json::json!("3"));
+        fields.insert(
+            "COMPONENTS".to_string(),
+            serde_json::json!([
+                {"COMPONENT_ID": "ABC"},
+                {"COMPONENT_ID": "XYZ"},
+            ]),
+        );
+
+        // Before seeding inherited values, this raised:
+        //   "Unknown field reference: '_root.LEN'".
+        let encoded = encode_fields(&def, &fields, false).expect("encode");
+        // 1 byte (LEN) + 2 components * 3 bytes (sized by _root.LEN) = 7 bytes.
+        assert_eq!(encoded.len(), 7);
+        assert_eq!(&encoded, b"3ABCXYZ");
+
+        let decoded = decode_fields(&def, &encoded, None);
+        let reencoded = encode_fields(&def, &decoded, false).expect("re-encode");
+        assert_eq!(reencoded, encoded);
+    }
+
+    /// An RSMECA-shaped definition exercising both fixes at once: the inner type
+    /// is referenced from a sibling scope (Phase 1) **and** repeats a field by a
+    /// `_parent` navigator (Phase 2). A fix addressing only one leaves this
+    /// broken.
+    fn sibling_and_parent_navigator_def() -> StructureDefinition {
+        // Innermost: a single byte.
+        let map_matrix = StructureDefinition::new("map_matrix_t").with_field(
+            FieldDefinition::new("MAP", FieldType::String)
+                .with_size(SizeSpec::fixed(1))
+                .with_encoding(Encoding::BcsN)
+                // Repeat count navigates to the enclosing record's NPAR.
+                .with_repeat(RepeatSpec::expr(
+                    ExpressionEvaluator::parse("_parent.NPAR.to_i").unwrap(),
+                )),
+        );
+
+        // Middle: declares NPAR, then references the SIBLING type `map_matrix_t`.
+        let comp = StructureDefinition::new("comp_t")
+            .with_field(
+                FieldDefinition::new("NPAR", FieldType::String)
+                    .with_size(SizeSpec::fixed(1))
+                    .with_encoding(Encoding::BcsN),
+            )
+            .with_field(FieldDefinition::new(
+                "MATRIX",
+                FieldType::TypeRef("map_matrix_t".to_string()),
+            ));
+
+        StructureDefinition::new("tre_rsmeca_like")
+            .with_field(FieldDefinition::new(
+                "COMP",
+                FieldType::TypeRef("comp_t".to_string()),
+            ))
+            .with_type("comp_t", comp)
+            .with_type("map_matrix_t", map_matrix)
+    }
+
+    #[test]
+    fn sibling_typeref_and_parent_navigator_compose() {
+        let def = sibling_and_parent_navigator_def();
+        let mut fields = HashMap::new();
+        fields.insert(
+            "COMP".to_string(),
+            serde_json::json!({
+                "NPAR": "3",
+                // MATRIX.MAP repeats _parent.NPAR (=3) times.
+                "MATRIX": {"MAP": ["1", "2", "3"]},
+            }),
+        );
+
+        let encoded = encode_fields(&def, &fields, false).expect("encode");
+        // NPAR (1 byte) + 3 * MAP (1 byte each) = 4 bytes.
+        assert_eq!(encoded.len(), 4);
+        assert_eq!(&encoded, b"3123");
+
+        let decoded = decode_fields(&def, &encoded, None);
+        let reencoded = encode_fields(&def, &decoded, false).expect("re-encode");
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn repeated_bytes_rejects_non_hex_element() {
+        let def = repeated_bytes_def();
+        let mut fields = HashMap::new();
+        fields.insert("N".to_string(), serde_json::json!("3"));
+        // "zz" is not valid hex.
+        fields.insert(
+            "DATA".to_string(),
+            serde_json::json!(["00ff", "zz12", "abcd"]),
+        );
+        let err = encode_fields(&def, &fields, false).unwrap_err();
+        assert!(matches!(err, WriteError::ValidationError { .. }));
     }
 }

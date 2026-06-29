@@ -3,6 +3,8 @@
 //! This module handles building the context needed for evaluating
 //! expressions that reference field values.
 
+use std::collections::HashMap;
+
 use crate::parser::error::AccessError;
 use crate::parser::expression::{EvalContext, EvalResult, ExpressionEvaluator};
 use crate::parser::types::{
@@ -381,12 +383,18 @@ pub fn build_context_from_definition<'a, F>(
     data: &'a [u8],
     evaluator: &ExpressionEvaluator,
     stop_at: &str,
+    seed: &HashMap<String, EvalResult>,
     read_field: F,
 ) -> Result<EvalContext, AccessError>
 where
     F: Fn(&FieldDefinition, usize, usize) -> Result<Value<'a>, AccessError>,
 {
+    // Pre-seed with inherited (enclosing-scope) values; locally parsed fields
+    // overlay them below (local wins).
     let mut ctx = EvalContext::new();
+    for (name, value) in seed {
+        ctx.fields.insert(name.clone(), value.clone());
+    }
     let mut current_offset = 0;
 
     for field in &definition.fields {
