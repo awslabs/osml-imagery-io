@@ -12,7 +12,7 @@
 mod context;
 mod iterator;
 mod offset;
-mod read;
+pub(crate) mod read;
 
 use std::borrow::Cow;
 use std::cell::RefCell;

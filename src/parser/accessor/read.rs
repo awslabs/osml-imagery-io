@@ -9,48 +9,73 @@ use crate::parser::error::AccessError;
 use crate::parser::types::{Endian, FieldDefinition, FieldType};
 use crate::parser::value::Value;
 
-/// Read an unsigned integer from bytes with specified endianness.
-pub fn read_unsigned(bytes: &[u8], size: u8, endian: Endian) -> Result<u64, AccessError> {
-    match (size, endian) {
-        (1, _) => Ok(bytes[0] as u64),
-        (2, Endian::Big) => Ok(u16::from_be_bytes([bytes[0], bytes[1]]) as u64),
-        (2, Endian::Little) => Ok(u16::from_le_bytes([bytes[0], bytes[1]]) as u64),
-        (4, Endian::Big) => Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64),
-        (4, Endian::Little) => {
-            Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64)
-        }
-        (8, Endian::Big) => Ok(u64::from_be_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ])),
-        (8, Endian::Little) => Ok(u64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ])),
-        _ => Err(AccessError::UnknownField {
+/// Fold the first `size` bytes into a `u64` honoring the declared byte order.
+///
+/// Shared core for [`read_unsigned`] and [`read_signed`]: NITF/BIIF integer
+/// fields are arbitrary 1–8 byte big-endian values (e.g. ILLUMB's 3-byte
+/// `EXISTENCE_MASK`), so the read path folds N bytes generically rather than
+/// dispatching on a `{1,2,4,8}` whitelist. The result is zero-extended; signed
+/// callers sign-extend afterward.
+///
+/// Widths outside `1..=8` (including 0, and anything wider than a `u64`) return
+/// `AccessError::UnknownField`; short buffers return `AccessError::UnexpectedEof`
+/// rather than indexing out of bounds, matching the float-read guard.
+fn read_uint_bytes(bytes: &[u8], size: u8, endian: Endian) -> Result<u64, AccessError> {
+    let n = size as usize;
+    if n == 0 || n > 8 {
+        return Err(AccessError::UnknownField {
             path: format!("unsupported integer size: {}", size),
-        }),
+        });
     }
+    if bytes.len() < n {
+        return Err(AccessError::UnexpectedEof {
+            path: "integer".to_string(),
+            expected: n,
+            available: bytes.len(),
+        });
+    }
+
+    // Fold bytes most-significant first. For big-endian that is left-to-right;
+    // for little-endian the most-significant byte is last, so iterate reversed.
+    let mut value: u64 = 0;
+    match endian {
+        Endian::Big => {
+            for &b in &bytes[..n] {
+                value = (value << 8) | b as u64;
+            }
+        }
+        Endian::Little => {
+            for &b in bytes[..n].iter().rev() {
+                value = (value << 8) | b as u64;
+            }
+        }
+    }
+    Ok(value)
 }
 
-/// Read a signed integer from bytes with specified endianness.
+/// Read an unsigned integer of any width in `1..=8` with specified endianness.
+pub fn read_unsigned(bytes: &[u8], size: u8, endian: Endian) -> Result<u64, AccessError> {
+    read_uint_bytes(bytes, size, endian)
+}
+
+/// Read a signed integer of any width in `1..=8` with specified endianness.
+///
+/// The N-byte value is sign-extended from its top bit (`8*size - 1`), so a
+/// width-3 `0xFFFFFF` reads as `-1`, not `16_777_215`.
 pub fn read_signed(bytes: &[u8], size: u8, endian: Endian) -> Result<i64, AccessError> {
-    match (size, endian) {
-        (1, _) => Ok(bytes[0] as i8 as i64),
-        (2, Endian::Big) => Ok(i16::from_be_bytes([bytes[0], bytes[1]]) as i64),
-        (2, Endian::Little) => Ok(i16::from_le_bytes([bytes[0], bytes[1]]) as i64),
-        (4, Endian::Big) => Ok(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64),
-        (4, Endian::Little) => {
-            Ok(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64)
-        }
-        (8, Endian::Big) => Ok(i64::from_be_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ])),
-        (8, Endian::Little) => Ok(i64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ])),
-        _ => Err(AccessError::UnknownField {
-            path: format!("unsupported integer size: {}", size),
-        }),
+    let raw = read_uint_bytes(bytes, size, endian)?;
+    let bits = size as u32 * 8;
+    if bits == 64 {
+        // Full width: the bit pattern is already the i64 value.
+        return Ok(raw as i64);
     }
+    let sign_bit = 1u64 << (bits - 1);
+    let extended = if raw & sign_bit != 0 {
+        raw | (!0u64 << bits)
+    } else {
+        raw
+    };
+    Ok(extended as i64)
 }
 
 /// Read an IEEE 754 float from bytes with specified endianness.
@@ -222,6 +247,99 @@ mod tests {
     fn read_field_value_float_short_data_errors() {
         let field = float_field("SCALE", 4);
         let result = read_field_value_from_bytes(&field, &[0x00, 0x01], Endian::Big);
+        assert!(matches!(result, Err(AccessError::UnexpectedEof { .. })));
+    }
+
+    #[test]
+    fn read_unsigned_width3_big_endian() {
+        // ILLUMB EXISTENCE_MASK range endpoints + an asymmetric pattern.
+        assert_eq!(
+            read_unsigned(&[0x00, 0x20, 0x00], 3, Endian::Big).unwrap(),
+            0x2000
+        );
+        assert_eq!(
+            read_unsigned(&[0xFF, 0xFF, 0x00], 3, Endian::Big).unwrap(),
+            0xFFFF00
+        );
+        assert_eq!(
+            read_unsigned(&[0xAB, 0xCD, 0xEF], 3, Endian::Big).unwrap(),
+            0xABCDEF
+        );
+    }
+
+    #[test]
+    fn read_unsigned_width3_little_endian() {
+        // Same values, byte-reversed on the wire.
+        assert_eq!(
+            read_unsigned(&[0x00, 0x20, 0x00], 3, Endian::Little).unwrap(),
+            0x2000
+        );
+        assert_eq!(
+            read_unsigned(&[0x00, 0xFF, 0xFF], 3, Endian::Little).unwrap(),
+            0xFFFF00
+        );
+        assert_eq!(
+            read_unsigned(&[0xEF, 0xCD, 0xAB], 3, Endian::Little).unwrap(),
+            0xABCDEF
+        );
+    }
+
+    #[test]
+    fn read_signed_width3_sign_extends() {
+        // 0xFFFFFF over 3 bytes is -1, not 16_777_215.
+        assert_eq!(
+            read_signed(&[0xFF, 0xFF, 0xFF], 3, Endian::Big).unwrap(),
+            -1
+        );
+        // Most-negative 24-bit value: 0x800000 == -8_388_608.
+        assert_eq!(
+            read_signed(&[0x80, 0x00, 0x00], 3, Endian::Big).unwrap(),
+            -8_388_608
+        );
+        // A positive value keeps its magnitude.
+        assert_eq!(
+            read_signed(&[0x00, 0x20, 0x00], 3, Endian::Big).unwrap(),
+            0x2000
+        );
+    }
+
+    #[test]
+    fn read_unsigned_round_trips_writer_width3() {
+        use crate::parser::writer::integer::encode_unsigned;
+        for &v in &[0x2000u64, 0xFFFF00, 0xABCDEF] {
+            for endian in [Endian::Big, Endian::Little] {
+                let bytes = encode_unsigned(v, 3, endian, "X").unwrap();
+                assert_eq!(read_unsigned(&bytes, 3, endian).unwrap(), v);
+            }
+        }
+    }
+
+    #[test]
+    fn read_signed_round_trips_writer_width3() {
+        use crate::parser::writer::integer::encode_signed;
+        for &v in &[-1i64, -8_388_608, 8_388_607, 0x2000] {
+            for endian in [Endian::Big, Endian::Little] {
+                let bytes = encode_signed(v, 3, endian, "X").unwrap();
+                assert_eq!(read_signed(&bytes, 3, endian).unwrap(), v);
+            }
+        }
+    }
+
+    #[test]
+    fn read_unsigned_rejects_out_of_range_widths() {
+        assert!(matches!(
+            read_unsigned(&[0x00], 0, Endian::Big),
+            Err(AccessError::UnknownField { .. })
+        ));
+        assert!(matches!(
+            read_unsigned(&[0u8; 9], 9, Endian::Big),
+            Err(AccessError::UnknownField { .. })
+        ));
+    }
+
+    #[test]
+    fn read_unsigned_short_buffer_errors() {
+        let result = read_unsigned(&[0x00, 0x20], 3, Endian::Big);
         assert!(matches!(result, Err(AccessError::UnexpectedEof { .. })));
     }
 }

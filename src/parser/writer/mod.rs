@@ -3,7 +3,7 @@
 //! The [`StructureWriter`] uses streaming mode for sequential field writes.
 
 mod encode;
-mod integer;
+pub(crate) mod integer;
 mod streaming;
 mod validation;
 
