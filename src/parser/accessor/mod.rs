@@ -170,6 +170,24 @@ impl<'a> StructureAccessor<'a> {
         self.data
     }
 
+    /// Resolve a count/expression repeat count against the current context.
+    ///
+    /// Returns `Some(count)` for `Count`/`Expression` repeats (a failed or
+    /// negative expression yields `Some(0)`), and `None` for non-repeated,
+    /// `Until`, or `Eos` fields — whose element count cannot be known without
+    /// reading data. Used to detect the count-0 case before the single-element
+    /// size probe runs (see the caller in [`Self::ensure_parsed`]).
+    fn eager_repeat_count(&self, field: &FieldDefinition, ctx: &EvalContext) -> Option<usize> {
+        match &field.repeat {
+            Some(RepeatSpec::Count(n)) => Some(*n),
+            Some(RepeatSpec::Expression(expr)) => match self.evaluator.evaluate(expr, ctx) {
+                Ok(EvalResult::Integer(n)) if n >= 0 => Some(n as usize),
+                _ => Some(0),
+            },
+            Some(RepeatSpec::Until(_)) | Some(RepeatSpec::Eos) | None => None,
+        }
+    }
+
     /// Perform a single O(n) pass through all fields, populating the
     /// offset cache, repeat offsets, and evaluation context.
     fn ensure_parsed(&self) -> Result<(), AccessError> {
@@ -187,6 +205,25 @@ impl<'a> StructureAccessor<'a> {
                 if let Ok(EvalResult::Boolean(false)) = result {
                     continue;
                 }
+            }
+
+            // For count/expression repeats, resolve the count before probing
+            // the single-element size. A count of 0 means no element is read, so
+            // the probe is meaningless — and for a repeated TypeRef whose element
+            // type carries its own data-dependent `repeat-expr` (e.g.
+            // `warp_set_t`'s `LINE_POLY_COEFFS`), the probe errors against the
+            // absent element data. Letting that `Err` reach `break` below would
+            // abandon every trailing field (the empty-`WARP_SETS` /
+            // `RESERVED_LEN` defect). Record an empty repeated field and advance
+            // by 0 instead.
+            if self.eager_repeat_count(field, &ctx) == Some(0) {
+                self.offset_cache
+                    .borrow_mut()
+                    .insert(field.id.clone(), (current_offset, 0));
+                self.repeat_offsets
+                    .borrow_mut()
+                    .insert(field.id.clone(), Vec::new());
+                continue;
             }
 
             // Get single-element size

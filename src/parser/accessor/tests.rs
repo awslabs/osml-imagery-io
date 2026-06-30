@@ -960,6 +960,107 @@ fn accessor_typeref_repeated_zero_count() {
     assert_eq!(offset, 1);
 }
 
+/// Create a definition whose repeated TypeRef element type contains its own
+/// data-dependent `repeat-expr`, modeling `tre_cswrpb`'s `WARP_SETS` /
+/// `warp_set_t.LINE_POLY_COEFFS`.
+///
+/// Layout: `count: str[1]`, `items: item_t repeat-expr count.to_i`,
+/// `tail: str[4]`. `item_t` is `order: str[1]` then
+/// `coeffs: str[2] repeat-expr order.to_i`.
+///
+/// The `.to_i` on string fields is what makes this faithful to the bug: when
+/// the outer `count` is 0 no element exists, but the single-element size probe
+/// of `item_t` still runs, reading `tail`'s bytes as `order` and evaluating
+/// `order.to_i` — which *errors* on a non-numeric string ("D".to_i). That error
+/// reaching the per-field `break` is exactly what dropped `RESERVED_LEN` after
+/// an empty `WARP_SETS`. (An integer inner field would parse cleanly to a large
+/// count and not reproduce the abort.)
+fn create_repeated_typeref_inner_repeat_definition() -> StructureDefinition {
+    use crate::parser::expression::ExpressionEvaluator;
+
+    let inner_repeat = ExpressionEvaluator::parse("order.to_i").unwrap();
+    let item_type = StructureDefinition::new("item_type")
+        .with_field(
+            FieldDefinition::new("order", FieldType::String)
+                .with_size(SizeSpec::Fixed(1))
+                .with_encoding(Encoding::BcsN),
+        )
+        .with_field(
+            FieldDefinition::new("coeffs", FieldType::String)
+                .with_size(SizeSpec::Fixed(2))
+                .with_repeat(RepeatSpec::Expression(inner_repeat)),
+        );
+
+    let outer_repeat = ExpressionEvaluator::parse("count.to_i").unwrap();
+    StructureDefinition::new("test_struct")
+        .with_type("item_type", item_type)
+        .with_field(
+            FieldDefinition::new("count", FieldType::String)
+                .with_size(SizeSpec::Fixed(1))
+                .with_encoding(Encoding::BcsN),
+        )
+        .with_field(
+            FieldDefinition::new("items", FieldType::TypeRef("item_type".to_string()))
+                .with_size(SizeSpec::Fixed(0))
+                .with_repeat(RepeatSpec::Expression(outer_repeat)),
+        )
+        .with_field(FieldDefinition::new("tail", FieldType::String).with_size(SizeSpec::Fixed(4)))
+}
+
+#[test]
+fn accessor_repeated_typeref_zero_count_inner_repeat_keeps_trailing_field() {
+    // Regression for Root cause B: a count-0 repeated TypeRef whose element type
+    // has its own data-dependent repeat-expr must not abort decode of the
+    // trailing field. Before the fix the single-element size probe errored
+    // (order.to_i on "D") and `break` dropped `tail`.
+    let def = Arc::new(create_repeated_typeref_inner_repeat_definition());
+    // count="0", no items, tail="DONE"
+    let data = b"0DONE";
+    let accessor = StructureAccessor::new(def, data).unwrap();
+
+    let count = accessor.get("count").unwrap();
+    assert_eq!(count.as_str().unwrap(), "0");
+
+    // items is an empty array
+    let items = accessor.get("items").unwrap();
+    if let Value::Array(arr) = items {
+        assert_eq!(arr.len(), 0);
+    } else {
+        panic!("Expected empty array");
+    }
+
+    // The trailing fixed field must still decode at offset 1.
+    let tail = accessor.get("tail").unwrap();
+    assert_eq!(tail.as_str().unwrap(), "DONE");
+
+    let (offset, _) = accessor.calculate_field_offset("tail", None).unwrap();
+    assert_eq!(offset, 1);
+}
+
+#[test]
+fn accessor_repeated_typeref_nonzero_count_inner_repeat_unaffected() {
+    // The guard must not disturb the non-empty case: with count=1 the single
+    // element (order=2, two 2-byte coeffs) is read and `tail` follows it.
+    let def = Arc::new(create_repeated_typeref_inner_repeat_definition());
+    // count="1", item[0]={order="2", coeffs=["AA","BB"]}, tail="DONE"
+    let data = b"12AABBDONE";
+    let accessor = StructureAccessor::new(def, data).unwrap();
+
+    let items = accessor.get("items").unwrap();
+    if let Value::Array(arr) = items {
+        assert_eq!(arr.len(), 1);
+        assert!(arr[0].is_struct());
+    } else {
+        panic!("Expected array");
+    }
+
+    // tail is after count(1) + item(order 1 + coeffs 2*2 = 5) = offset 6
+    let tail = accessor.get("tail").unwrap();
+    assert_eq!(tail.as_str().unwrap(), "DONE");
+    let (offset, _) = accessor.calculate_field_offset("tail", None).unwrap();
+    assert_eq!(offset, 6);
+}
+
 /// Create a definition that references a non-existent type.
 fn create_unknown_typeref_definition() -> StructureDefinition {
     StructureDefinition::new("test_struct")

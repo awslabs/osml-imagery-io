@@ -84,6 +84,21 @@ fn get_nested_type_size(
             }
         }
 
+        // A count-0 repeated field contributes nothing and must not be probed:
+        // for a repeated TypeRef whose element type carries its own
+        // data-dependent `repeat-expr`, the single-element probe below errors
+        // against absent element data. Letting that `?` propagate would abort
+        // sizing of the whole enclosing type (the nested mirror of the
+        // empty-`WARP_SETS` decode-abort defect). Skip it and add 0 size.
+        if let Some(RepeatSpec::Count(0)) = &field.repeat {
+            continue;
+        }
+        if let Some(RepeatSpec::Expression(expr)) = &field.repeat {
+            if let Ok(EvalResult::Integer(0)) = evaluator.evaluate(expr, &nested_ctx) {
+                continue;
+            }
+        }
+
         // Calculate field size - recursively handle TypeRef
         let field_size = get_simple_field_size(
             field,
