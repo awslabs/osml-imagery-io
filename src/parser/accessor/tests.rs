@@ -1061,6 +1061,84 @@ fn accessor_repeated_typeref_nonzero_count_inner_repeat_unaffected() {
     assert_eq!(offset, 6);
 }
 
+/// Create a two-level definition modeling `tre_matesa`: an outer repeated
+/// TypeRef (`groups`) whose element type (`group_t`) itself ends in a count-0
+/// repeated TypeRef (`mates`). Layout:
+///   `num_groups: str[1]`, `groups: group_t repeat-expr num_groups.to_i`
+///   group_t: `num_mates: str[1]`, `mates: mate_t repeat-expr num_mates.to_i`
+///   mate_t:  `id_len: str[1]`, `id: str[id_len.to_i]`
+///
+/// When a `group_t` element has `num_mates == 0`, sizing that element must not
+/// probe `mate_t`'s single-element size — that probe reads the next group's
+/// `num_mates`/`id_len` as a `mate_t` and evaluates `id_len.to_i` against the
+/// wrong (or absent, at the tail) bytes, erroring. That error propagating out of
+/// `get_type_size` for the enclosing `group_t` is what dropped trailing groups
+/// on decode.
+fn create_nested_zero_count_repeat_definition() -> StructureDefinition {
+    use crate::parser::expression::ExpressionEvaluator;
+
+    let id_size = ExpressionEvaluator::parse("id_len.to_i").unwrap();
+    let mate_type = StructureDefinition::new("mate_t")
+        .with_field(
+            FieldDefinition::new("id_len", FieldType::String)
+                .with_size(SizeSpec::Fixed(1))
+                .with_encoding(Encoding::BcsN),
+        )
+        .with_field(
+            FieldDefinition::new("id", FieldType::String).with_size(SizeSpec::Expression(id_size)),
+        );
+
+    let mates_repeat = ExpressionEvaluator::parse("num_mates.to_i").unwrap();
+    let group_type = StructureDefinition::new("group_t")
+        .with_field(
+            FieldDefinition::new("num_mates", FieldType::String)
+                .with_size(SizeSpec::Fixed(1))
+                .with_encoding(Encoding::BcsN),
+        )
+        .with_field(
+            FieldDefinition::new("mates", FieldType::TypeRef("mate_t".to_string()))
+                .with_size(SizeSpec::Fixed(0))
+                .with_repeat(RepeatSpec::Expression(mates_repeat)),
+        );
+
+    let groups_repeat = ExpressionEvaluator::parse("num_groups.to_i").unwrap();
+    StructureDefinition::new("test_struct")
+        .with_type("mate_t", mate_type)
+        .with_type("group_t", group_type)
+        .with_field(
+            FieldDefinition::new("num_groups", FieldType::String)
+                .with_size(SizeSpec::Fixed(1))
+                .with_encoding(Encoding::BcsN),
+        )
+        .with_field(
+            FieldDefinition::new("groups", FieldType::TypeRef("group_t".to_string()))
+                .with_size(SizeSpec::Fixed(0))
+                .with_repeat(RepeatSpec::Expression(groups_repeat)),
+        )
+}
+
+#[test]
+fn accessor_nested_zero_count_repeat_keeps_trailing_sibling() {
+    // Regression: a nested count-0 repeated TypeRef at the tail of an enclosing
+    // element must not abort sizing of that element, which would drop every
+    // trailing sibling in the outer array. Before the fix this returned 1 group.
+    let def = Arc::new(create_nested_zero_count_repeat_definition());
+    // num_groups=2
+    //   group[0]: num_mates=1, mate[0]={id_len=1, id="X"}  -> bytes "1" "1" "X"
+    //   group[1]: num_mates=0, mates=[]                    -> bytes "0"
+    let data = b"211X0";
+    let accessor = StructureAccessor::new(def, data).unwrap();
+
+    let groups = accessor.get("groups").unwrap();
+    if let Value::Array(arr) = groups {
+        assert_eq!(arr.len(), 2, "trailing empty group must not be dropped");
+        assert!(arr[0].is_struct());
+        assert!(arr[1].is_struct());
+    } else {
+        panic!("Expected array");
+    }
+}
+
 /// Create a definition that references a non-existent type.
 fn create_unknown_typeref_definition() -> StructureDefinition {
     StructureDefinition::new("test_struct")

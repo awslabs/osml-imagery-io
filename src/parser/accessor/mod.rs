@@ -685,6 +685,17 @@ impl<'a> StructureAccessor<'a> {
                 }
             }
 
+            // A nested repeated field whose count resolves to 0 reads no element
+            // and contributes 0 bytes. Skip the single-element size probe: for a
+            // repeated TypeRef whose element type carries its own data-dependent
+            // `size`/`repeat-expr` (e.g. `mate_entry`'s `MATE_ID`), probing the
+            // element against the absent tail data errors, and that `Err` would
+            // abort sizing the whole enclosing element — dropping every trailing
+            // sibling on decode. Mirrors the top-level guard in `ensure_parsed`.
+            if self.eager_repeat_count(field, &nested_ctx) == Some(0) {
+                continue;
+            }
+
             let field_size = self.get_nested_field_size(field, &nested_ctx, offset + total_size)?;
 
             if offset + total_size + field_size <= self.data.len() {
