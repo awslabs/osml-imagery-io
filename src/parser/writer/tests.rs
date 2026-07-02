@@ -570,3 +570,73 @@ fn eos_field_writes_empty_string() {
 
     assert_eq!(data.len(), 0);
 }
+
+// ==================== RepeatSpec::Eos / Until encode tests ====================
+
+/// A definition whose trailing field is a fixed-size element repeated to
+/// end-of-stream — the shape used by RSMDCB `CRSCOV`.
+fn create_repeat_eos_definition() -> Arc<StructureDefinition> {
+    Arc::new(
+        StructureDefinition::new("test_struct")
+            .with_field(
+                FieldDefinition::new("tag", FieldType::String).with_size(SizeSpec::fixed(6)),
+            )
+            .with_field(
+                FieldDefinition::new("elems", FieldType::String)
+                    .with_size(SizeSpec::fixed(3))
+                    .with_repeat(RepeatSpec::eos()),
+            ),
+    )
+}
+
+#[test]
+fn repeat_eos_encodes_supplied_list() {
+    // On encode the caller supplies the list, so its length is the authoritative
+    // element count for an eos repeat (there is no count field to derive it from).
+    let def = create_repeat_eos_definition();
+    let mut writer = StructureWriter::new(def);
+
+    writer.set("tag", "HEADER").unwrap();
+    writer
+        .set("elems", vec!["aaa", "bbb", "ccc"])
+        .unwrap();
+    let data = writer.finish().unwrap();
+
+    assert_eq!(&data[..6], b"HEADER");
+    assert_eq!(&data[6..], b"aaabbbccc");
+    assert_eq!(data.len(), 6 + 9);
+}
+
+#[test]
+fn repeat_eos_encodes_single_element() {
+    let def = create_repeat_eos_definition();
+    let mut writer = StructureWriter::new(def);
+
+    writer.set("tag", "HEADER").unwrap();
+    writer.set("elems", vec!["xyz"]).unwrap();
+    let data = writer.finish().unwrap();
+
+    assert_eq!(&data[6..], b"xyz");
+    assert_eq!(data.len(), 6 + 3);
+}
+
+#[test]
+fn repeat_until_encodes_supplied_list() {
+    // Until's terminating expression is a decode-time concern; on encode the
+    // supplied list length is authoritative, exactly as for eos.
+    let terminator = ExpressionEvaluator::parse("_index >= 2").unwrap();
+    let def = Arc::new(
+        StructureDefinition::new("test_struct").with_field(
+            FieldDefinition::new("elems", FieldType::String)
+                .with_size(SizeSpec::fixed(2))
+                .with_repeat(RepeatSpec::until(terminator)),
+        ),
+    );
+    let mut writer = StructureWriter::new(def);
+
+    writer.set("elems", vec!["ab", "cd", "ef"]).unwrap();
+    let data = writer.finish().unwrap();
+
+    assert_eq!(&data[..], b"abcdef");
+    assert_eq!(data.len(), 6);
+}

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use super::error::WriteError;
 use super::expression::{EvalContext, EvalResult, ExpressionEvaluator};
-use super::types::{FieldDefinition, SizeSpec, StructureDefinition};
+use super::types::{FieldDefinition, RepeatSpec, SizeSpec, StructureDefinition};
 
 use encode::encode_value;
 use streaming::{
@@ -121,6 +121,11 @@ pub struct StructureWriter {
     next_field_index: usize,
     /// Count of elements written for current repeated field
     current_repeat_written: usize,
+    /// Caller-supplied element counts for `repeat: eos`/`until` fields. Their
+    /// count is not derivable from a count field, so on encode the length of
+    /// the supplied value list is authoritative. Keyed by field id, recorded
+    /// when the array is set. See [`Self::resolve_repeat_count`].
+    eos_until_counts: HashMap<String, usize>,
     /// When true, enforce strict spec-compliant encoding validation on write.
     /// When false (default), numeric fields accept any printable ASCII.
     strict_encoding: bool,
@@ -148,6 +153,7 @@ impl StructureWriter {
             written_values: HashMap::new(),
             next_field_index: 0,
             current_repeat_written: 0,
+            eos_until_counts: HashMap::new(),
             strict_encoding: false,
             inherited: HashMap::new(),
         }
@@ -247,7 +253,7 @@ impl StructureWriter {
 
             if let Some(ref repeat) = field.repeat {
                 let ctx = self.build_eval_context();
-                let expected_count = get_repeat_count(repeat, &field.id, &self.evaluator, &ctx)?;
+                let expected_count = self.resolve_repeat_count(repeat, &field.id, &ctx)?;
                 if expected_count > 0 && !self.written.contains(&field.id) {
                     return Err(WriteError::MissingRequired {
                         path: field.id.clone(),
@@ -296,6 +302,28 @@ impl StructureWriter {
             })
     }
 
+    /// Resolve how many elements a repeated field emits/expects.
+    ///
+    /// For `Count`/`Expression` repeats the count comes from the definition (via
+    /// [`get_repeat_count`]). For `Eos`/`Until` the count is not derivable from a
+    /// count field, so the caller-supplied value list length recorded in
+    /// [`Self::eos_until_counts`] is authoritative; if no list was supplied the
+    /// field is treated as absent (count 0), matching `finish()`'s
+    /// "list present ⇒ satisfied" check.
+    fn resolve_repeat_count(
+        &self,
+        repeat: &RepeatSpec,
+        field_name: &str,
+        ctx: &EvalContext,
+    ) -> Result<usize, WriteError> {
+        match repeat {
+            RepeatSpec::Eos | RepeatSpec::Until(_) => {
+                Ok(self.eos_until_counts.get(field_name).copied().unwrap_or(0))
+            }
+            _ => get_repeat_count(repeat, field_name, &self.evaluator, ctx),
+        }
+    }
+
     /// Write an array of values for a repeated field.
     fn write_array(
         &mut self,
@@ -303,6 +331,16 @@ impl StructureWriter {
         field: &FieldDefinition,
         elements: Vec<WriteValue>,
     ) -> Result<(), WriteError> {
+        // For eos/until repeats the supplied list length is the authoritative
+        // element count (there is no count field to validate against). Record it
+        // before emitting so per-element advancement and finish() agree.
+        if matches!(
+            field.repeat,
+            Some(RepeatSpec::Eos) | Some(RepeatSpec::Until(_))
+        ) {
+            self.eos_until_counts
+                .insert(field_name.to_string(), elements.len());
+        }
         if elements.is_empty() {
             // Zero-element array: verify ordering then advance past this field.
             let ctx = self.build_eval_context();
@@ -391,7 +429,7 @@ impl StructureWriter {
             self.current_repeat_written += 1;
             // Check if all elements written
             if let Some(ref repeat) = field.repeat {
-                let expected_count = get_repeat_count(repeat, &field.id, &self.evaluator, &ctx)?;
+                let expected_count = self.resolve_repeat_count(repeat, &field.id, &ctx)?;
                 if self.current_repeat_written >= expected_count {
                     self.written.insert(field_name.to_string());
                     self.next_field_index += 1;
