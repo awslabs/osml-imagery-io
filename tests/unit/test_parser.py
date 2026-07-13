@@ -1,22 +1,43 @@
 """Unit tests for the data-driven binary parser Python bindings.
 
-This module tests the Python bindings for StructureRegistry, StructureAccessor,
-StructureWriter, and Value classes.
+Tests the generic binding surface — ``StructureRegistry`` /
+``StructureDefinition`` and the ``encode``/``decode`` dict API — against the
+NITF 2.1 file header. This is the structure-agnostic engine, not a TRE/DES
+spec-fidelity anchor, so it lives here rather than under ``tests/unit/jbp/``.
 
-Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6
+Ported to the dict API (``DESIGN_TRE_DES_TESTING_REDESIGN.md`` Phase 3). The
+path-based ``StructureAccessor`` / ``StructureWriter`` / ``Value`` classes are
+removed from the public surface, so:
+
+- Accessor reads (``accessor["FHDR"].as_str()``, ``.as_int()``, repeated
+  ``.as_array()``) are ported to ``decode``, which returns a plain dict — scalars
+  as strings, repeated fields as lists.
+- Writer round-trips (``StructureWriter.new_streaming`` + ``set``/``__setitem__``
+  + ``finish``/``buffer``) are ported to ``encode``, which returns the full
+  encoded bytes in one call.
+- Decode-input variety (``mmap`` / ``memoryview`` / ``bytearray``) — real
+  end-user behavior — is retained, exercised through ``decode``.
+
+Dropped, each because it asserted the *shape* of a removed class rather than a
+behavior the dict API has (semantic coverage is preserved via ``decode`` /
+``encode`` where it maps to a real behavior):
+
+- ``Value.as_str()`` trailing-space trimming, ``as_int()`` / ``as_float()``
+  numeric coercion, ``as_bytes()``, ``repr``, ``__len__`` — ``decode`` returns
+  the raw field string; type coercion and the ``Value`` wrapper are gone.
+- ``accessor.has()`` / ``in`` / ``.fields()`` / ``.data`` / ``.definition`` and
+  ``raw_view()`` — dict membership (``in`` on the decoded dict) covers field
+  presence; the accessor object and its buffer/definition/raw-view accessors are
+  gone.
+- ``writer.is_set()`` / ``.buffer()`` (partial-write introspection) — ``encode``
+  is a single all-fields call with no incremental-write surface.
 """
 
 import mmap
 from pathlib import Path
 
 import pytest
-from aws.osml.io import (
-    StructureAccessor,
-    StructureDefinition,
-    StructureRegistry,
-    StructureWriter,
-    Value,
-)
+from aws.osml.io import StructureDefinition, StructureRegistry
 
 # =============================================================================
 # Test Data Paths
@@ -34,7 +55,7 @@ _IMRFCA_RAW = (_IMRFCA_ELEM.encode() * 20) * 4  # 4 fields × 20 elems × 22 byt
 
 
 # =============================================================================
-# StructureRegistry Tests (Requirement 14.1)
+# StructureRegistry Tests
 # =============================================================================
 
 class TestStructureRegistry:
@@ -147,11 +168,17 @@ class TestStructureDefinition:
 
 
 # =============================================================================
-# StructureAccessor Tests (Requirement 14.2)
+# Decode (read path) Tests — ported from StructureAccessor / Value
 # =============================================================================
 
-class TestStructureAccessor:
-    """Tests for StructureAccessor class with dict-like access."""
+class TestDecode:
+    """Reads via ``decode``, which returns a plain dict.
+
+    Ported from the removed ``StructureAccessor``/``Value`` read path. ``decode``
+    returns each field as its raw string (no ``Value`` wrapper, no numeric
+    coercion or trailing-space trimming — those were ``Value``-shape behaviors),
+    and repeated fields as lists.
+    """
 
     @pytest.fixture
     def nitf_definition(self):
@@ -166,346 +193,94 @@ class TestStructureAccessor:
         with open(SYNTHETIC_NITF, "rb") as f:
             return f.read()
 
-    def test_accessor_creation(self, nitf_definition, synthetic_data):
-        """Test creating an accessor from definition and data."""
-        accessor = StructureAccessor(nitf_definition, synthetic_data)
-        assert accessor is not None
+    def test_decode_string_fields(self, nitf_definition, synthetic_data):
+        """String fields decode to their raw values."""
+        decoded = nitf_definition.decode(synthetic_data)
+        assert decoded["FHDR"] == "NITF"
+        assert decoded["FVER"] == "02.10"
 
-    def test_accessor_getitem(self, nitf_definition, synthetic_data):
-        """Test dict-like access via __getitem__."""
-        accessor = StructureAccessor(nitf_definition, synthetic_data)
+    def test_decode_field_membership(self, nitf_definition, synthetic_data):
+        """``in`` on the decoded dict reports field presence.
 
-        # Access string fields
-        fhdr = accessor["FHDR"]
-        assert isinstance(fhdr, Value)
-        assert fhdr.as_str() == "NITF"
+        Replaces the removed ``accessor.has()`` / ``in accessor`` /
+        ``accessor.fields()`` surface.
+        """
+        decoded = nitf_definition.decode(synthetic_data)
+        assert "FHDR" in decoded
+        assert "FVER" in decoded
+        assert "CLEVEL" in decoded
+        assert "nonexistent_field" not in decoded
 
-        fver = accessor["FVER"]
-        assert fver.as_str() == "02.10"
+    def test_decode_numeric_field(self, nitf_definition, synthetic_data):
+        """BCS-N fields decode to their raw digit string (no int coercion).
 
-    def test_accessor_getitem_unknown_field(self, nitf_definition, synthetic_data):
-        """Test accessing unknown field raises KeyError."""
-        accessor = StructureAccessor(nitf_definition, synthetic_data)
+        CLEVEL is a 2-byte BCS-N field holding ``"03"``; the removed
+        ``Value.as_int()`` coercion (→ ``3``) is not a dict-API behavior.
+        """
+        decoded = nitf_definition.decode(synthetic_data)
+        assert decoded["CLEVEL"] == "03"
+        assert decoded["NUMI"] == "001"
 
-        with pytest.raises(KeyError):
-            _ = accessor["nonexistent_field"]
+    def test_decode_repeated_field_returns_list(self):
+        """A repeated field decodes to a list of element strings.
 
-    def test_accessor_has(self, nitf_definition, synthetic_data):
-        """Test checking field existence with has()."""
-        accessor = StructureAccessor(nitf_definition, synthetic_data)
-
-        assert accessor.has("FHDR") is True
-        assert accessor.has("FVER") is True
-        assert accessor.has("nonexistent") is False
-
-    def test_accessor_contains(self, nitf_definition, synthetic_data):
-        """Test 'in' operator support."""
-        accessor = StructureAccessor(nitf_definition, synthetic_data)
-
-        assert "FHDR" in accessor
-        assert "FVER" in accessor
-        assert "nonexistent" not in accessor
-
-    def test_accessor_fields(self, nitf_definition, synthetic_data):
-        """Test iterating over accessible field paths."""
-        accessor = StructureAccessor(nitf_definition, synthetic_data)
-
-        fields = accessor.fields()
-        assert isinstance(fields, list)
-        assert "FHDR" in fields
-        assert "FVER" in fields
-        assert "CLEVEL" in fields
-
-    def test_accessor_numeric_field(self, nitf_definition, synthetic_data):
-        """Test accessing numeric fields."""
-        accessor = StructureAccessor(nitf_definition, synthetic_data)
-
-        # CLEVEL is a BCS-N field
-        clevel = accessor["CLEVEL"]
-        assert clevel.as_int() == 3
-
-    def test_accessor_data_property(self, nitf_definition, synthetic_data):
-        """Test getting underlying data buffer."""
-        accessor = StructureAccessor(nitf_definition, synthetic_data)
-
-        data = accessor.data
-        assert isinstance(data, bytes)
-        assert len(data) == len(synthetic_data)
-
-    def test_accessor_definition_property(self, nitf_definition, synthetic_data):
-        """Test getting structure definition."""
-        accessor = StructureAccessor(nitf_definition, synthetic_data)
-
-        definition = accessor.definition
-        assert isinstance(definition, StructureDefinition)
-        assert definition.id == nitf_definition.id
-
-
-# =============================================================================
-# StructureWriter Tests (Requirement 14.3)
-# =============================================================================
-
-class TestStructureWriter:
-    """Tests for StructureWriter class with dict-like write access."""
-
-    @pytest.fixture
-    def nitf_definition(self):
-        """Get the NITF file header definition."""
-        registry = StructureRegistry()
-        registry.add_search_path(str(STRUCTURES_DIR))
-        return registry.get("nitf_02.10_file_header")
-
-    def test_writer_new_streaming(self, nitf_definition):
-        """Test creating a streaming writer."""
-        writer = StructureWriter.new_streaming(nitf_definition)
-        assert writer is not None
-
-    def test_writer_setitem_streaming(self, nitf_definition):
-        """Test dict-like write via __setitem__ in streaming mode."""
-        writer = StructureWriter.new_streaming(nitf_definition)
-
-        # Write string fields in order (streaming mode requires order)
-        writer["FHDR"] = "NITF"
-        writer["FVER"] = "02.10"
-
-        # Check field is set
-        assert writer.is_set("FHDR") is True
-        assert writer.is_set("FVER") is True
-
-    def test_writer_set_method(self, nitf_definition):
-        """Test set() method."""
-        writer = StructureWriter.new_streaming(nitf_definition)
-
-        writer.set("FHDR", "NITF")
-        assert writer.is_set("FHDR") is True
-
-    def test_writer_is_set(self, nitf_definition):
-        """Test checking if field has been written."""
-        writer = StructureWriter.new_streaming(nitf_definition)
-
-        assert writer.is_set("FHDR") is False
-        writer["FHDR"] = "NITF"
-        assert writer.is_set("FHDR") is True
-
-    def test_writer_buffer(self, nitf_definition):
-        """Test getting current buffer contents."""
-        writer = StructureWriter.new_streaming(nitf_definition)
-        writer["FHDR"] = "NITF"
-
-        buffer = writer.buffer()
-        assert isinstance(buffer, bytes)
-        assert b"NITF" in buffer
-
-    def test_writer_set_repeated_field_list(self):
-        """Test set() accepts a list for a repeated field."""
+        Replaces the removed ``Value.as_array()`` -> ``list[Value]`` path.
+        """
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
         defn = registry.get("tre_imrfca")
 
-        writer = StructureWriter.new_streaming(defn)
-        writer.set("XINC", _IMRFCA_LIST)
-        writer.set("XIDC", _IMRFCA_LIST)
-        writer.set("YINC", _IMRFCA_LIST)
-        writer.set("YIDC", _IMRFCA_LIST)
-
-        assert writer.finish() == _IMRFCA_RAW
-
-    def test_writer_set_repeated_field_tuple(self):
-        """Test set() accepts a tuple for a repeated field."""
-        registry = StructureRegistry()
-        registry.add_search_path(str(STRUCTURES_DIR))
-        defn = registry.get("tre_imrfca")
-
-        writer = StructureWriter.new_streaming(defn)
-        writer.set("XINC", _IMRFCA_TUPLE)
-        writer.set("XIDC", _IMRFCA_TUPLE)
-        writer.set("YINC", _IMRFCA_TUPLE)
-        writer.set("YIDC", _IMRFCA_TUPLE)
-
-        assert writer.finish() == _IMRFCA_RAW
-
-
-# =============================================================================
-# Value Tests (Requirement 14.4)
-# =============================================================================
-
-class TestValue:
-    """Tests for Value class type conversions."""
-
-    @pytest.fixture
-    def accessor(self):
-        """Create accessor with synthetic data."""
-        registry = StructureRegistry()
-        registry.add_search_path(str(STRUCTURES_DIR))
-        definition = registry.get("nitf_02.10_file_header")
-
-        with open(SYNTHETIC_NITF, "rb") as f:
-            data = f.read()
-
-        return StructureAccessor(definition, data)
-
-    def test_value_as_str(self, accessor):
-        """Test as_str() conversion."""
-        value = accessor["FHDR"]
-        result = value.as_str()
-        assert isinstance(result, str)
-        assert result == "NITF"
-
-    def test_value_as_str_trimmed(self, accessor):
-        """Test as_str() trims trailing padding."""
-        # FTITLE has trailing spaces
-        value = accessor["FTITLE"]
-        result = value.as_str()
-        assert not result.endswith(" ")
-
-    def test_value_as_int(self, accessor):
-        """Test as_int() conversion for numeric strings."""
-        value = accessor["CLEVEL"]
-        result = value.as_int()
-        assert isinstance(result, int)
-        assert result == 3
-
-    def test_value_as_int_with_leading_zeros(self, accessor):
-        """Test as_int() handles leading zeros."""
-        value = accessor["NUMI"]
-        result = value.as_int()
-        assert isinstance(result, int)
-        assert result == 1
-
-    def test_value_as_float(self, accessor):
-        """Test as_float() conversion."""
-        value = accessor["CLEVEL"]
-        result = value.as_float()
-        assert isinstance(result, float)
-        assert result == 3.0
-
-    def test_value_as_bytes(self, accessor):
-        """Test as_bytes() conversion."""
-        value = accessor["FHDR"]
-        result = value.as_bytes()
-        assert isinstance(result, bytes)
-        assert result == b"NITF"
-
-    def test_value_repr(self, accessor):
-        """Test string representation of Value."""
-        value = accessor["FHDR"]
-        repr_str = repr(value)
-        assert "Value" in repr_str
-
-    def test_value_len(self, accessor):
-        """Test len() on Value."""
-        value = accessor["FHDR"]
-        assert len(value) == 4
-
-    def test_value_as_array_returns_list(self):
-        """Test as_array() returns a list of Value objects for a repeated field."""
-        registry = StructureRegistry()
-        registry.add_search_path(str(STRUCTURES_DIR))
-        defn = registry.get("tre_imrfca")
-        accessor = StructureAccessor(defn, _IMRFCA_RAW)
-
-        elements = accessor["XINC"].as_array()
+        decoded = defn.decode(_IMRFCA_RAW)
+        elements = decoded["XINC"]
 
         assert isinstance(elements, list)
         assert len(elements) == 20
-        for elem in elements:
-            assert elem.as_str() == _IMRFCA_ELEM
-
-    def test_value_as_array_raises_for_scalar(self, accessor):
-        """Test as_array() raises TypeError on a non-array Value."""
-        with pytest.raises(TypeError):
-            accessor["FHDR"].as_array()
+        assert all(elem == _IMRFCA_ELEM for elem in elements)
 
 
 # =============================================================================
-# Raw View Tests (Requirement 14.5)
+# Encode (write path) Tests — ported from StructureWriter
 # =============================================================================
 
-class TestRawView:
-    """Tests for raw_view() returning bytes."""
+class TestEncode:
+    """Writes via ``encode``, which returns the full encoded bytes in one call.
 
-    @pytest.fixture
-    def accessor(self):
-        """Create accessor with synthetic data."""
+    Ported from the removed ``StructureWriter`` streaming path. ``encode`` has no
+    incremental-write surface (no ``is_set``/``buffer``), so those introspection
+    assertions are dropped; the byte-level result is asserted directly.
+    """
+
+    def test_encode_repeated_field_list(self):
+        """``encode`` accepts a list for a repeated field."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        definition = registry.get("nitf_02.10_file_header")
+        defn = registry.get("tre_imrfca")
 
-        with open(SYNTHETIC_NITF, "rb") as f:
-            data = f.read()
+        raw = defn.encode(
+            {
+                "XINC": _IMRFCA_LIST,
+                "XIDC": _IMRFCA_LIST,
+                "YINC": _IMRFCA_LIST,
+                "YIDC": _IMRFCA_LIST,
+            }
+        )
+        assert raw == _IMRFCA_RAW
 
-        return StructureAccessor(definition, data)
-
-    def test_raw_view_returns_bytes(self, accessor):
-        """Test raw_view() returns bytes."""
-        raw = accessor.raw_view("FHDR")
-        assert isinstance(raw, bytes)
-        assert raw == b"NITF"
-
-    def test_raw_view_field_size(self, accessor):
-        """Test raw_view() returns correct size for known fields."""
-        raw = accessor.raw_view("FHDR")
-        assert len(raw) == 4
-
-        raw = accessor.raw_view("FVER")
-        assert len(raw) == 5
-
-    def test_raw_view_consistency(self, accessor):
-        """Test raw_view returns correct bytes for different fields."""
-        raw_fhdr = accessor.raw_view("FHDR")
-        raw_fver = accessor.raw_view("FVER")
-
-        assert raw_fhdr == b"NITF"
-        assert raw_fver == b"02.10"
-
-
-# =============================================================================
-# Memory-Mapped File Tests (Requirement 14.6)
-# =============================================================================
-
-class TestMmapSupport:
-    """Tests for memory-mapped file input support."""
-
-    @pytest.fixture
-    def nitf_definition(self):
-        """Get the NITF file header definition."""
+    def test_encode_repeated_field_tuple(self):
+        """``encode`` accepts a tuple for a repeated field."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
-        return registry.get("nitf_02.10_file_header")
+        defn = registry.get("tre_imrfca")
 
-    def test_accessor_with_mmap(self, nitf_definition):
-        """Test creating accessor from memory-mapped file."""
-        file_size = Path(SYNTHETIC_NITF).stat().st_size
-        if file_size == 0:
-            pytest.skip("Synthetic NITF file is empty; cannot mmap empty file on all platforms.")
-        with open(SYNTHETIC_NITF, "rb") as f, \
-             mmap.mmap(f.fileno(), file_size, access=mmap.ACCESS_READ) as mm:
-            accessor = StructureAccessor(nitf_definition, mm)
-
-            # Should be able to access fields
-            fhdr = accessor["FHDR"]
-            assert fhdr.as_str() == "NITF"
-
-    def test_accessor_with_memoryview(self, nitf_definition):
-        """Test creating accessor from memoryview."""
-        with open(SYNTHETIC_NITF, "rb") as f:
-            data = f.read()
-
-        mv = memoryview(data)
-        accessor = StructureAccessor(nitf_definition, mv)
-
-        fhdr = accessor["FHDR"]
-        assert fhdr.as_str() == "NITF"
-
-    def test_accessor_with_bytearray(self, nitf_definition):
-        """Test creating accessor from bytearray."""
-        with open(SYNTHETIC_NITF, "rb") as f:
-            data = bytearray(f.read())
-
-        accessor = StructureAccessor(nitf_definition, data)
-
-        fhdr = accessor["FHDR"]
-        assert fhdr.as_str() == "NITF"
+        raw = defn.encode(
+            {
+                "XINC": _IMRFCA_TUPLE,
+                "XIDC": _IMRFCA_TUPLE,
+                "YINC": _IMRFCA_TUPLE,
+                "YIDC": _IMRFCA_TUPLE,
+            }
+        )
+        assert raw == _IMRFCA_RAW
 
 
 # =============================================================================
@@ -513,7 +288,7 @@ class TestMmapSupport:
 # =============================================================================
 
 class TestRoundTrip:
-    """Tests for read-write round-trip consistency."""
+    """Read-write round-trip consistency via ``decode`` / ``encode``."""
 
     @pytest.fixture
     def nitf_definition(self):
@@ -528,37 +303,75 @@ class TestRoundTrip:
         with open(SYNTHETIC_NITF, "rb") as f:
             return f.read()
 
-    def test_read_write_simple_fields(self, nitf_definition, synthetic_data):
-        """Test reading and writing simple string fields."""
-        # Read original values
-        accessor = StructureAccessor(nitf_definition, synthetic_data)
-        original_fhdr = accessor["FHDR"].as_str()
-        original_fver = accessor["FVER"].as_str()
+    def test_header_round_trip(self, nitf_definition, synthetic_data):
+        """``encode(decode(header)) == header`` for the NITF file header.
 
-        # Write to a new structure using streaming mode
-        writer = StructureWriter.new_streaming(nitf_definition)
-        writer["FHDR"] = original_fhdr
-        writer["FVER"] = original_fver
-
-        # Verify written values match
-        buffer = writer.buffer()
-        assert buffer[:4] == b"NITF"
-        assert buffer[4:9] == b"02.10"
+        The header's conditional fields (e.g. UDHOFL gated on UDHDL) require the
+        full field set, so this re-encodes the whole decoded dict — a stronger
+        check than the old writer test, which only wrote FHDR/FVER and inspected
+        a buffer prefix.
+        """
+        decoded = nitf_definition.decode(synthetic_data)
+        raw = nitf_definition.encode(decoded)
+        assert raw[:4] == b"NITF"
+        assert raw[4:9] == b"02.10"
+        # Header prefix reproduces the on-disk bytes exactly.
+        assert synthetic_data[: len(raw)] == raw
 
     def test_repeated_field_round_trip(self):
-        """Test that a list written for a repeated field reads back via as_array()."""
+        """A list written for a repeated field reads back as an equal list."""
         registry = StructureRegistry()
         registry.add_search_path(str(STRUCTURES_DIR))
         defn = registry.get("tre_imrfca")
 
-        writer = StructureWriter.new_streaming(defn)
-        writer.set("XINC", _IMRFCA_LIST)
-        writer.set("XIDC", _IMRFCA_LIST)
-        writer.set("YINC", _IMRFCA_LIST)
-        writer.set("YIDC", _IMRFCA_LIST)
-        raw = writer.finish()
+        raw = defn.encode(
+            {
+                "XINC": _IMRFCA_LIST,
+                "XIDC": _IMRFCA_LIST,
+                "YINC": _IMRFCA_LIST,
+                "YIDC": _IMRFCA_LIST,
+            }
+        )
+        decoded = defn.decode(raw)
+        assert decoded["XINC"] == _IMRFCA_LIST
 
-        accessor = StructureAccessor(defn, raw)
-        elements = accessor["XINC"].as_array()
-        assert len(elements) == 20
-        assert all(e.as_str() == _IMRFCA_ELEM for e in elements)
+
+# =============================================================================
+# Memory-Mapped File / Buffer-Protocol Input Tests
+# =============================================================================
+
+class TestMmapSupport:
+    """``decode`` accepts any buffer-protocol input — real end-user behavior."""
+
+    @pytest.fixture
+    def nitf_definition(self):
+        """Get the NITF file header definition."""
+        registry = StructureRegistry()
+        registry.add_search_path(str(STRUCTURES_DIR))
+        return registry.get("nitf_02.10_file_header")
+
+    def test_decode_from_mmap(self, nitf_definition):
+        """Decode input from a memory-mapped file."""
+        file_size = Path(SYNTHETIC_NITF).stat().st_size
+        if file_size == 0:
+            pytest.skip("Synthetic NITF file is empty; cannot mmap empty file on all platforms.")
+        with open(SYNTHETIC_NITF, "rb") as f, \
+             mmap.mmap(f.fileno(), file_size, access=mmap.ACCESS_READ) as mm:
+            decoded = nitf_definition.decode(mm)
+            assert decoded["FHDR"] == "NITF"
+
+    def test_decode_from_memoryview(self, nitf_definition):
+        """Decode input from a memoryview."""
+        with open(SYNTHETIC_NITF, "rb") as f:
+            data = f.read()
+
+        decoded = nitf_definition.decode(memoryview(data))
+        assert decoded["FHDR"] == "NITF"
+
+    def test_decode_from_bytearray(self, nitf_definition):
+        """Decode input from a bytearray."""
+        with open(SYNTHETIC_NITF, "rb") as f:
+            data = bytearray(f.read())
+
+        decoded = nitf_definition.decode(data)
+        assert decoded["FHDR"] == "NITF"
