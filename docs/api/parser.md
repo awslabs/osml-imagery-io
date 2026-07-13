@@ -11,35 +11,13 @@
 
 ## StructureDefinition
 
+A `StructureDefinition` is the entire public interface for reading and writing a
+named binary structure. Its `decode` method parses raw bytes into a nested dict
+(lists for repeated fields, dicts for nested types), and its `encode` method
+serializes such a dict back to bytes — a symmetric, dict-based round trip.
+
 ```{eval-rst}
 .. autoclass:: aws.osml.io.StructureDefinition
-   :members:
-   :undoc-members:
-   :show-inheritance:
-```
-
-## StructureAccessor
-
-```{eval-rst}
-.. autoclass:: aws.osml.io.StructureAccessor
-   :members:
-   :undoc-members:
-   :show-inheritance:
-```
-
-## StructureWriter
-
-```{eval-rst}
-.. autoclass:: aws.osml.io.StructureWriter
-   :members:
-   :undoc-members:
-   :show-inheritance:
-```
-
-## Value
-
-```{eval-rst}
-.. autoclass:: aws.osml.io.Value
    :members:
    :undoc-members:
    :show-inheritance:

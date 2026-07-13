@@ -22,7 +22,7 @@
 //! * :class:`TextAssetProvider` — text asset access.
 //! * :class:`DataAssetProvider` — structured data (XML/JSON) access.
 //! * :class:`GraphicsAssetProvider` — vector graphics (CGM) access.
-//! * :class:`StructureRegistry`, :class:`StructureAccessor`, :class:`StructureWriter` — binary structure parsing and encoding.
+//! * :class:`StructureRegistry`, :class:`StructureDefinition` — binary structure parsing and encoding via ``encode``/``decode``.
 
 pub mod asset;
 pub mod buffered_data;
@@ -52,9 +52,7 @@ pub use graphics::PyGraphicsAssetProvider;
 pub use image::PyImageAssetProvider;
 pub use io::IO;
 pub use metadata::PyMetadataProvider;
-pub use parser::{
-    PyStructureAccessor, PyStructureDefinition, PyStructureRegistry, PyStructureWriter, PyValue,
-};
+pub use parser::{PyStructureDefinition, PyStructureRegistry};
 pub use reader::PyDatasetReader;
 pub use text::PyTextAssetProvider;
 pub use writer::PyDatasetWriter;

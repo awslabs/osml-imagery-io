@@ -29,8 +29,7 @@ pub use bindings::{
     PyAssetProvider, PyBufferedDataAssetProvider, PyBufferedImageAssetProvider,
     PyBufferedMetadataProvider, PyBufferedTextAssetProvider, PyDataAssetProvider, PyDatasetReader,
     PyDatasetWriter, PyGraphicsAssetProvider, PyImageAssetProvider, PyMetadataProvider,
-    PyStructureAccessor, PyStructureDefinition, PyStructureRegistry, PyStructureWriter,
-    PyTextAssetProvider, PyValue, IO,
+    PyStructureDefinition, PyStructureRegistry, PyTextAssetProvider, IO,
 };
 pub use buffered::{
     BufferedDataAssetProvider, BufferedImageAssetProvider, BufferedMetadataProvider,
@@ -65,10 +64,7 @@ fn _io(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<IO>()?;
     // Parser bindings
     m.add_class::<PyStructureRegistry>()?;
-    m.add_class::<PyStructureAccessor>()?;
-    m.add_class::<PyStructureWriter>()?;
     m.add_class::<PyStructureDefinition>()?;
-    m.add_class::<PyValue>()?;
     // Codec decode bindings
     #[cfg(feature = "openjpeg")]
     m.add_function(wrap_pyfunction!(bindings::codecs::decode_jpeg2000, m)?)?;

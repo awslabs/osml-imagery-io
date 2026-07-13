@@ -369,7 +369,7 @@ direction TB
 
 ```
 
-## Parser Infrastructure (PyStructure Classes)
+## Parser Infrastructure (StructureRegistry / StructureDefinition)
 
 The parser infrastructure provides a data-driven approach to reading and writing binary structures. Instead of hand-coding parsers for each format, structure definitions are loaded from KSY (Kaitai Struct YAML) files and used to parse binary data at runtime. This enables maintainable parsing of formats like NITF headers and TRE extensions.
 
@@ -390,40 +390,20 @@ direction TB
         +id str
         +title Optional[str]
         +field_names List[str]
-    }
-
-    class StructureAccessor {
-        +__init__(definition: StructureDefinition, data: bytes)
-        +__getitem__(path: str) Value
-        +has(path: str) bool
-        +fields() List[str]
-        +raw_view(path: str) bytes
-        +field_byte_range(path: str) Tuple[int, int]
-        +data bytes
-        +definition StructureDefinition
-    }
-
-    class StructureWriter {
-        +new_fixed(definition: StructureDefinition)$ StructureWriter
-        +new_streaming(definition: StructureDefinition)$ StructureWriter
-        +__setitem__(path: str, value: Any) None
-        +set(path: str, value: Any) None
-        +is_set(path: str) bool
-        +finish() bytes
-        +buffer() bytes
-    }
-
-    class Value {
-        +as_str() str
-        +as_int() int
-        +as_float() float
-        +as_bytes() bytes
+        +__len__() int
+        +decode(data: bytes) dict
+        +encode(values: dict, strict: bool) bytes
     }
 
     StructureRegistry --> StructureDefinition : provides
-    StructureAccessor --> StructureDefinition : uses
-    StructureAccessor --> Value : returns
-    StructureWriter --> StructureDefinition : uses
 ```
+
+`StructureDefinition` is the entire public read/write surface: `decode` parses
+bytes into a nested dict (lists for repeated fields, dicts for nested types) and
+`encode` serializes such a dict back to bytes. The path-based
+`StructureAccessor` / `StructureWriter` / `Value` classes that once wrapped these
+operations are no longer part of the public API — they remain internal Rust
+types in `src/parser/` (see the [parser design](parser-design.md)) that `decode`
+and `encode` are built on, but they are not exposed to Python.
 
 For parser usage examples and structure definition authoring, see the [Metadata](../user-guide/metadata.md) user guide.

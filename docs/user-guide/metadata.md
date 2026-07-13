@@ -455,11 +455,33 @@ Structure definitions drive both directions of the pipeline:
 Adding a new `.ksy` file for a TRE automatically enables both reading and
 writing that TRE — no code changes required.
 
-#### Lower-Level Access with StructureAccessor
+#### Lower-Level Access with decode / encode
 
-For lower-level access with built-in type conversion, the `StructureAccessor`
-returns `Value` objects with `as_str()`, `as_int()`, and `as_float()` methods
-that handle NITF's ASCII-numeric conventions (e.g. parsing `"003"` as `3`).
+When you have a raw binary blob for a single structure — a TRE payload, a DES,
+or any registered header — you can parse and serialize it directly through the
+`StructureDefinition` returned by the registry. `decode` turns bytes into a
+nested dict (repeated fields become lists, nested types become dicts), and
+`encode` turns such a dict back into bytes:
+
+```python
+from aws.osml.io import StructureRegistry
+
+registry = StructureRegistry()
+definition = registry.get("TRE_GEOLOB")
+
+# Parse a raw TRE payload into a dict of fields
+fields = definition.decode(raw_bytes)
+arv = fields["ARV"]                 # "000360000"
+
+# Serialize a dict of fields back to bytes
+raw = definition.encode({"ARV": "000360000", "BRV": "000360000"})
+```
+
+Values come back as the same Python types the `MetadataProvider` interface
+yields — ASCII-numeric fields as strings, binary integers as `int` — so cast
+with `int(...)` when you need a number. `decode` accepts any bytes-like input
+(`bytes`, `bytearray`, `memoryview`), and `encode` auto-formats numeric fields
+to their defined widths.
 
 #### Writing Your Own Structure Definitions
 

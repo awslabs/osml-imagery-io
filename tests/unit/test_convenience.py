@@ -533,10 +533,7 @@ class TestPublicApiSurface:
             "MetadataProvider",
             "BufferedMetadataProvider",
             "StructureRegistry",
-            "StructureAccessor",
-            "StructureWriter",
             "StructureDefinition",
-            "Value",
         }
 
         expected = convenience_members | core_members
@@ -548,58 +545,6 @@ class TestPublicApiSurface:
         # Convenience members specifically must be present
         for name in convenience_members:
             assert name in all_members, f"'{name}' not in __all__"
-
-
-# ============================================================================
-# test_existing_api_preserved
-# ============================================================================
-
-
-class TestExistingApiPreserved:
-    """Verify no existing __all__ members were removed.
-
-    **Validates: Requirements 7.2, 7.3**
-    """
-
-    def test_existing_api_preserved(self):
-        """All pre-existing __all__ members are still present after adding convenience API."""
-        import aws.osml.io as io_module
-
-        all_members = set(io_module.__all__)
-
-        # These are the members that existed before the convenience API was added
-        pre_existing_members = {
-            "__version__",
-            "AssetType",
-            "PixelType",
-            "IO",
-            "open",
-            "DatasetReader",
-            "DatasetWriter",
-            "AssetProvider",
-            "ImageAssetProvider",
-            "BufferedImageAssetProvider",
-            "TextAssetProvider",
-            "BufferedTextAssetProvider",
-            "DataAssetProvider",
-            "GraphicsAssetProvider",
-            "MetadataProvider",
-            "BufferedMetadataProvider",
-            "StructureRegistry",
-            "StructureAccessor",
-            "StructureWriter",
-            "StructureDefinition",
-            "Value",
-        }
-
-        removed = pre_existing_members - all_members
-        assert not removed, f"Existing members removed from __all__: {removed}"
-
-        # Verify each pre-existing member is importable
-        for name in pre_existing_members:
-            assert hasattr(io_module, name), (
-                f"'{name}' is in __all__ but not importable from aws.osml.io"
-            )
 
 
 # ============================================================================

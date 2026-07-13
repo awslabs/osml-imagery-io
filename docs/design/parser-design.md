@@ -15,7 +15,7 @@ Key differences from Kaitai Struct:
 | `instances` | Supported | Not implemented |
 | `params` | Supported (Kaitai-native) | Supported — typed parameters bound at a `type: foo(arg)` reference |
 | `consts:` (String-keyed map) | Not supported | Our extension — file-level named scalar/map literals |
-| Array indexing `arr[0]` | `arr[0]` bracket syntax (native) | `arr[i]` bracket syntax in expressions (native); repeated fields surface as `Value::Array` in the public API |
+| Array indexing `arr[0]` | `arr[0]` bracket syntax (native) | `arr[i]` bracket syntax in expressions (native); repeated fields surface internally as `Value::Array` and decode to Python lists |
 | Map lookup `map[key]` | Not supported | Our extension — String-keyed subscript over a `consts:` map |
 | NITF encodings | Not built-in | BCS-A, BCS-N, BCS-NPI, ECS-A support |
 | Writing support | Limited | Full bidirectional read/write |

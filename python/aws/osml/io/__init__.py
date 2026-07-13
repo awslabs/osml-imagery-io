@@ -21,12 +21,9 @@ from aws.osml.io._io import (
     ImageAssetProvider,
     MetadataProvider,
     PixelType,
-    StructureAccessor,
     StructureDefinition,
     StructureRegistry,
-    StructureWriter,
     TextAssetProvider,
-    Value,
     __version__,
 )
 from aws.osml.io.convenience import ImageInfo, Tile, iminfo, imread, imsave, tiles
@@ -62,10 +59,7 @@ __all__ = [
     "BufferedMetadataProvider",
     # Parser
     "StructureRegistry",
-    "StructureAccessor",
-    "StructureWriter",
     "StructureDefinition",
-    "Value",
     # Convenience API
     "imread",
     "imsave",
