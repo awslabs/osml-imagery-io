@@ -13,7 +13,7 @@ use tempfile::NamedTempFile;
 use _io::jbp::{JBPDatasetReader, JBPDatasetWriter, NitfFormat};
 use _io::{
     BufferedImageAssetProvider, BufferedMetadataProvider, DatasetReader, DatasetWriter,
-    MemoryImageConfig, PixelType,
+    MemoryImageConfig, OwnedBuffer, PixelType,
 };
 
 use super::super::common;
@@ -37,9 +37,9 @@ pub fn bench_jbp_c3(c: &mut Criterion) {
 
     // 3. Create encoding hints: IC=C3, single block covering the whole image
     let metadata = BufferedMetadataProvider::new();
-    metadata.set("ic", "C3");
-    metadata.set("nppbh", &common::NCOLS.to_string());
-    metadata.set("nppbv", &common::NROWS.to_string());
+    metadata.set("ic", serde_json::json!("C3"));
+    metadata.set("nppbh", serde_json::json!(common::NCOLS.to_string()));
+    metadata.set("nppbv", serde_json::json!(common::NROWS.to_string()));
 
     // 4. Write NITF with IC=C3
     let tmp = NamedTempFile::new().expect("failed to create temp file");
@@ -61,7 +61,8 @@ pub fn bench_jbp_c3(c: &mut Criterion) {
 
     // 5. Read back and obtain the image asset provider
     let file_data = std::fs::read(tmp.path()).expect("failed to read NITF file");
-    let reader = JBPDatasetReader::from_bytes(&file_data).expect("reader creation failed");
+    let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(file_data))
+        .expect("reader creation failed");
     let asset_keys = reader.get_asset_keys(Some(_io::AssetType::Image), None);
     let asset = reader.get_asset(&asset_keys[0]).expect("get_asset failed");
     let image_provider = asset.as_image().expect("expected Image asset variant");

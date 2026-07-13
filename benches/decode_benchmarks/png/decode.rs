@@ -9,7 +9,10 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use tempfile::NamedTempFile;
 
 use _io::png::{PNGDatasetReader, PNGDatasetWriter};
-use _io::{BufferedImageAssetProvider, DatasetReader, DatasetWriter, MemoryImageConfig, PixelType};
+use _io::{
+    BufferedImageAssetProvider, DatasetReader, DatasetWriter, MemoryImageConfig, OwnedBuffer,
+    PixelType,
+};
 
 use super::super::common;
 
@@ -46,7 +49,8 @@ pub fn bench_png_decode(c: &mut Criterion) {
 
     // 4. Read back and obtain the image asset provider
     let file_data = std::fs::read(tmp.path()).expect("failed to read PNG file");
-    let reader = PNGDatasetReader::from_bytes(&file_data).expect("reader creation failed");
+    let reader = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(file_data))
+        .expect("reader creation failed");
     let asset_keys = reader.get_asset_keys(Some(_io::AssetType::Image), None);
     let asset = reader.get_asset(&asset_keys[0]).expect("get_asset failed");
     let image_provider = asset.as_image().expect("expected Image asset variant");

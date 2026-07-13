@@ -4,8 +4,6 @@
 //! - `"nc_decode"`: migrated from `benches/nc_decode.rs` (15-band, 16-bit, 1024×1024 IMODE=P)
 //! - `"jbp_nc"`: new IMODE B/P/R/S benchmarks (3-band, 8-bit, 2048×2048)
 
-use std::sync::Arc;
-
 use criterion::{BenchmarkId, Criterion, Throughput};
 
 use _io::jbp::image::decoder::BlockDecoder;
@@ -15,6 +13,7 @@ use _io::jbp::image::interleave::{
 use _io::jbp::image::nc_decoder::UncompressedBlockDecoder;
 use _io::jbp::image::swap_be_to_ne;
 use _io::jbp::image::types::{InterleaveMode, PixelJustification, PixelValueType};
+use _io::OwnedBuffer;
 
 use super::super::common;
 
@@ -41,7 +40,7 @@ fn generate_bip_data() -> Vec<u8> {
 }
 
 /// Build an `UncompressedBlockDecoder` for a single-block 1024×1024×15 IMODE=P image.
-fn create_imode_p_decoder(data: Arc<[u8]>) -> UncompressedBlockDecoder {
+fn create_imode_p_decoder(data: OwnedBuffer) -> UncompressedBlockDecoder {
     UncompressedBlockDecoder::from_raw_params(
         data,
         NROWS,
@@ -66,8 +65,7 @@ fn create_imode_p_decoder(data: Arc<[u8]>) -> UncompressedBlockDecoder {
 
 pub fn bench_decode_block_imode_p(c: &mut Criterion) {
     let data = generate_bip_data();
-    let arc_data: Arc<[u8]> = Arc::from(data);
-    let decoder = create_imode_p_decoder(arc_data);
+    let decoder = create_imode_p_decoder(OwnedBuffer::from_vec(data));
 
     let mut group = c.benchmark_group("nc_decode");
     group.throughput(Throughput::Bytes(DATA_SIZE as u64));
@@ -235,7 +233,7 @@ pub fn bench_tiled_transpose_tile_sizes(c: &mut Criterion) {
 
 /// Helper: build an `UncompressedBlockDecoder` for a single 2048×2048×3 block
 /// with the given interleave mode and 8-bit unsigned pixels.
-fn create_imode_decoder(data: Arc<[u8]>, imode: InterleaveMode) -> UncompressedBlockDecoder {
+fn create_imode_decoder(data: OwnedBuffer, imode: InterleaveMode) -> UncompressedBlockDecoder {
     UncompressedBlockDecoder::from_raw_params(
         data,
         common::NROWS,
@@ -256,7 +254,7 @@ fn create_imode_decoder(data: Arc<[u8]>, imode: InterleaveMode) -> UncompressedB
 
 pub fn bench_nc_imode_b(c: &mut Criterion) {
     let pixels = common::generate_synthetic_pixels(common::DATA_SIZE);
-    let decoder = create_imode_decoder(Arc::from(pixels.as_slice()), InterleaveMode::B);
+    let decoder = create_imode_decoder(OwnedBuffer::from_vec(pixels), InterleaveMode::B);
 
     let mut group = c.benchmark_group("jbp_nc");
     group.throughput(Throughput::Bytes(common::DATA_SIZE as u64));
@@ -275,7 +273,7 @@ pub fn bench_nc_imode_b(c: &mut Criterion) {
 
 pub fn bench_nc_imode_p(c: &mut Criterion) {
     let pixels = common::generate_synthetic_pixels(common::DATA_SIZE);
-    let decoder = create_imode_decoder(Arc::from(pixels.as_slice()), InterleaveMode::P);
+    let decoder = create_imode_decoder(OwnedBuffer::from_vec(pixels), InterleaveMode::P);
 
     let mut group = c.benchmark_group("jbp_nc");
     group.throughput(Throughput::Bytes(common::DATA_SIZE as u64));
@@ -294,7 +292,7 @@ pub fn bench_nc_imode_p(c: &mut Criterion) {
 
 pub fn bench_nc_imode_r(c: &mut Criterion) {
     let pixels = common::generate_synthetic_pixels(common::DATA_SIZE);
-    let decoder = create_imode_decoder(Arc::from(pixels.as_slice()), InterleaveMode::R);
+    let decoder = create_imode_decoder(OwnedBuffer::from_vec(pixels), InterleaveMode::R);
 
     let mut group = c.benchmark_group("jbp_nc");
     group.throughput(Throughput::Bytes(common::DATA_SIZE as u64));
@@ -313,7 +311,7 @@ pub fn bench_nc_imode_r(c: &mut Criterion) {
 
 pub fn bench_nc_imode_s(c: &mut Criterion) {
     let pixels = common::generate_synthetic_pixels(common::DATA_SIZE);
-    let decoder = create_imode_decoder(Arc::from(pixels.as_slice()), InterleaveMode::S);
+    let decoder = create_imode_decoder(OwnedBuffer::from_vec(pixels), InterleaveMode::S);
 
     let mut group = c.benchmark_group("jbp_nc");
     group.throughput(Throughput::Bytes(common::DATA_SIZE as u64));
@@ -339,7 +337,7 @@ pub fn bench_nc_imode_s(c: &mut Criterion) {
 // ===========================================================================
 
 /// Helper: build a decoder for a single 1024×1024×15 block at the given IMODE.
-fn create_multiband_decoder(data: Arc<[u8]>, imode: InterleaveMode) -> UncompressedBlockDecoder {
+fn create_multiband_decoder(data: OwnedBuffer, imode: InterleaveMode) -> UncompressedBlockDecoder {
     UncompressedBlockDecoder::from_raw_params(
         data,
         NROWS,
@@ -360,7 +358,7 @@ fn create_multiband_decoder(data: Arc<[u8]>, imode: InterleaveMode) -> Uncompres
 
 pub fn bench_nc_multiband_imode_b(c: &mut Criterion) {
     let data = generate_bip_data(); // 30 MiB, deterministic pattern
-    let decoder = create_multiband_decoder(Arc::from(data.as_slice()), InterleaveMode::B);
+    let decoder = create_multiband_decoder(OwnedBuffer::from_vec(data), InterleaveMode::B);
 
     let mut group = c.benchmark_group("jbp_nc_multiband");
     group.throughput(Throughput::Bytes(DATA_SIZE as u64));
@@ -379,7 +377,7 @@ pub fn bench_nc_multiband_imode_b(c: &mut Criterion) {
 
 pub fn bench_nc_multiband_imode_p(c: &mut Criterion) {
     let data = generate_bip_data();
-    let decoder = create_multiband_decoder(Arc::from(data.as_slice()), InterleaveMode::P);
+    let decoder = create_multiband_decoder(OwnedBuffer::from_vec(data), InterleaveMode::P);
 
     let mut group = c.benchmark_group("jbp_nc_multiband");
     group.throughput(Throughput::Bytes(DATA_SIZE as u64));
@@ -398,7 +396,7 @@ pub fn bench_nc_multiband_imode_p(c: &mut Criterion) {
 
 pub fn bench_nc_multiband_imode_r(c: &mut Criterion) {
     let data = generate_bip_data();
-    let decoder = create_multiband_decoder(Arc::from(data.as_slice()), InterleaveMode::R);
+    let decoder = create_multiband_decoder(OwnedBuffer::from_vec(data), InterleaveMode::R);
 
     let mut group = c.benchmark_group("jbp_nc_multiband");
     group.throughput(Throughput::Bytes(DATA_SIZE as u64));
@@ -417,7 +415,7 @@ pub fn bench_nc_multiband_imode_r(c: &mut Criterion) {
 
 pub fn bench_nc_multiband_imode_s(c: &mut Criterion) {
     let data = generate_bip_data();
-    let decoder = create_multiband_decoder(Arc::from(data.as_slice()), InterleaveMode::S);
+    let decoder = create_multiband_decoder(OwnedBuffer::from_vec(data), InterleaveMode::S);
 
     let mut group = c.benchmark_group("jbp_nc_multiband");
     group.throughput(Throughput::Bytes(DATA_SIZE as u64));

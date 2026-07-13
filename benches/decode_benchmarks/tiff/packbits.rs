@@ -13,7 +13,7 @@ use tempfile::NamedTempFile;
 use _io::tiff::{TIFFDatasetReader, TIFFDatasetWriter};
 use _io::{
     BufferedImageAssetProvider, BufferedMetadataProvider, DatasetReader, DatasetWriter,
-    MemoryImageConfig, PixelType,
+    MemoryImageConfig, OwnedBuffer, PixelType,
 };
 
 use super::super::common;
@@ -35,9 +35,9 @@ pub fn bench_tiff_packbits(c: &mut Criterion) {
 
     // Compression=32773 (PackBits), tile 2048×2048
     let metadata = BufferedMetadataProvider::new();
-    metadata.set_json("259", serde_json::json!(32773));
-    metadata.set_json("322", serde_json::json!(common::NCOLS));
-    metadata.set_json("323", serde_json::json!(common::NROWS));
+    metadata.set("259", serde_json::json!(32773));
+    metadata.set("322", serde_json::json!(common::NCOLS));
+    metadata.set("323", serde_json::json!(common::NROWS));
 
     let tmp = NamedTempFile::new().expect("failed to create temp file");
     let mut writer = TIFFDatasetWriter::new(tmp.path()).expect("writer creation failed");
@@ -56,7 +56,8 @@ pub fn bench_tiff_packbits(c: &mut Criterion) {
     writer.close().expect("writer close failed");
 
     let file_data = std::fs::read(tmp.path()).expect("failed to read TIFF file");
-    let reader = TIFFDatasetReader::from_bytes(&file_data).expect("reader creation failed");
+    let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(file_data))
+        .expect("reader creation failed");
     let asset_keys = reader.get_asset_keys(Some(_io::AssetType::Image), None);
     let asset = reader.get_asset(&asset_keys[0]).expect("get_asset failed");
     let image_provider = asset.as_image().expect("expected Image asset variant");
