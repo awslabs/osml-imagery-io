@@ -953,7 +953,10 @@ fn eval_subscript_on_scalar_is_type_error() {
 fn image_records_context() -> EvalContext {
     let record = |ncolcb: i64| {
         let mut m = std::collections::HashMap::new();
-        m.insert("NCOLCB".to_string(), Node::Scalar(EvalResult::Integer(ncolcb)));
+        m.insert(
+            "NCOLCB".to_string(),
+            Node::Scalar(EvalResult::Integer(ncolcb)),
+        );
         Node::Struct(m)
     };
     let mut ctx = EvalContext::new();
@@ -983,10 +986,8 @@ fn eval_array_subscript_with_index_expression_and_arithmetic() {
     // with `_index` bound to the outer image loop counter.
     let evaluator = ExpressionEvaluator::new();
     let ctx = image_records_context().with_index(2);
-    let expr = ExpressionEvaluator::parse(
-        "NROWCB.to_i * IMAGE_RECORDS[_index].NCOLCB.to_i",
-    )
-    .unwrap();
+    let expr =
+        ExpressionEvaluator::parse("NROWCB.to_i * IMAGE_RECORDS[_index].NCOLCB.to_i").unwrap();
     // NROWCB(4) * IMAGE_RECORDS[2].NCOLCB(7) = 28.
     assert_eq!(
         evaluator.evaluate(&expr, &ctx).unwrap(),

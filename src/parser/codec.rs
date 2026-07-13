@@ -680,9 +680,7 @@ fn value_to_json_seeded(
                 // (evaluated in the enclosing scope, with the element `_index`
                 // when repeated) so a param-sized nested field resolves too.
                 let seeded = match ref_field {
-                    Some(field) => {
-                        seed_type_params_read(field, &def, inherited, ref_index)
-                    }
+                    Some(field) => seed_type_params_read(field, &def, inherited, ref_index),
                     None => inherited.clone(),
                 };
                 if let Ok(accessor) =
@@ -1075,7 +1073,8 @@ mod tests {
         fields.insert("FLAG".to_string(), serde_json::json!("0"));
         // OPT provided but its condition is false, so it must not be written.
         fields.insert("OPT".to_string(), serde_json::json!("ABCD"));
-        let encoded = encode_fields(&def, &fields, false).expect("Ok(false) condition should not error");
+        let encoded =
+            encode_fields(&def, &fields, false).expect("Ok(false) condition should not error");
         assert_eq!(&encoded, b"0");
     }
 
@@ -1119,7 +1118,10 @@ mod tests {
 
         let decoded = decode_fields(&def, &encoded, None);
         assert_eq!(decoded.get("CODE"), Some(&serde_json::json!("06b")));
-        assert_eq!(decoded.get("VALUE"), Some(&serde_json::json!("HELLOWORLD!!")));
+        assert_eq!(
+            decoded.get("VALUE"),
+            Some(&serde_json::json!("HELLOWORLD!!"))
+        );
 
         let reencoded = encode_fields(&def, &decoded, false).expect("re-encode");
         assert_eq!(reencoded, encoded);
@@ -1135,7 +1137,10 @@ mod tests {
         fields.insert("VALUE".to_string(), serde_json::json!("X"));
         let err = encode_fields(&def, &fields, false).unwrap_err();
         assert!(
-            matches!(err, WriteError::ValidationError { .. } | WriteError::ConversionError { .. }),
+            matches!(
+                err,
+                WriteError::ValidationError { .. } | WriteError::ConversionError { .. }
+            ),
             "expected a write error for unknown map key, got {:?}",
             err
         );
@@ -1155,7 +1160,9 @@ mod tests {
             )
             .with_field(
                 FieldDefinition::new("DATA", FieldType::String)
-                    .with_size(SizeSpec::expr(ExpressionEvaluator::parse("n.to_i").unwrap()))
+                    .with_size(SizeSpec::expr(
+                        ExpressionEvaluator::parse("n.to_i").unwrap(),
+                    ))
                     .with_encoding(Encoding::BcsA),
             );
         let mut fields = HashMap::new();
@@ -1327,10 +1334,8 @@ mod tests {
                     .with_size(SizeSpec::fixed(1))
                     .with_encoding(Encoding::BcsA)
                     .with_repeat(RepeatSpec::expr(
-                        ExpressionEvaluator::parse(
-                            "NROW.to_i * RECORDS[image_index].NCOL.to_i",
-                        )
-                        .unwrap(),
+                        ExpressionEvaluator::parse("NROW.to_i * RECORDS[image_index].NCOL.to_i")
+                            .unwrap(),
                     )),
             );
 

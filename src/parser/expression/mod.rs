@@ -165,14 +165,12 @@ impl EvalResult {
         match self {
             EvalResult::Integer(n) => Ok(*n),
             EvalResult::Float(f) => Ok(*f as i64),
-            EvalResult::String(s) => {
-                s.trim()
-                    .parse::<i64>()
-                    .map_err(|_| crate::parser::error::ExpressionError::TypeError {
-                        operator: "[] index".to_string(),
-                        operand_type: format!("String({})", s),
-                    })
-            }
+            EvalResult::String(s) => s.trim().parse::<i64>().map_err(|_| {
+                crate::parser::error::ExpressionError::TypeError {
+                    operator: "[] index".to_string(),
+                    operand_type: format!("String({})", s),
+                }
+            }),
             other => Err(crate::parser::error::ExpressionError::TypeError {
                 operator: "[] index".to_string(),
                 operand_type: format!("{:?}", other),

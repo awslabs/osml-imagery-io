@@ -578,8 +578,9 @@ mod tests {
     /// name that is never provided, so its `size:` cannot be resolved.
     fn unresolvable_size_def() -> StructureDefinition {
         StructureDefinition::new("bad_size").with_field(
-            FieldDefinition::new("F", FieldType::String)
-                .with_size(SizeSpec::expr(ExpressionEvaluator::parse("MISSING.to_i").unwrap())),
+            FieldDefinition::new("F", FieldType::String).with_size(SizeSpec::expr(
+                ExpressionEvaluator::parse("MISSING.to_i").unwrap(),
+            )),
         )
     }
 
@@ -592,9 +593,10 @@ mod tests {
         let data = vec![b'X'; 16];
         let evaluator = ExpressionEvaluator::new();
         let seed = HashMap::new();
-        let result = build_context_from_definition(&def, &data, &evaluator, "", &seed, |field, off, sz| {
-            read_simple_value(field, &data[off..off + sz])
-        });
+        let result =
+            build_context_from_definition(&def, &data, &evaluator, "", &seed, |field, off, sz| {
+                read_simple_value(field, &data[off..off + sz])
+            });
         assert!(
             matches!(result, Err(AccessError::ExpressionError { .. })),
             "expected ExpressionError, got {:?}",
@@ -607,7 +609,10 @@ mod tests {
         // `Ok(false)` on an `if:` still means the field is legitimately absent:
         // the builder skips it and succeeds (does not error).
         let def = StructureDefinition::new("cond")
-            .with_field(FieldDefinition::new("FLAG", FieldType::UnsignedInt(1)).with_size(SizeSpec::Fixed(1)))
+            .with_field(
+                FieldDefinition::new("FLAG", FieldType::UnsignedInt(1))
+                    .with_size(SizeSpec::Fixed(1)),
+            )
             .with_field(
                 FieldDefinition::new("OPT", FieldType::String)
                     .with_size(SizeSpec::Fixed(4))
@@ -617,10 +622,11 @@ mod tests {
         let data = vec![0u8; 8];
         let evaluator = ExpressionEvaluator::new();
         let seed = HashMap::new();
-        let ctx = build_context_from_definition(&def, &data, &evaluator, "", &seed, |field, off, sz| {
-            read_simple_value(field, &data[off..off + sz])
-        })
-        .expect("Ok(false) condition should not error");
+        let ctx =
+            build_context_from_definition(&def, &data, &evaluator, "", &seed, |field, off, sz| {
+                read_simple_value(field, &data[off..off + sz])
+            })
+            .expect("Ok(false) condition should not error");
         // FLAG parsed; OPT skipped as absent.
         assert!(ctx.get_scalar("FLAG").is_some());
         assert!(ctx.get_scalar("OPT").is_none());
@@ -638,9 +644,10 @@ mod tests {
         let data = vec![b'X'; 8];
         let evaluator = ExpressionEvaluator::new();
         let seed = HashMap::new();
-        let result = build_context_from_definition(&def, &data, &evaluator, "", &seed, |field, off, sz| {
-            read_simple_value(field, &data[off..off + sz])
-        });
+        let result =
+            build_context_from_definition(&def, &data, &evaluator, "", &seed, |field, off, sz| {
+                read_simple_value(field, &data[off..off + sz])
+            });
         assert!(
             matches!(result, Err(AccessError::ExpressionError { .. })),
             "expected ExpressionError, got {:?}",

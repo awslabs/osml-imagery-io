@@ -271,13 +271,8 @@ impl<'a> StructureAccessor<'a> {
 
                 match repeat {
                     RepeatSpec::Count(_) | RepeatSpec::Expression(_) => {
-                        current_offset = self.parse_counted_repeat(
-                            &mut ctx,
-                            field,
-                            count,
-                            size,
-                            current_offset,
-                        );
+                        current_offset =
+                            self.parse_counted_repeat(&mut ctx, field, count, size, current_offset);
                     }
                     RepeatSpec::Until(until_expr) => {
                         let mut elem_offset = current_offset;
@@ -766,8 +761,12 @@ impl<'a> StructureAccessor<'a> {
                             let mut total = 0;
                             let mut current_offset = base_offset;
                             for _ in 0..(n as usize) {
-                                let elem_size =
-                                    self.get_type_size(type_name, &field.type_args, current_offset, ctx)?;
+                                let elem_size = self.get_type_size(
+                                    type_name,
+                                    &field.type_args,
+                                    current_offset,
+                                    ctx,
+                                )?;
                                 total += elem_size;
                                 current_offset += elem_size;
                             }
@@ -800,7 +799,9 @@ impl<'a> StructureAccessor<'a> {
                         FieldType::UnsignedInt(bytes) | FieldType::SignedInt(bytes) => {
                             Ok(*bytes as usize)
                         }
-                        FieldType::TypeRef(type_name) => self.get_type_size(type_name, &field.type_args, offset, ctx),
+                        FieldType::TypeRef(type_name) => {
+                            self.get_type_size(type_name, &field.type_args, offset, ctx)
+                        }
                         _ => Ok(0),
                     }
                 } else {

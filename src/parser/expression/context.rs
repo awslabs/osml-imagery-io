@@ -181,7 +181,10 @@ mod tests {
         // nodes, which every scope re-seeds from `definition.consts`.
         let mut ctx = EvalContext::new();
         ctx.insert_scalar("N", EvalResult::Integer(1));
-        ctx.insert_node("arr", Node::Array(vec![Node::Scalar(EvalResult::Integer(2))]));
+        ctx.insert_node(
+            "arr",
+            Node::Array(vec![Node::Scalar(EvalResult::Integer(2))]),
+        );
         let mut table = HashMap::new();
         table.insert("06a".to_string(), EvalResult::Integer(11));
         ctx.insert_node("widths", Node::Map(table));

@@ -137,10 +137,12 @@ impl ExpressionEvaluator {
                         // the element is a struct the caller wrote `A[i]` without
                         // a following `.member`, which is an intermediary at the
                         // final boundary.
-                        elem.as_scalar().cloned().ok_or_else(|| ExpressionError::TypeError {
-                            operator: "[]".to_string(),
-                            operand_type: format!("{:?}", elem),
-                        })
+                        elem.as_scalar()
+                            .cloned()
+                            .ok_or_else(|| ExpressionError::TypeError {
+                                operator: "[]".to_string(),
+                                operand_type: format!("{:?}", elem),
+                            })
                     }
                     Node::Struct(fields) => {
                         // Member deref after a subscript (`A[i].F`) lowers to a
@@ -240,9 +242,9 @@ impl ExpressionEvaluator {
                     }
                     Node::Struct(fields) => {
                         let key = self.evaluate(index, context)?.expect_string()?;
-                        fields.get(&key).ok_or(ExpressionError::UnknownField {
-                            field: key,
-                        })
+                        fields
+                            .get(&key)
+                            .ok_or(ExpressionError::UnknownField { field: key })
                     }
                     other => Err(ExpressionError::TypeError {
                         operator: "[]".to_string(),

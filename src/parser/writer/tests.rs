@@ -597,9 +597,7 @@ fn repeat_eos_encodes_supplied_list() {
     let mut writer = StructureWriter::new(def);
 
     writer.set("tag", "HEADER").unwrap();
-    writer
-        .set("elems", vec!["aaa", "bbb", "ccc"])
-        .unwrap();
+    writer.set("elems", vec!["aaa", "bbb", "ccc"]).unwrap();
     let data = writer.finish().unwrap();
 
     assert_eq!(&data[..6], b"HEADER");

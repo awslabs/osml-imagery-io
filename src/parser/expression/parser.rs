@@ -246,10 +246,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse the `.member` or `.method` that follows a `.` in postfix position.
-    fn parse_member_or_method(
-        &mut self,
-        expr: Expression,
-    ) -> Result<Expression, ExpressionError> {
+    fn parse_member_or_method(&mut self, expr: Expression) -> Result<Expression, ExpressionError> {
         match &self.current {
             Token::Ident(name) => {
                 let name = name.clone();
