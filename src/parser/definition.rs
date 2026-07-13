@@ -11,10 +11,10 @@ use std::path::Path;
 use serde::Deserialize;
 
 use super::error::LoadError;
-use super::expression::ExpressionEvaluator;
+use super::expression::{EvalResult, Expression, ExpressionEvaluator, Node};
 use super::types::{
-    Encoding, Endian, EnumDefinition, FieldDefinition, FieldType, RepeatSpec, SizeSpec,
-    StructureDefinition,
+    Encoding, Endian, EnumDefinition, FieldDefinition, FieldType, ParamDefinition, RepeatSpec,
+    SizeSpec, StructureDefinition,
 };
 
 /// Loads structure definitions from KSY YAML files.
@@ -100,14 +100,64 @@ impl DefinitionLoader {
             HashMap::new()
         };
 
-        Ok(StructureDefinition {
+        // Parse the top-level `consts:` section into intermediary nodes.
+        let consts = Self::convert_consts(raw.consts)?;
+
+        let mut def = StructureDefinition {
             id,
             title: meta.title,
             endian,
             fields,
             types,
             enums,
-        })
+            consts,
+            // The top-level structure takes no parameters; only nested types can
+            // declare `params:` (a TRE root is never referenced with arguments).
+            params: Vec::new(),
+        };
+
+        // `consts:` is a top-level-file-only section, but nested type scopes need
+        // to reference the const maps too (e.g. SENSRB's `time_stamped_set_t`
+        // sizes a field from `sensrb_value_widths[...]`). The inherited-scope
+        // snapshot is scalar-only (Decision 2), so a `Map` node cannot ride it.
+        // Instead, stamp the file-level consts onto every nested type so each
+        // scope seeds them directly from its own `consts`.
+        Self::propagate_consts(&mut def);
+
+        Ok(def)
+    }
+
+    /// Copy the root-level `consts` into every nested type definition (recursively).
+    ///
+    /// Consts are declared only at the top level, but each scope's evaluation
+    /// context is seeded from its own `definition.consts`, so nested types need a
+    /// copy to resolve `MAP[KEY]` subscripts. A nested type that somehow already
+    /// carried consts keeps its own (its entries win), though the loader never
+    /// produces such a case today. A field of the same name still shadows the
+    /// const at evaluation time (the context builders overlay parsed/written
+    /// fields on top of the seeded consts).
+    fn propagate_consts(def: &mut StructureDefinition) {
+        if def.consts.is_empty() {
+            return;
+        }
+        let root_consts = def.consts.clone();
+        Self::stamp_consts_into_types(&mut def.types, &root_consts);
+    }
+
+    /// Recursively seed `consts` into a `types` map and their descendants.
+    fn stamp_consts_into_types(
+        types: &mut HashMap<String, StructureDefinition>,
+        root_consts: &HashMap<String, Node>,
+    ) {
+        for nested in types.values_mut() {
+            for (name, node) in root_consts {
+                nested
+                    .consts
+                    .entry(name.clone())
+                    .or_insert_with(|| node.clone());
+            }
+            Self::stamp_consts_into_types(&mut nested.types, root_consts);
+        }
     }
 
     /// Convert a nested type definition.
@@ -149,6 +199,10 @@ impl DefinitionLoader {
             HashMap::new()
         };
 
+        // Parse the type's declared parameters (`params:`), in order — the
+        // binding order for arguments at a parameterized reference.
+        let params = Self::convert_params(raw.params);
+
         Ok(StructureDefinition {
             id: name.to_string(),
             title: None,
@@ -156,7 +210,23 @@ impl DefinitionLoader {
             fields,
             types,
             enums,
+            // Nested types declare no `consts:` of their own; the root-level
+            // consts are stamped in by `propagate_consts` after the whole file
+            // is converted.
+            consts: HashMap::new(),
+            params,
         })
+    }
+
+    /// Convert a raw `params:` list into ordered [`ParamDefinition`]s.
+    ///
+    /// Order is preserved because arguments at a `type: foo(a, b)` reference bind
+    /// by position. An absent section yields no parameters.
+    fn convert_params(raw: Option<Vec<RawParam>>) -> Vec<ParamDefinition> {
+        raw.into_iter()
+            .flatten()
+            .map(|p| ParamDefinition::new(p.id, p.param_type))
+            .collect()
     }
 
     /// Convert a raw field definition.
@@ -168,8 +238,15 @@ impl DefinitionLoader {
 
         let field_context = format!("{}.{}", context, id);
 
+        // Split a parameterized type reference (`foo(a, b)`) into its base type
+        // name and argument expressions before classifying the type. The base
+        // name is what `parse_field_type` sees (so `TypeRef` holds only `foo`);
+        // the arguments are evaluated at read/write time in this field's scope
+        // and bound to the referenced type's `params:` (see `type_args`).
+        let (base_type, type_args) = Self::split_type_ref_args(&raw, &field_context)?;
+
         // Parse field type
-        let field_type = Self::parse_field_type(raw.field_type.as_deref(), &field_context)?;
+        let field_type = Self::parse_field_type(base_type.as_deref(), &field_context)?;
 
         // Parse size
         let size = Self::parse_size(&raw, &field_context)?;
@@ -204,7 +281,87 @@ impl DefinitionLoader {
             condition,
             repeat,
             doc: raw.doc,
+            type_args,
         })
+    }
+
+    /// Split a (possibly parameterized) type string into its base name and
+    /// parsed argument expressions.
+    ///
+    /// For `foo(expr1, expr2)` this returns `(Some("foo"), [expr1, expr2])`; for
+    /// a plain `foo` or a non-type-ref field it returns the string unchanged with
+    /// no arguments. Only a `TypeRef`-shaped name (lowercase/underscored) can
+    /// carry arguments — a built-in like `u4` never does — but this splits
+    /// purely on the parentheses and leaves type classification to
+    /// [`Self::parse_field_type`]. Each argument is parsed with the same
+    /// [`ExpressionEvaluator`] the `size:`/`if:` fields use, so `_index`,
+    /// arithmetic, and member/subscript access all work as arguments.
+    fn split_type_ref_args(
+        raw: &RawFieldDefinition,
+        context: &str,
+    ) -> Result<(Option<String>, Vec<Expression>), LoadError> {
+        let Some(type_str) = raw.field_type.as_deref() else {
+            return Ok((None, Vec::new()));
+        };
+
+        let Some(open) = type_str.find('(') else {
+            return Ok((Some(type_str.to_string()), Vec::new()));
+        };
+
+        // A parenthesized argument list: require a matching trailing ')'.
+        let trimmed = type_str.trim_end();
+        if !trimmed.ends_with(')') {
+            return Err(LoadError::InvalidType {
+                type_str: type_str.to_string(),
+                context: context.to_string(),
+            });
+        }
+        let base = type_str[..open].trim().to_string();
+        let args_str = trimmed[open + 1..trimmed.len() - 1].trim();
+
+        let args = if args_str.is_empty() {
+            Vec::new()
+        } else {
+            Self::split_top_level_commas(args_str)
+                .into_iter()
+                .map(|arg| {
+                    ExpressionEvaluator::parse(arg.trim()).map_err(|e| {
+                        LoadError::InvalidExpression {
+                            expr: arg.trim().to_string(),
+                            message: e.to_string(),
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        Ok((Some(base), args))
+    }
+
+    /// Split an argument list on commas that sit at parenthesis/bracket depth 0.
+    ///
+    /// A nested call or subscript in an argument (`foo(bar[i], baz(x, y))`) keeps
+    /// its inner commas intact; only the top-level separators split. String
+    /// literals are not scanned for delimiters — TRE type arguments are numeric
+    /// index/scalar expressions, never string literals — so a bare depth scan is
+    /// sufficient here.
+    fn split_top_level_commas(s: &str) -> Vec<String> {
+        let mut parts = Vec::new();
+        let mut depth: i32 = 0;
+        let mut start = 0;
+        for (i, c) in s.char_indices() {
+            match c {
+                '(' | '[' => depth += 1,
+                ')' | ']' => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(s[start..i].to_string());
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        parts.push(s[start..].to_string());
+        parts
     }
 
     /// Parse field type from type string.
@@ -387,6 +544,44 @@ impl DefinitionLoader {
         }
     }
 
+    /// Convert the raw `consts:` section into a map of intermediary nodes.
+    ///
+    /// Each top-level entry is either a scalar const (`Node::Scalar`) or a
+    /// string-keyed lookup table (`Node::Map`), mirroring `convert_enum`. A map's
+    /// values are scalars; a nested map is rejected as malformed.
+    fn convert_consts(
+        raw: Option<HashMap<String, RawConst>>,
+    ) -> Result<HashMap<String, Node>, LoadError> {
+        let Some(raw) = raw else {
+            return Ok(HashMap::new());
+        };
+        let mut out = HashMap::with_capacity(raw.len());
+        for (name, raw_const) in raw {
+            let node = match raw_const {
+                RawConst::Scalar(scalar) => Node::Scalar(Self::scalar_to_eval_result(scalar)),
+                RawConst::Map(entries) => {
+                    let table = entries
+                        .into_iter()
+                        .map(|(k, v)| (k, Self::scalar_to_eval_result(v)))
+                        .collect();
+                    Node::Map(table)
+                }
+            };
+            out.insert(name, node);
+        }
+        Ok(out)
+    }
+
+    /// Lower a deserialized scalar literal to an [`EvalResult`] leaf.
+    fn scalar_to_eval_result(scalar: RawScalar) -> EvalResult {
+        match scalar {
+            RawScalar::Bool(b) => EvalResult::Boolean(b),
+            RawScalar::Integer(n) => EvalResult::Integer(n),
+            RawScalar::Float(f) => EvalResult::Float(f),
+            RawScalar::String(s) => EvalResult::String(s),
+        }
+    }
+
     /// Convert raw enum definition.
     fn convert_enum(raw: RawEnumDefinition) -> Result<EnumDefinition, LoadError> {
         let mut def = EnumDefinition::new();
@@ -407,6 +602,13 @@ impl DefinitionLoader {
     /// checked against the current scope's `types` map, then against each
     /// ancestor scope in order (innermost parent first). This allows nested
     /// types to reference sibling types defined at the parent level.
+    ///
+    /// Parameterized references (`type: foo(a, b)`) are also arity-checked here:
+    /// the number of argument expressions on the field
+    /// ([`FieldDefinition::type_args`]) must equal the referenced type's declared
+    /// [`params`](StructureDefinition::params) count. The loader has already
+    /// split the arguments off the type name, so `TypeRef` holds only the base
+    /// name; this closes the former "arguments silently discarded" gap.
     fn validate_fields_type_refs(
         fields: &[FieldDefinition],
         types: &HashMap<String, StructureDefinition>,
@@ -415,20 +617,37 @@ impl DefinitionLoader {
     ) -> Result<(), LoadError> {
         for field in fields {
             if let FieldType::TypeRef(type_name) = &field.field_type {
-                // Strip parenthesized arguments from parameterized type refs
-                // e.g. "warp_set_t(_index)" -> "warp_set_t"
-                let base_name = match type_name.find('(') {
-                    Some(pos) => &type_name[..pos],
-                    None => type_name.as_str(),
-                };
+                // `type_name` is the base name (arguments were split off at load).
+                // Check current scope first, then walk ancestor scopes.
+                let resolved = types
+                    .get(type_name)
+                    .or_else(|| ancestor_types.iter().find_map(|t| t.get(type_name)));
 
-                // Check current scope first, then walk ancestor scopes
-                let found = types.contains_key(base_name)
-                    || ancestor_types.iter().any(|t| t.contains_key(base_name));
-
-                if !found {
+                let Some(resolved_def) = resolved else {
                     return Err(LoadError::UndefinedType {
                         type_name: type_name.clone(),
+                        context: format!("field '{}' in {}", field.id, context),
+                    });
+                };
+
+                // Arity: the argument count must match the referenced type's
+                // declared parameter count. A mismatch is a load-time error rather
+                // than a silently-dropped argument.
+                if field.type_args.len() != resolved_def.params.len() {
+                    return Err(LoadError::InvalidType {
+                        type_str: format!(
+                            "{}({} argument{}) but '{}' declares {} parameter{}",
+                            type_name,
+                            field.type_args.len(),
+                            if field.type_args.len() == 1 { "" } else { "s" },
+                            type_name,
+                            resolved_def.params.len(),
+                            if resolved_def.params.len() == 1 {
+                                ""
+                            } else {
+                                "s"
+                            },
+                        ),
                         context: format!("field '{}' in {}", field.id, context),
                     });
                 }
@@ -461,6 +680,33 @@ struct RawKsyFile {
     seq: Option<Vec<RawFieldDefinition>>,
     types: Option<HashMap<String, RawTypeDefinition>>,
     enums: Option<HashMap<String, RawEnumDefinition>>,
+    /// Top-level `consts:` section: named scalar or string-keyed-map literals.
+    consts: Option<HashMap<String, RawConst>>,
+}
+
+/// A raw `consts:` entry: either a scalar literal or a string-keyed map of scalars.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawConst {
+    /// A single scalar const (`max_bands: 16`).
+    Scalar(RawScalar),
+    /// A string-keyed lookup table (`sensrb_value_widths: { "06a": 11, ... }`).
+    Map(HashMap<String, RawScalar>),
+}
+
+/// A scalar literal in a `consts:` section.
+///
+/// Variant order matters for `#[serde(untagged)]`: the first variant whose type
+/// the YAML node deserializes into wins. `Bool` precedes the numeric variants so
+/// `true`/`false` do not coerce to `1`/`0`, and `Integer` precedes `Float` so a
+/// whole number stays an integer.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawScalar {
+    Bool(bool),
+    Integer(i64),
+    Float(f64),
+    String(String),
 }
 
 #[derive(Debug, Deserialize)]
@@ -480,6 +726,16 @@ struct RawTypeDefinition {
     seq: Option<Vec<RawFieldDefinition>>,
     types: Option<HashMap<String, RawTypeDefinition>>,
     enums: Option<HashMap<String, RawEnumDefinition>>,
+    /// Typed parameters (`params:`) this type accepts. Kaitai-native syntax.
+    params: Option<Vec<RawParam>>,
+}
+
+/// A raw `params:` entry: a named, optionally typed parameter.
+#[derive(Debug, Deserialize)]
+struct RawParam {
+    id: String,
+    #[serde(rename = "type")]
+    param_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -982,6 +1238,83 @@ seq:
     }
 
     #[test]
+    fn load_ksy_with_scalar_const() {
+        let yaml = r#"
+meta:
+  id: test_struct
+consts:
+  max_bands: 16
+seq: []
+"#;
+        let def = DefinitionLoader::load_str(yaml).unwrap();
+        assert_eq!(
+            def.consts.get("max_bands"),
+            Some(&Node::Scalar(EvalResult::Integer(16)))
+        );
+    }
+
+    #[test]
+    fn load_ksy_with_map_const() {
+        let yaml = r#"
+meta:
+  id: test_struct
+consts:
+  sensrb_value_widths:
+    "06a": 11
+    "06b": 12
+    "07a": 1
+seq: []
+"#;
+        let def = DefinitionLoader::load_str(yaml).unwrap();
+        match def.consts.get("sensrb_value_widths") {
+            Some(Node::Map(table)) => {
+                assert_eq!(table.get("06a"), Some(&EvalResult::Integer(11)));
+                assert_eq!(table.get("06b"), Some(&EvalResult::Integer(12)));
+                assert_eq!(table.get("07a"), Some(&EvalResult::Integer(1)));
+            }
+            other => panic!("expected Map node, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn load_ksy_const_map_propagates_to_nested_types() {
+        // `consts:` is top-level-only, but the loader stamps it onto every nested
+        // type so a nested `MAP[KEY]` subscript resolves against its own scope.
+        let yaml = r#"
+meta:
+  id: test_struct
+consts:
+  widths:
+    "a": 1
+seq:
+  - id: inner
+    type: inner_t
+types:
+  inner_t:
+    seq:
+      - id: v
+        type: u1
+"#;
+        let def = DefinitionLoader::load_str(yaml).unwrap();
+        let inner = def.types.get("inner_t").expect("inner_t present");
+        match inner.consts.get("widths") {
+            Some(Node::Map(table)) => assert_eq!(table.get("a"), Some(&EvalResult::Integer(1))),
+            other => panic!("expected propagated Map node, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn load_ksy_without_consts_is_empty() {
+        let yaml = r#"
+meta:
+  id: test_struct
+seq: []
+"#;
+        let def = DefinitionLoader::load_str(yaml).unwrap();
+        assert!(def.consts.is_empty());
+    }
+
+    #[test]
     fn load_ksy_with_type_reference() {
         let yaml = r#"
 meta:
@@ -999,6 +1332,138 @@ types:
         assert_eq!(
             def.fields[0].field_type,
             FieldType::TypeRef("my_custom_type".to_string())
+        );
+    }
+
+    #[test]
+    fn load_ksy_parses_type_params() {
+        // A `params:` section deserializes into ordered ParamDefinitions on the
+        // nested type.
+        let yaml = r#"
+meta:
+  id: test_struct
+seq:
+  - id: block
+    type: crscov_block(0)
+types:
+  crscov_block:
+    params:
+      - id: image_index
+        type: s4
+    seq:
+      - id: V
+        type: u1
+"#;
+        let def = DefinitionLoader::load_str(yaml).unwrap();
+        let nested = def.types.get("crscov_block").expect("nested type present");
+        assert_eq!(nested.params.len(), 1);
+        assert_eq!(nested.params[0].id, "image_index");
+        assert_eq!(nested.params[0].type_hint.as_deref(), Some("s4"));
+    }
+
+    #[test]
+    fn load_ksy_splits_type_ref_base_and_args() {
+        // The parameterized reference's base name lands in TypeRef; the argument
+        // expressions land in `type_args`.
+        let yaml = r#"
+meta:
+  id: test_struct
+seq:
+  - id: block
+    type: crscov_block(_index)
+types:
+  crscov_block:
+    params:
+      - id: image_index
+        type: s4
+    seq:
+      - id: V
+        type: u1
+"#;
+        let def = DefinitionLoader::load_str(yaml).unwrap();
+        assert_eq!(
+            def.fields[0].field_type,
+            FieldType::TypeRef("crscov_block".to_string())
+        );
+        assert_eq!(def.fields[0].type_args.len(), 1);
+        assert_eq!(
+            def.fields[0].type_args[0],
+            Expression::SpecialVar(crate::parser::expression::SpecialVariable::Index)
+        );
+    }
+
+    #[test]
+    fn validate_type_ref_arity_match_ok() {
+        // Argument count equals declared param count: no error.
+        let yaml = r#"
+meta:
+  id: test_struct
+seq:
+  - id: block
+    type: crscov_block(0)
+types:
+  crscov_block:
+    params:
+      - id: image_index
+        type: s4
+    seq:
+      - id: V
+        type: u1
+"#;
+        let def = DefinitionLoader::load_str(yaml).unwrap();
+        assert!(DefinitionLoader::validate_type_references(&def).is_ok());
+    }
+
+    #[test]
+    fn validate_type_ref_arity_mismatch_errors() {
+        // Passing an argument to a type that declares no params is an arity error
+        // at load, not a silently-discarded argument.
+        let yaml = r#"
+meta:
+  id: test_struct
+seq:
+  - id: block
+    type: no_params_t(0)
+types:
+  no_params_t:
+    seq:
+      - id: V
+        type: u1
+"#;
+        let def = DefinitionLoader::load_str(yaml).unwrap();
+        let err = DefinitionLoader::validate_type_references(&def).unwrap_err();
+        assert!(
+            matches!(err, LoadError::InvalidType { .. }),
+            "expected InvalidType arity error, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn validate_type_ref_missing_arg_errors() {
+        // A type that declares a param but is referenced with no arguments is
+        // also an arity mismatch.
+        let yaml = r#"
+meta:
+  id: test_struct
+seq:
+  - id: block
+    type: crscov_block
+types:
+  crscov_block:
+    params:
+      - id: image_index
+        type: s4
+    seq:
+      - id: V
+        type: u1
+"#;
+        let def = DefinitionLoader::load_str(yaml).unwrap();
+        let err = DefinitionLoader::validate_type_references(&def).unwrap_err();
+        assert!(
+            matches!(err, LoadError::InvalidType { .. }),
+            "expected InvalidType arity error, got {:?}",
+            err
         );
     }
 }

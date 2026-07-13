@@ -12,7 +12,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use super::error::WriteError;
-use super::expression::{EvalContext, EvalResult, ExpressionEvaluator};
+use super::expression::{EvalContext, EvalResult, ExpressionEvaluator, Node};
 use super::types::{FieldDefinition, RepeatSpec, SizeSpec, StructureDefinition};
 
 use encode::encode_value;
@@ -102,8 +102,7 @@ impl<T: Into<WriteValue>> From<Vec<T>> for WriteValue {
 /// Writer for encoding values according to a structure definition.
 ///
 /// Fields must be written in definition order. For repeated fields,
-/// pass a `WriteValue::Array` or write elements sequentially with
-/// indexed paths (`field_0`, `field_1`, ...).
+/// pass a `WriteValue::Array` holding all elements.
 pub struct StructureWriter {
     /// The structure definition
     definition: Arc<StructureDefinition>,
@@ -115,8 +114,14 @@ pub struct StructureWriter {
     written: HashSet<String>,
     /// Expression evaluator for size expressions
     evaluator: ExpressionEvaluator,
-    /// Values written so far (for expression evaluation)
-    written_values: HashMap<String, WriteValue>,
+    /// Field nodes written so far, for the node-context tree. Scalar fields are
+    /// lowered to `Node::Scalar` leaves at write time (replacing the old
+    /// `written_values: HashMap<String, WriteValue>` re-derivation); array/struct
+    /// fields are registered as `Node::Array`/`Node::Struct` by
+    /// [`Self::set_node`] so an expression can navigate an enclosing repeated
+    /// group (`IMAGE_RECORDS[image_index].NCOLCB`). The evaluator context is
+    /// built directly from these nodes plus [`Self::inherited`].
+    written_nodes: HashMap<String, Node>,
     /// Next expected field index
     next_field_index: usize,
     /// Count of elements written for current repeated field
@@ -129,12 +134,14 @@ pub struct StructureWriter {
     /// When true, enforce strict spec-compliant encoding validation on write.
     /// When false (default), numeric fields accept any printable ASCII.
     strict_encoding: bool,
-    /// Field values inherited from the enclosing scope(s) when this writer
+    /// Field nodes inherited from the enclosing scope(s) when this writer
     /// serializes a nested structure. Seeded once before writing and overlaid by
     /// locally-written values in [`Self::build_eval_context`] (local wins). This
-    /// is the "stack" of enclosing scalar values that nested `size`/`repeat-expr`
-    /// expressions (including `_root.`/`_parent.` navigators) resolve against.
-    inherited: HashMap<String, EvalResult>,
+    /// is the "stack" of enclosing values that nested `size`/`repeat-expr`
+    /// expressions (including `_root.`/`_parent.` navigators and an enclosing
+    /// repeated group indexed by `ARRAY[i].FIELD`) resolve against. Carries
+    /// scalar leaves and navigable `Array`/`Struct` nodes.
+    inherited: HashMap<String, Node>,
 }
 
 impl StructureWriter {
@@ -150,7 +157,7 @@ impl StructureWriter {
             position: 0,
             written: HashSet::new(),
             evaluator: ExpressionEvaluator::new(),
-            written_values: HashMap::new(),
+            written_nodes: HashMap::new(),
             next_field_index: 0,
             current_repeat_written: 0,
             eos_until_counts: HashMap::new(),
@@ -179,8 +186,19 @@ impl StructureWriter {
     /// snapshot of the enclosing scope's scalar values so this writer's nested
     /// `size`/`repeat-expr` expressions can reference them. Locally-written
     /// values overlay these in [`Self::build_eval_context`] (local wins).
-    pub fn set_inherited_context(&mut self, inherited: HashMap<String, EvalResult>) {
+    pub fn set_inherited_context(&mut self, inherited: HashMap<String, Node>) {
         self.inherited = inherited;
+    }
+
+    /// Register an intermediary (`Array`/`Struct`) node for a field.
+    ///
+    /// Scalar leaves are recorded automatically as fields are written; this lets
+    /// [`crate::parser::codec`] additionally register the array/struct shape of a
+    /// repeated or nested field built from the input dict, so an expression can
+    /// navigate an enclosing group (`IMAGE_RECORDS[image_index].NCOLCB`) on the
+    /// write path exactly as on read.
+    pub fn set_node(&mut self, name: impl Into<String>, node: Node) {
+        self.written_nodes.insert(name.into(), node);
     }
 
     /// Snapshot the scalar values written so far, as an eval context map.
@@ -190,8 +208,8 @@ impl StructureWriter {
     /// (local wins), so the snapshot reflects the full flat scope visible at the
     /// current point. Only scalar values participate, matching
     /// [`Self::build_eval_context`].
-    pub fn eval_snapshot(&self) -> HashMap<String, EvalResult> {
-        self.build_eval_context().fields
+    pub fn eval_snapshot(&self) -> HashMap<String, Node> {
+        self.build_eval_context().snapshot()
     }
 
     /// Write a value to a field.
@@ -220,26 +238,37 @@ impl StructureWriter {
 
     /// Determine whether a field should be written given what has been written so far.
     ///
-    /// An unconditional field is always active. A conditional field is active
-    /// unless its `if:` expression evaluates to exactly `Ok(Boolean(false))`
-    /// against the current write context. This deliberately mirrors
-    /// [`advance_past_false_conditions`]: a condition the evaluator cannot resolve
-    /// (e.g. an unsupported `_root.`/`_parent.` reference) is treated as active by
-    /// both the streaming cursor and this query, so callers and the cursor never
-    /// disagree about field presence.
+    /// Returns `Ok(true)` for an unconditional field and for a conditional field
+    /// whose `if:` evaluates to `Ok(Boolean(true))`; `Ok(false)` when it evaluates
+    /// to `Ok(Boolean(false))` (the field is legitimately absent).
+    ///
+    /// **Total-or-error:** a condition the evaluator cannot resolve — a reference
+    /// to a value not present in the write context — returns `Err`, not "active".
+    /// The prior code treated any non-`false` result (including `Err`) as active,
+    /// which let an unresolvable condition silently pass; that masked the same
+    /// class of desync the read path had. `Ok(false)` still means "absent"; an
+    /// unresolvable or non-boolean condition is now a propagated error.
     ///
     /// This lets [`crate::parser::codec::encode_fields`] gate writes on the same
     /// notion of presence the cursor uses, instead of inferring presence from
     /// which keys happen to be in the input map.
-    pub fn is_field_active(&self, field: &FieldDefinition) -> bool {
+    pub fn is_field_active(&self, field: &FieldDefinition) -> Result<bool, WriteError> {
         match &field.condition {
-            None => true,
+            None => Ok(true),
             Some(condition) => {
                 let ctx = self.build_eval_context();
-                !matches!(
-                    self.evaluator.evaluate(condition, &ctx),
-                    Ok(EvalResult::Boolean(false))
-                )
+                match self.evaluator.evaluate(condition, &ctx) {
+                    Ok(EvalResult::Boolean(true)) => Ok(true),
+                    Ok(EvalResult::Boolean(false)) => Ok(false),
+                    Ok(_) => Err(WriteError::ValidationError {
+                        path: field.id.clone(),
+                        message: "Condition did not evaluate to boolean".to_string(),
+                    }),
+                    Err(e) => Err(WriteError::ValidationError {
+                        path: field.id.clone(),
+                        message: format!("Failed to evaluate condition: {}", e),
+                    }),
+                }
             }
         }
     }
@@ -420,9 +449,17 @@ impl StructureWriter {
         self.buffer.extend_from_slice(&encoded);
         self.position += actual_size;
 
-        // Track written values for eval context
-        let eval_key = field_name.to_string();
-        self.written_values.insert(eval_key, value);
+        // Track the written scalar leaf for the eval context. Only scalars
+        // participate here; `Bytes`/`Array` contribute no scalar leaf (a nested
+        // struct is already collapsed to `Bytes` by the recursion). The array/
+        // struct *shape* of a repeated or nested field is registered separately
+        // by the codec via [`Self::set_node`], built from the input dict. A
+        // repeated scalar field records its most recent element under the base
+        // name, matching the prior `written_values` behavior.
+        if let Some(leaf) = write_value_to_scalar(&value) {
+            self.written_nodes
+                .insert(field_name.to_string(), Node::Scalar(leaf));
+        }
 
         // Handle repeat advancement
         if let Some(_idx) = index {
@@ -444,38 +481,51 @@ impl StructureWriter {
         Ok(())
     }
 
-    /// Build an evaluation context from written values.
+    /// Build an evaluation context from the scalar values written so far.
+    ///
+    /// The node-context tree is built directly from [`Self::written_scalars`]
+    /// (leaves lowered at write time) plus [`Self::inherited`]. Inherited
+    /// (enclosing-scope) values are seeded first; locally-written values overlay
+    /// them on name collision so a local field shadows an inherited one of the
+    /// same name.
     fn build_eval_context(&self) -> EvalContext {
         let mut ctx = EvalContext::new();
 
-        // Seed inherited (enclosing-scope) values first; locally-written values
-        // below overlay them on name collision so a local field shadows an
-        // inherited one of the same name.
-        for (name, value) in &self.inherited {
-            ctx.fields.insert(name.clone(), value.clone());
+        // Seed compile-time consts (const map/scalar nodes) first. The loader
+        // stamps file-level consts onto every nested type, so a sub-writer for a
+        // nested type also seeds them from its own `definition.consts` — a
+        // nested `MAP[KEY]` subscript resolves on the write path too. Inherited
+        // and locally-written scalars overlay these (a same-named field shadows
+        // the const).
+        for (name, node) in &self.definition.consts {
+            ctx.insert_node(name.clone(), node.clone());
         }
 
-        for (name, value) in &self.written_values {
-            match value {
-                WriteValue::Integer(n) => {
-                    ctx.fields.insert(name.clone(), EvalResult::Integer(*n));
-                }
-                WriteValue::Unsigned(n) => {
-                    ctx.fields
-                        .insert(name.clone(), EvalResult::Integer(*n as i64));
-                }
-                WriteValue::String(s) => {
-                    ctx.fields
-                        .insert(name.clone(), EvalResult::String(s.clone()));
-                }
-                WriteValue::Float(f) => {
-                    ctx.fields.insert(name.clone(), EvalResult::Float(*f));
-                }
-                WriteValue::Bytes(_) | WriteValue::Array(_) => {}
-            }
+        for (name, node) in &self.inherited {
+            ctx.insert_node(name.clone(), node.clone());
+        }
+
+        for (name, node) in &self.written_nodes {
+            ctx.insert_node(name.clone(), node.clone());
         }
 
         ctx
+    }
+}
+
+/// Lower a [`WriteValue`] to the scalar [`EvalResult`] leaf the evaluator can
+/// consume, or `None` for non-scalar values.
+///
+/// `Bytes` (including a nested struct already collapsed to bytes) and `Array`
+/// (a repeated group) contribute no scalar leaf — matching the prior
+/// `build_eval_context` match, which skipped both.
+fn write_value_to_scalar(value: &WriteValue) -> Option<EvalResult> {
+    match value {
+        WriteValue::Integer(n) => Some(EvalResult::Integer(*n)),
+        WriteValue::Unsigned(n) => Some(EvalResult::Integer(*n as i64)),
+        WriteValue::String(s) => Some(EvalResult::String(s.clone())),
+        WriteValue::Float(f) => Some(EvalResult::Float(*f)),
+        WriteValue::Bytes(_) | WriteValue::Array(_) => None,
     }
 }
 

@@ -29,7 +29,7 @@ pub use accessor::StructureAccessor;
 pub use definition::DefinitionLoader;
 pub use error::{AccessError, ConversionError, ExpressionError, LoadError, WriteError};
 pub use expression::{
-    BinaryOperator, EvalContext, EvalResult, Expression, ExpressionEvaluator, Literal,
+    BinaryOperator, EvalContext, EvalResult, Expression, ExpressionEvaluator, Literal, Node,
     SpecialVariable, UnaryOperator,
 };
 pub use registry::StructureRegistry;

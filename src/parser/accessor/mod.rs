@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::parser::error::AccessError;
-use crate::parser::expression::{EvalContext, EvalResult, ExpressionEvaluator};
+use crate::parser::expression::{EvalContext, EvalResult, ExpressionEvaluator, Node};
 use crate::parser::types::{
     Encoding, Endian, FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition,
 };
@@ -74,13 +74,15 @@ pub struct StructureAccessor<'a> {
     /// Base offset within parent data
     #[allow(dead_code)]
     base_offset: usize,
-    /// Field values inherited from the enclosing scope(s) when this accessor
+    /// Field nodes inherited from the enclosing scope(s) when this accessor
     /// reads a nested structure. Seeded before parsing and overlaid by locally
     /// parsed values (local wins). Lets a nested `size`/`repeat-expr` — including
-    /// `_root.`/`_parent.` navigators — resolve against enclosing field values,
-    /// the decode-side mirror of [`crate::parser::writer::StructureWriter`]'s
-    /// inherited context.
-    inherited: HashMap<String, EvalResult>,
+    /// `_root.`/`_parent.` navigators and an enclosing repeated group indexed by
+    /// `ARRAY[i].FIELD` — resolve against enclosing field values, the decode-side
+    /// mirror of [`crate::parser::writer::StructureWriter`]'s inherited context.
+    /// Carries scalar leaves and navigable `Array`/`Struct` nodes (const `Map`s
+    /// are re-seeded per scope, not threaded — see [`EvalContext::snapshot`]).
+    inherited: HashMap<String, Node>,
 }
 
 impl<'a> StructureAccessor<'a> {
@@ -109,7 +111,7 @@ impl<'a> StructureAccessor<'a> {
     pub fn new_with_inherited(
         definition: Arc<StructureDefinition>,
         data: &'a [u8],
-        inherited: HashMap<String, EvalResult>,
+        inherited: HashMap<String, Node>,
     ) -> Result<Self, AccessError> {
         Ok(Self {
             definition,
@@ -153,9 +155,16 @@ impl<'a> StructureAccessor<'a> {
     /// (local wins, since locally parsed values overlay inherited ones in the
     /// eval context). Mirrors
     /// [`crate::parser::writer::StructureWriter::eval_snapshot`].
-    pub fn eval_snapshot(&self) -> HashMap<String, EvalResult> {
+    pub fn eval_snapshot(&self) -> HashMap<String, Node> {
+        // Ensure the full single-pass parse has run so the snapshot reflects the
+        // rich context (with `Array`/`Struct` nodes from `ensure_parsed`), not the
+        // scalar-only `build_context_from_definition` fallback. A nested
+        // sub-accessor inheriting this scope needs the enclosing repeated group as
+        // a navigable array (`RECORDS[image_index].NCOL`), which only the parsed
+        // context carries.
+        let _ = self.ensure_parsed();
         match self.build_eval_context() {
-            Ok(ctx) => ctx.fields,
+            Ok(ctx) => ctx.snapshot(),
             Err(_) => self.inherited.clone(),
         }
     }
@@ -226,10 +235,20 @@ impl<'a> StructureAccessor<'a> {
                 continue;
             }
 
-            // Get single-element size
+            // Get single-element size. For a parameterized element reference
+            // (`cov_block(_index)`) seed `_index = 0` so the argument binds while
+            // sizing the representative first element; the per-element loop below
+            // re-sizes each element with its own index. Without this the probe
+            // errors on the unresolved `_index` and abandons the field. Only the
+            // parameterized case gets the seed, so no other field's sizing changes.
+            let probe_ctx = if field.type_args.is_empty() {
+                ctx.clone()
+            } else {
+                ctx.clone().with_index(0)
+            };
             let size = match get_simple_field_size(
                 field,
-                &ctx,
+                &probe_ctx,
                 &self.evaluator,
                 &self.definition,
                 self.data,
@@ -252,44 +271,18 @@ impl<'a> StructureAccessor<'a> {
 
                 match repeat {
                     RepeatSpec::Count(_) | RepeatSpec::Expression(_) => {
-                        let mut elem_offset = current_offset;
-                        // `count` is derived from (untrusted) field data, so don't
-                        // pre-allocate for the full declared count — cap the initial
-                        // capacity and let the vector grow as elements are read.
-                        let mut elem_offsets = Vec::with_capacity(count.min(1000));
-                        // Store base field offset
-                        self.offset_cache
-                            .borrow_mut()
-                            .insert(field.id.clone(), (current_offset, size));
-                        for _i in 0..count {
-                            let elem_size = match &field.field_type {
-                                FieldType::TypeRef(type_name) => self
-                                    .get_type_size(type_name, elem_offset, &ctx)
-                                    .unwrap_or(size),
-                                _ => size,
-                            };
-                            // Once an element no longer fits, no later element can
-                            // either (offsets only advance) — stop instead of spinning
-                            // through a huge declared count against a short buffer.
-                            if elem_offset + elem_size > self.data.len() {
-                                break;
-                            }
-                            // Read value for eval context
-                            if let Ok(value) = self.read_field_value(field, elem_offset, elem_size)
-                            {
-                                let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
-                            }
-                            elem_offsets.push((elem_offset, elem_size));
-                            elem_offset += elem_size;
-                        }
-                        self.repeat_offsets
-                            .borrow_mut()
-                            .insert(field.id.clone(), elem_offsets);
-                        current_offset = elem_offset;
+                        current_offset = self.parse_counted_repeat(
+                            &mut ctx,
+                            field,
+                            count,
+                            size,
+                            current_offset,
+                        );
                     }
                     RepeatSpec::Until(until_expr) => {
                         let mut elem_offset = current_offset;
                         let mut elem_offsets = Vec::new();
+                        let mut elem_values = Vec::new();
                         self.offset_cache
                             .borrow_mut()
                             .insert(field.id.clone(), (current_offset, size));
@@ -297,7 +290,7 @@ impl<'a> StructureAccessor<'a> {
                         loop {
                             let elem_size = match &field.field_type {
                                 FieldType::TypeRef(type_name) => self
-                                    .get_type_size(type_name, elem_offset, &ctx)
+                                    .get_type_size(type_name, &field.type_args, elem_offset, &ctx)
                                     .unwrap_or(size),
                                 _ => size,
                             };
@@ -305,6 +298,9 @@ impl<'a> StructureAccessor<'a> {
                                 break;
                             }
                             let value = self.read_field_value(field, elem_offset, elem_size)?;
+                            // Keep the last-element scalar in `ctx` for the `until`
+                            // condition, which may reference the field by name; the
+                            // whole group is replaced by an Array node after the loop.
                             let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
 
                             // Check until condition
@@ -313,6 +309,7 @@ impl<'a> StructureAccessor<'a> {
                             let _ = add_value_to_context_impl(&mut until_ctx, "_", &value);
 
                             elem_offsets.push((elem_offset, elem_size));
+                            elem_values.push(value);
 
                             if let Ok(EvalResult::Boolean(true)) =
                                 self.evaluator.evaluate(until_expr, &until_ctx)
@@ -323,6 +320,7 @@ impl<'a> StructureAccessor<'a> {
                             i += 1;
                             elem_offset += elem_size;
                         }
+                        self.insert_array_node(&mut ctx, field, elem_values);
                         self.repeat_offsets
                             .borrow_mut()
                             .insert(field.id.clone(), elem_offsets);
@@ -331,13 +329,14 @@ impl<'a> StructureAccessor<'a> {
                     RepeatSpec::Eos => {
                         let mut elem_offset = current_offset;
                         let mut elem_offsets = Vec::new();
+                        let mut elem_values = Vec::new();
                         self.offset_cache
                             .borrow_mut()
                             .insert(field.id.clone(), (current_offset, size));
                         loop {
                             let elem_size = match &field.field_type {
                                 FieldType::TypeRef(type_name) => self
-                                    .get_type_size(type_name, elem_offset, &ctx)
+                                    .get_type_size(type_name, &field.type_args, elem_offset, &ctx)
                                     .unwrap_or(size),
                                 _ => size,
                             };
@@ -346,11 +345,12 @@ impl<'a> StructureAccessor<'a> {
                             }
                             if let Ok(value) = self.read_field_value(field, elem_offset, elem_size)
                             {
-                                let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
+                                elem_values.push(value);
                                 elem_offsets.push((elem_offset, elem_size));
                             }
                             elem_offset += elem_size;
                         }
+                        self.insert_array_node(&mut ctx, field, elem_values);
                         self.repeat_offsets
                             .borrow_mut()
                             .insert(field.id.clone(), elem_offsets);
@@ -365,7 +365,16 @@ impl<'a> StructureAccessor<'a> {
 
                 if current_offset + size <= self.data.len() {
                     if let Ok(value) = self.read_field_value(field, current_offset, size) {
-                        let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
+                        // A nested struct becomes a `Node::Struct` (navigable by
+                        // `.member`); a scalar stays a scalar leaf.
+                        if value.is_struct() {
+                            let inherited = ctx.snapshot();
+                            if let Some(node) = self.value_to_node(&value, &inherited) {
+                                ctx.insert_node(field.id.clone(), node);
+                            }
+                        } else {
+                            let _ = add_value_to_context_impl(&mut ctx, &field.id, &value);
+                        }
                     }
                 }
                 current_offset += size;
@@ -618,7 +627,7 @@ impl<'a> StructureAccessor<'a> {
                         }
                         FieldType::TypeRef(type_name) => {
                             let ctx = self.build_eval_context()?;
-                            self.get_type_size(type_name, offset, &ctx)
+                            self.get_type_size(type_name, &field.type_args, offset, &ctx)
                         }
                         _ => Ok(0),
                     }
@@ -657,9 +666,15 @@ impl<'a> StructureAccessor<'a> {
     }
 
     /// Get the size of a nested type.
+    ///
+    /// `type_args` are the parameterized-reference arguments from the referencing
+    /// field (empty for a plain reference); each is evaluated in the enclosing
+    /// context `ctx` and bound by the target type's param name into the nested
+    /// context, so parameter references resolve while sizing the nested type.
     pub(crate) fn get_type_size(
         &self,
         type_name: &str,
+        type_args: &[crate::parser::expression::Expression],
         offset: usize,
         ctx: &EvalContext,
     ) -> Result<usize, AccessError> {
@@ -672,6 +687,16 @@ impl<'a> StructureAccessor<'a> {
                 })?;
 
         let mut nested_ctx = ctx.clone();
+        for (name, value) in self
+            .evaluator
+            .bind_type_params(&nested_def.params, type_args, ctx)
+            .map_err(|e| AccessError::ExpressionError {
+                path: format!("type:{}", type_name),
+                message: e.to_string(),
+            })?
+        {
+            nested_ctx.insert_scalar(name, value);
+        }
         let mut total_size = 0;
 
         for field in &nested_def.fields {
@@ -742,7 +767,7 @@ impl<'a> StructureAccessor<'a> {
                             let mut current_offset = base_offset;
                             for _ in 0..(n as usize) {
                                 let elem_size =
-                                    self.get_type_size(type_name, current_offset, ctx)?;
+                                    self.get_type_size(type_name, &field.type_args, current_offset, ctx)?;
                                 total += elem_size;
                                 current_offset += elem_size;
                             }
@@ -775,7 +800,7 @@ impl<'a> StructureAccessor<'a> {
                         FieldType::UnsignedInt(bytes) | FieldType::SignedInt(bytes) => {
                             Ok(*bytes as usize)
                         }
-                        FieldType::TypeRef(type_name) => self.get_type_size(type_name, offset, ctx),
+                        FieldType::TypeRef(type_name) => self.get_type_size(type_name, &field.type_args, offset, ctx),
                         _ => Ok(0),
                     }
                 } else {
@@ -956,8 +981,15 @@ impl<'a> StructureAccessor<'a> {
     /// shadows an inherited one of the same name.
     fn seeded_context(&self) -> EvalContext {
         let mut ctx = EvalContext::new();
-        for (name, value) in &self.inherited {
-            ctx.fields.insert(name.clone(), value.clone());
+        // Seed compile-time consts (const map/scalar nodes) first; a locally
+        // parsed field of the same name shadows the const as parsing overlays it.
+        // The loader stamps file-level consts onto every nested type, so this
+        // scope's `definition.consts` is populated even for nested types.
+        for (name, node) in &self.definition.consts {
+            ctx.insert_node(name.clone(), node.clone());
+        }
+        for (name, node) in &self.inherited {
+            ctx.insert_node(name.clone(), node.clone());
         }
         ctx
     }
@@ -994,6 +1026,140 @@ impl<'a> StructureAccessor<'a> {
         value: &Value<'a>,
     ) -> Result<(), AccessError> {
         add_value_to_context_impl(ctx, name, value)
+    }
+
+    /// Convert a parsed [`Value`] into a context [`Node`], recursively.
+    ///
+    /// Scalars become `Scalar` leaves; a repeated group becomes a `Node::Array`
+    /// of per-element nodes; a nested struct becomes a `Node::Struct` of its
+    /// named field nodes, re-parsed from the struct's bytes with a sub-accessor.
+    /// This is what makes an enclosing repeated group navigable by
+    /// `ARRAY[i].FIELD` — the array of structs lands in the context tree instead
+    /// of being dropped (the root cause of the array-subscript bug). Returns
+    /// `None` when a nested struct's type cannot be resolved or re-parsed, so the
+    /// caller simply omits that node (matching the pre-existing "drop what we
+    /// cannot represent" behavior for the sizing context).
+    ///
+    /// `inherited` is the enclosing scope threaded into a struct sub-accessor so
+    /// a nested field sized by an enclosing scalar still resolves.
+    fn value_to_node(&self, value: &Value<'a>, inherited: &HashMap<String, Node>) -> Option<Node> {
+        match value {
+            Value::String(s) => Some(Node::Scalar(EvalResult::String(s.to_string()))),
+            Value::Bytes(b) => Some(Node::Scalar(EvalResult::Bytes(b.to_vec()))),
+            Value::Unsigned(n) => Some(Node::Scalar(EvalResult::Integer(*n as i64))),
+            Value::Signed(n) => Some(Node::Scalar(EvalResult::Integer(*n))),
+            Value::Float(f) => Some(Node::Scalar(EvalResult::Float(*f))),
+            Value::Array(arr) => Some(Node::Array(
+                arr.iter()
+                    .filter_map(|v| self.value_to_node(v, inherited))
+                    .collect(),
+            )),
+            Value::Struct(sv) => {
+                // Resolve the struct's type from this scope's flat type map, and
+                // propagate the whole map into the sub-definition so a
+                // second-level sibling TypeRef resolves too (mirrors the flat-
+                // types handling on the decode-to-JSON path).
+                let nested = self.definition.types.get(&sv.type_name)?;
+                let mut sub_def = nested.clone();
+                sub_def.types = self.definition.types.clone();
+                // The set of names this struct declares locally — its own fields
+                // and params. The snapshot below also carries the inherited
+                // scope (seeded so a nested field sized by an enclosing scalar
+                // parses), but a `Struct` node should expose only the type's own
+                // members so a member deref (`A[i].NCOLCB`) cannot accidentally
+                // resolve an inherited name; filter to the local set.
+                let local: std::collections::HashSet<String> = nested
+                    .fields
+                    .iter()
+                    .map(|f| f.id.clone())
+                    .chain(nested.params.iter().map(|p| p.id.clone()))
+                    .collect();
+                let sub = StructureAccessor::new_with_inherited(
+                    Arc::new(sub_def),
+                    sv.data,
+                    inherited.clone(),
+                )
+                .ok()?;
+                let members = sub
+                    .eval_snapshot()
+                    .into_iter()
+                    .filter(|(k, _)| local.contains(k))
+                    .collect();
+                Some(Node::Struct(members))
+            }
+        }
+    }
+
+    /// Parse a `Count`/`Expression`-repeated field: read each element, cache its
+    /// offset, and register the whole group as a `Node::Array`. Returns the offset
+    /// just past the last element read.
+    ///
+    /// Each element is sized with its own `_index` seeded so a parameterized
+    /// element reference (`cov_block(_index)`) binds — the decode mirror of the
+    /// encode path's per-element `seed_type_params`.
+    fn parse_counted_repeat(
+        &self,
+        ctx: &mut EvalContext,
+        field: &FieldDefinition,
+        count: usize,
+        size: usize,
+        start_offset: usize,
+    ) -> usize {
+        let mut elem_offset = start_offset;
+        // `count` is derived from (untrusted) field data, so cap the initial
+        // capacity and let the vectors grow as elements are read.
+        let mut elem_offsets = Vec::with_capacity(count.min(1000));
+        let mut elem_values = Vec::with_capacity(count.min(1000));
+        self.offset_cache
+            .borrow_mut()
+            .insert(field.id.clone(), (start_offset, size));
+        for i in 0..count {
+            let elem_ctx = ctx.clone().with_index(i);
+            let elem_size = match &field.field_type {
+                FieldType::TypeRef(type_name) => self
+                    .get_type_size(type_name, &field.type_args, elem_offset, &elem_ctx)
+                    .unwrap_or(size),
+                _ => size,
+            };
+            // Once an element no longer fits, no later element can either (offsets
+            // only advance) — stop instead of spinning through a huge declared
+            // count against a short buffer.
+            if elem_offset + elem_size > self.data.len() {
+                break;
+            }
+            if let Ok(value) = self.read_field_value(field, elem_offset, elem_size) {
+                elem_values.push(value);
+            }
+            elem_offsets.push((elem_offset, elem_size));
+            elem_offset += elem_size;
+        }
+        self.insert_array_node(ctx, field, elem_values);
+        self.repeat_offsets
+            .borrow_mut()
+            .insert(field.id.clone(), elem_offsets);
+        elem_offset
+    }
+
+    /// Insert a repeated field's elements into `ctx` as a single `Node::Array`.
+    ///
+    /// Each element is converted to a node (a scalar leaf, or a `Struct` for a
+    /// repeated TypeRef) so the group is navigable by `FIELD[i]` / `FIELD[i].M`.
+    /// Struct elements are re-parsed against the current scope (`ctx`'s snapshot)
+    /// so a nested field sized by an enclosing scalar resolves. Replaces the
+    /// prior "last element as a bare scalar" behavior — no `.ksy` references a
+    /// repeated field by bare name, so the group only ever appears subscripted.
+    fn insert_array_node(
+        &self,
+        ctx: &mut EvalContext,
+        field: &FieldDefinition,
+        elems: Vec<Value<'a>>,
+    ) {
+        let inherited = ctx.snapshot();
+        let nodes: Vec<Node> = elems
+            .iter()
+            .filter_map(|v| self.value_to_node(v, &inherited))
+            .collect();
+        ctx.insert_node(field.id.clone(), Node::Array(nodes));
     }
 
     /// Access a nested field within a value.

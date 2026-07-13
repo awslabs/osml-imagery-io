@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use super::expression::Expression;
+use super::expression::{Expression, Node};
 
 /// A complete structure definition parsed from a KSY file.
 #[derive(Debug, Clone)]
@@ -22,6 +22,25 @@ pub struct StructureDefinition {
     pub types: HashMap<String, StructureDefinition>,
     /// Enumeration definitions
     pub enums: HashMap<String, EnumDefinition>,
+    /// Compile-time constants declared in the top-level `consts:` section.
+    ///
+    /// Each entry is an intermediary [`Node`] — a scalar or a string-keyed
+    /// [`Node::Map`] — seeded once into the root evaluation context on both the
+    /// read and write paths, where the `[]` subscript operator navigates it.
+    /// Consts are a top-level-file-only concept; to reach nested type scopes
+    /// (which resolve enclosing scalars via the scalar-only inherited snapshot,
+    /// not a `Map` node), the loader stamps the file-level consts onto every
+    /// nested type's `consts` so each scope seeds them directly.
+    pub consts: HashMap<String, Node>,
+    /// Typed parameters this type declares (`params:` section).
+    ///
+    /// A parameterized type reference (`type: foo(expr)`) evaluates each argument
+    /// in the *enclosing* scope and binds it by position to these parameters,
+    /// seeding the bound values by name into the child evaluation context. This
+    /// is the scoped, unambiguous alternative to threading the positional
+    /// `_index` across a nesting boundary. Empty for types that take no
+    /// parameters.
+    pub params: Vec<ParamDefinition>,
 }
 
 impl StructureDefinition {
@@ -34,6 +53,8 @@ impl StructureDefinition {
             fields: Vec::new(),
             types: HashMap::new(),
             enums: HashMap::new(),
+            consts: HashMap::new(),
+            params: Vec::new(),
         }
     }
 
@@ -66,6 +87,47 @@ impl StructureDefinition {
         self.enums.insert(name.into(), def);
         self
     }
+
+    /// Add a compile-time const node (a scalar or string-keyed map).
+    pub fn with_const(mut self, name: impl Into<String>, node: Node) -> Self {
+        self.consts.insert(name.into(), node);
+        self
+    }
+
+    /// Add a typed parameter (declared order is the binding order).
+    pub fn with_param(mut self, param: ParamDefinition) -> Self {
+        self.params.push(param);
+        self
+    }
+}
+
+/// A typed parameter declared in a type's `params:` section.
+///
+/// At a parameterized reference (`type: foo(expr)`), the positional argument is
+/// evaluated in the enclosing scope and bound to this parameter's [`id`] in the
+/// child context, where it participates in navigation and shadowing like any
+/// other named node. [`type_hint`] records the declared `type:` for
+/// documentation and future coercion; the evaluator itself is dynamically typed,
+/// so a bound scalar is used as-is.
+///
+/// [`id`]: ParamDefinition::id
+/// [`type_hint`]: ParamDefinition::type_hint
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParamDefinition {
+    /// Parameter name — the key the bound argument is seeded under in the child.
+    pub id: String,
+    /// Declared parameter type (e.g. `s4`), if any. Advisory only.
+    pub type_hint: Option<String>,
+}
+
+impl ParamDefinition {
+    /// Create a parameter with the given name and optional declared type.
+    pub fn new(id: impl Into<String>, type_hint: Option<String>) -> Self {
+        Self {
+            id: id.into(),
+            type_hint,
+        }
+    }
 }
 
 /// Definition of a single field in a structure.
@@ -87,6 +149,13 @@ pub struct FieldDefinition {
     pub repeat: Option<RepeatSpec>,
     /// Documentation string
     pub doc: Option<String>,
+    /// Arguments passed to a parameterized type reference (`type: foo(a, b)`).
+    ///
+    /// Each argument is an [`Expression`] evaluated in *this* field's (enclosing)
+    /// scope and bound by position to the referenced type's
+    /// [`params`](StructureDefinition::params). Empty for a plain type reference
+    /// or a non-`TypeRef` field.
+    pub type_args: Vec<Expression>,
 }
 
 impl FieldDefinition {
@@ -101,6 +170,7 @@ impl FieldDefinition {
             condition: None,
             repeat: None,
             doc: None,
+            type_args: Vec::new(),
         }
     }
 
@@ -137,6 +207,12 @@ impl FieldDefinition {
     /// Set the documentation string.
     pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
         self.doc = Some(doc.into());
+        self
+    }
+
+    /// Set the parameterized-type-reference argument expressions.
+    pub fn with_type_args(mut self, type_args: Vec<Expression>) -> Self {
+        self.type_args = type_args;
         self
     }
 }

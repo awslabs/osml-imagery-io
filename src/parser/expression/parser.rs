@@ -4,6 +4,9 @@ use super::lexer::{Lexer, Token};
 use super::{BinaryOperator, Expression, Literal, SpecialVariable, UnaryOperator};
 use crate::parser::error::ExpressionError;
 
+/// Method names recognized as postfix method calls rather than field access.
+const METHODS: [&str; 4] = ["to_i", "to_s", "length", "strip"];
+
 /// Parser for expression strings using recursive descent.
 pub(crate) struct Parser<'a> {
     lexer: Lexer<'a>,
@@ -214,57 +217,72 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse postfix: primary ('.' method_or_field)*
+    /// Parse postfix: primary ('.' method_or_field | '[' index ']')*
+    ///
+    /// Both `.member` access and `[index]` subscript are left-associative and
+    /// interleave freely: `A[i].F`, `MAP[KEY]`, `A[_index - 1].F` all parse into
+    /// a chain of `Index` nodes composing with member access.
     fn parse_postfix(&mut self) -> Result<Expression, ExpressionError> {
         let mut expr = self.parse_primary()?;
-        while self.current == Token::Dot {
-            self.advance()?;
+        loop {
             match &self.current {
-                Token::Ident(name) => {
-                    let name = name.clone();
+                Token::Dot => {
                     self.advance()?;
-                    // Check if this is a method call
-                    if name == "to_i" || name == "to_s" || name == "length" || name == "strip" {
-                        expr = Expression::MethodCall {
-                            target: Box::new(expr),
-                            method: name,
-                        };
-                    } else {
-                        // It's a field access - append to path
-                        match expr {
-                            Expression::FieldRef(ref mut path) => {
-                                path.push('.');
-                                path.push_str(&name);
-                            }
-                            Expression::SpecialVar(var) => {
-                                // Convert special var to field ref with path
-                                let var_name = match var {
-                                    SpecialVariable::Root => "_root",
-                                    SpecialVariable::Parent => "_parent",
-                                    SpecialVariable::Index => "_index",
-                                    SpecialVariable::Io => "_io",
-                                };
-                                expr = Expression::FieldRef(format!("{}.{}", var_name, name));
-                            }
-                            _ => {
-                                return Err(ExpressionError::SyntaxError {
-                                    message: format!(
-                                        "Cannot access field '{}' on non-field expression",
-                                        name
-                                    ),
-                                });
-                            }
-                        }
-                    }
+                    expr = self.parse_member_or_method(expr)?;
                 }
-                _ => {
-                    return Err(ExpressionError::SyntaxError {
-                        message: "Expected identifier after '.'".to_string(),
-                    });
+                Token::LBracket => {
+                    self.advance()?;
+                    let index = self.parse_expression()?;
+                    self.expect(Token::RBracket)?;
+                    expr = Expression::Index {
+                        base: Box::new(expr),
+                        index: Box::new(index),
+                    };
                 }
+                _ => break,
             }
         }
         Ok(expr)
+    }
+
+    /// Parse the `.member` or `.method` that follows a `.` in postfix position.
+    fn parse_member_or_method(
+        &mut self,
+        expr: Expression,
+    ) -> Result<Expression, ExpressionError> {
+        match &self.current {
+            Token::Ident(name) => {
+                let name = name.clone();
+                self.advance()?;
+                if METHODS.contains(&name.as_str()) {
+                    Ok(Expression::MethodCall {
+                        target: Box::new(expr),
+                        method: name,
+                    })
+                } else {
+                    // Field access. On a bare/dotted field reference we keep the
+                    // existing path-string lowering (`parent.child`). After a
+                    // subscript the base is an `Index`, not a `FieldRef`, so the
+                    // member deref lowers to a string-keyed `Index` — the same
+                    // navigation the map-lookup arm uses, resolved against a
+                    // struct node.
+                    match expr {
+                        Expression::FieldRef(mut path) => {
+                            path.push('.');
+                            path.push_str(&name);
+                            Ok(Expression::FieldRef(path))
+                        }
+                        base => Ok(Expression::Index {
+                            base: Box::new(base),
+                            index: Box::new(Expression::Literal(Literal::String(name))),
+                        }),
+                    }
+                }
+            }
+            _ => Err(ExpressionError::SyntaxError {
+                message: "Expected identifier after '.'".to_string(),
+            }),
+        }
     }
 
     /// Parse primary: literal | identifier | special_var | '(' expr ')'
@@ -293,12 +311,13 @@ impl<'a> Parser<'a> {
             Token::Ident(name) => {
                 let name = name.clone();
                 self.advance()?;
-                // Check for special variables
+                // Check for special variables. `_root`/`_parent`/`_io`
+                // navigators were removed from the language; only `_index`
+                // remains. Any other identifier — including a stray `_root`
+                // token — parses as a plain field reference and fails with
+                // `UnknownField` at eval time, since no field carries that name.
                 match name.as_str() {
                     "_index" => Ok(Expression::SpecialVar(SpecialVariable::Index)),
-                    "_root" => Ok(Expression::SpecialVar(SpecialVariable::Root)),
-                    "_parent" => Ok(Expression::SpecialVar(SpecialVariable::Parent)),
-                    "_io" => Ok(Expression::SpecialVar(SpecialVariable::Io)),
                     _ => Ok(Expression::FieldRef(name)),
                 }
             }

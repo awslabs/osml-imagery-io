@@ -218,6 +218,37 @@ pub enum ExpressionError {
         operand_type: String,
     },
 
+    /// Subscript lookup against a `consts:` map missed.
+    ///
+    /// Unknown-key is an error, not a silent fallback: a decoded code absent
+    /// from the map means the file is malformed or uses a newer registered code
+    /// we should consciously add. Silently defaulting a value (e.g. a width)
+    /// would reintroduce the cursor desync the `[]` operator exists to fix.
+    #[error("Unknown key '{key}' in map '{map}'")]
+    UnknownKey {
+        /// The name of the const map that was subscripted
+        map: String,
+        /// The key that was not found in the map
+        key: String,
+    },
+
+    /// Array subscript index out of range.
+    ///
+    /// Like [`Self::UnknownKey`] for maps, an out-of-range array index is an
+    /// error rather than a silent fallback: a `repeat-expr:`/`size:` that indexes
+    /// past the end of a repeated group means the definition disagrees with the
+    /// data (read) or the input dict (write), which must fail loudly rather than
+    /// silently mis-size the field.
+    #[error("Index {index} out of range for array '{array}' (length {len})")]
+    IndexOutOfRange {
+        /// The name of the array that was subscripted
+        array: String,
+        /// The (signed) index that was requested
+        index: i64,
+        /// The number of elements the array actually holds
+        len: usize,
+    },
+
     /// Division by zero
     #[error("Division by zero")]
     DivisionByZero,

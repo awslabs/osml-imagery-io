@@ -4,7 +4,7 @@ This document describes the data-driven binary parser infrastructure in `src/par
 
 ## Relationship to Kaitai Struct
 
-Our definition format is inspired by Kaitai Struct's `.ksy` YAML format but is not fully compatible. We implement a subset of Kaitai features tailored for NITF parsing, with some extensions (like NITF-specific character encodings) and some omissions (like `instances` and `params`).
+Our definition format is inspired by Kaitai Struct's `.ksy` YAML format but is not fully compatible. We implement a subset of Kaitai features tailored for NITF parsing, with some extensions (like NITF-specific character encodings and a String-keyed `consts:` map) and some omissions (like `instances`).
 
 Key differences from Kaitai Struct:
 
@@ -13,10 +13,16 @@ Key differences from Kaitai Struct:
 | Execution model | Compiles to target language code | Runtime interpretation |
 | Expression syntax | Full Kaitai expression language | Subset (see below) |
 | `instances` | Supported | Not implemented |
-| `params` | Supported | Not implemented |
-| Array indexing | `arr[0]` bracket syntax | `arr_0` indexed paths (internal); `Value::Array` (public API) |
+| `params` | Supported (Kaitai-native) | Supported — typed parameters bound at a `type: foo(arg)` reference |
+| `consts:` (String-keyed map) | Not supported | Our extension — file-level named scalar/map literals |
+| Array indexing `arr[0]` | `arr[0]` bracket syntax (native) | `arr[i]` bracket syntax in expressions (native); repeated fields surface as `Value::Array` in the public API |
+| Map lookup `map[key]` | Not supported | Our extension — String-keyed subscript over a `consts:` map |
 | NITF encodings | Not built-in | BCS-A, BCS-N, BCS-NPI, ECS-A support |
 | Writing support | Limited | Full bidirectional read/write |
+
+The `[]` subscript operator and typed `params:` are **Kaitai-native** features we now
+support. The String-keyed `consts:` map and its `map[key]` lookup are a **local
+extension** — Kaitai has array indexing but no String-keyed map literal.
 
 Our definition files use the `.ksy` extension for familiarity but should be considered a Kaitai-inspired format rather than true Kaitai Struct files. They may not work with the official Kaitai Struct compiler.
 
@@ -137,7 +143,7 @@ classDiagram
 
 - **`StructureAccessor`** is the read path. Given a definition and a byte slice, it lazily parses field offsets via a single O(n) pass on first access, caching repeat element offsets for efficient indexed access. All subsequent field accesses are O(1) lookups. It provides a map-like `get(path)` interface returning `Value` instances, with repeated fields returned as `Value::Array`. It uses `ExpressionEvaluator` to resolve dynamic sizes and conditional fields.
 
-- **`StructureWriter`** is the write path. It uses streaming mode where fields must be written in definition order. It accepts field values via `set(path, value)` and serializes them into bytes according to the definition. For repeated fields, callers can pass a `WriteValue::Array` with all elements at once, or write elements sequentially with indexed paths.
+- **`StructureWriter`** is the write path. It uses streaming mode where fields must be written in definition order. It accepts field values via `set(path, value)` and serializes them into bytes according to the definition. For repeated fields, callers pass a `WriteValue::Array` holding all elements.
 
 - **`ExpressionEvaluator`** + **`EvalContext`** handle the expression language (arithmetic, comparisons, bitwise operations, field references) used in conditional fields, computed sizes, and repeat counts. Both the accessor and writer build an `EvalContext` from already-parsed fields to evaluate expressions.
 
@@ -173,9 +179,68 @@ let def = DefinitionLoader::load_str(yaml_string)?;
 | `repeat: until` | ✓ | Condition-based termination |
 | `repeat: eos` | ✓ | Read until end of stream |
 | `doc` | ✓ | Documentation strings |
+| `consts` (file-level) | ✓ | Named scalar or String-keyed map literals (our extension) |
+| `params` (typed) | ✓ | Bound at a `type: foo(arg)` reference (Kaitai-native) |
 | `instances` | ✗ | Not implemented |
-| `params` | ✗ | Not implemented |
 | Bit fields (`b1`, `b4`) | Partial | Parsed as bytes |
+
+##### `consts:` — file-level named literals (extension)
+
+A top-level `consts:` section declares compile-time-literal named values — either a
+scalar or a String-keyed map of scalars. Consts are seeded once into the root
+evaluation scope and inherited by every nested type scope (the same threading used
+for enclosing scalars), so a nested type may reference a file-level const with no
+extra plumbing. A parsed/written field of the same name shadows a const.
+
+The String-keyed map form supports a `map[key]` subscript lookup, which is how
+SENSRB sizes its variable-width `TIME_STAMP_VALUE` / `PIXEL_REFERENCE_VALUE` fields
+from a type code (per STDI-0002 Vol 1, App Z, Table Z.3-1 note h):
+
+```yaml
+consts:
+  sensrb_value_widths:        # a String-keyed map: code -> width
+    "06a": 11
+    "06b": 12
+    # ... note-h codes 02a-10c ...
+
+seq:
+  - id: TIME_STAMP_VALUE
+    size: sensrb_value_widths[TIME_STAMP_TYPE]
+```
+
+A lookup with a key not present in the map is a hard **error**, not a silent
+fallback — a malformed or newer-than-modeled code fails loudly rather than
+mis-sizing the field.
+
+##### `params:` — typed parameters (Kaitai-native)
+
+A type may declare `params:`, and a `type: foo(expr)` reference supplies the
+arguments. Each argument is evaluated in the **parent** scope and bound by name into
+the child type's scope, where it participates in navigation and shadowing like any
+other named value. Argument-count (arity) mismatch is an error at load time. This is
+the mechanism for binding a parent loop index into a nested type, since `_index` is
+local to its own scope and never threaded across a nesting boundary (see below).
+RSMDCB uses it to reach the matching per-image record from its `CRSCOV` block:
+
+```yaml
+seq:
+  - id: CRSCOV_BLOCK
+    type: crscov_block(_index)   # bind the outer per-image index
+    repeat: expr
+    repeat-expr: NIMGE.to_i
+
+types:
+  crscov_block:
+    params:
+      - id: image_index          # named, unambiguous — the bound index
+        type: s4
+    seq:
+      - id: CRSCOV
+        type: str
+        size: 21
+        repeat: expr
+        repeat-expr: NROWCB.to_i * IMAGE_RECORDS[image_index].NCOLCB.to_i
+```
 
 ### 2. StructureAccessor (Reading)
 
@@ -188,16 +253,13 @@ let accessor = StructureAccessor::new(Arc::new(def), &data)?;
 let version = accessor.get("fver")?.as_str()?;
 let num_images = accessor.get("numi")?.as_i64()?;
 
-// Repeated fields return Value::Array
+// Repeated fields return Value::Array; index into it for individual elements
 let all_info = accessor.get("image_info")?;  // Returns Value::Array
 if let Value::Array(entries) = all_info {
     for entry in &entries {
-        // Each entry is a Value::Struct with nested fields
+        // Each entry is a Value::Struct wrapping the element's raw bytes
     }
 }
-
-// Indexed access for individual repeated elements
-let first_len = accessor.get("image_info_0.li")?.as_str()?;
 
 // Check field existence (including conditional evaluation)
 if accessor.has("optional_field") { ... }
@@ -258,15 +320,26 @@ let result = evaluator.evaluate(&expr, &context)?;
 |----------|--------|---------|
 | Literals | integers, floats, strings, booleans | `42`, `3.14`, `"text"`, `true` |
 | Hex literals | `0x` prefix | `0xFF`, `0x1A` |
-| Field references | dot-notation paths | `header.version`, `items_0.value` |
+| Field references | dot-notation paths | `header.version`, `count` |
 | Arithmetic | `+`, `-`, `*`, `/`, `%` | `width * height` |
 | Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=` | `version >= 2` |
 | Logical | `and`, `or`, `not` | `a > 0 and b < 10` |
 | Bitwise | `&`, `\|`, `^`, `~`, `<<`, `>>` | `flags & 0xFF`, `mask \| 0x01` |
-| Methods | `.to_i`, `.to_s`, `.length` | `numi.to_i`, `data.length` |
+| Methods | `.to_i`, `.to_s`, `.length`, `.strip` | `numi.to_i`, `data.length` |
+| Subscript | `base[index]` | `widths[TYPE]`, `records[_index].ncol` |
 | Special vars | `_index` | Current repeat index |
 | Parentheses | `(expr)` | `(a + b) * c` |
 | Unary | `-`, `not`, `~` | `-offset`, `~mask` |
+
+The `[]` subscript navigates the evaluation context tree and composes with
+`.member` access. Over a `consts:` **map** it does a String-keyed lookup
+(`widths[TYPE]`); over an **array** it does a numeric index that a following
+`.member` dereferences (`records[_index].ncol`). The index is an arbitrary
+sub-expression, so `records[_index - 1].ncol` works. An unknown map key or an
+out-of-range array index is an error. A subscript always resolves to a scalar
+before it reaches an operator or method — intermediary map/array/struct nodes are
+navigation state, never a final expression result, so a bare `size: widths` (a map
+with no subscript) is a type error at the size/repeat boundary.
 
 #### Operator Precedence (lowest to highest)
 
@@ -279,12 +352,46 @@ let result = evaluator.evaluate(&expr, &context)?;
 7. `+`, `-`
 8. `*`, `/`, `%`
 9. Unary `-`, `not`, `~`
-10. Postfix `.method`, `.field`
+10. Postfix `.method`, `.field`, `[index]` subscript (left-associative; `.` and `[]` interleave freely)
 
 #### Not Supported
 
-- `_root`, `_parent`, `_io` (parsed but not evaluated)
+- `_root`, `_parent`, `_io` scope navigators — Kaitai resolves cross-scope
+  references through these navigators; our dialect has no equivalent and does not
+  reserve the names. Instead, nested expressions resolve a bare field name against
+  a single flat value scope per structure (consts < inherited enclosing scalars <
+  local fields); local fields win on a name collision. Enclosing-scope scalars are
+  threaded into nested accessors/writers via the `inherited` map, so a bare name
+  reaches an enclosing field with no navigator prefix. A navigator-style token such
+  as `_root.X` is parsed as an ordinary `FieldRef` and fails with `UnknownField` at
+  eval time.
 - Ternary operator: `a ? b : c`
+
+#### Total-or-Error Evaluation
+
+Evaluation of a `size:`, `repeat-expr:`, or `if:` expression is **total-or-error**
+on both the read and write paths: if the expression references a value that is
+unavailable — not yet parsed (read) or not present in the input dict (write) —
+evaluation returns an error and the caller **propagates** it. Neither path silently
+skips the field nor guesses a value. This matters to anyone authoring a `.ksy` for a
+TRE we do not yet model: a definition that disagrees with the bytes (read) or the
+input dict (write) now fails loudly instead of silently mis-parsing.
+
+The one distinction to keep in mind for `if:`:
+
+- `Ok(false)` — the condition evaluated cleanly to false, so the field is
+  legitimately **absent**. This is honored: the field is skipped.
+- `Err(...)` — the condition referenced an unavailable value. This is an **error**
+  and propagates; it does not masquerade as "absent" (read) or "present" (write).
+
+The sole sanctioned skip that is *not* an error is the structural count-0 case: a
+`repeat` with a count of `0` (whether `RepeatSpec::Count(0)` or a `repeat-expr`
+evaluating to `0`) produces no elements. That skip is taken before any per-element
+evaluation, so nothing is swallowed.
+
+This is why an unknown `consts:` map key and an out-of-range array index are errors
+rather than fallbacks: a silent default would reintroduce exactly the cursor-desync
+this contract exists to prevent.
 
 #### Why a Custom Expression Evaluator?
 
@@ -385,7 +492,7 @@ ExpressionError // Expression errors (syntax, unknown field, type error, divisio
 
 ## Repeated Field Access
 
-Repeated fields are accessed primarily through the base field name, which returns a `Value::Array`. Individual elements can also be accessed via `{field_id}_{index}` indexed paths (zero-based) for convenience.
+Repeated fields are accessed through the base field name, which returns a `Value::Array`. Individual elements are reached by indexing into that array in Rust (or the equivalent sequence in the Python bindings).
 
 ```yaml
 seq:
@@ -397,12 +504,9 @@ seq:
     repeat-expr: num_segments
 ```
 
-If `num_segments` is 3:
-- `segment_info` — Entire array as `Value::Array` (preferred)
-- `segment_info_0` — First entry (indexed access)
-- `segment_info_0.offset` — Nested field access on first entry
-- `segment_info_1` — Second entry
-- `segment_info_2` — Third entry
+If `num_segments` is 3, `accessor.get("segment_info")` returns a `Value::Array`
+of 3 elements. Each element is a `Value::Struct` wrapping that entry's raw bytes;
+index the array (`arr[0]`, `arr[1]`, `arr[2]`) to reach a specific element.
 
 For writing, pass arrays directly:
 ```rust
@@ -474,10 +578,11 @@ for i in 0..num_images {
 | Feature | Kaitai Struct | Implementation Status |
 |---------|---------------|----------------------|
 | `instances` | Supported | Not implemented |
-| `params` | Supported | Not implemented |
-| `_root`, `_parent`, `_io` | Supported | Parsed but not evaluated |
+| `params` | Supported | Supported — typed parameters bound at `type: foo(arg)` |
+| `consts:` String-keyed map | Not supported | Supported (our extension) — `map[key]` lookup |
+| `_root`, `_parent`, `_io` | Supported | Not supported — flat-scope resolution with `inherited`-map threading instead |
 | Ternary operator | Supported | Not supported |
 | Bitwise operators | Supported | Supported (`&`, `\|`, `^`, `~`, `<<`, `>>`) |
-| Array indexing `arr[0]` | Supported | `Value::Array` for whole array; `arr_0` indexed paths for elements |
-| Method calls | `.to_i`, `.to_s`, `.length`, etc. | `.to_i`, `.to_s`, `.length` |
+| Array indexing `arr[0]` | Supported | Supported in expressions (`arr[i]`); repeated fields surface as `Value::Array` in the public API |
+| Method calls | `.to_i`, `.to_s`, `.length`, etc. | `.to_i`, `.to_s`, `.length`, `.strip` |
 | Hex literals | `0xFF` | Supported |

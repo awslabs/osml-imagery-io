@@ -41,6 +41,8 @@ pub(crate) enum Token {
     Dot,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     // End of input
     Eof,
 }
@@ -217,6 +219,8 @@ impl<'a> Lexer<'a> {
                 '.' => Ok(Token::Dot),
                 '(' => Ok(Token::LParen),
                 ')' => Ok(Token::RParen),
+                '[' => Ok(Token::LBracket),
+                ']' => Ok(Token::RBracket),
                 '=' => {
                     if self.peek_char() == Some('=') {
                         self.next_char();

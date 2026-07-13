@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::parser::error::AccessError;
-use crate::parser::expression::{EvalContext, EvalResult, ExpressionEvaluator};
+use crate::parser::expression::{EvalContext, EvalResult, Expression, ExpressionEvaluator, Node};
 use crate::parser::types::{
     Endian, FieldDefinition, FieldType, RepeatSpec, SizeSpec, StructureDefinition,
 };
@@ -43,6 +43,7 @@ use super::read::read_float;
 ///   fields), reads actual data to determine the correct size
 fn get_nested_type_size(
     type_name: &str,
+    type_args: &[Expression],
     definition: &StructureDefinition,
     ctx: &EvalContext,
     evaluator: &ExpressionEvaluator,
@@ -56,8 +57,21 @@ fn get_nested_type_size(
             path: format!("type:{}", type_name),
         })?;
 
-    // Build a local context for the nested type
+    // Build a local context for the nested type, then bind any parameterized
+    // type-reference arguments: each is evaluated in the *enclosing* context
+    // (`ctx`) and seeded by the target type's param name into `nested_ctx`, so a
+    // reference like `IMAGE_RECORDS[image_index].NCOLCB` resolves inside the
+    // nested scope. `type_args` is empty for a plain (non-parameterized) ref.
     let mut nested_ctx = ctx.clone();
+    for (name, value) in evaluator
+        .bind_type_params(&nested_def.params, type_args, ctx)
+        .map_err(|e| AccessError::ExpressionError {
+            path: format!("type:{}", type_name),
+            message: e.to_string(),
+        })?
+    {
+        nested_ctx.insert_scalar(name, value);
+    }
     let mut total_size = 0;
 
     for field in &nested_def.fields {
@@ -66,20 +80,28 @@ fn get_nested_type_size(
             let result = evaluator.evaluate(condition, &nested_ctx);
             match result {
                 Ok(EvalResult::Boolean(false)) => {
-                    // Skip this conditional field
+                    // Field legitimately absent — `Ok(false)` means "not present".
                     continue;
                 }
                 Ok(EvalResult::Boolean(true)) => {
                     // Condition is true, continue to process field
                 }
-                Err(_) => {
-                    // Condition evaluation failed - skip this field
-                    // This can happen when referenced fields don't exist yet
-                    continue;
+                Err(e) => {
+                    // Total-or-error: a condition that references an unavailable
+                    // value is an error, not a silent skip. Swallowing it here
+                    // desyncs the cursor (the field's bytes are still present but
+                    // its size is dropped from the running total). Propagate.
+                    return Err(AccessError::ExpressionError {
+                        path: field.id.clone(),
+                        message: e.to_string(),
+                    });
                 }
                 _ => {
-                    // Condition didn't evaluate to boolean - skip field
-                    continue;
+                    // A non-boolean condition result is malformed, not "absent".
+                    return Err(AccessError::ExpressionError {
+                        path: field.id.clone(),
+                        message: "Condition did not evaluate to boolean".to_string(),
+                    });
                 }
             }
         }
@@ -249,6 +271,7 @@ pub fn get_simple_field_size(
                         // Get size from nested type
                         get_nested_type_size(
                             type_name,
+                            &field.type_args,
                             definition,
                             ctx,
                             evaluator,
@@ -342,6 +365,7 @@ pub fn get_simple_total_field_size(
                         for _ in 0..(n as usize) {
                             let elem_size = get_nested_type_size(
                                 type_name,
+                                &field.type_args,
                                 definition,
                                 ctx,
                                 evaluator,
@@ -384,11 +408,11 @@ pub fn add_value_to_context_impl<'a>(
         // Floats are usable in expressions: the evaluator supports float
         // comparisons and arithmetic (e.g. `SCALE_FACTOR > 4.5`).
         Value::Float(f) => EvalResult::Float(*f),
-        Value::Array(_) => return Ok(()), // Arrays not directly usable in expressions
-        Value::Struct(_) => return Ok(()), // Structs not directly usable in expressions
+        Value::Array(_) => return Ok(()), // Arrays enter the tree in the array-subscript phase
+        Value::Struct(_) => return Ok(()), // Structs enter the tree in the array-subscript phase
     };
 
-    ctx.fields.insert(name.to_string(), eval_result);
+    ctx.insert_scalar(name, eval_result);
     Ok(())
 }
 
@@ -398,7 +422,7 @@ pub fn build_context_from_definition<'a, F>(
     data: &'a [u8],
     evaluator: &ExpressionEvaluator,
     stop_at: &str,
-    seed: &HashMap<String, EvalResult>,
+    seed: &HashMap<String, Node>,
     read_field: F,
 ) -> Result<EvalContext, AccessError>
 where
@@ -407,8 +431,15 @@ where
     // Pre-seed with inherited (enclosing-scope) values; locally parsed fields
     // overlay them below (local wins).
     let mut ctx = EvalContext::new();
-    for (name, value) in seed {
-        ctx.fields.insert(name.clone(), value.clone());
+    // Seed compile-time consts first (const map/scalar nodes). The loader stamps
+    // the file-level consts onto every nested type, so `definition.consts` is
+    // populated at every scope and a nested `MAP[KEY]` subscript resolves. A
+    // parsed field of the same name shadows the const (fields overlay below).
+    for (name, node) in &definition.consts {
+        ctx.insert_node(name.clone(), node.clone());
+    }
+    for (name, node) in seed {
+        ctx.insert_node(name.clone(), node.clone());
     }
     let mut current_offset = 0;
 
@@ -417,23 +448,59 @@ where
             break;
         }
 
-        // Skip conditional fields that aren't present
+        // Skip conditional fields that aren't present.
         if let Some(ref condition) = field.condition {
             // Use a temporary context without this field
             let temp_ctx = ctx.clone();
-            let result = evaluator.evaluate(condition, &temp_ctx);
-            if let Ok(EvalResult::Boolean(false)) = result {
+            match evaluator.evaluate(condition, &temp_ctx) {
+                Ok(EvalResult::Boolean(false)) => {
+                    // Field legitimately absent — `Ok(false)` means "not present".
+                    continue;
+                }
+                Ok(EvalResult::Boolean(true)) => {
+                    // Present — fall through and size it.
+                }
+                Ok(_) => {
+                    // A non-boolean condition result is malformed, not "absent".
+                    return Err(AccessError::ExpressionError {
+                        path: field.id.clone(),
+                        message: "Condition did not evaluate to boolean".to_string(),
+                    });
+                }
+                Err(e) => {
+                    // Total-or-error: a condition referencing an unavailable value
+                    // is an error, not "present". The prior code let any non-false
+                    // result (including `Err`) fall through as present, papering
+                    // over an unresolvable condition — flip it to propagate.
+                    return Err(AccessError::ExpressionError {
+                        path: field.id.clone(),
+                        message: e.to_string(),
+                    });
+                }
+            }
+        }
+
+        // Sanctioned structural skip (mirrors `ensure_parsed` and
+        // `get_nested_type_size`): a count-0 repeated field reads no element and
+        // contributes 0 bytes, so it must not be probed. For a repeated TypeRef
+        // whose element type carries its own data-dependent `repeat-expr`, the
+        // single-element probe below errors against absent element data; with the
+        // total-or-error flip that `Err` would now propagate and abort context
+        // building. Skip the field structurally *before* any evaluation instead.
+        if let Some(RepeatSpec::Count(0)) = &field.repeat {
+            continue;
+        }
+        if let Some(RepeatSpec::Expression(expr)) = &field.repeat {
+            if let Ok(EvalResult::Integer(0)) = evaluator.evaluate(expr, &ctx) {
                 continue;
             }
         }
 
-        // Get field size - use simple size calculation to avoid recursion
-        // Pass definition, data, and current_offset for TypeRef resolution
-        let size =
-            match get_simple_field_size(field, &ctx, evaluator, definition, data, current_offset) {
-                Ok(s) => s,
-                Err(_) => continue, // Skip fields we can't size
-            };
+        // Get field size - use simple size calculation to avoid recursion.
+        // Total-or-error: a field whose size cannot be resolved is a propagated
+        // error, not a silently-skipped field (skipping desyncs the read cursor,
+        // the mechanism behind the SENSRB `size: 12` bug).
+        let size = get_simple_field_size(field, &ctx, evaluator, definition, data, current_offset)?;
 
         // Read and add to context if within bounds
         if current_offset + size <= data.len() {
@@ -442,10 +509,12 @@ where
             }
         }
 
-        // Move past this field - use simple calculation with TypeRef support
+        // Move past this field - use simple calculation with TypeRef support.
+        // Total-or-error: propagate a total-size failure rather than falling back
+        // to the single-element `size`, which would silently under-advance the
+        // cursor for a repeated field.
         let total_size =
-            get_simple_total_field_size(field, &ctx, evaluator, definition, data, current_offset)
-                .unwrap_or(size);
+            get_simple_total_field_size(field, &ctx, evaluator, definition, data, current_offset)?;
         current_offset += total_size;
     }
 
@@ -499,9 +568,83 @@ mod tests {
         let value = read_simple_value(&field, &bytes).unwrap();
         let mut ctx = EvalContext::new();
         add_value_to_context_impl(&mut ctx, "BIG", &value).unwrap();
-        match ctx.fields.get("BIG") {
+        match ctx.get_scalar("BIG") {
             Some(EvalResult::Integer(n)) => assert_eq!(*n, -42),
             other => panic!("expected Integer(-42), got {:?}", other),
         }
+    }
+
+    /// Build a definition with a single expression-sized field referencing a
+    /// name that is never provided, so its `size:` cannot be resolved.
+    fn unresolvable_size_def() -> StructureDefinition {
+        StructureDefinition::new("bad_size").with_field(
+            FieldDefinition::new("F", FieldType::String)
+                .with_size(SizeSpec::expr(ExpressionEvaluator::parse("MISSING.to_i").unwrap())),
+        )
+    }
+
+    #[test]
+    fn read_builder_propagates_unresolvable_size() {
+        // Total-or-error: a `size:` referencing an unavailable value must error
+        // out of the read builder, not silently skip the field (the SENSRB
+        // `size: 12` desync mechanism).
+        let def = unresolvable_size_def();
+        let data = vec![b'X'; 16];
+        let evaluator = ExpressionEvaluator::new();
+        let seed = HashMap::new();
+        let result = build_context_from_definition(&def, &data, &evaluator, "", &seed, |field, off, sz| {
+            read_simple_value(field, &data[off..off + sz])
+        });
+        assert!(
+            matches!(result, Err(AccessError::ExpressionError { .. })),
+            "expected ExpressionError, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn read_builder_ok_false_condition_marks_absent() {
+        // `Ok(false)` on an `if:` still means the field is legitimately absent:
+        // the builder skips it and succeeds (does not error).
+        let def = StructureDefinition::new("cond")
+            .with_field(FieldDefinition::new("FLAG", FieldType::UnsignedInt(1)).with_size(SizeSpec::Fixed(1)))
+            .with_field(
+                FieldDefinition::new("OPT", FieldType::String)
+                    .with_size(SizeSpec::Fixed(4))
+                    .with_condition(ExpressionEvaluator::parse("FLAG.to_i == 1").unwrap()),
+            );
+        // FLAG = 0 -> condition false -> OPT absent, no error.
+        let data = vec![0u8; 8];
+        let evaluator = ExpressionEvaluator::new();
+        let seed = HashMap::new();
+        let ctx = build_context_from_definition(&def, &data, &evaluator, "", &seed, |field, off, sz| {
+            read_simple_value(field, &data[off..off + sz])
+        })
+        .expect("Ok(false) condition should not error");
+        // FLAG parsed; OPT skipped as absent.
+        assert!(ctx.get_scalar("FLAG").is_some());
+        assert!(ctx.get_scalar("OPT").is_none());
+    }
+
+    #[test]
+    fn read_builder_propagates_unresolvable_condition() {
+        // Total-or-error: a condition referencing an unavailable value errors
+        // rather than being treated as present (the flipped top-level site).
+        let def = StructureDefinition::new("cond_err").with_field(
+            FieldDefinition::new("OPT", FieldType::String)
+                .with_size(SizeSpec::Fixed(4))
+                .with_condition(ExpressionEvaluator::parse("MISSING.to_i == 1").unwrap()),
+        );
+        let data = vec![b'X'; 8];
+        let evaluator = ExpressionEvaluator::new();
+        let seed = HashMap::new();
+        let result = build_context_from_definition(&def, &data, &evaluator, "", &seed, |field, off, sz| {
+            read_simple_value(field, &data[off..off + sz])
+        });
+        assert!(
+            matches!(result, Err(AccessError::ExpressionError { .. })),
+            "expected ExpressionError, got {:?}",
+            result
+        );
     }
 }

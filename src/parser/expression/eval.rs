@@ -1,7 +1,6 @@
 //! Expression evaluation logic.
 
-use std::collections::HashMap;
-
+use super::context::{EvalContext, Node};
 use super::ops::{
     eval_add, eval_bitwise_and, eval_bitwise_or, eval_bitwise_xor, eval_compare, eval_div,
     eval_logical_and, eval_logical_or, eval_mod, eval_mul, eval_shift_left, eval_shift_right,
@@ -10,60 +9,7 @@ use super::ops::{
 use super::parser::Parser;
 use super::{BinaryOperator, EvalResult, Expression, Literal, SpecialVariable, UnaryOperator};
 use crate::parser::error::ExpressionError;
-
-/// Strip leading `_root.`/`_parent.` navigator segments from a field path,
-/// returning the trailing bare field name.
-///
-/// `_root.`/`_parent.` may chain (e.g. `_parent._parent.NPAR`), so all leading
-/// navigator segments are removed. With a single flat value scope per structure
-/// the level a navigator points at is irrelevant — only the final name matters.
-fn strip_scope_navigators(path: &str) -> &str {
-    let mut rest = path;
-    while let Some(tail) = rest
-        .strip_prefix("_root.")
-        .or_else(|| rest.strip_prefix("_parent."))
-    {
-        rest = tail;
-    }
-    rest
-}
-
-/// Context for expression evaluation containing field values.
-#[derive(Debug, Clone)]
-pub struct EvalContext {
-    /// Field values by path
-    pub fields: HashMap<String, EvalResult>,
-    /// Current repetition index (for _index)
-    pub index: Option<usize>,
-}
-
-impl EvalContext {
-    /// Create a new empty evaluation context.
-    pub fn new() -> Self {
-        Self {
-            fields: HashMap::new(),
-            index: None,
-        }
-    }
-
-    /// Set a field value.
-    pub fn with_field(mut self, path: impl Into<String>, value: EvalResult) -> Self {
-        self.fields.insert(path.into(), value);
-        self
-    }
-
-    /// Set the current index.
-    pub fn with_index(mut self, index: usize) -> Self {
-        self.index = Some(index);
-        self
-    }
-}
-
-impl Default for EvalContext {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+use crate::parser::types::ParamDefinition;
 
 /// Evaluates expressions in the context of a structure.
 pub struct ExpressionEvaluator;
@@ -111,19 +57,18 @@ impl ExpressionEvaluator {
                 Literal::Boolean(b) => EvalResult::Boolean(*b),
             }),
             Expression::FieldRef(path) => {
-                // Try an exact match first. On miss, fall back to the bare field
-                // name with any leading `_root.`/`_parent.` navigator segments
-                // stripped. These structures use a single flat value scope per
-                // structure (no lexically-nested types, no shadowing), so a
-                // navigator like `_root.LEN` or `_parent.N` resolves to the same
-                // `LEN`/`N` that lives in the shared scope. See
-                // `StructureWriter::build_eval_context` and
-                // `StructureAccessor` for how that scope is seeded with
-                // inherited (enclosing) field values.
+                // Resolve a bare field name against the flat value scope. These
+                // structures use a single flat value scope per structure (no
+                // lexically-nested types, no shadowing beyond the local-wins
+                // rule), so a nested expression's bare name like `LEN` or `NPAR`
+                // resolves to the enclosing field of the same name. See
+                // `StructureWriter::build_eval_context` and `StructureAccessor`
+                // for how that scope is seeded with inherited (enclosing) field
+                // values. Only a scalar leaf is a valid bare reference; a bare
+                // intermediary node (const map, array, struct) yields
+                // `UnknownField` since it is not a final value on its own.
                 context
-                    .fields
-                    .get(path)
-                    .or_else(|| context.fields.get(strip_scope_navigators(path)))
+                    .get_scalar(path)
                     .cloned()
                     .ok_or_else(|| ExpressionError::UnknownField {
                         field: path.clone(),
@@ -136,11 +81,6 @@ impl ExpressionEvaluator {
                     .ok_or_else(|| ExpressionError::UnknownField {
                         field: "_index".to_string(),
                     }),
-                SpecialVariable::Root | SpecialVariable::Parent | SpecialVariable::Io => {
-                    Err(ExpressionError::UnknownField {
-                        field: format!("{:?}", var),
-                    })
-                }
             },
             Expression::BinaryOp { left, op, right } => {
                 let left_val = self.evaluate(left, context)?;
@@ -165,6 +105,163 @@ impl ExpressionEvaluator {
                 let val = self.evaluate(target, context)?;
                 self.eval_method_call(val, method)
             }
+            // Subscript navigation. `base[index]` navigates a context node and
+            // yields the *scalar* final the surrounding expression consumes:
+            //   - a const `Map` does a string-keyed lookup → mapped scalar;
+            //   - an `Array` does numeric indexing → the element's scalar leaf,
+            //     or (for `A[i].F`) the parser has already lowered the `.F` into
+            //     an outer string-keyed `Index` whose base is this `A[i]`, so the
+            //     base here resolves to the element `Struct` and this arm reads
+            //     member `F` off it;
+            //   - a `Struct` does a string-keyed member read → member scalar.
+            // Chained navigation (array element → struct member) is resolved by
+            // `navigate`, which walks the container chain and returns the node to
+            // index into here.
+            Expression::Index { base, index } => {
+                let node = self.navigate(base, context)?;
+                match node {
+                    Node::Map(table) => {
+                        let key = self.evaluate(index, context)?.expect_string()?;
+                        table
+                            .get(&key)
+                            .cloned()
+                            .ok_or_else(|| ExpressionError::UnknownKey {
+                                map: Self::base_name(base),
+                                key,
+                            })
+                    }
+                    Node::Array(elems) => {
+                        let raw = self.evaluate(index, context)?.expect_integer()?;
+                        let elem = Self::array_element(elems, raw, base)?;
+                        // A bare `A[i]` used as a final must land on a scalar; if
+                        // the element is a struct the caller wrote `A[i]` without
+                        // a following `.member`, which is an intermediary at the
+                        // final boundary.
+                        elem.as_scalar().cloned().ok_or_else(|| ExpressionError::TypeError {
+                            operator: "[]".to_string(),
+                            operand_type: format!("{:?}", elem),
+                        })
+                    }
+                    Node::Struct(fields) => {
+                        // Member deref after a subscript (`A[i].F`) lowers to a
+                        // string-keyed index into the element struct.
+                        let key = self.evaluate(index, context)?.expect_string()?;
+                        fields
+                            .get(&key)
+                            .and_then(Node::as_scalar)
+                            .cloned()
+                            .ok_or(ExpressionError::UnknownField { field: key })
+                    }
+                    Node::Scalar(_) => Err(ExpressionError::TypeError {
+                        operator: "[]".to_string(),
+                        operand_type: format!("{:?}", node),
+                    }),
+                }
+            }
+        }
+    }
+
+    /// Select an array element by a (possibly negative) index, erroring when it
+    /// falls outside the array. Names the array for the error via `base`.
+    fn array_element<'c>(
+        elems: &'c [Node],
+        raw: i64,
+        base: &Expression,
+    ) -> Result<&'c Node, ExpressionError> {
+        let idx = usize::try_from(raw).ok().filter(|&i| i < elems.len());
+        match idx {
+            Some(i) => Ok(&elems[i]),
+            None => Err(ExpressionError::IndexOutOfRange {
+                array: Self::base_name(base),
+                index: raw,
+                len: elems.len(),
+            }),
+        }
+    }
+
+    /// Bind a parameterized type reference's arguments to the target type's
+    /// parameters, evaluated in the enclosing (parent) context.
+    ///
+    /// Each argument expression in `args` is evaluated against `parent_ctx` and
+    /// bound by position to `params[i].id`, producing the name→scalar map the
+    /// caller seeds into the child scope (via the inherited-snapshot mechanism)
+    /// so `IMAGE_RECORDS[image_index].NCOLCB`-style references resolve inside the
+    /// nested type. Arity is validated at load
+    /// ([`crate::parser::definition::DefinitionLoader::validate_type_references`]),
+    /// so a defensive length check here only guards against a hand-built
+    /// definition; a mismatch binds the positions that line up and ignores the
+    /// rest rather than erroring at eval time.
+    pub fn bind_type_params(
+        &self,
+        params: &[ParamDefinition],
+        args: &[Expression],
+        parent_ctx: &EvalContext,
+    ) -> Result<Vec<(String, EvalResult)>, ExpressionError> {
+        let mut bound = Vec::with_capacity(params.len().min(args.len()));
+        for (param, arg) in params.iter().zip(args.iter()) {
+            let value = self.evaluate(arg, parent_ctx)?;
+            bound.push((param.id.clone(), value));
+        }
+        Ok(bound)
+    }
+
+    /// Resolve the base of a subscript to the context [`Node`] it names.
+    ///
+    /// The base is either a bare reference to a named node — a const map, an
+    /// array, or a struct — resolved against the context tree, or itself a
+    /// subscript (`A[i]` as the base of `A[i].F`). In the chained case this
+    /// recurses: it resolves the inner container and indexes one level into it,
+    /// returning the sub-`Node` (typically the element `Struct` an outer
+    /// `.member` reads from). Indexing a `Map` yields a scalar, not a node, so a
+    /// `Map` can only be the *final* container in a chain — using one as an
+    /// intermediate base is a type error.
+    fn navigate<'c>(
+        &self,
+        base: &Expression,
+        context: &'c EvalContext,
+    ) -> Result<&'c Node, ExpressionError> {
+        match base {
+            Expression::FieldRef(name) => {
+                context
+                    .get(name)
+                    .ok_or_else(|| ExpressionError::UnknownField {
+                        field: name.clone(),
+                    })
+            }
+            Expression::Index {
+                base: inner_base,
+                index,
+            } => {
+                let container = self.navigate(inner_base, context)?;
+                match container {
+                    Node::Array(elems) => {
+                        let raw = self.evaluate(index, context)?.expect_integer()?;
+                        Self::array_element(elems, raw, inner_base)
+                    }
+                    Node::Struct(fields) => {
+                        let key = self.evaluate(index, context)?.expect_string()?;
+                        fields.get(&key).ok_or(ExpressionError::UnknownField {
+                            field: key,
+                        })
+                    }
+                    other => Err(ExpressionError::TypeError {
+                        operator: "[]".to_string(),
+                        operand_type: format!("{:?}", other),
+                    }),
+                }
+            }
+            _ => Err(ExpressionError::TypeError {
+                operator: "[]".to_string(),
+                operand_type: "non-navigable base expression".to_string(),
+            }),
+        }
+    }
+
+    /// Best-effort name of a subscript base, for error messages.
+    fn base_name(base: &Expression) -> String {
+        match base {
+            Expression::FieldRef(name) => name.clone(),
+            _ => "<expr>".to_string(),
         }
     }
 

@@ -674,7 +674,8 @@ impl PyStructureAccessor {
     /// Access a field by path using bracket notation.
     ///
     /// Supports dot-notation paths for nested fields (e.g.,
-    /// ``"parent.child"`` or ``"items_0.value"``).
+    /// ``"parent.child"``). Repeated fields are returned whole as an
+    /// array value.
     ///
     /// :param path: Field path to access.
     /// :type path: str
@@ -775,8 +776,7 @@ impl PyStructureAccessor {
 /// definition order. Call :meth:`finish` to retrieve the final encoded bytes.
 /// Field values are set using bracket notation or the :meth:`set` method, and
 /// accepted types include ``str``, ``int``, ``float``, and ``bytes``.
-/// For repeated fields, write elements sequentially with indexed paths
-/// (``field_0``, ``field_1``, ...).
+/// For repeated fields, assign a ``list`` (or ``tuple``) holding all elements.
 ///
 /// Example:
 ///
@@ -829,7 +829,8 @@ impl PyStructureWriter {
     ///
     /// :param path: The field path.
     /// :type path: str
-    /// :param value: The value to write (``str``, ``bytes``, ``int``, or ``float``).
+    /// :param value: The value to write (``str``, ``bytes``, ``int``, or
+    ///     ``float``; or a ``list``/``tuple`` of these for a repeated field).
     /// :raises ValueError: If the value is invalid for the field.
     /// :raises RuntimeError: If the writer has been finalized.
     fn __setitem__(&mut self, path: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
