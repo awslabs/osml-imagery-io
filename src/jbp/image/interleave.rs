@@ -523,8 +523,6 @@ pub fn fused_bip_to_bsq_swap_parallel(
     // Dispatch tile groups to Rayon.
     rayon::scope(|s| {
         for &(tile_start, tile_end) in &tile_ranges {
-            let src = src;
-            let bands = bands;
             let dst_ptr = &dst_ptr;
 
             s.spawn(move |_| {

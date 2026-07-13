@@ -645,6 +645,8 @@ mod tests {
 
     /// Helper function to create synthetic NITF image subheader test data.
     /// This creates a minimal valid image subheader with configurable parameters.
+    // One argument per configurable NITF image-subheader field synthesized here.
+    #[allow(clippy::too_many_arguments)]
     fn create_image_subheader_test_data(
         iid1: &str,
         nrows: u32,
@@ -891,11 +893,11 @@ mod property_tests {
     use crate::parser::StructureRegistry;
     use proptest::prelude::*;
 
-    /// Property 1: Image Subheader Round-Trip
-    /// For any valid image subheader configuration, writing the subheader to bytes
-    /// and then parsing it back SHALL produce an equivalent ImageSubheaderFacade
-    /// with identical field values.
-    /// **Validates: Requirements 1.1-1.10, 2.1-2.5, 7.1-7.8, 17.1**
+    // Property 1: Image Subheader Round-Trip
+    // For any valid image subheader configuration, writing the subheader to bytes
+    // and then parsing it back SHALL produce an equivalent ImageSubheaderFacade
+    // with identical field values.
+    // **Validates: Requirements 1.1-1.10, 2.1-2.5, 7.1-7.8, 17.1**
 
     /// Generate a valid BCS-A string of specified length (printable ASCII 0x20-0x7E)
     /// Ensures at least one non-space character to avoid all-space strings
@@ -956,6 +958,8 @@ mod property_tests {
     }
 
     /// Helper function to create synthetic NITF image subheader test data.
+    // One argument per configurable NITF image-subheader field synthesized here.
+    #[allow(clippy::too_many_arguments)]
     fn create_test_subheader(
         iid1: &str,
         nrows: u32,
@@ -1638,7 +1642,7 @@ mod property_tests {
             prop_assert_eq!(parsed_nelut.unwrap(), nelut, "NELUT should match");
 
             // Verify each LUT's data is byte-identical
-            for lut_idx in 0..nluts as usize {
+            for (lut_idx, expected_lut) in lut_data_vec.iter().enumerate().take(nluts as usize) {
                 let parsed_lut_data = band_info.lut_data(lut_idx)
                     .map_err(|e| TestCaseError::fail(format!("Failed to get LUT data {}: {}", lut_idx, e)))?;
 
@@ -1650,7 +1654,7 @@ mod property_tests {
                     "LUT {} should have {} entries", lut_idx, nelut);
 
                 // Verify byte-identical
-                prop_assert_eq!(&parsed_bytes, &lut_data_vec[lut_idx],
+                prop_assert_eq!(&parsed_bytes, expected_lut,
                     "LUT {} data should be byte-identical", lut_idx);
             }
 
@@ -1663,6 +1667,8 @@ mod property_tests {
     }
 
     /// Helper function to create synthetic NITF image subheader with LUT data.
+    // One argument per configurable NITF image-subheader/LUT field synthesized here.
+    #[allow(clippy::too_many_arguments)]
     fn create_test_subheader_with_lut(
         nrows: u32,
         ncols: u32,

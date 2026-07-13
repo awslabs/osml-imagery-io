@@ -911,6 +911,11 @@ impl TiffHandle {
     }
 
     /// Get an `f32` tag value from the current IFD.
+    ///
+    /// Part of the typed TIFF field API surface for full field-type coverage;
+    /// currently exercised only by tests (the reader reads tags generically via
+    /// `enumerate_ifd_tags`/`read_tag_value`).
+    #[allow(dead_code)]
     pub fn get_field_f32(&self, tag: u32) -> Result<f32, CodecError> {
         let mut value: f32 = 0.0;
         let ret = unsafe { sys::TIFFGetField(self.handle, tag, &mut value as *mut f32) };
@@ -925,6 +930,9 @@ impl TiffHandle {
     }
 
     /// Get an `f64` tag value from the current IFD.
+    ///
+    /// Part of the typed TIFF field API surface (see [`TiffHandle::get_field_f32`]).
+    #[allow(dead_code)]
     pub fn get_field_f64(&self, tag: u32) -> Result<f64, CodecError> {
         let mut value: f64 = 0.0;
         let ret = unsafe { sys::TIFFGetField(self.handle, tag, &mut value as *mut f64) };
@@ -939,6 +947,9 @@ impl TiffHandle {
     }
 
     /// Get a string tag value from the current IFD.
+    ///
+    /// Part of the typed TIFF field API surface (see [`TiffHandle::get_field_f32`]).
+    #[allow(dead_code)]
     pub fn get_field_string(&self, tag: u32) -> Result<String, CodecError> {
         let mut ptr: *const c_char = ptr::null();
         let ret = unsafe { sys::TIFFGetField(self.handle, tag, &mut ptr as *mut *const c_char) };
@@ -1533,6 +1544,9 @@ impl TiffHandle {
     }
 
     /// Write an `i32` (SLONG) array tag to the current IFD.
+    ///
+    /// Part of the typed TIFF field API surface (see [`TiffHandle::get_field_f32`]).
+    #[allow(dead_code)]
     pub fn set_field_i32_array(&self, tag: u32, data: &[i32]) -> Result<(), CodecError> {
         let ret =
             unsafe { sys::TIFFSetField(self.handle, tag, data.len() as c_int, data.as_ptr()) };
@@ -1576,6 +1590,9 @@ impl TiffHandle {
     /// libtiff returns variable-length SHORT arrays (e.g., GeoKeyDirectoryTag 34735)
     /// via `TIFFGetField(tif, tag, &count, &ptr)` where count is `u16` and ptr
     /// points to libtiff-owned memory. We copy into a `Vec` before returning.
+    ///
+    /// Part of the typed TIFF field API surface (see [`TiffHandle::get_field_f32`]).
+    #[allow(dead_code)]
     pub fn get_field_u16_array(&self, tag: u32, _count: u16) -> Result<Vec<u16>, CodecError> {
         let mut actual_count: u16 = 0;
         let mut ptr: *const u16 = ptr::null();
@@ -1632,6 +1649,9 @@ impl TiffHandle {
     /// libtiff returns variable-length DOUBLE arrays (e.g., GeoDoubleParamsTag 34736,
     /// ModelTiepointTag 33922) via `TIFFGetField(tif, tag, &count, &ptr)` where
     /// count is `u16` and ptr points to libtiff-owned memory.
+    ///
+    /// Part of the typed TIFF field API surface (see [`TiffHandle::get_field_f32`]).
+    #[allow(dead_code)]
     pub fn get_field_f64_array(&self, tag: u32, _count: u16) -> Result<Vec<f64>, CodecError> {
         let mut actual_count: u16 = 0;
         let mut ptr: *const f64 = ptr::null();

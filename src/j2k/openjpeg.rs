@@ -663,6 +663,9 @@ pub struct OpenJpegEncodeState {
     codec: OjpCodec,
     image: OjpImage,
     stream: OjpStream,
+    /// Encode parameters captured at `start_encode`. Retained for the encode
+    /// state's lifetime; not read back after configuration.
+    #[allow(dead_code)]
     params: J2KEncodeParams,
     tiles_written: u32,
     total_tiles: u32,

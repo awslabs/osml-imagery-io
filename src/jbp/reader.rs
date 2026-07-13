@@ -65,10 +65,18 @@ pub struct JBPDatasetReader {
     /// File-level metadata provider
     file_metadata: Arc<JBPFileMetadataProvider>,
     /// File header structure definition
+    ///
+    /// Retained from construction to keep the definition alive alongside the
+    /// accessor built from it; not read back directly.
+    #[allow(dead_code)]
     file_header_definition: Arc<StructureDefinition>,
     /// Header length in bytes
     header_length: usize,
     /// Validation mode flag
+    ///
+    /// Applied once during construction (gates the file-length check); retained
+    /// on the struct to record the mode the reader was opened with.
+    #[allow(dead_code)]
     validate_file_length: bool,
     /// Collected validation warnings
     warnings: RwLock<Vec<ValidationWarning>>,

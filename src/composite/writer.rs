@@ -178,6 +178,9 @@ mod tests {
     }
 
     impl MockAssetProvider {
+        // Test factory: intentionally returns the wrapped `AssetProvider` enum
+        // (not `Self`) so call sites read naturally when queuing assets.
+        #[allow(clippy::new_ret_no_self)]
         fn new(key: &str) -> AssetProvider {
             AssetProvider::Image(Arc::new(Self {
                 key: key.to_string(),

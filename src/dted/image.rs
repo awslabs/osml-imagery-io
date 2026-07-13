@@ -230,11 +230,11 @@ impl ImageAssetProvider for DTEDImageAssetProvider {
         config.insert("dted_codec".to_string(), Vec::new());
         config.insert(
             "num_lat_points".to_string(),
-            (self.num_lat_points as u32).to_le_bytes().to_vec(),
+            self.num_lat_points.to_le_bytes().to_vec(),
         );
         config.insert(
             "num_lon_lines".to_string(),
-            (self.num_lon_lines as u32).to_le_bytes().to_vec(),
+            self.num_lon_lines.to_le_bytes().to_vec(),
         );
         config.insert(
             "record_size".to_string(),

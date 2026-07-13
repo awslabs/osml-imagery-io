@@ -40,9 +40,10 @@ use crate::jbp::tre::{parse_tre_fields_from_metadata, write_tre_envelopes, TreEn
 use crate::jbp::tre_fields::serialize_tre_groups_to_envelopes;
 use crate::jbp::types::{NitfFormat, SegmentType};
 use crate::parser::StructureRegistry;
-use crate::traits::{
-    AssetMetadata, AssetProvider, DatasetWriter, ImageAssetProvider, MetadataProvider,
-};
+use crate::traits::{AssetProvider, DatasetWriter, ImageAssetProvider, MetadataProvider};
+// Used only by the test submodules (imported via `use super::*`).
+#[cfg(test)]
+use crate::traits::AssetMetadata;
 use crate::types::AssetType;
 
 /// Maximum TRE data size for UDID field (UDIDL max 99999 - 3 bytes for UDOFL).
@@ -285,8 +286,16 @@ struct QueuedAsset {
     /// Human-readable title
     title: String,
     /// Detailed description
+    ///
+    /// Captured from the asset's `AssetMetadata`; unlike `title` (→ IID2/TXTITL/
+    /// SNAME), NITF has no per-segment field to carry it, so it is not written.
+    #[allow(dead_code)]
     description: String,
     /// Semantic roles
+    ///
+    /// Captured from `AssetMetadata`; no corresponding NITF subheader field, so
+    /// not written to output.
+    #[allow(dead_code)]
     roles: Vec<String>,
     /// Segment type derived from asset type
     segment_type: SegmentType,
@@ -468,6 +477,9 @@ impl JBPDatasetWriter {
     }
 
     /// Count segments by type.
+    ///
+    /// Test-only helper used to assert segment composition of a queued dataset.
+    #[cfg(test)]
     fn count_segments_by_type(&self) -> (usize, usize, usize, usize, usize) {
         let mut numi = 0;
         let mut nums = 0;
@@ -947,6 +959,10 @@ impl JBPDatasetWriter {
     ///
     /// # Returns
     /// A vector of warning messages for any detected conflicts.
+    // Complexity is inherent: one independent metadata-vs-derived consistency
+    // check per NITF image field. Each check is short and self-contained;
+    // extracting them would obscure the flat, auditable list of validations.
+    #[allow(clippy::cognitive_complexity)]
     fn detect_and_resolve_conflicts(
         asset: &QueuedAsset,
         image_props: &ImageProperties,

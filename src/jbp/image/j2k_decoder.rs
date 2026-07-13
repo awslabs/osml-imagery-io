@@ -73,6 +73,10 @@ pub struct Jpeg2000BlockDecoder {
     /// Bits per pixel
     nbpp: u8,
     /// Pixel value type
+    ///
+    /// Captured from the image subheader; the J2K codestream is self-describing
+    /// for sample type, so this is retained for completeness but not read back.
+    #[allow(dead_code)]
     pvtype: PixelValueType,
     /// Compression type (C8, CD, M8, or MD)
     ic: String,

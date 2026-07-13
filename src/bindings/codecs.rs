@@ -339,6 +339,9 @@ fn write_ifd_entry(buf: &mut Vec<u8>, tag: u16, field_type: u16, count: u32, val
 /// - JPEGTables data (if present)
 /// - Compressed tile bytes
 #[cfg(feature = "libtiff")]
+// Each argument is a distinct TIFF tag needed to frame a standalone tile as a
+// minimal TIFF; grouping them into a struct would just move the same fields.
+#[allow(clippy::too_many_arguments)]
 fn build_synthetic_tiff(
     data: &[u8],
     compression: u16,
@@ -487,6 +490,9 @@ fn build_synthetic_tiff(
 #[pyo3(signature = (data, compression, bits_per_sample, samples_per_pixel,
                     photometric, planar_config, predictor, tile_width,
                     tile_height, sample_format, jpeg_tables=None))]
+// Python-facing decode entry point; the argument list mirrors the TIFF tile
+// parameters the caller must supply. Keep the flat signature for the binding.
+#[allow(clippy::too_many_arguments)]
 pub fn decode_tiff_tile(
     py: Python<'_>,
     data: &[u8],

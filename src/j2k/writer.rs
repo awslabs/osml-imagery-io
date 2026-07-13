@@ -104,6 +104,11 @@ impl J2KDatasetWriter {
     ///
     /// The file is opened immediately and wrapped in a `BufWriter<File>`,
     /// then delegated to `new_with_output_and_codec`.
+    ///
+    /// Codec-injection constructor for the standalone `.j2k` writer. Retained
+    /// as part of the J2K write API surface (mirrors `new_with_output_and_codec`,
+    /// which the public constructor uses); not currently reached by callers.
+    #[allow(dead_code)]
     pub(crate) fn new_with_codec(
         path: impl AsRef<Path>,
         codec: Arc<dyn J2KCodec>,

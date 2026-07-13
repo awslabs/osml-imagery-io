@@ -178,6 +178,7 @@ pub trait BlockDecoder: Send + Sync {
     /// Offsets are relative to the start of the image data buffer.
     /// The caller (JBPImageAssetProvider) translates these to file-relative
     /// offsets by adding `location.data_offset`.
+    #[allow(clippy::type_complexity)] // (block_row, block_col) -> [(offset, length)]; self-documenting inline.
     fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), Vec<(u64, u64)>>> {
         None
     }

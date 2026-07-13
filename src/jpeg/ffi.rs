@@ -30,6 +30,10 @@ fn store_error(msg: String) {
 }
 
 /// Get and clear the last error message.
+///
+/// Companion to the thread-local error hook; retained for callers that need to
+/// surface the last libjpeg error. Not currently consumed.
+#[allow(dead_code)]
 pub(super) fn take_last_error() -> Option<String> {
     LAST_ERROR.with(|e| e.borrow_mut().take())
 }
@@ -467,6 +471,7 @@ pub fn decompress_8bit(
 ///
 /// # Returns
 /// The compressed JPEG data.
+#[allow(dead_code)] // Future work: 12-bit encode path (see `libjpeg-turbo-12bit` feature).
 pub fn compress_12bit(
     _src: &[u8],
     _width: usize,
@@ -549,8 +554,8 @@ mod tests {
         let width = 8;
         let height = 8;
         let mut src = vec![0u8; width * height];
-        for i in 0..src.len() {
-            src[i] = (i * 4) as u8;
+        for (i, val) in src.iter_mut().enumerate() {
+            *val = (i * 4) as u8;
         }
 
         // Compress

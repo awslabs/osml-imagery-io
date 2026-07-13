@@ -172,8 +172,8 @@ impl TreEnvelope {
         let tag_bytes = self.tag.as_bytes();
         bytes.extend_from_slice(tag_bytes);
         // Pad with spaces if tag is shorter than 6 characters
-        for _ in tag_bytes.len()..CETAG_SIZE {
-            bytes.push(b' ');
+        if tag_bytes.len() < CETAG_SIZE {
+            bytes.extend(std::iter::repeat_n(b' ', CETAG_SIZE - tag_bytes.len()));
         }
 
         // Write CEL (5 digits, zero-padded)

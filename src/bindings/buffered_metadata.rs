@@ -110,7 +110,9 @@ impl PyBufferedMetadataProvider {
     /// :type source: MetadataProvider or None
     #[new]
     #[pyo3(signature = (source=None))]
-    fn py_new(source: Option<PyRef<'_, PyMetadataProvider>>) -> (Self, PyMetadataProvider) {
+    fn py_new(
+        source: Option<PyRef<'_, PyMetadataProvider>>,
+    ) -> PyClassInitializer<Self> {
         let simple = match source {
             Some(src) => BufferedMetadataProvider::from_provider(src.inner().as_ref()),
             None => BufferedMetadataProvider::new(),
@@ -119,7 +121,7 @@ impl PyBufferedMetadataProvider {
 
         let base = PyMetadataProvider::new(inner.clone() as Arc<dyn MetadataProvider>);
 
-        (Self { inner }, base)
+        PyClassInitializer::from(base).add_subclass(Self { inner })
     }
 
     fn __setitem__(&self, py: Python<'_>, key: &str, value: Py<PyAny>) -> PyResult<()> {

@@ -470,6 +470,11 @@ impl OjpCodec {
     }
 
     /// Encode image.
+    ///
+    /// Whole-image encode entry point. The NITF C8/CD block-encode path uses
+    /// the tile-based `encode_tile`/`start_compress` flow instead; this method
+    /// is retained for the standalone whole-image encode API.
+    #[allow(dead_code)]
     pub fn encode(&self, stream: &OjpStream) -> Result<(), CodecError> {
         let result = unsafe { sys::opj_encode(self.ptr, stream.ptr) };
         if result == OPJ_FALSE {
@@ -672,6 +677,10 @@ pub struct OjpImage {
 
 impl OjpImage {
     /// Create a new image for encoding.
+    ///
+    /// Whole-image constructor. The NITF block-encode path uses `new_tile`;
+    /// this and [`OjpImage::set_component_data`] back the whole-image encode API.
+    #[allow(dead_code)]
     pub fn new(
         width: u32,
         height: u32,
@@ -820,6 +829,9 @@ impl OjpImage {
     }
 
     /// Set component data from a slice.
+    ///
+    /// Paired with [`OjpImage::new`] for the whole-image encode API (see note there).
+    #[allow(dead_code)]
     pub fn set_component_data(&mut self, index: u32, data: &[i32]) -> Result<(), CodecError> {
         if index >= self.num_components() {
             return Err(CodecError::Encode(format!(
@@ -877,7 +889,12 @@ pub struct ComponentInfo {
     /// Resolution reduction factor
     pub factor: u32,
     /// Horizontal sub-sampling factor (XRsiz)
+    ///
+    /// Populated from the codestream for completeness; not yet consumed by the
+    /// decode path (which assumes 1:1 sampling).
+    #[allow(dead_code)]
     pub dx: u32,
     /// Vertical sub-sampling factor (YRsiz)
+    #[allow(dead_code)]
     pub dy: u32,
 }

@@ -194,6 +194,7 @@ fn resolve_ascii_key(key_id: u16, value: &str) -> (String, Value) {
 ///
 /// Returns `(directory_u16_array, Option<double_params>, Option<ascii_params>)`.
 /// Returns an empty directory vec if `"34735"` is not present.
+#[allow(clippy::type_complexity)] // (directory, double_params, ascii_params); documented above.
 pub fn build_geokey_directory(
     metadata: &HashMap<String, Value>,
 ) -> Result<(Vec<u16>, Option<Vec<f64>>, Option<String>), CodecError> {
@@ -280,6 +281,7 @@ fn value_to_u16(val: &Value) -> Result<u16, ()> {
 /// and `"34264"` (ModelTransformationTag) from the Tag_Dictionary.
 ///
 /// Returns `(Option<pixel_scale_3>, Option<tiepoints_flat>, Option<transformation_16>)`.
+#[allow(clippy::type_complexity)] // (pixel_scale, tiepoints, transformation); documented above.
 pub fn extract_transformation_tags(
     metadata: &HashMap<String, Value>,
 ) -> Result<(Option<Vec<f64>>, Option<Vec<f64>>, Option<Vec<f64>>), CodecError> {

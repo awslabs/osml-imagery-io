@@ -150,6 +150,7 @@ pub trait ImageAssetProvider: AssetMetadata {
     /// tile-parts, the Vec contains one entry per tile-part in codestream order.
     ///
     /// Returns `None` for providers without a backing file (e.g., BufferedImageAssetProvider).
+    #[allow(clippy::type_complexity)] // (block_row, block_col) -> [(offset, length)]; self-documenting inline.
     fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), Vec<(u64, u64)>>> {
         None
     }

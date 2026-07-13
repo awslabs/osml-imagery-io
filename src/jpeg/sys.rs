@@ -17,6 +17,9 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(dead_code)]
+// Type names (JSAMPLE, JSAMPROW, JSAMPARRAY, ...) mirror libjpeg's C typedefs
+// verbatim so the bindings map 1:1 to the C API; keep the upper-case acronyms.
+#![allow(clippy::upper_case_acronyms)]
 
 use std::os::raw::{c_char, c_int, c_uchar, c_uint, c_ulong, c_void};
 

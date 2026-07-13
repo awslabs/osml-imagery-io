@@ -69,8 +69,8 @@ mod prop_23_streaming_mode_order {
 
             let fields = ["field_a", "field_b", "field_c", "field_d"];
 
-            for i in 0..skip_index {
-                writer.set(fields[i], val.clone()).unwrap();
+            for field in fields.iter().take(skip_index) {
+                writer.set(field, val.clone()).unwrap();
             }
 
             let skip_to = skip_index + 1;
@@ -277,8 +277,8 @@ mod prop_22_padding_application {
 
             let buffer = writer.buffer();
             prop_assert_eq!(&buffer[..value_size], value.as_bytes());
-            for i in value_size..field_size {
-                prop_assert_eq!(buffer[i], 0x20, "Padding should be space (0x20)");
+            for &byte in buffer.iter().take(field_size).skip(value_size) {
+                prop_assert_eq!(byte, 0x20, "Padding should be space (0x20)");
             }
         }
 
@@ -303,8 +303,8 @@ mod prop_22_padding_application {
             // BCS-N left-pads with '0' (numeric right-justification)
             let buffer = writer.buffer();
             let pad_len = field_size - value_size;
-            for i in 0..pad_len {
-                prop_assert_eq!(buffer[i], 0x30, "BCS-N padding should be '0' (0x30)");
+            for &byte in buffer.iter().take(pad_len) {
+                prop_assert_eq!(byte, 0x30, "BCS-N padding should be '0' (0x30)");
             }
             prop_assert_eq!(&buffer[pad_len..field_size], value.as_bytes());
         }
@@ -329,8 +329,8 @@ mod prop_22_padding_application {
             writer.set("field", value.clone()).unwrap();
 
             let buffer = writer.buffer();
-            for i in value_size..field_size {
-                prop_assert_eq!(buffer[i], pad_char);
+            for &byte in buffer.iter().take(field_size).skip(value_size) {
+                prop_assert_eq!(byte, pad_char);
             }
         }
 
@@ -348,8 +348,8 @@ mod prop_22_padding_application {
             writer.set("field", "").unwrap();
 
             let buffer = writer.buffer();
-            for i in 0..field_size {
-                prop_assert_eq!(buffer[i], 0x20, "Empty string should be fully padded");
+            for &byte in buffer.iter().take(field_size) {
+                prop_assert_eq!(byte, 0x20, "Empty string should be fully padded");
             }
         }
     }

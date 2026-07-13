@@ -93,7 +93,10 @@ impl TIFFImageAssetProvider {
     ///
     /// The handle's current directory is set to `ifd_index` to read tags.
     /// The caller must hold the mutex lock when calling this.
-    pub fn new(
+    ///
+    /// Crate-internal: its `TiffHandle`/`TIFFMetadataProvider` arguments are
+    /// `pub(crate)`, so this constructor is only callable from within the crate.
+    pub(crate) fn new(
         key: String,
         ifd_index: u32,
         handle: Arc<Mutex<TiffHandle>>,
@@ -165,6 +168,7 @@ impl TIFFImageAssetProvider {
     }
 
     /// Number of pixels in a full block.
+    #[allow(dead_code)] // Helper alongside `bytes_per_sample`; kept for block-sizing callers.
     fn pixels_per_block(&self) -> usize {
         self.block_width as usize * self.block_height as usize
     }

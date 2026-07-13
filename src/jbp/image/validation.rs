@@ -1087,6 +1087,8 @@ mod property_tests {
 
     /// Helper function to create synthetic NITF image subheader test data.
     /// This creates a minimal valid image subheader with configurable parameters.
+    // One argument per configurable NITF image-subheader field synthesized here.
+    #[allow(clippy::too_many_arguments)]
     fn create_image_subheader_test_data(
         nrows: u32,
         ncols: u32,

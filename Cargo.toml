@@ -22,6 +22,10 @@ extension-module = ["pyo3/extension-module"]
 openjpeg = []
 # Enable libjpeg-turbo-based JPEG DCT codec (requires libjpeg-turbo)
 libjpeg-turbo = []
+# Enable 12-bit JPEG DCT support (requires a separately compiled libjpeg12).
+# Future work: the 12-bit encode/decode scaffolding is present but not yet
+# wired into the codec dispatch. Off by default.
+libjpeg-turbo-12bit = ["libjpeg-turbo"]
 # Enable libtiff-based TIFF codec (requires libtiff)
 libtiff = []
 # Enable static linking of native C libraries (used in CI release builds)

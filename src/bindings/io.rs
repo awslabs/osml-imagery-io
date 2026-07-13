@@ -677,6 +677,10 @@ fn create_reader(parsed: &ParsedUri, format: Option<&str>) -> PyResult<PyDataset
 /// This is the core reader creation logic, returning a `Box<dyn DatasetReader>`
 /// that can be used directly (e.g., in composite readers) or wrapped in
 /// `PyDatasetReader` for Python exposure.
+// Complexity comes from the flat format-dispatch match (one arm per supported
+// format, each feature-gated); splitting it would scatter the dispatch table
+// without reducing real branching. Kept as a single readable dispatch point.
+#[allow(clippy::cognitive_complexity)]
 fn create_reader_boxed(
     parsed: &ParsedUri,
     format: Option<&str>,

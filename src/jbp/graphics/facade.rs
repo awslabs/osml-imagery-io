@@ -334,6 +334,8 @@ mod tests {
     use super::*;
 
     /// Create test graphic subheader bytes.
+    // One argument per NITF graphic-subheader field being synthesized in tests.
+    #[allow(clippy::too_many_arguments)]
     fn create_test_subheader_bytes(
         sy: &str,
         sid: &str,

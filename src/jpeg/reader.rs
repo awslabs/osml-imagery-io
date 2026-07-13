@@ -245,8 +245,8 @@ mod tests {
     fn make_jpeg(width: usize, height: usize, num_bands: usize, quality: u8) -> (Vec<u8>, Vec<u8>) {
         // Create pixel-interleaved source data
         let mut src = vec![0u8; width * height * num_bands];
-        for i in 0..src.len() {
-            src[i] = (i * 7 % 256) as u8;
+        for (i, val) in src.iter_mut().enumerate() {
+            *val = (i * 7 % 256) as u8;
         }
         let jpeg_data = compress_8bit(&src, width, height, num_bands, quality).unwrap();
         (jpeg_data, src)

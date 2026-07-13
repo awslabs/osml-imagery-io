@@ -406,6 +406,10 @@ pub struct JpegNitfBlockEncoder {
     /// Number of bands
     nbands: u32,
     /// Bits per pixel
+    ///
+    /// Used at construction to derive `bytes_per_pixel`; retained on the struct
+    /// for diagnostics but not read back thereafter.
+    #[allow(dead_code)]
     nbpp: u8,
     /// Interleave mode
     imode: InterleaveMode,
@@ -902,8 +906,8 @@ mod tests {
             let width = 8;
             let height = 8;
             let mut src = vec![0u8; width * height];
-            for i in 0..src.len() {
-                src[i] = (i * 4) as u8;
+            for (i, val) in src.iter_mut().enumerate() {
+                *val = (i * 4) as u8;
             }
 
             // Create encoder and encode
@@ -1195,8 +1199,8 @@ mod tests {
             let width = 16;
             let height = 16;
             let mut src = vec![0u8; width * height];
-            for i in 0..src.len() {
-                src[i] = ((i * 7) % 256) as u8; // Some variation
+            for (i, val) in src.iter_mut().enumerate() {
+                *val = ((i * 7) % 256) as u8; // Some variation
             }
 
             let encoder_low = JpegBlockEncoder::new(

@@ -837,6 +837,11 @@ impl TIFFDatasetWriter {
     }
 
     /// Write a single image asset as one IFD.
+    // Complexity reflects the sequential set of TIFF tags that must be written
+    // for one IFD (dimensions, sample format, compression, tiling, geo tags),
+    // each conditional on image properties. Splitting mid-IFD would fragment a
+    // single logical write with no real reduction in branching.
+    #[allow(clippy::cognitive_complexity)]
     fn write_image_ifd(
         handle: &TiffHandle,
         image: &dyn ImageAssetProvider,

@@ -332,7 +332,7 @@ mod tests {
         let provider = BufferedMetadataProvider::new();
         provider.set("str", json!("hello"));
         provider.set("int", json!(42));
-        provider.set("float", json!(3.14));
+        provider.set("float", json!(2.5));
         provider.set("bool", json!(true));
         provider.set("null", Value::Null);
         provider.set("array", json!([1, 2, 3]));
@@ -340,7 +340,7 @@ mod tests {
 
         assert_eq!(provider.get_value("str"), Some(json!("hello")));
         assert_eq!(provider.get_value("int"), Some(json!(42)));
-        assert_eq!(provider.get_value("float"), Some(json!(3.14)));
+        assert_eq!(provider.get_value("float"), Some(json!(2.5)));
         assert_eq!(provider.get_value("bool"), Some(json!(true)));
         assert_eq!(provider.get_value("null"), Some(Value::Null));
         assert_eq!(provider.get_value("array"), Some(json!([1, 2, 3])));

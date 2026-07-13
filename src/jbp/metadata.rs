@@ -1935,7 +1935,6 @@ mod property_tests {
                 count in 1u8..6,
                 elem_values in prop::collection::vec(field_value_strategy(5), 6),
             ) {
-                let count = count;
                 let values: Vec<String> = elem_values.into_iter().take(count as usize).collect();
                 let elem_size = 5usize;
 
@@ -2000,7 +1999,6 @@ mod property_tests {
                 count in 1u8..6,
                 elem_values in prop::collection::vec(field_value_strategy(5), 6),
             ) {
-                let count = count;
                 let values: Vec<String> = elem_values.into_iter().take(count as usize).collect();
                 let elem_size = 5usize;
 

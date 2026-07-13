@@ -1089,8 +1089,8 @@ mod tests {
             let width = 8;
             let height = 8;
             let mut src = vec![0u8; width * height];
-            for i in 0..src.len() {
-                src[i] = (i * 4) as u8;
+            for (i, val) in src.iter_mut().enumerate() {
+                *val = (i * 4) as u8;
             }
 
             // Compress

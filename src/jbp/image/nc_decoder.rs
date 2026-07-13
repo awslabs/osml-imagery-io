@@ -113,6 +113,9 @@ impl UncompressedBlockDecoder {
     /// Create a decoder from raw parameters (for benchmarks and testing).
     ///
     /// This bypasses subheader parsing and constructs the decoder directly.
+    // Args mirror the parsed image-subheader fields this bypasses; a params
+    // struct would just relocate them. Test/bench-only seam.
+    #[allow(clippy::too_many_arguments)]
     #[doc(hidden)]
     pub fn from_raw_params(
         image_data: OwnedBuffer,
