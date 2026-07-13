@@ -148,40 +148,43 @@ seq:
     size: 2
     encoding: BCS-NPI
     doc: |
-      Total Number of Row Delta Values
-      2 BCS-NPI positive integer.
+      Total Number of Image Row Coordinate Digits
+      2 BCS-NPI positive integer, range 3-11.
 
   - id: TNUMCD
     type: str
     size: 2
     encoding: BCS-NPI
     doc: |
-      Total Number of Column Delta Values
-      2 BCS-NPI positive integer.
+      Total Number of Image Column Coordinate Digits
+      2 BCS-NPI positive integer, range 3-11.
 
   - id: FNUMRD
     type: str
     size: 1
     encoding: BCS-NPI
     doc: |
-      Field Size for Row Delta Values
-      1 BCS-NPI digit (bytes per value).
+      Number of Fractional Image Row Coordinate Digits
+      1 BCS-NPI digit, range 1-3.
 
   - id: FNUMCD
     type: str
     size: 1
     encoding: BCS-NPI
     doc: |
-      Field Size for Column Delta Values
-      1 BCS-NPI digit (bytes per value).
+      Number of Fractional Image Column Coordinate Digits
+      1 BCS-NPI digit, range 1-3.
 
   - id: DELTA_ORIGIN
     type: delta_origin_t
     repeat: expr
-    repeat-expr: NPLN.to_i
+    repeat-expr: NPLN.to_i - 1
     doc: |
-      Delta Origin Values for Each Plane
-      NPLN sets of row and column origin deltas.
+      Delta Origin Values for Grid Planes 2..NPLN
+      NPLN-1 sets of row and column origin deltas. Per STDI-0002 Vol 1,
+      App U (Table 12, p. U-217) the IXO/IYO offsets are emitted "for grid
+      plane 2 through the total number of grid planes", i.e. NPLN-1 entries
+      (plane 1 is the reference plane and has no offset).
 
   - id: PLANES
     type: plane_t
@@ -229,7 +232,7 @@ types:
           3 BCS-NPI positive integer.
 
       - id: GRID_POINTS
-        type: grid_point_t(_parent.FNUMRD.to_i, _parent.FNUMCD.to_i)
+        type: grid_point_t
         repeat: expr
         repeat-expr: NXPTS.to_i * NYPTS.to_i
         doc: |
@@ -237,24 +240,21 @@ types:
           NXPTS * NYPTS grid points with row and column deltas.
 
   grid_point_t:
-    params:
-      - id: ROW_SIZE
-        type: u1
-      - id: COL_SIZE
-        type: u1
     seq:
       - id: RCOORD
         type: str
-        size: row_size
-        encoding: BCS-N
+        size: TNUMRD.to_i
+        encoding: BCS-A
         doc: |
-          Row Coordinate Delta
-          Variable size BCS-N integer (FNUMRD bytes).
+          Image Row Coordinate
+          Variable size BCS-A field (TNUMRD total coordinate digits).
+          May be all spaces when the coordinate is unavailable.
 
       - id: CCOORD
         type: str
-        size: col_size
-        encoding: BCS-N
+        size: TNUMCD.to_i
+        encoding: BCS-A
         doc: |
-          Column Coordinate Delta
-          Variable size BCS-N integer (FNUMCD bytes).
+          Image Column Coordinate
+          Variable size BCS-A field (TNUMCD total coordinate digits).
+          May be all spaces when the coordinate is unavailable.

@@ -53,7 +53,7 @@ seq:
     type: str
     size: 18
     encoding: BCS-A
-    if: _root._io.size >= 80
+    if: SHAPE_USE.strip == "CLOUD_SHAPES"
     doc: |
       Cloud Cover Source (CC_SOURCE)
       Source sensor(s) for determining cloud cover.

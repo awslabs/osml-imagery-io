@@ -46,21 +46,23 @@ seq:
       Number of Adjustable Parameters
       2 BCS-N integer, range 1-36.
 
-  - id: APTS
+  - id: APTYP
     type: str
     size: 1
     encoding: BCS-A
     doc: |
       Adjustable Parameter Type
-      1 BCS-A. I=Image, G=Ground.
+      1 BCS-A. I=image-space, G=ground-space.
 
   - id: LOCTYP
     type: str
     size: 1
     encoding: BCS-A
     doc: |
-      Location Type
-      1 BCS-A. R=Rectangular, G=Geodetic.
+      Local Coordinate System Identifier
+      1 BCS-A. R=rectangular ground coordinates, N=non-rectangular
+      (image row/column, geodetic height). If APTYP=G the only valid
+      value is R.
 
   - id: NSFX
     type: str
@@ -125,12 +127,12 @@ seq:
 
   - id: IMAGE_AP
     type: image_adjustable_params
-    if: APTS == "I"
+    if: APTYP == "I"
     doc: Image-space adjustable parameters (only when APTYP=I).
 
   - id: GROUND_AP
     type: ground_adjustable_params
-    if: APTS == "G"
+    if: APTYP == "G"
     doc: Ground-space adjustable parameters (only when APTYP=G).
 
   - id: BASIS_DATA
@@ -279,4 +281,17 @@ types:
         type: str
         size: 2
         encoding: BCS-N
-        doc: Number of Basis Vectors (2 BCS-N, 1-99).
+        doc: |
+          Number of Basis Adjustable Parameters (2 BCS-N, 1-99).
+          Number of columns of matrix A; NBASIS >= NPAR and
+          NPAR*NBASIS <= 1296.
+      - id: AEL
+        type: str
+        size: 21
+        encoding: BCS-A
+        repeat: expr
+        repeat-expr: NPAR.to_i * NBASIS.to_i
+        doc: |
+          Matrix A Elements
+          21 BCS-A real, row major order (NPAR*NBASIS entries). Maps the
+          basis set of adjustable parameters to the active set.

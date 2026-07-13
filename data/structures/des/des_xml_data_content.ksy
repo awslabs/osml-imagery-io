@@ -17,8 +17,17 @@ doc: |
   Note: This definition covers the DES-specific subheader fields that appear
   in DESSHF when DESID is "XML_DATA_CONTENT". The DESDATA field contains
   the actual XML content.
-  
-  Reference: STDI-0002 Volume 2, Appendix F - XML_DATA_CONTENT
+
+  Field presence is gated by the three DESSHL tiers the spec defines
+  (DESSHL.to_i >= 5, >= 283, >= 773). DESSHL lives in the DES subheader, one
+  level above this DESSHF structure, so these gates require DESSHL to be
+  threaded in via the inherited-scope map. That inheritance does not exist
+  until this structure is codec-wired (it is presently dormant), so the tier
+  predicates are UNVERIFIED at runtime; they take effect and gain a
+  presence test as a follow-up task (DESIGN_REMOVE_ROOT_PARENT_NAVIGATORS
+  Impl Plan phase 6).
+
+  Reference: STDI-0002 Volume 2, Appendix F - XML_DATA_CONTENT, Table F-1
 
 seq:
   - id: DESCRC
@@ -35,7 +44,7 @@ seq:
     type: str
     size: 8
     encoding: BCS-A
-    if: _root._io.size >= 13
+    if: DESSHL.to_i >= 283
     doc: |
       XML File Type (DESSHFT)
       Representative of the XML file type.
@@ -46,7 +55,7 @@ seq:
     type: str
     size: 20
     encoding: BCS-A
-    if: _root._io.size >= 33
+    if: DESSHL.to_i >= 283
     doc: |
       Date and Time (DESSHDT)
       Time (UTC/Zulu) of the XML file's origination.
@@ -56,7 +65,7 @@ seq:
     type: str
     size: 40
     encoding: UTF-8
-    if: _root._io.size >= 73
+    if: DESSHL.to_i >= 283
     doc: |
       Responsible Party - Organization Identifier (DESSHRP)
       Identification of the organization responsible for the DES content.
@@ -66,7 +75,7 @@ seq:
     type: str
     size: 60
     encoding: UTF-8
-    if: _root._io.size >= 133
+    if: DESSHL.to_i >= 283
     doc: |
       Specification Identifier (DESSHSI)
       Name of the specification used for the XML data content.
@@ -76,7 +85,7 @@ seq:
     type: str
     size: 10
     encoding: BCS-A
-    if: _root._io.size >= 143
+    if: DESSHL.to_i >= 283
     doc: |
       Specification Version (DESSHSV)
       Version or edition of the specification.
@@ -86,7 +95,7 @@ seq:
     type: str
     size: 20
     encoding: BCS-A
-    if: _root._io.size >= 163
+    if: DESSHL.to_i >= 283
     doc: |
       Specification Date (DESSHSD)
       Version or edition date for the specification.
@@ -96,7 +105,7 @@ seq:
     type: str
     size: 120
     encoding: BCS-A
-    if: _root._io.size >= 283
+    if: DESSHL.to_i >= 283
     doc: |
       Target Namespace (DESSHTN)
       Identification of the target namespace designated within the XML content.
@@ -107,7 +116,7 @@ seq:
     type: str
     size: 125
     encoding: BCS-A
-    if: _root._io.size >= 408
+    if: DESSHL.to_i >= 773
     doc: |
       Location - Polygon (DESSHLPG)
       Five-point boundary enclosing the area applicable to the DES.
@@ -120,7 +129,7 @@ seq:
     type: str
     size: 25
     encoding: BCS-A
-    if: _root._io.size >= 433
+    if: DESSHL.to_i >= 773
     doc: |
       Location - Point (DESSHLPT)
       Single geographic point applicable to the DES.
@@ -132,7 +141,7 @@ seq:
     type: str
     size: 20
     encoding: BCS-A
-    if: _root._io.size >= 453
+    if: DESSHL.to_i >= 773
     doc: |
       Location - Identifier (DESSHLI)
       Identifier used to represent a geographic area.
@@ -144,7 +153,7 @@ seq:
     type: str
     size: 120
     encoding: BCS-A
-    if: _root._io.size >= 573
+    if: DESSHL.to_i >= 773
     doc: |
       Location Identifier Namespace URI (DESSHLIN)
       URI for the namespace where the Location Identifier is described.
@@ -155,7 +164,7 @@ seq:
     type: str
     size: 200
     encoding: UTF-8
-    if: _root._io.size >= 773
+    if: DESSHL.to_i >= 773
     doc: |
       Abstract (DESSHABS)
       Brief narrative summary of the content of the DES.

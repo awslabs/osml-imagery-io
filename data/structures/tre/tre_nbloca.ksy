@@ -36,7 +36,7 @@ seq:
   - id: FRAME_OFFSETS
     type: u4
     repeat: expr
-    repeat-expr: number_of_frames - 1
+    repeat-expr: NUMBER_OF_FRAMES - 1
     if: NUMBER_OF_FRAMES > 1
     doc: |
       Frame Offsets (FRAME_2_OFFSET to FRAME_N_OFFSET)

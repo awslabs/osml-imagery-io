@@ -35,18 +35,21 @@ seq:
       Format: CCYYMMDDhhmmss (NITF 2.1) or DDHHMMSSZmonYY (NITF 2.0).
       Used for validity check between TRE and file header.
 
-  - id: NITFVER
+  - id: FORMATVER
     type: str
     size: 9
     encoding: BCS-A
     doc: |
-      NITF Version Flag.
-      Values: "NITF02.00" or "NITF02.10"
+      Format Version Flag.
+      For JBP, the File Profile Name (FHDR) and File Version (FVER) fields
+      (NITF or NSIF, 02.10 or 01.01); for MIL-STD-2500A, the File Type &
+      Version (FHDR) field (NITF02.00).
+      Values: "NITF02.10", "NSIF01.01", or "NITF02.00".
 
-  - id: NFSECFLDS
+  - id: SECFLDS
     size: 207
     doc: |
-      NITF Security Fields (FSEC).
+      Security Fields (FSEC).
       Byte copy of the associated segment's security fields.
       
       For NITF 2.1: 167 bytes from security fields followed by
@@ -93,6 +96,7 @@ seq:
       Range: 00000-99737.
 
   - id: SECURITY
+    type: bytes
     size: SECLEN.to_i
     doc: |
       Security Data.

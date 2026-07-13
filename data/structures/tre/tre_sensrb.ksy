@@ -15,6 +15,99 @@ doc: |
   
   Reference: STDI-0002 Volume 1, Appendix Z - SENSRB
 
+consts:
+  # Code -> byte-size lookup for the time-stamped (12d TIME_STAMP_VALUE) and
+  # pixel-referenced (13e PIXEL_REFERENCE_VALUE) parameter values. Per Table
+  # Z.3-1 note h, each of those fields inherits the size (and range/character
+  # set) of the indexed parameter named by the group's type code (12a
+  # TIME_STAMP_TYPE / 13a PIXEL_REFERENCE_TYPE), whose value range is 02a-10c.
+  # The width is the BYTE SIZE column of the referenced index; codes are
+  # transcribed directly from Table Z.3-1 (modules 2-10).
+  # Reference: STDI-0002 Vol 1, App Z, Table Z.3-1 note h.
+  sensrb_value_widths:
+    # Module 02 - Sensor Array Data
+    "02a": 20   # DETECTION
+    "02b": 8    # ROW_DETECTORS
+    "02c": 8    # COLUMN_DETECTORS
+    "02d": 8    # ROW_METRIC
+    "02e": 8    # COLUMN_METRIC
+    "02f": 8    # FOCAL_LENGTH
+    "02g": 8    # ROW_FOV
+    "02h": 8    # COLUMN_FOV
+    "02i": 1    # CALIBRATED
+    # Module 03 - Sensor Calibration Data
+    "03a": 2    # CALIBRATION_UNIT
+    "03b": 9    # PRINCIPAL_POINT_OFFSET_X
+    "03c": 9    # PRINCIPAL_POINT_OFFSET_Y
+    "03d": 12   # RADIAL_DISTORT_1
+    "03e": 12   # RADIAL_DISTORT_2
+    "03f": 12   # RADIAL_DISTORT_3
+    "03g": 9    # RADIAL_DISTORT_LIMIT
+    "03h": 12   # DECENT_DISTORT_1
+    "03i": 12   # DECENT_DISTORT_2
+    "03j": 12   # AFFINITY_DISTORT_1
+    "03k": 12   # AFFINITY_DISTORT_2
+    "03l": 8    # CALIBRATION_DATE
+    # Module 04 - Image Formation Data
+    "04a": 15   # METHOD
+    "04b": 3    # MODE
+    "04c": 8    # ROW_COUNT
+    "04d": 8    # COLUMN_COUNT
+    "04e": 8    # ROW_SET
+    "04f": 8    # COLUMN_SET
+    "04g": 10   # ROW_RATE
+    "04h": 10   # COLUMN_RATE
+    "04i": 8    # FIRST_PIXEL_ROW
+    "04j": 8    # FIRST_PIXEL_COLUMN
+    "04k": 1    # TRANSFORM_PARAMS
+    "04l": 12   # TRANSFORM_PARAM_1
+    "04m": 12   # TRANSFORM_PARAM_2
+    "04n": 12   # TRANSFORM_PARAM_3
+    "04o": 12   # TRANSFORM_PARAM_4
+    "04p": 12   # TRANSFORM_PARAM_5
+    "04q": 12   # TRANSFORM_PARAM_6
+    "04r": 12   # TRANSFORM_PARAM_7
+    "04s": 12   # TRANSFORM_PARAM_8
+    # Module 05 - Reference Time/Pixel
+    "05a": 12   # REFERENCE_TIME
+    "05b": 8    # REFERENCE_ROW
+    "05c": 8    # REFERENCE_COLUMN
+    # Module 06 - Sensor Position Data
+    "06a": 11   # LATITUDE_OR_X
+    "06b": 12   # LONGITUDE_OR_Y
+    "06c": 11   # ALTITUDE_OR_Z
+    "06d": 8    # SENSOR_X_OFFSET
+    "06e": 8    # SENSOR_Y_OFFSET
+    "06f": 8    # SENSOR_Z_OFFSET
+    # Module 07 - Attitude Euler Angles
+    "07a": 1    # SENSOR_ANGLE_MODEL
+    "07b": 10   # SENSOR_ANGLE_1
+    "07c": 9    # SENSOR_ANGLE_2
+    "07d": 10   # SENSOR_ANGLE_3
+    "07e": 1    # PLATFORM_RELATIVE
+    "07f": 9    # PLATFORM_HEADING
+    "07g": 9    # PLATFORM_PITCH
+    "07h": 10   # PLATFORM_ROLL
+    # Module 08 - Attitude Unit Vectors
+    "08a": 10   # ICX_NORTH_OR_X
+    "08b": 10   # ICX_EAST_OR_Y
+    "08c": 10   # ICX_DOWN_OR_Z
+    "08d": 10   # ICY_NORTH_OR_X
+    "08e": 10   # ICY_EAST_OR_Y
+    "08f": 10   # ICY_DOWN_OR_Z
+    "08g": 10   # ICZ_NORTH_OR_X
+    "08h": 10   # ICZ_EAST_OR_Y
+    "08i": 10   # ICZ_DOWN_OR_Z
+    # Module 09 - Attitude Quaternion
+    "09a": 10   # ATTITUDE_Q1
+    "09b": 10   # ATTITUDE_Q2
+    "09c": 10   # ATTITUDE_Q3
+    "09d": 10   # ATTITUDE_Q4
+    # Module 10 - Sensor Velocity Data
+    "10a": 9    # VELOCITY_NORTH_OR_X
+    "10b": 9    # VELOCITY_EAST_OR_Y
+    "10c": 9    # VELOCITY_DOWN_OR_Z
+
 seq:
   # Module 01: General Data
   - id: GENERAL_DATA
@@ -781,9 +874,12 @@ types:
 
       - id: TIME_STAMP_VALUE
         type: str
-        size: 12
+        size: sensrb_value_widths[TIME_STAMP_TYPE]
         encoding: BCS-N
-        doc: Time Stamp Value
+        doc: |
+          Time Stamp Value (12d). Per Table Z.3-1 note h, its byte size is that
+          of the parameter indexed by TIME_STAMP_TYPE (12a); looked up in the
+          sensrb_value_widths const table rather than fixed at 12.
 
   pixel_referenced_set_t:
     seq:
@@ -820,9 +916,12 @@ types:
 
       - id: PIXEL_REFERENCE_VALUE
         type: str
-        size: 12
+        size: sensrb_value_widths[PIXEL_REFERENCE_TYPE]
         encoding: BCS-N
-        doc: Pixel Reference Value
+        doc: |
+          Pixel Reference Value (13e). Per Table Z.3-1 note h, its byte size is
+          that of the parameter indexed by PIXEL_REFERENCE_TYPE (13a); looked up
+          in the sensrb_value_widths const table rather than fixed at 12.
 
   uncertainty_set_t:
     seq:

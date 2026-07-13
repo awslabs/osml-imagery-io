@@ -35,8 +35,9 @@ doc: |
   The header fields, EXISTENCE_MASK, and top-level conditional fields
   (RAD_QUANTITY, RADQ_UNIT) are fully parsed. The illumination set loop
   data is captured as raw bytes because the per-set conditional fields
-  reference EXISTENCE_MASK, NUM_BANDS, and NUM_OTHERS from the parent
-  scope, which requires _parent resolution not supported by the KSY parser.
+  reference EXISTENCE_MASK, NUM_BANDS, and NUM_OTHERS across nested
+  per-band and per-other loops, which the KSY parser does not yet model
+  as distinct sub-structures.
   
   Reference: STDI-0002 Volume 1, Appendix AL - ILLUMA-ILLUMB
 
@@ -154,7 +155,8 @@ seq:
   # Each set contains required fields (DATETIME, TARGET_LAT/LON/HGT)
   # plus conditional fields controlled by EXISTENCE_MASK bits 22-8,
   # with nested per-band and per-other-source loops.
-  # Full parsing requires _parent references not supported by KSY parser.
+  # Full parsing requires modeling those nested loops as sub-structures,
+  # which the KSY parser does not yet support.
   - id: ILLUM_SET_DATA
     size-eos: true
     doc: |

@@ -33,10 +33,10 @@ doc: |
     b16: INT_TIMEn (per-band)
     b15: CALDRKn, CALIBRATION_SENSITIVITYn (per-band)
     b14: ROW_GSDn, ROW_GSD_UNITn, COL_GSDn, COL_GSD_UNITn (per-band)
-    b13: ROW_GSD_UNCn, ROW_GSD_UNITn, COL_GSD_UNCn, COL_GSD_UNITn (per-band) — if set, b14 must also be set
+    b13: ROW_GSD_UNCn, COL_GSD_UNCn (per-band) — if set, b14 must also be set. 
     b12: BKNOISEn, SCNNOISEn (per-band)
     b11: SPT_RESP_FUNCTION_ROWn, SPT_RESP_UNIT_ROWn, SPT_RESP_FUNCTION_COLn, SPT_RESP_UNIT_COLn (per-band)
-    b10: SPT_RESP_UNC_ROWn, SPT_RESP_UNIT_ROWn, SPT_RESP_UNC_COLn, SPT_RESP_UNIT_COLn (per-band) — if set, b11 must also be set
+    b10: SPT_RESP_UNC_ROWn, SPT_RESP_UNC_COLn (per-band) — if set, b11 must also be set. 
     b9:  DATA_FLD_3n (per-band)
     b8:  DATA_FLD_4n (per-band)
     b7:  DATA_FLD_5n (per-band)
@@ -96,10 +96,12 @@ seq:
       N = None
 
   - id: SCALE_FACTOR
+    type: f4be
     size: 4
     doc: "Cube scale factor (M). IEEE 754 single-precision float."
 
   - id: ADDITIVE_FACTOR
+    type: f4be
     size: 4
     doc: "Cube additive factor (A). IEEE 754 single-precision float."
 
@@ -152,6 +154,7 @@ seq:
     doc: "Unit of column spatial response. M = meters, R = microradians"
 
   - id: DATA_FLD_1
+    type: bytes
     size: 48
     doc: "Reserved for future use."
 
@@ -175,6 +178,7 @@ seq:
     doc: "Radiometric adjustment surface description."
 
   - id: ATMOSPHERIC_ADJUSTMENT_ALTITUDE
+    type: f4be
     size: 4
     if: "EXISTENCE_MASK & 0x80000000 != 0"
     doc: "Atmospheric adjustment altitude. IEEE 754 single-precision float."
@@ -189,6 +193,7 @@ seq:
 
   # --- Bit 29 (0x20000000): DATA_FLD_2 ---
   - id: DATA_FLD_2
+    type: bytes
     size: 32
     if: "EXISTENCE_MASK & 0x20000000 != 0"
     doc: "Reserved for future use."
@@ -306,6 +311,7 @@ seq:
 
   # --- Bit 18 (0x00040000): SCALE_FACTORn, ADDITIVE_FACTORn (per-band, IEEE754) ---
   - id: BAND_SCALE_FACTOR
+    type: f4be
     size: 4
     repeat: expr
     repeat-expr: COUNT.to_i
@@ -313,6 +319,7 @@ seq:
     doc: "Per-band scale factor. IEEE 754 single-precision float."
 
   - id: BAND_ADDITIVE_FACTOR
+    type: f4be
     size: 4
     repeat: expr
     repeat-expr: COUNT.to_i
@@ -358,7 +365,6 @@ seq:
     if: "EXISTENCE_MASK & 0x00008000 != 0"
     doc: "Calibration sensitivity per band."
 
-  # --- Bit 14 (0x00004000): ROW_GSDn, ROW_GSD_UNITn, COL_GSDn, COL_GSD_UNITn (per-band) ---
   - id: BAND_ROW_GSD
     type: str
     size: 7
@@ -368,6 +374,15 @@ seq:
     if: "EXISTENCE_MASK & 0x00004000 != 0"
     doc: "Per-band row ground sample distance."
 
+  - id: BAND_ROW_GSD_UNC
+    type: str
+    size: 7
+    encoding: BCS-N
+    repeat: expr
+    repeat-expr: COUNT.to_i
+    if: "EXISTENCE_MASK & 0x00002000 != 0"
+    doc: "Per-band row GSD uncertainty (b13). Requires b14 also set."
+
   - id: BAND_ROW_GSD_UNIT
     type: str
     size: 1
@@ -375,7 +390,7 @@ seq:
     repeat: expr
     repeat-expr: COUNT.to_i
     if: "EXISTENCE_MASK & 0x00004000 != 0"
-    doc: "Per-band row GSD unit. M = meters, R = microradians."
+    doc: "Per-band row GSD unit (M/R) — applies to BAND_ROW_GSD and BAND_ROW_GSD_UNC."
 
   - id: BAND_COL_GSD
     type: str
@@ -386,35 +401,6 @@ seq:
     if: "EXISTENCE_MASK & 0x00004000 != 0"
     doc: "Per-band column ground sample distance."
 
-  - id: BAND_COL_GSD_UNIT
-    type: str
-    size: 1
-    encoding: BCS-A
-    repeat: expr
-    repeat-expr: COUNT.to_i
-    if: "EXISTENCE_MASK & 0x00004000 != 0"
-    doc: "Per-band column GSD unit. M = meters, R = microradians."
-
-  # --- Bit 13 (0x00002000): ROW_GSD_UNCn, ROW_GSD_UNITn, COL_GSD_UNCn, COL_GSD_UNITn (per-band) ---
-  # Note: If b13 is set, b14 must also be set per spec
-  - id: BAND_ROW_GSD_UNC
-    type: str
-    size: 7
-    encoding: BCS-N
-    repeat: expr
-    repeat-expr: COUNT.to_i
-    if: "EXISTENCE_MASK & 0x00002000 != 0"
-    doc: "Per-band row GSD uncertainty. Requires b14 also set."
-
-  - id: BAND_ROW_GSD_UNC_UNIT
-    type: str
-    size: 1
-    encoding: BCS-A
-    repeat: expr
-    repeat-expr: COUNT.to_i
-    if: "EXISTENCE_MASK & 0x00002000 != 0"
-    doc: "Per-band row GSD uncertainty unit."
-
   - id: BAND_COL_GSD_UNC
     type: str
     size: 7
@@ -422,16 +408,16 @@ seq:
     repeat: expr
     repeat-expr: COUNT.to_i
     if: "EXISTENCE_MASK & 0x00002000 != 0"
-    doc: "Per-band column GSD uncertainty. Requires b14 also set."
+    doc: "Per-band column GSD uncertainty (b13). Requires b14 also set."
 
-  - id: BAND_COL_GSD_UNC_UNIT
+  - id: BAND_COL_GSD_UNIT
     type: str
     size: 1
     encoding: BCS-A
     repeat: expr
     repeat-expr: COUNT.to_i
-    if: "EXISTENCE_MASK & 0x00002000 != 0"
-    doc: "Per-band column GSD uncertainty unit."
+    if: "EXISTENCE_MASK & 0x00004000 != 0"
+    doc: "Per-band column GSD unit (M/R) — applies to BAND_COL_GSD and BAND_COL_GSD_UNC."
 
   # --- Bit 12 (0x00001000): BKNOISEn, SCNNOISEn (per-band) ---
   - id: BKNOISE
@@ -452,7 +438,6 @@ seq:
     if: "EXISTENCE_MASK & 0x00001000 != 0"
     doc: "Scanner noise level per band."
 
-  # --- Bit 11 (0x00000800): SPT_RESP_FUNCTION_ROWn, SPT_RESP_UNIT_ROWn, SPT_RESP_FUNCTION_COLn, SPT_RESP_UNIT_COLn (per-band) ---
   - id: BAND_SPT_RESP_FUNCTION_ROW
     type: str
     size: 7
@@ -462,6 +447,15 @@ seq:
     if: "EXISTENCE_MASK & 0x00000800 != 0"
     doc: "Per-band spatial response function across rows."
 
+  - id: BAND_SPT_RESP_UNC_ROW
+    type: str
+    size: 7
+    encoding: BCS-N
+    repeat: expr
+    repeat-expr: COUNT.to_i
+    if: "EXISTENCE_MASK & 0x00000400 != 0"
+    doc: "Per-band spatial response uncertainty across rows (b10). Requires b11 also set."
+
   - id: BAND_SPT_RESP_UNIT_ROW
     type: str
     size: 1
@@ -469,7 +463,7 @@ seq:
     repeat: expr
     repeat-expr: COUNT.to_i
     if: "EXISTENCE_MASK & 0x00000800 != 0"
-    doc: "Per-band row spatial response unit."
+    doc: "Per-band row spatial response unit (M/R) — applies to the row function and its uncertainty."
 
   - id: BAND_SPT_RESP_FUNCTION_COL
     type: str
@@ -480,35 +474,6 @@ seq:
     if: "EXISTENCE_MASK & 0x00000800 != 0"
     doc: "Per-band spatial response function across columns."
 
-  - id: BAND_SPT_RESP_UNIT_COL
-    type: str
-    size: 1
-    encoding: BCS-A
-    repeat: expr
-    repeat-expr: COUNT.to_i
-    if: "EXISTENCE_MASK & 0x00000800 != 0"
-    doc: "Per-band column spatial response unit."
-
-  # --- Bit 10 (0x00000400): SPT_RESP_UNC_ROWn, SPT_RESP_UNIT_ROWn, SPT_RESP_UNC_COLn, SPT_RESP_UNIT_COLn (per-band) ---
-  # Note: If b10 is set, b11 must also be set per spec
-  - id: BAND_SPT_RESP_UNC_ROW
-    type: str
-    size: 7
-    encoding: BCS-N
-    repeat: expr
-    repeat-expr: COUNT.to_i
-    if: "EXISTENCE_MASK & 0x00000400 != 0"
-    doc: "Per-band spatial response uncertainty across rows. Requires b11 also set."
-
-  - id: BAND_SPT_RESP_UNC_UNIT_ROW
-    type: str
-    size: 1
-    encoding: BCS-A
-    repeat: expr
-    repeat-expr: COUNT.to_i
-    if: "EXISTENCE_MASK & 0x00000400 != 0"
-    doc: "Per-band row spatial response uncertainty unit."
-
   - id: BAND_SPT_RESP_UNC_COL
     type: str
     size: 7
@@ -516,19 +481,20 @@ seq:
     repeat: expr
     repeat-expr: COUNT.to_i
     if: "EXISTENCE_MASK & 0x00000400 != 0"
-    doc: "Per-band spatial response uncertainty across columns. Requires b11 also set."
+    doc: "Per-band spatial response uncertainty across columns (b10). Requires b11 also set."
 
-  - id: BAND_SPT_RESP_UNC_UNIT_COL
+  - id: BAND_SPT_RESP_UNIT_COL
     type: str
     size: 1
     encoding: BCS-A
     repeat: expr
     repeat-expr: COUNT.to_i
-    if: "EXISTENCE_MASK & 0x00000400 != 0"
-    doc: "Per-band column spatial response uncertainty unit."
+    if: "EXISTENCE_MASK & 0x00000800 != 0"
+    doc: "Per-band column spatial response unit (M/R) — applies to the column function and its uncertainty."
 
   # --- Bit 9 (0x00000200): DATA_FLD_3n (per-band) ---
   - id: DATA_FLD_3
+    type: bytes
     size: 16
     repeat: expr
     repeat-expr: COUNT.to_i
@@ -537,6 +503,7 @@ seq:
 
   # --- Bit 8 (0x00000100): DATA_FLD_4n (per-band) ---
   - id: DATA_FLD_4
+    type: bytes
     size: 24
     repeat: expr
     repeat-expr: COUNT.to_i
@@ -545,6 +512,7 @@ seq:
 
   # --- Bit 7 (0x00000080): DATA_FLD_5n (per-band) ---
   - id: DATA_FLD_5
+    type: bytes
     size: 32
     repeat: expr
     repeat-expr: COUNT.to_i
@@ -553,6 +521,7 @@ seq:
 
   # --- Bit 6 (0x00000040): DATA_FLD_6n (per-band) ---
   - id: DATA_FLD_6
+    type: bytes
     size: 48
     repeat: expr
     repeat-expr: COUNT.to_i

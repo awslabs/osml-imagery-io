@@ -472,7 +472,7 @@ types:
       - id: DT_VALUES
         size: dt_size
         repeat: expr
-        repeat-expr: number_dt
+        repeat-expr: NUMBER_DT
         if: NUMBER_DT > 0
         doc: |
           Delta Time Values (DTn)

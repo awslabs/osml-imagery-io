@@ -49,7 +49,7 @@ seq:
       0 = nearest neighbor, 1 = linear.
 
   - id: WARP_SETS
-    type: warp_set_t(_index)
+    type: warp_set_t
     repeat: expr
     repeat-expr: NUM_SETS_WARP_DATA.to_i
     doc: |
@@ -68,9 +68,6 @@ seq:
 
 types:
   warp_set_t:
-    params:
-      - id: SET_INDEX
-        type: s4
     doc: |
       Warping Data Set
       Contains normalization parameters and polynomial coefficients for
@@ -80,7 +77,7 @@ types:
         type: str
         size: 11
         encoding: BCS-N
-        if: _root.SENSOR_TYPE == "F"
+        if: SENSOR_TYPE == "F"
         doc: |
           Focal Length Associated with this Set of Warping Data
           (conditional: SENSOR_TYPE = F)

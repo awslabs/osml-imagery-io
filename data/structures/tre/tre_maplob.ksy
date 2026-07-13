@@ -13,35 +13,37 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix P - GEOSDE
 
 seq:
-  - id: UNI
+  - id: UNILOA
     type: str
     size: 3
     encoding: BCS-A
     doc: |
-      Unit of Measure (UNI)
-      3 BCS-A. Unit for coordinate values.
-      Values: "M  " (Meters), "DM " (Decimeters),
-      "CM " (Centimeters), "MM " (Millimeters),
-      "UM " (Micrometers), "KM " (Kilometers),
-      "F  " (Feet), "I  " (Inches).
+      Length Units (UNILOA)
+      3 BCS-A. Unit of measure used for the Easting (LOD) and
+      Northing (LAD) intervals. Default value is "M" (meters).
+      Values: "UM" (micrometers), "MM" (millimeters),
+      "CM" (centimeters), "DM" (decimeters), "M" (meters),
+      "KM" (kilometers), "IN" (inches), "FT" (feet),
+      "YD" (yards), "MI" (statute miles), "NM" (nautical miles),
+      or all BCS spaces.
 
-  - id: ARV
+  - id: LOD
     type: str
-    size: 9
+    size: 5
     encoding: BCS-N
     doc: |
-      X Scale Factor (ARV)
-      9 BCS-N positive integer. Number of pixels per unit
-      in the X (easting) direction.
+      Easting Interval (LOD)
+      5 BCS-N. Data density in the E/W direction that is the
+      column width of an image pixel (00001 to 99999).
 
-  - id: BRV
+  - id: LAD
     type: str
-    size: 9
+    size: 5
     encoding: BCS-N
     doc: |
-      Y Scale Factor (BRV)
-      9 BCS-N positive integer. Number of pixels per unit
-      in the Y (northing) direction.
+      Northing Interval (LAD)
+      5 BCS-N. Data density in the N/S direction that is the
+      line width of an image pixel (00001 to 99999).
 
   - id: LSO
     type: str

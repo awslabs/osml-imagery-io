@@ -49,9 +49,43 @@ seq:
       wrapped TREs apply.
 
   - id: CEDATA
-    size-eos: true
+    type: encapsulated_tre
+    repeat: eos
     doc: |
       Contained Extension Data
-      Variable length. Contains one or more complete NITF TREs
-      (each with their own CETAG/CEL/CEDATA structure).
-      All bytes must be accounted for by the contained TREs.
+      One or more complete NITF TREs, each modeled as a
+      TRETAGn/TRELn/TREDATAn group. The number of encapsulated TREs is
+      not signaled by a count field; the group repeats until the end of
+      the TRE data (repeat: eos). All bytes must be accounted for by the
+      contained TREs.
+
+types:
+  encapsulated_tre:
+    doc: |
+      One encapsulated NITF TRE, as it appears inside FSYNWA's CEDATA.
+      Per Table AF-10 (p. AF-38/AF-39) the group is TRETAGn, TRELn, and
+      TREDATAn, repeated once per encapsulated TRE.
+    seq:
+      - id: TRETAG
+        type: str
+        size: 6
+        encoding: BCS-A
+        doc: |
+          The TRETAG of the nth encapsulated TRE (6 BCS-A).
+
+      - id: TREL
+        type: str
+        size: 5
+        encoding: BCS-N
+        doc: |
+          The length in bytes of the TREDATA field of the nth encapsulated
+          TRE (5 BCS-N, 00001 - 99956). If this value is zero, the TREDATA
+          field for the nth TRE is not present (size 0).
+
+      - id: TREDATA
+        type: bytes
+        size: TREL.to_i
+        doc: |
+          The data of the nth encapsulated TRE. Its length is given by
+          TRELn. Raw bytes (an entire encapsulated TRE payload), so it is
+          modeled as `bytes` for faithful round-trip regardless of content.

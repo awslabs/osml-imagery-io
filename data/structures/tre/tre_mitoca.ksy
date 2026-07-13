@@ -309,7 +309,7 @@ types:
     seq:
       - id: COMPONENT_ID
         type: str
-        size: _root.COMPONENT_ID_LEN.to_i
+        size: COMPONENT_ID_LEN.to_i
         encoding: BCS-A
         doc: |
           Component Image ID.
@@ -320,7 +320,7 @@ types:
         type: str
         size: 3
         encoding: BCS-N
-        if: _root.COMPONENT_INDEX_TYPE.to_i != 0
+        if: COMPONENT_INDEX_TYPE.to_i != 0
         doc: |
           Image Sub-Header Index.
           Display Level or sequence count of the Component Image Segment.
@@ -364,7 +364,7 @@ types:
         type: str
         size: 8
         encoding: BCS-N
-        if: _root.VOLUME_COMPOSITE_INDEX.to_i != 0
+        if: VOLUME_COMPOSITE_INDEX.to_i != 0
         doc: |
           Upper Left Row Pixel Offset.
           Row pixel offset of upper left corner relative to Volume composite.
@@ -373,7 +373,7 @@ types:
         type: str
         size: 8
         encoding: BCS-N
-        if: _root.VOLUME_COMPOSITE_INDEX.to_i != 0
+        if: VOLUME_COMPOSITE_INDEX.to_i != 0
         doc: |
           Upper Left Column Pixel Offset.
           Column pixel offset of upper left corner relative to Volume composite.
@@ -382,7 +382,7 @@ types:
         type: str
         size: 8
         encoding: BCS-N
-        if: _root.VOLUME_COMPOSITE_INDEX.to_i != 0
+        if: VOLUME_COMPOSITE_INDEX.to_i != 0
         doc: |
           Upper Right Row Pixel Offset.
           Row pixel offset of upper right corner relative to Volume composite.
@@ -391,7 +391,7 @@ types:
         type: str
         size: 8
         encoding: BCS-N
-        if: _root.VOLUME_COMPOSITE_INDEX.to_i != 0
+        if: VOLUME_COMPOSITE_INDEX.to_i != 0
         doc: |
           Upper Right Column Pixel Offset.
           Column pixel offset of upper right corner relative to Volume composite.
@@ -400,7 +400,7 @@ types:
         type: str
         size: 8
         encoding: BCS-N
-        if: _root.VOLUME_COMPOSITE_INDEX.to_i != 0
+        if: VOLUME_COMPOSITE_INDEX.to_i != 0
         doc: |
           Lower Right Row Pixel Offset.
           Row pixel offset of lower right corner relative to Volume composite.
@@ -409,7 +409,7 @@ types:
         type: str
         size: 8
         encoding: BCS-N
-        if: _root.VOLUME_COMPOSITE_INDEX.to_i != 0
+        if: VOLUME_COMPOSITE_INDEX.to_i != 0
         doc: |
           Lower Right Column Pixel Offset.
           Column pixel offset of lower right corner relative to Volume composite.
@@ -418,7 +418,7 @@ types:
         type: str
         size: 8
         encoding: BCS-N
-        if: _root.VOLUME_COMPOSITE_INDEX.to_i != 0
+        if: VOLUME_COMPOSITE_INDEX.to_i != 0
         doc: |
           Lower Left Row Pixel Offset.
           Row pixel offset of lower left corner relative to Volume composite.
@@ -427,7 +427,7 @@ types:
         type: str
         size: 8
         encoding: BCS-N
-        if: _root.VOLUME_COMPOSITE_INDEX.to_i != 0
+        if: VOLUME_COMPOSITE_INDEX.to_i != 0
         doc: |
           Lower Left Column Pixel Offset.
           Column pixel offset of lower left corner relative to Volume composite.

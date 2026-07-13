@@ -168,12 +168,21 @@ types:
         type: str
         size: 1
         encoding: BCS-A
-        doc: Quality of Data (1 BCS-A).
+        doc: Downgrading (1 BCS-A). Y (required) or N (default, not required).
+      - id: CDV10
+        type: str
+        size: 8
+        encoding: BCS-A
+        if: QSS != "U" and QOD != "Y"
+        doc: |
+          Downgrading Date (CDV10n)
+          8 BCS-A (YYYYMMDD). Date of downgrading of the nth
+          original source. Omitted when QSS == "U" or QOD == "Y".
       - id: QLE
         type: str
         size: 80
         encoding: BCS-A
-        doc: Quality Legend (80 BCS-A).
+        doc: Releasing Instructions (80 BCS-A).
       - id: CPY
         type: str
         size: 80

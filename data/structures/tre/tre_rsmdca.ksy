@@ -408,6 +408,16 @@ seq:
       Ground XZ Parameter Index
       2 BCS-NPI non-negative integer.
 
+  - id: GYX
+    type: str
+    size: 2
+    encoding: BCS-A
+    doc: |
+      Ground YX Parameter Index
+      2 BCS-A non-negative integer (01-36, all spaces if not used).
+      RSM Adjustment Vector index for the coefficient of ground point x
+      position applied to the ground point y position.
+
   - id: GYY
     type: str
     size: 2
@@ -423,6 +433,26 @@ seq:
     doc: |
       Ground YZ Parameter Index
       2 BCS-NPI non-negative integer.
+
+  - id: GZX
+    type: str
+    size: 2
+    encoding: BCS-A
+    doc: |
+      Ground ZX Parameter Index
+      2 BCS-A non-negative integer (01-36, all spaces if not used).
+      RSM Adjustment Vector index for the coefficient of ground point x
+      position applied to the ground point z position.
+
+  - id: GZY
+    type: str
+    size: 2
+    encoding: BCS-A
+    doc: |
+      Ground ZY Parameter Index
+      2 BCS-A non-negative integer (01-36, all spaces if not used).
+      RSM Adjustment Vector index for the coefficient of ground point y
+      position applied to the ground point z position.
 
   - id: GZZ
     type: str
