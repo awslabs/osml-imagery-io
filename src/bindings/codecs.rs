@@ -558,6 +558,24 @@ pub fn decode_tiff_tile(
         ))
     })?;
 
+    // Sub-byte tiles (BitsPerSample ∈ {1,2,4}) arrive packed, MSB-first, with
+    // each row padded to a byte boundary. Expand to one u8 per sample so the
+    // byte-aligned pad/deinterleave steps below treat it as ordinary UInt8
+    // data. The row stride is `tile_width × bands` samples (chunky). No
+    // predictor is applied — predictors are byte-aligned only and sub-byte
+    // masks use Deflate/PackBits/CCITT without one. Mirrors the eager path in
+    // `src/tiff/image.rs` (`maybe_unpack_subbyte`).
+    let decoded = if bits_per_sample < 8 {
+        crate::bitpack::unpack_subbyte_msb_first(
+            &decoded,
+            bits_per_sample as u8,
+            tile_width * bands,
+            tile_height,
+        )
+    } else {
+        decoded
+    };
+
     // Handle edge tiles: allocate full nominal tile buffer, copy decoded bytes
     let full_tile_bytes =
         tile_width as usize * tile_height as usize * bands as usize * bytes_per_sample;
@@ -858,5 +876,63 @@ mod tests {
             decoded, pixel_data,
             "Multi-band uncompressed tile data should round-trip exactly"
         );
+    }
+
+    /// Phase 4: a 1-bit synthetic tile round-trips through the exact
+    /// build_synthetic_tiff → read_encoded_tile → sub-byte-unpack sequence that
+    /// `decode_tiff_tile` runs. libtiff returns packed, row-padded bits; the
+    /// `bitpack` unpack step must expand them to one u8 per sample so the Zarr
+    /// codec path yields a `uint8` array of 0/1 values. Tile dims are multiples
+    /// of 16 (libtiff requirement).
+    #[test]
+    fn test_decode_tiff_tile_subbyte_1bit_unpacks() {
+        let tile_w = 16u32;
+        let tile_h = 16u32;
+        // Checkerboard so every byte holds a mix of set/clear bits.
+        let value_at = |r: u32, c: u32| ((r + c) % 2) as u8;
+
+        let mut samples = Vec::with_capacity((tile_w * tile_h) as usize);
+        for r in 0..tile_h {
+            for c in 0..tile_w {
+                samples.push(value_at(r, c));
+            }
+        }
+        let packed = crate::bitpack::pack_subbyte_msb_first(&samples, 1, tile_w, tile_h);
+
+        let tiff_buf = build_synthetic_tiff(
+            &packed,
+            tags::COMPRESSION_NONE,
+            1, // bits_per_sample
+            1, // samples_per_pixel
+            tags::PHOTOMETRIC_MINISBLACK,
+            tags::PLANAR_CONFIG_CONTIG,
+            1, // predictor
+            tile_w,
+            tile_h,
+            tags::SAMPLE_FORMAT_UINT,
+            None,
+        );
+
+        let handle =
+            TiffHandle::from_bytes(&tiff_buf).expect("Failed to open synthetic 1-bit TIFF");
+        let decoded = handle
+            .read_encoded_tile(0)
+            .expect("Failed to read 1-bit tile 0");
+
+        // Mirror the unpack step decode_tiff_tile performs for bits < 8.
+        let unpacked = crate::bitpack::unpack_subbyte_msb_first(&decoded, 1, tile_w, tile_h);
+
+        assert_eq!(unpacked.len(), (tile_w * tile_h) as usize);
+        for r in 0..tile_h {
+            for c in 0..tile_w {
+                assert_eq!(
+                    unpacked[(r * tile_w + c) as usize],
+                    value_at(r, c),
+                    "1-bit sample mismatch at ({}, {})",
+                    r,
+                    c
+                );
+            }
+        }
     }
 }

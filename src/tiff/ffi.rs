@@ -1745,6 +1745,32 @@ impl TiffHandle {
         Ok(())
     }
 
+    /// Compress and write a strip of data.
+    ///
+    /// Returns `CodecError::Io` if `TIFFWriteEncodedStrip` fails.
+    ///
+    /// Part of the write API surface; currently exercised only by tests that
+    /// build strip-based fixtures (e.g. CCITT-compressed bilevel round-trips).
+    #[allow(dead_code)]
+    pub fn write_encoded_strip(&self, strip_index: u32, data: &[u8]) -> Result<(), CodecError> {
+        let bytes_written = unsafe {
+            sys::TIFFWriteEncodedStrip(
+                self.handle,
+                strip_index,
+                data.as_ptr() as *mut c_void,
+                data.len() as i64,
+            )
+        };
+
+        if bytes_written < 0 {
+            let error_msg = take_last_error()
+                .unwrap_or_else(|| format!("Failed to write strip {}", strip_index));
+            return Err(CodecError::Io(std::io::Error::other(error_msg)));
+        }
+
+        Ok(())
+    }
+
     /// Register a custom (non-standard) tag with libtiff so it can be written.
     ///
     /// libtiff rejects `TIFFSetField` calls for tags it doesn't know about.

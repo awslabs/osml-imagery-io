@@ -5,8 +5,10 @@
 **Codec type:** array-to-bytes  
 
 Decodes compressed TIFF tiles into NumPy arrays. Supports LZW, JPEG, Deflate,
-Adobe Deflate, PackBits, and uncompressed tiles, including horizontal
-differencing predictors and YCbCr-to-RGB conversion for JPEG tiles.
+Adobe Deflate, PackBits, CCITT Group 3/Group 4 fax, and uncompressed tiles,
+including horizontal differencing predictors, YCbCr-to-RGB conversion for JPEG
+tiles, and sub-byte (1/2/4-bit) sample unpacking for bilevel data and
+transparency masks.
 
 ## Document Conventions
 
@@ -61,7 +63,7 @@ document for further details.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `compression` | `int` | No | `1` | TIFF compression tag value. See table below. |
-| `bits_per_sample` | `int` | No | `8` | Bits per sample per band (`8`, `16`, `32`, or `64`). |
+| `bits_per_sample` | `int` | No | `8` | Bits per sample per band (`1`, `2`, `4`, `8`, `16`, `32`, or `64`). Sub-byte widths (`1`/`2`/`4`) are unpacked to `uint8`. |
 | `samples_per_pixel` | `int` | No | `1` | Number of bands. |
 | `photometric` | `int` | No | `1` | Photometric interpretation. `0` = MinIsWhite, `1` = MinIsBlack, `2` = RGB, `6` = YCbCr. |
 | `planar_config` | `int` | No | `1` | Planar configuration. `1` = chunky (interleaved), `2` = planar (separate). |
@@ -76,6 +78,8 @@ document for further details.
 | Value | Name | Notes |
 |-------|------|-------|
 | `1` | None (uncompressed) | Raw tile bytes; still needs byte-order and planar conversion. |
+| `3` | CCITT Group 3 fax | Bilevel (1-bit) encoding; decodes to sub-byte data unpacked to `uint8`. |
+| `4` | CCITT Group 4 fax | Bilevel (1-bit) encoding; decodes to sub-byte data unpacked to `uint8`. |
 | `5` | LZW | Supports horizontal differencing predictor (`predictor=2`). |
 | `7` | JPEG | Requires `jpeg_tables`. Handles YCbCr-to-RGB conversion when `photometric=6`. |
 | `8` | Deflate (zlib) | Supports horizontal differencing predictor. |
@@ -86,6 +90,7 @@ document for further details.
 
 | Sample Format | Bits Per Sample | NumPy dtype |
 |---------------|-----------------|-------------|
+| `1` (uint) | 1, 2, 4 | `uint8` (sub-byte samples unpacked, MSB-first) |
 | `1` (uint) | 8 | `uint8` |
 | `1` (uint) | 16 | `uint16` |
 | `1` (uint) | 32 | `uint32` |
@@ -103,9 +108,10 @@ document for further details.
 2. Open the buffer with libtiff's `TIFFClientOpen` using memory-backed I/O callbacks.
 3. If `compression=7` (JPEG) and `photometric=6` (YCbCr), set `JPEGCOLORMODE_RGB` so libtiff performs YCbCr-to-RGB conversion during decode.
 4. Call `TIFFReadEncodedTile(handle, 0, ...)` to decompress the tile. libtiff handles predictor reversal, byte-order conversion, and color space conversion internally.
-5. If the decoded tile is smaller than the nominal tile dimensions (edge tile), pad with zeros to the full tile shape.
-6. Convert from chunky (pixel-interleaved) to band-sequential (BSQ) format if `planar_config=1` and `samples_per_pixel > 1`.
-7. Return an array with shape `(samples_per_pixel, tile_height, tile_width)` and the dtype corresponding to the `sample_format`/`bits_per_sample` combination.
+5. If `bits_per_sample` is sub-byte (`1`, `2`, or `4`), unpack the packed samples to one `uint8` per sample. Unpacking is MSB-first and uses the tile's per-row byte-boundary stride — not the image width — so partial edge tiles unpack correctly. Predictors are not defined for (nor emitted with) sub-byte data.
+6. If the decoded tile is smaller than the nominal tile dimensions (edge tile), pad with zeros to the full tile shape.
+7. Convert from chunky (pixel-interleaved) to band-sequential (BSQ) format if `planar_config=1` and `samples_per_pixel > 1`.
+8. Return an array with shape `(samples_per_pixel, tile_height, tile_width)` and the dtype corresponding to the `sample_format`/`bits_per_sample` combination.
 
 ### Encoding
 

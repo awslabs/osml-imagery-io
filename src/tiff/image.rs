@@ -29,6 +29,12 @@ pub(crate) fn map_pixel_type(
     let sf = sample_format.unwrap_or(tags::SAMPLE_FORMAT_UINT);
 
     match (sf, bits_per_sample) {
+        // Sub-byte unsigned samples (bilevel masks, 2/4-bit grayscale) unpack to
+        // one u8 per sample (0/1, 0..3, 0..15) via `crate::bitpack`. TIFF 6.0
+        // p.22 lists 4-bit as Baseline grayscale; p.37 defines the 1-bit
+        // transparency mask. The public PixelType stays UInt8 — no packed
+        // representation crosses the FFI/NumPy boundary.
+        (tags::SAMPLE_FORMAT_UINT, 1 | 2 | 4) => Ok(PixelType::UInt8),
         (tags::SAMPLE_FORMAT_UINT, 8) => Ok(PixelType::UInt8),
         (tags::SAMPLE_FORMAT_UINT, 16) => Ok(PixelType::UInt16),
         (tags::SAMPLE_FORMAT_UINT, 32) => Ok(PixelType::UInt32),
@@ -557,6 +563,11 @@ impl TIFFImageAssetProvider {
             let raw = guard.read_encoded_tile(tile_index)?;
             drop(guard);
 
+            // Sub-byte tiles arrive packed; expand to one u8/sample. Row stride
+            // is block_width × bands samples (chunky), padded to a byte boundary.
+            let raw =
+                self.maybe_unpack_subbyte(raw, self.block_width * self.bands, self.block_height);
+
             deinterleave_chunky_to_bsq(
                 &raw,
                 self.block_width,
@@ -579,6 +590,10 @@ impl TIFFImageAssetProvider {
             for &band in &requested_bands {
                 let tile_index = base_tile + band * tiles_per_band;
                 let raw = guard.read_encoded_tile(tile_index)?;
+
+                // Planar sub-byte tile: one band per tile, row stride is
+                // block_width samples padded to a byte boundary.
+                let raw = self.maybe_unpack_subbyte(raw, self.block_width, self.block_height);
 
                 // Extract actual pixels from the (possibly padded) tile
                 extract_actual_pixels(
@@ -632,6 +647,10 @@ impl TIFFImageAssetProvider {
             let raw = guard.read_encoded_strip(block_row)?;
             drop(guard);
 
+            // Sub-byte strip: expand to one u8/sample. Row stride is
+            // width × bands samples, padded to a byte boundary per row.
+            let raw = self.maybe_unpack_subbyte(raw, self.width * self.bands, actual_rows);
+
             // For strips, block_width == actual_cols == ImageWidth, no column padding
             deinterleave_chunky_to_bsq(
                 &raw,
@@ -655,6 +674,10 @@ impl TIFFImageAssetProvider {
                 let strip_index = band * strips_per_band + block_row;
                 let raw = guard.read_encoded_strip(strip_index)?;
 
+                // Planar sub-byte strip: one band per strip, row stride is
+                // width samples padded to a byte boundary per row.
+                let raw = self.maybe_unpack_subbyte(raw, self.width, actual_rows);
+
                 // For strips, no column padding — just take actual_rows worth of data
                 let row_bytes = actual_cols as usize * bps;
                 let take = actual_rows as usize * row_bytes;
@@ -666,6 +689,30 @@ impl TIFFImageAssetProvider {
         };
 
         Ok((bsq_data, [num_out_bands, actual_rows, actual_cols]))
+    }
+
+    /// Unpack sub-byte samples if this IFD stores fewer than 8 bits per sample.
+    ///
+    /// libtiff returns packed sub-byte data (BitsPerSample ∈ {1,2,4}), MSB-first,
+    /// with each tile/strip row padded to a byte boundary. This expands it to one
+    /// `u8` per sample so the byte-aligned deinterleave/extract helpers below can
+    /// treat it as ordinary 8-bit data. `samples_per_row` is the row stride in
+    /// *samples* — `block_width × bands` for a chunky tile/strip, `block_width`
+    /// for a planar (single-band) tile. Byte-aligned data is returned unchanged.
+    ///
+    /// No predictor is applied: predictors are defined only for byte-aligned
+    /// samples, and 1-bit masks use Deflate/PackBits/CCITT without one.
+    fn maybe_unpack_subbyte(&self, raw: Vec<u8>, samples_per_row: u32, num_rows: u32) -> Vec<u8> {
+        if self.bits_per_sample < 8 {
+            crate::bitpack::unpack_subbyte_msb_first(
+                &raw,
+                self.bits_per_sample as u8,
+                samples_per_row,
+                num_rows,
+            )
+        } else {
+            raw
+        }
     }
 
     /// Resolve the band selection: if None, return all bands [0..N).
@@ -777,6 +824,21 @@ mod tests {
             map_pixel_type(Some(tags::SAMPLE_FORMAT_UINT), 8).unwrap(),
             PixelType::UInt8
         );
+    }
+
+    #[test]
+    fn test_map_pixel_type_subbyte_uint_maps_to_uint8() {
+        // Sub-byte unsigned samples (1/2/4-bit) unpack to one u8 per sample.
+        for bits in [1u16, 2, 4] {
+            assert_eq!(
+                map_pixel_type(Some(tags::SAMPLE_FORMAT_UINT), bits).unwrap(),
+                PixelType::UInt8,
+                "BitsPerSample={} should map to UInt8",
+                bits
+            );
+            // Absent SampleFormat defaults to UInt per TIFF 6.0.
+            assert_eq!(map_pixel_type(None, bits).unwrap(), PixelType::UInt8);
+        }
     }
 
     #[test]
@@ -1542,6 +1604,242 @@ mod tests {
         assert_eq!(config["predictor"], 1u16.to_le_bytes().to_vec());
         assert_eq!(config["compression"], 32946u16.to_le_bytes().to_vec());
         assert!(!config.contains_key("jpeg_tables"));
+    }
+
+    // =========================================================================
+    // Sub-byte decode tests (BitsPerSample ∈ {1,2,4})
+    // =========================================================================
+
+    /// Build a tiled sub-byte TIFF via the write path. `bits` ∈ {1,2,4}.
+    /// Tile dimensions must be multiples of 16 (libtiff requirement); the image
+    /// may be smaller than a whole number of tiles so edge tiles are exercised.
+    /// `value_at(row, col)` supplies each pixel's sample value (masked to `bits`).
+    fn make_subbyte_tiled_tiff(
+        bits: u16,
+        width: u32,
+        height: u32,
+        tile_w: u32,
+        tile_h: u32,
+        value_at: impl Fn(u32, u32) -> u8,
+    ) -> Vec<u8> {
+        let handle = TiffHandle::from_write(false).unwrap();
+        handle.set_field_u32(tags::IMAGE_WIDTH, width).unwrap();
+        handle.set_field_u32(tags::IMAGE_LENGTH, height).unwrap();
+        handle.set_field_u16(tags::BITS_PER_SAMPLE, bits).unwrap();
+        handle.set_field_u16(tags::SAMPLES_PER_PIXEL, 1).unwrap();
+        handle
+            .set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT)
+            .unwrap();
+        handle
+            .set_field_u16(
+                tags::PHOTOMETRIC_INTERPRETATION,
+                tags::PHOTOMETRIC_MINISBLACK,
+            )
+            .unwrap();
+        handle.set_field_u32(tags::TILE_WIDTH, tile_w).unwrap();
+        handle.set_field_u32(tags::TILE_LENGTH, tile_h).unwrap();
+        handle
+            .set_field_u16(tags::COMPRESSION, tags::COMPRESSION_NONE)
+            .unwrap();
+        handle
+            .set_field_u16(tags::PLANAR_CONFIGURATION, tags::PLANAR_CONFIG_CONTIG)
+            .unwrap();
+
+        let tiles_across = width.div_ceil(tile_w);
+        let tiles_down = height.div_ceil(tile_h);
+        for tr in 0..tiles_down {
+            for tc in 0..tiles_across {
+                // Build one full tile's worth of unpacked samples, zero-padding
+                // the region beyond the image edge.
+                let mut samples = Vec::with_capacity((tile_w * tile_h) as usize);
+                for r in 0..tile_h {
+                    for c in 0..tile_w {
+                        let gr = tr * tile_h + r;
+                        let gc = tc * tile_w + c;
+                        let v = if gr < height && gc < width {
+                            value_at(gr, gc)
+                        } else {
+                            0
+                        };
+                        samples.push(v);
+                    }
+                }
+                let packed =
+                    crate::bitpack::pack_subbyte_msb_first(&samples, bits as u8, tile_w, tile_h);
+                let tile_index = tr * tiles_across + tc;
+                handle.write_encoded_tile(tile_index, &packed).unwrap();
+            }
+        }
+
+        handle.write_directory().unwrap();
+        handle.into_bytes().unwrap()
+    }
+
+    /// Collect a whole single-band image into row-major u8 by reading every
+    /// block and placing it at the correct offset.
+    fn read_full_image(provider: &TIFFImageAssetProvider) -> Vec<u8> {
+        let width = provider.num_columns() as usize;
+        let height = provider.num_rows() as usize;
+        let mut out = vec![0u8; width * height];
+        let (grid_rows, grid_cols) = provider.block_grid_size();
+        let bh = provider.num_pixels_per_block_vertical() as usize;
+        let bw = provider.num_pixels_per_block_horizontal() as usize;
+        for br in 0..grid_rows {
+            for bc in 0..grid_cols {
+                let (data, shape) = provider.get_block(br, bc, 0, None).unwrap();
+                let rows = shape[1] as usize;
+                let cols = shape[2] as usize;
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let gr = br as usize * bh + r;
+                        let gc = bc as usize * bw + c;
+                        out[gr * width + gc] = data[r * cols + c];
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn test_decode_1bit_tiled_full_and_edge_tile() {
+        // 20×16 image, 16×16 tiles → 2 tiles across (second is a partial,
+        // 4-column edge tile), 1 tile down. Checkerboard pattern.
+        let width = 20;
+        let height = 16;
+        let value_at = |r: u32, c: u32| ((r + c) % 2) as u8;
+        let data = make_subbyte_tiled_tiff(1, width, height, 16, 16, value_at);
+        let provider = provider_from_bytes(&data);
+
+        assert_eq!(provider.pixel_value_type(), PixelType::UInt8);
+        assert_eq!(provider.num_bits_per_pixel(), 1);
+
+        let img = read_full_image(&provider);
+        for r in 0..height {
+            for c in 0..width {
+                assert_eq!(
+                    img[(r * width + c) as usize],
+                    value_at(r, c),
+                    "1-bit mismatch at ({}, {})",
+                    r,
+                    c
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_4bit_tiled_full_and_edge_tile() {
+        // 20×16 image, 16×16 tiles → edge tile with a partial (4-col) column.
+        // Values sweep 0..15 so both nibbles of each byte are exercised.
+        let width = 20;
+        let height = 16;
+        let value_at = |r: u32, c: u32| ((r * width + c) % 16) as u8;
+        let data = make_subbyte_tiled_tiff(4, width, height, 16, 16, value_at);
+        let provider = provider_from_bytes(&data);
+
+        assert_eq!(provider.pixel_value_type(), PixelType::UInt8);
+        assert_eq!(provider.num_bits_per_pixel(), 4);
+
+        let img = read_full_image(&provider);
+        for r in 0..height {
+            for c in 0..width {
+                assert_eq!(
+                    img[(r * width + c) as usize],
+                    value_at(r, c),
+                    "4-bit mismatch at ({}, {})",
+                    r,
+                    c
+                );
+            }
+        }
+    }
+
+    /// Build a 1-bit stripped TIFF compressed with the given CCITT codec and
+    /// return the assembled bytes. `value_at(row, col)` supplies each bit.
+    fn make_ccitt_stripped_tiff(
+        compression: u16,
+        width: u32,
+        height: u32,
+        value_at: impl Fn(u32, u32) -> u8,
+    ) -> Vec<u8> {
+        let handle = TiffHandle::from_write(false).unwrap();
+        handle.set_field_u32(tags::IMAGE_WIDTH, width).unwrap();
+        handle.set_field_u32(tags::IMAGE_LENGTH, height).unwrap();
+        handle.set_field_u16(tags::BITS_PER_SAMPLE, 1).unwrap();
+        handle.set_field_u16(tags::SAMPLES_PER_PIXEL, 1).unwrap();
+        handle
+            .set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT)
+            .unwrap();
+        // CCITT fax uses white-is-zero photometric.
+        handle
+            .set_field_u16(tags::PHOTOMETRIC_INTERPRETATION, 0)
+            .unwrap();
+        handle.set_field_u32(tags::ROWS_PER_STRIP, height).unwrap();
+        handle
+            .set_field_u16(tags::COMPRESSION, compression)
+            .unwrap();
+        handle
+            .set_field_u16(tags::PLANAR_CONFIGURATION, tags::PLANAR_CONFIG_CONTIG)
+            .unwrap();
+
+        let mut samples = Vec::with_capacity((width * height) as usize);
+        for r in 0..height {
+            for c in 0..width {
+                samples.push(value_at(r, c));
+            }
+        }
+        let packed = crate::bitpack::pack_subbyte_msb_first(&samples, 1, width, height);
+        handle.write_encoded_strip(0, &packed).unwrap();
+        handle.write_directory().unwrap();
+        handle.into_bytes().unwrap()
+    }
+
+    #[test]
+    fn test_decode_ccitt_g4_1bit_round_trips() {
+        // Validates the allowlist addition: a G4-compressed 1-bit strip decodes
+        // through libtiff and the sub-byte unpack path to expected u8 values.
+        let width = 32;
+        let height = 8;
+        let value_at = |r: u32, c: u32| (((r + c) / 3) % 2) as u8;
+        let data = make_ccitt_stripped_tiff(tags::COMPRESSION_CCITT_G4, width, height, value_at);
+        let provider = provider_from_bytes(&data);
+
+        assert_eq!(provider.pixel_value_type(), PixelType::UInt8);
+        let img = read_full_image(&provider);
+        for r in 0..height {
+            for c in 0..width {
+                assert_eq!(
+                    img[(r * width + c) as usize],
+                    value_at(r, c),
+                    "CCITT G4 mismatch at ({}, {})",
+                    r,
+                    c
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_ccitt_g3_1bit_round_trips() {
+        let width = 32;
+        let height = 8;
+        let value_at = |_r: u32, c: u32| ((c / 5) % 2) as u8;
+        let data = make_ccitt_stripped_tiff(tags::COMPRESSION_CCITT_G3, width, height, value_at);
+        let provider = provider_from_bytes(&data);
+
+        let img = read_full_image(&provider);
+        for r in 0..height {
+            for c in 0..width {
+                assert_eq!(
+                    img[(r * width + c) as usize],
+                    value_at(r, c),
+                    "CCITT G3 mismatch at ({}, {})",
+                    r,
+                    c
+                );
+            }
+        }
     }
 
     #[test]

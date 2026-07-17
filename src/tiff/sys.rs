@@ -197,6 +197,19 @@ extern "C" {
     /// Number of bytes read, or -1 on error
     pub fn TIFFReadEncodedStrip(tif: *mut c_void, strip: u32, buf: *mut c_void, size: i64) -> i64;
 
+    /// Compress and write a strip of data.
+    ///
+    /// # Arguments
+    /// * `tif` - TIFF handle
+    /// * `strip` - Strip index
+    /// * `data` - Data to compress and write
+    /// * `size` - Data size in bytes
+    ///
+    /// # Returns
+    /// Number of bytes written, or -1 on error
+    pub fn TIFFWriteEncodedStrip(tif: *mut c_void, strip: u32, data: *mut c_void, size: i64)
+        -> i64;
+
     /// Return the size in bytes of a decoded strip.
     pub fn TIFFStripSize(tif: *mut c_void) -> i64;
 

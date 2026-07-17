@@ -326,6 +326,53 @@ class TestClassifyAssets:
         # image:1 has only one overview
         assert overviews["image:1"] == [(3, ovr_1_3)]
 
+    def test_mask_assets_are_skipped(self):
+        """Mask assets (keys ending in :mask) are excluded from parents and
+        overviews — they are not part of the Zarr pyramid.
+
+        Resolves design open question 1: mask overviews are classified via
+        MASK_PATTERN and deliberately skipped from the pyramid for now.
+        """
+        from aws.osml.io.virtualizarr_parsers import _classify_assets
+
+        parent = "parent_sentinel"
+        ovr1 = "overview_1_sentinel"
+        full_mask = "full_mask_sentinel"
+        ovr_mask = "overview_mask_sentinel"
+
+        # A full COG-style layout: image, its mask, an overview, and the
+        # overview's mask.
+        all_assets = [
+            ("image:0", parent),
+            ("image:0:mask", full_mask),
+            ("image:0:overview:1", ovr1),
+            ("image:0:overview:1:mask", ovr_mask),
+        ]
+
+        parents, overviews = _classify_assets(all_assets)
+
+        # Only the non-mask image is a parent; only the non-mask overview is
+        # grouped. Both mask keys are dropped.
+        assert parents == {"image:0": parent}
+        assert overviews == {"image:0": [(1, ovr1)]}
+
+    def test_standalone_mask_is_not_a_parent(self):
+        """A standalone mask key (fallback for non-COG ordering) is skipped
+        rather than misclassified as a parent image."""
+        from aws.osml.io.virtualizarr_parsers import _classify_assets
+
+        image = "image_sentinel"
+        standalone_mask = "standalone_mask_sentinel"
+        all_assets = [
+            ("image:0:mask", standalone_mask),
+            ("image:1", image),
+        ]
+
+        parents, overviews = _classify_assets(all_assets)
+
+        assert parents == {"image:1": image}
+        assert overviews == {}
+
 
 def _make_manifest_array(rows, cols, num_bands=1):
     """Create a synthetic ManifestArray with the given dimensions.

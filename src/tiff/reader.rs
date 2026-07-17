@@ -4,6 +4,9 @@
 //! `NewSubfileType`, and creates one `TIFFImageAssetProvider` per IFD.
 //! Full-resolution IFDs get keys like `image:0` with role `"data"`;
 //! overview IFDs get keys like `image:0:overview:1` with role `"overview"`.
+//! Transparency-mask IFDs (NewSubfileType bit 2) get a `:mask` suffix bound to
+//! their associated image/overview by enumeration order (`image:0:mask`,
+//! `image:0:overview:1:mask`) with roles `["mask"]` / `["overview","mask"]`.
 //! Dataset-level metadata contains byte order, directory count, and image
 //! segment count.
 
@@ -26,6 +29,8 @@ use crate::types::AssetType;
 /// with `CodecError::Unsupported` during enumeration.
 const SUPPORTED_COMPRESSIONS: &[u16] = &[
     tags::COMPRESSION_NONE,
+    tags::COMPRESSION_CCITT_G3,
+    tags::COMPRESSION_CCITT_G4,
     tags::COMPRESSION_LZW,
     tags::COMPRESSION_JPEG,
     tags::COMPRESSION_DEFLATE,
@@ -106,6 +111,14 @@ impl TIFFDatasetReader {
         let mut segment_index: usize = 0;
         let mut current_parent_index: usize = 0;
         let mut overview_index: u32 = 1;
+        // Counter for mask-of-overview IFDs. Per COG Recommendation 3 the mask
+        // overviews follow the image overviews in the same largest→smallest
+        // order, so mask overview M associates with image overview M.
+        let mut mask_overview_index: u32 = 1;
+        // The most recent full-resolution image key. A following mask IFD binds
+        // to it (order-based association). `None` until the first full-res IFD
+        // is seen, which triggers the standalone-mask fallback.
+        let mut last_full_res_key: Option<String> = None;
 
         for ifd_index in 0..num_directories {
             let guard = handle.lock().map_err(|e| {
@@ -119,7 +132,7 @@ impl TIFFDatasetReader {
                 .unwrap_or(tags::COMPRESSION_NONE);
             if !SUPPORTED_COMPRESSIONS.contains(&compression) {
                 return Err(CodecError::Unsupported(format!(
-                    "Unsupported TIFF compression type: {} (code {}). Supported: None (1), LZW (5), JPEG (7), Deflate (8), PackBits (32773), Adobe Deflate (32946)",
+                    "Unsupported TIFF compression type: {} (code {}). Supported: None (1), CCITT Group 3 (3), CCITT Group 4 (4), LZW (5), JPEG (7), Deflate (8), PackBits (32773), Adobe Deflate (32946)",
                     compression_name(compression),
                     compression,
                 )));
@@ -135,28 +148,74 @@ impl TIFFDatasetReader {
                 }
             }
 
-            // Classify by NewSubfileType (tag 254)
+            // Classify by NewSubfileType (tag 254). Per TIFF 6.0 p.36 the bits
+            // are independent flags: bit 0 marks a reduced-resolution (overview)
+            // subfile, bit 2 marks a transparency mask (PhotometricInterpretation
+            // must be 4). We inspect them independently.
             let new_subfile_type = guard.get_field_u32(tags::NEW_SUBFILE_TYPE).unwrap_or(0);
-            let is_full_res = (new_subfile_type & 1) == 0;
+            let is_reduced_res = (new_subfile_type & 1) != 0;
+            let is_mask = (new_subfile_type & 4) != 0;
 
             // Drop the guard before creating the provider (it acquires its own lock)
             drop(guard);
 
-            // Determine key and roles based on IFD classification
-            let (key, roles) = if is_full_res || single_ifd {
-                // Full-resolution IFD (or single-IFD override)
+            // Determine key and roles based on IFD classification. Masks are
+            // bound to their associated image/overview by enumeration order,
+            // relying on the COG IFD ordering guarantee (OGC COG Recommendation
+            // 3: image → its mask → image overviews → mask overviews). When no
+            // parent has been seen (non-COG ordering), a mask is exposed as a
+            // standalone `image:N:mask`.
+            let (key, roles) = if single_ifd {
+                // Single-IFD override: always the primary image, regardless of
+                // any reduced-resolution or mask bits.
                 let key = format!("image:{}", segment_index);
-                let roles = vec!["data".to_string()];
+                last_full_res_key = Some(key.clone());
                 current_parent_index = segment_index;
                 segment_index += 1;
                 overview_index = 1;
-                (key, roles)
-            } else {
-                // Overview IFD
+                mask_overview_index = 1;
+                (key, vec!["data".to_string()])
+            } else if is_mask && is_reduced_res {
+                // Mask of an overview (bits 0+2). Associates with the image
+                // overview of the same ordinal.
+                if last_full_res_key.is_some() {
+                    let key = format!(
+                        "image:{}:overview:{}:mask",
+                        current_parent_index, mask_overview_index
+                    );
+                    mask_overview_index += 1;
+                    (key, vec!["overview".to_string(), "mask".to_string()])
+                } else {
+                    // Fallback: no parent seen — standalone mask.
+                    let key = format!("image:{}:mask", segment_index);
+                    segment_index += 1;
+                    (key, vec!["overview".to_string(), "mask".to_string()])
+                }
+            } else if is_mask {
+                // Mask of the full-resolution image (bit 2 only).
+                if let Some(parent) = &last_full_res_key {
+                    let key = format!("{}:mask", parent);
+                    (key, vec!["mask".to_string()])
+                } else {
+                    // Fallback: no parent seen — standalone mask.
+                    let key = format!("image:{}:mask", segment_index);
+                    segment_index += 1;
+                    (key, vec!["mask".to_string()])
+                }
+            } else if is_reduced_res {
+                // Overview IFD (bit 0 only).
                 let key = format!("image:{}:overview:{}", current_parent_index, overview_index);
-                let roles = vec!["overview".to_string()];
                 overview_index += 1;
-                (key, roles)
+                (key, vec!["overview".to_string()])
+            } else {
+                // Full-resolution IFD (NewSubfileType 0).
+                let key = format!("image:{}", segment_index);
+                last_full_res_key = Some(key.clone());
+                current_parent_index = segment_index;
+                segment_index += 1;
+                overview_index = 1;
+                mask_overview_index = 1;
+                (key, vec!["data".to_string()])
             };
 
             // Build metadata and create the provider
@@ -699,6 +758,127 @@ mod tests {
         assert_eq!(
             all_keys,
             vec!["image:0", "image:0:overview:1", "image:0:overview:2"]
+        );
+    }
+
+    /// Phase 3: full COG mask layout per OGC COG Recommendation 3
+    /// (image → its mask → image overviews → mask overviews). NewSubfileType
+    /// values: 0 (image), 4 (mask), 1×5 (image overviews), 5×5 (mask overviews).
+    #[test]
+    fn test_mask_bearing_cog_keys_and_roles() {
+        let data = make_multi_ifd_tiff(&[0, 4, 1, 1, 1, 1, 1, 5, 5, 5, 5, 5]);
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
+
+        assert_eq!(
+            reader.asset_keys,
+            vec![
+                "image:0",
+                "image:0:mask",
+                "image:0:overview:1",
+                "image:0:overview:2",
+                "image:0:overview:3",
+                "image:0:overview:4",
+                "image:0:overview:5",
+                "image:0:overview:1:mask",
+                "image:0:overview:2:mask",
+                "image:0:overview:3:mask",
+                "image:0:overview:4:mask",
+                "image:0:overview:5:mask",
+            ]
+        );
+
+        // Full-res image → data
+        assert_eq!(
+            reader.get_asset("image:0").unwrap().roles(),
+            &["data".to_string()]
+        );
+        // Full-res mask → mask only
+        assert_eq!(
+            reader.get_asset("image:0:mask").unwrap().roles(),
+            &["mask".to_string()]
+        );
+        // Image overview → overview only
+        assert_eq!(
+            reader.get_asset("image:0:overview:1").unwrap().roles(),
+            &["overview".to_string()]
+        );
+        // Mask overview → dual roles
+        assert_eq!(
+            reader.get_asset("image:0:overview:1:mask").unwrap().roles(),
+            &["overview".to_string(), "mask".to_string()]
+        );
+    }
+
+    /// Phase 3: role-based filtering with masks present. A query for `mask`
+    /// returns all masks (full-res + overview masks); a query for `overview`
+    /// returns image overviews *and* mask overviews (dual role).
+    #[test]
+    fn test_role_filtering_with_masks() {
+        let data = make_multi_ifd_tiff(&[0, 4, 1, 1, 5, 5]);
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
+
+        let mask_keys = reader.get_asset_keys(Some(AssetType::Image), Some(&["mask".to_string()]));
+        assert_eq!(
+            mask_keys,
+            vec![
+                "image:0:mask",
+                "image:0:overview:1:mask",
+                "image:0:overview:2:mask",
+            ]
+        );
+
+        let overview_keys =
+            reader.get_asset_keys(Some(AssetType::Image), Some(&["overview".to_string()]));
+        assert_eq!(
+            overview_keys,
+            vec![
+                "image:0:overview:1",
+                "image:0:overview:2",
+                "image:0:overview:1:mask",
+                "image:0:overview:2:mask",
+            ]
+        );
+
+        // `data` role still selects only the primary image (regression guard
+        // for `_resolve_asset`, which prefers roles=["data"]).
+        let data_keys = reader.get_asset_keys(Some(AssetType::Image), Some(&["data".to_string()]));
+        assert_eq!(data_keys, vec!["image:0"]);
+    }
+
+    /// Phase 3: a mask IFD (NewSubfileType=4) appearing before any full-res
+    /// image — non-COG ordering — falls back to a standalone `image:N:mask`
+    /// rather than mis-associating.
+    #[test]
+    fn test_out_of_order_mask_falls_back_to_standalone() {
+        // Mask first, then the full-res image.
+        let data = make_multi_ifd_tiff(&[4, 0]);
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
+
+        assert_eq!(reader.asset_keys, vec!["image:0:mask", "image:1"]);
+
+        // The standalone mask still carries the mask role.
+        assert_eq!(
+            reader.get_asset("image:0:mask").unwrap().roles(),
+            &["mask".to_string()]
+        );
+        // The following full-res image is keyed independently.
+        assert_eq!(
+            reader.get_asset("image:1").unwrap().roles(),
+            &["data".to_string()]
+        );
+    }
+
+    /// Phase 3: a mask-of-overview IFD (NewSubfileType=5) appearing before any
+    /// full-res image also falls back to a standalone `image:N:mask`.
+    #[test]
+    fn test_out_of_order_overview_mask_falls_back_to_standalone() {
+        let data = make_multi_ifd_tiff(&[5, 0]);
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
+
+        assert_eq!(reader.asset_keys, vec!["image:0:mask", "image:1"]);
+        assert_eq!(
+            reader.get_asset("image:0:mask").unwrap().roles(),
+            &["overview".to_string(), "mask".to_string()]
         );
     }
 }

@@ -208,10 +208,24 @@ def _are_contiguous(ranges: list[tuple[int, int]]) -> bool:
 
 
 OVERVIEW_PATTERN = re.compile(r"^(image:\d+):overview:(\d+)$")
+# Transparency-mask assets carry a ``:mask`` suffix (``image:0:mask``,
+# ``image:0:overview:1:mask``).  ``OVERVIEW_PATTERN`` is anchored with ``$`` so
+# mask-overview keys never match it; without an explicit pattern they would
+# otherwise fall through to the ``image:`` branch and be misclassified as
+# parents.  Matching them here lets ``_classify_assets`` skip masks
+# intentionally rather than silently mis-grouping them.
+MASK_PATTERN = re.compile(r":mask$")
 
 
 def _classify_assets(all_assets):
     """Classify assets into parent images and their overviews.
+
+    Transparency-mask assets (keys ending in ``:mask``) are recognized via
+    :data:`MASK_PATTERN` and deliberately excluded from both ``parents`` and
+    ``overviews``: they are not part of the resolution pyramid the Zarr view
+    exposes.  Consuming a mask as nodata is a deferred follow-on (see the
+    design doc's Non-Goals), so masks are skipped here rather than surfaced as
+    extra Zarr arrays.
 
     Parameters
     ----------
@@ -228,6 +242,9 @@ def _classify_assets(all_assets):
     parents = {}
     overviews = {}
     for key, asset in all_assets:
+        if MASK_PATTERN.search(key):
+            # Transparency masks are not part of the Zarr pyramid — skip them.
+            continue
         m = OVERVIEW_PATTERN.match(key)
         if m:
             parent_key = m.group(1)

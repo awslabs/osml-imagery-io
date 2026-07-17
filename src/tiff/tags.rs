@@ -77,6 +77,13 @@ pub const YCBCR_SUB_SAMPLING: u32 = 530;
 /// No compression.
 pub const COMPRESSION_NONE: u16 = 1;
 
+/// CCITT Group 3 fax compression (bilevel). Decodes to 1-bit data, which the
+/// sub-byte unpack path expands to one `u8` per pixel.
+pub const COMPRESSION_CCITT_G3: u16 = 3;
+
+/// CCITT Group 4 fax compression (bilevel). See [`COMPRESSION_CCITT_G3`].
+pub const COMPRESSION_CCITT_G4: u16 = 4;
+
 /// LZW compression.
 pub const COMPRESSION_LZW: u16 = 5;
 
@@ -134,6 +141,10 @@ pub const PHOTOMETRIC_RGB: u16 = 2;
 
 /// Palette color (indexed via color map).
 pub const PHOTOMETRIC_PALETTE: u16 = 3;
+
+/// Transparency mask (TIFF 6.0 p.37). A 1-bit bitmap defining the interior
+/// (1-bits) vs. exterior (0-bits) of another image in the file.
+pub const PHOTOMETRIC_MASK: u16 = 4;
 
 /// YCbCr color space, required for JPEG-in-TIFF with RGB data.
 pub const PHOTOMETRIC_YCBCR: u16 = 6;

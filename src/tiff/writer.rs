@@ -730,28 +730,72 @@ impl TIFFDatasetWriter {
         pad_value as u8
     }
 
-    /// Determine the `NewSubfileType` value for an image asset.
+    /// Coerce a one-byte-per-sample buffer prior to sub-byte packing.
     ///
-    /// Returns `1` (reduced-resolution image) if the asset's roles include
-    /// `"overview"`, or as a fallback if the asset key contains the substring
-    /// `:overview:`. Returns `0` (full-resolution image) otherwise.
-    fn new_subfile_type_for_asset(roles: &[String], key: &str) -> u32 {
-        if roles.iter().any(|r| r == "overview") || key.contains(":overview:") {
-            1
+    /// For mask assets any nonzero input is coerced to `1`, so callers may
+    /// supply a `uint8` mask stored as 0/255 (or any nonzero validity marker)
+    /// and get a well-formed 1-bit bitmap. This mirrors JBP's `pack_bilevel`
+    /// (`value != 0.0`). Non-mask sub-byte data is returned unchanged — the
+    /// packer already masks off high bits per sample.
+    fn coerce_subbyte(samples: &[u8], is_mask: bool) -> Vec<u8> {
+        if is_mask {
+            samples.iter().map(|&v| u8::from(v != 0)).collect()
         } else {
-            0
+            samples.to_vec()
         }
     }
 
-    /// Extract the parent key from an overview key by stripping `:overview:M`.
+    /// Determine the `NewSubfileType` value for an image asset.
     ///
-    /// For example, `image:0:overview:1` → `image:0`.
-    /// If the key does not contain `:overview:`, returns the key unchanged.
+    /// Per TIFF 6.0 p.36 the bits are independent flags, so this is the inverse
+    /// of the reader's classification (`reader.rs`):
+    /// - bit 0 (=1): reduced-resolution (overview) subfile — set when the roles
+    ///   include `"overview"` or the key contains `:overview:`.
+    /// - bit 2 (=4): transparency mask — set when the roles include `"mask"` or
+    ///   the key ends with `:mask`.
+    ///
+    /// A mask *of an overview* therefore yields `5` (bits 0+2); a mask of the
+    /// full-resolution image yields `4`; a plain overview yields `1`; a
+    /// full-resolution image yields `0`.
+    fn new_subfile_type_for_asset(roles: &[String], key: &str) -> u32 {
+        let mut nsft = 0;
+        if roles.iter().any(|r| r == "overview") || key.contains(":overview:") {
+            nsft |= 1;
+        }
+        if roles.iter().any(|r| r == "mask") || key.ends_with(":mask") {
+            nsft |= 4;
+        }
+        nsft
+    }
+
+    /// Extract the full-resolution parent key from an overview or mask key.
+    ///
+    /// Strips any trailing `:mask` suffix, then any `:overview:M` suffix, so all
+    /// children of a full-resolution image group under the same key:
+    /// - `image:0:overview:1` → `image:0`
+    /// - `image:0:mask` → `image:0`
+    /// - `image:0:overview:1:mask` → `image:0`
+    ///
+    /// If the key names neither an overview nor a mask, it is returned unchanged.
     fn extract_parent_key(key: &str) -> String {
-        if let Some((parent, _)) = key.rsplit_once(":overview:") {
+        let without_mask = key.strip_suffix(":mask").unwrap_or(key);
+        if let Some((parent, _)) = without_mask.rsplit_once(":overview:") {
             parent.to_string()
         } else {
-            key.to_string()
+            without_mask.to_string()
+        }
+    }
+
+    /// COG intra-group ordering rank for a child IFD, from its `NewSubfileType`.
+    ///
+    /// Per OGC COG Recommendation 3 the children of a full-resolution image are
+    /// ordered: its mask → image overviews → mask overviews. Within each rank,
+    /// assets are further sorted by decreasing area (largest overview first).
+    fn cog_child_rank(nst: u32) -> u8 {
+        match nst {
+            4 => 0, // full-resolution mask
+            1 => 1, // image overview
+            _ => 2, // mask overview (5) and any other reduced-res child
         }
     }
 
@@ -768,19 +812,20 @@ impl TIFFDatasetWriter {
 
     /// Sort `self.assets` in-place for COG-compliant IFD ordering.
     ///
-    /// The sort produces:
+    /// Per OGC COG Recommendation 3, the sort produces:
     /// 1. Full-resolution assets (NewSubfileType=0) in insertion order
-    /// 2. Each full-res asset is immediately followed by its associated
-    ///    overview assets (NewSubfileType=1), sorted by decreasing area
-    /// 3. Orphan overviews (no matching full-res parent) are appended at the end
+    /// 2. Each full-res asset is immediately followed by its associated children,
+    ///    ordered: its mask (NST=4) → image overviews (NST=1, largest→smallest)
+    ///    → mask overviews (NST=5, largest→smallest)
+    /// 3. Orphan children (no matching full-res parent) are appended at the end
     fn sort_assets_for_cog(&mut self) {
         if self.assets.len() <= 1 {
             return;
         }
 
-        // Partition into full-res and overview indices
+        // Partition into full-res and child indices (overviews and masks)
         let mut full_res_indices: Vec<usize> = Vec::new();
-        let mut overview_groups: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut child_groups: HashMap<String, Vec<usize>> = HashMap::new();
 
         for (i, asset) in self.assets.iter().enumerate() {
             let nst = Self::new_subfile_type_for_asset(&asset.roles, &asset.key);
@@ -788,20 +833,29 @@ impl TIFFDatasetWriter {
                 full_res_indices.push(i);
             } else {
                 let parent = Self::extract_parent_key(&asset.key);
-                overview_groups.entry(parent).or_default().push(i);
+                child_groups.entry(parent).or_default().push(i);
             }
         }
 
-        // Sort each overview group by decreasing area
-        for group in overview_groups.values_mut() {
+        // Sort each child group by COG rank (mask → image overviews → mask
+        // overviews), then by decreasing area within a rank.
+        for group in child_groups.values_mut() {
             group.sort_by(|&a, &b| {
-                let area_a = Self::get_image_area(&self.assets[a]);
-                let area_b = Self::get_image_area(&self.assets[b]);
-                area_b.cmp(&area_a) // Decreasing
+                let nst_a =
+                    Self::new_subfile_type_for_asset(&self.assets[a].roles, &self.assets[a].key);
+                let nst_b =
+                    Self::new_subfile_type_for_asset(&self.assets[b].roles, &self.assets[b].key);
+                Self::cog_child_rank(nst_a)
+                    .cmp(&Self::cog_child_rank(nst_b))
+                    .then_with(|| {
+                        let area_a = Self::get_image_area(&self.assets[a]);
+                        let area_b = Self::get_image_area(&self.assets[b]);
+                        area_b.cmp(&area_a) // Decreasing
+                    })
             });
         }
 
-        // Rebuild order: full-res (insertion order) interleaved with overviews
+        // Rebuild order: full-res (insertion order) interleaved with children
         let mut sorted_indices: Vec<usize> = Vec::with_capacity(self.assets.len());
         let mut used_parents: HashSet<String> = HashSet::new();
 
@@ -809,18 +863,18 @@ impl TIFFDatasetWriter {
             sorted_indices.push(idx);
             let parent_key = &self.assets[idx].key;
             used_parents.insert(parent_key.clone());
-            if let Some(ovrs) = overview_groups.get(parent_key) {
-                for &oidx in ovrs {
-                    sorted_indices.push(oidx);
+            if let Some(children) = child_groups.get(parent_key) {
+                for &cidx in children {
+                    sorted_indices.push(cidx);
                 }
             }
         }
 
-        // Append orphan overviews (no matching full-res parent)
-        for (parent, ovrs) in &overview_groups {
+        // Append orphan children (no matching full-res parent)
+        for (parent, children) in &child_groups {
             if !used_parents.contains(parent) {
-                for &oidx in ovrs {
-                    sorted_indices.push(oidx);
+                for &cidx in children {
+                    sorted_indices.push(cidx);
                 }
             }
         }
@@ -853,9 +907,27 @@ impl TIFFDatasetWriter {
         let num_cols = image.num_columns();
         let num_rows = image.num_rows();
         let num_bands = image.num_bands();
-        let bits_per_sample = image.actual_bits_per_pixel();
         let pixel_type = image.pixel_value_type();
         let bytes_per_sample = pixel_type.bytes_per_pixel() as u32;
+
+        // Classify this IFD from its roles/key (inverse of the reader). A mask
+        // (NST bit 2) is a 1-bit, single-sample bitmap with PhotometricInterpretation
+        // = 4 (TIFF 6.0 p.37), regardless of what the provider reports — masks
+        // unpack to UInt8 on read but must be re-stored as sub-byte on write.
+        let nsft = Self::new_subfile_type_for_asset(roles, key);
+        let is_mask = (nsft & 4) != 0;
+
+        // Effective on-disk sample geometry. For masks this is forced to the
+        // spec-mandated 1-bit/1-sample; otherwise it follows the provider (which
+        // may itself be sub-byte, e.g. 2/4-bit grayscale).
+        let bits_per_sample = if is_mask {
+            1
+        } else {
+            image.actual_bits_per_pixel()
+        };
+        let samples_per_pixel = if is_mask { 1 } else { num_bands };
+        // Sub-byte samples are bit-packed (MSB-first, row-padded) before write.
+        let is_subbyte = bits_per_sample < 8;
 
         // JPEG compression requires 8-bit samples
         if hints.compression == tags::COMPRESSION_JPEG && bits_per_sample != 8 {
@@ -876,10 +948,13 @@ impl TIFFDatasetWriter {
         handle.set_field_u32(tags::IMAGE_WIDTH, num_cols)?;
         handle.set_field_u32(tags::IMAGE_LENGTH, num_rows)?;
         handle.set_field_u16(tags::BITS_PER_SAMPLE, bits_per_sample as u16)?;
-        handle.set_field_u16(tags::SAMPLES_PER_PIXEL, num_bands as u16)?;
+        handle.set_field_u16(tags::SAMPLES_PER_PIXEL, samples_per_pixel as u16)?;
         handle.set_field_u16(tags::SAMPLE_FORMAT, Self::sample_format(pixel_type))?;
-        // JPEG-in-TIFF requires YCbCr for ≥3 bands; non-JPEG uses the standard logic.
-        let photometric = if hints.compression == tags::COMPRESSION_JPEG {
+        // Masks carry PhotometricInterpretation = 4 (TIFF 6.0 p.37). Otherwise
+        // JPEG-in-TIFF requires YCbCr for ≥3 bands; non-JPEG uses standard logic.
+        let photometric = if is_mask {
+            tags::PHOTOMETRIC_MASK
+        } else if hints.compression == tags::COMPRESSION_JPEG {
             if num_bands >= 3 {
                 tags::PHOTOMETRIC_YCBCR
             } else {
@@ -890,17 +965,18 @@ impl TIFFDatasetWriter {
         };
         handle.set_field_u16(tags::PHOTOMETRIC_INTERPRETATION, photometric)?;
 
-        // Set NewSubfileType based on roles and key
-        let nsft = Self::new_subfile_type_for_asset(roles, key);
+        // NewSubfileType was classified above from roles/key.
         handle.set_field_u32(tags::NEW_SUBFILE_TYPE, nsft)?;
 
         handle.set_field_u32(tags::TILE_WIDTH, tile_width)?;
         handle.set_field_u32(tags::TILE_LENGTH, tile_height)?;
         handle.set_field_u16(tags::COMPRESSION, hints.compression)?;
-        // Only set Predictor tag for compressions that support it (LZW, Deflate).
-        // libtiff rejects the Predictor tag for uncompressed and JPEG images.
-        if hints.compression == tags::COMPRESSION_LZW
-            || hints.compression == tags::COMPRESSION_DEFLATE
+        // Only set Predictor tag for compressions that support it (LZW, Deflate),
+        // and never for sub-byte samples — predictors are defined only for
+        // byte-aligned data, and masks/bilevel imagery carry no predictor.
+        if !is_subbyte
+            && (hints.compression == tags::COMPRESSION_LZW
+                || hints.compression == tags::COMPRESSION_DEFLATE)
         {
             handle.set_field_u16(tags::PREDICTOR, hints.predictor)?;
         }
@@ -1082,7 +1158,20 @@ impl TIFFDatasetWriter {
                             band * tiles_per_plane + block_row * tiles_across + block_col;
                         let src_offset = band as usize * plane_size;
                         let band_data = &padded[src_offset..src_offset + plane_size];
-                        handle.write_encoded_tile(tile_index, band_data)?;
+                        // Sub-byte planes are one sample per byte (tile_width per
+                        // row); bit-pack MSB-first before write.
+                        if is_subbyte {
+                            let coerced = Self::coerce_subbyte(band_data, is_mask);
+                            let packed = crate::bitpack::pack_subbyte_msb_first(
+                                &coerced,
+                                bits_per_sample as u8,
+                                tile_width,
+                                tile_height,
+                            );
+                            handle.write_encoded_tile(tile_index, &packed)?;
+                        } else {
+                            handle.write_encoded_tile(tile_index, band_data)?;
+                        }
                     }
                 } else {
                     // Convert CHW → HWC and write as a single tile
@@ -1090,7 +1179,21 @@ impl TIFFDatasetWriter {
                     let interleaved =
                         bsq_to_interleaved(&padded, num_bands, pixels_in_tile, bytes_per_sample);
                     let tile_index = block_row * tiles_across + block_col;
-                    handle.write_encoded_tile(tile_index, &interleaved)?;
+                    // Sub-byte chunky tiles pack samples_per_pixel × tile_width
+                    // samples per row, MSB-first (mirrors the reader's unpack
+                    // stride of width × bands).
+                    if is_subbyte {
+                        let coerced = Self::coerce_subbyte(&interleaved, is_mask);
+                        let packed = crate::bitpack::pack_subbyte_msb_first(
+                            &coerced,
+                            bits_per_sample as u8,
+                            tile_width * samples_per_pixel,
+                            tile_height,
+                        );
+                        handle.write_encoded_tile(tile_index, &packed)?;
+                    } else {
+                        handle.write_encoded_tile(tile_index, &interleaved)?;
+                    }
                 }
             }
         }
@@ -2508,6 +2611,346 @@ mod tests {
         // Insertion order: image:2, image:0, image:1 — should be preserved
         let keys: Vec<&str> = writer.assets.iter().map(|a| a.key.as_str()).collect();
         assert_eq!(keys, vec!["image:2", "image:0", "image:1"]);
+    }
+
+    // =========================================================================
+    // Phase 5: mask write path (classification, tags, coercion, ordering)
+    // =========================================================================
+
+    #[test]
+    fn writer_new_subfile_type_bitfield_for_all_roles() {
+        // Full-resolution image → 0
+        assert_eq!(
+            TIFFDatasetWriter::new_subfile_type_for_asset(&["data".to_string()], "image:0"),
+            0
+        );
+        // Overview → bit 0
+        assert_eq!(
+            TIFFDatasetWriter::new_subfile_type_for_asset(
+                &["overview".to_string()],
+                "image:0:overview:1"
+            ),
+            1
+        );
+        // Full-res mask → bit 2
+        assert_eq!(
+            TIFFDatasetWriter::new_subfile_type_for_asset(&["mask".to_string()], "image:0:mask"),
+            4
+        );
+        // Mask of an overview → bits 0+2
+        assert_eq!(
+            TIFFDatasetWriter::new_subfile_type_for_asset(
+                &["overview".to_string(), "mask".to_string()],
+                "image:0:overview:1:mask"
+            ),
+            5
+        );
+    }
+
+    #[test]
+    fn writer_new_subfile_type_from_key_suffix_only() {
+        // Even without roles, the key suffixes drive classification.
+        assert_eq!(
+            TIFFDatasetWriter::new_subfile_type_for_asset(&[], "image:0:mask"),
+            4
+        );
+        assert_eq!(
+            TIFFDatasetWriter::new_subfile_type_for_asset(&[], "image:0:overview:1:mask"),
+            5
+        );
+    }
+
+    /// Helper: build a 1-band mask provider whose pixels are 0/255 (as GDAL
+    /// stores validity masks), so the coercion path is exercised.
+    fn make_mask_provider(key: &str, cols: u32, rows: u32) -> Arc<BufferedImageAssetProvider> {
+        let config = MemoryImageConfig::new(cols, rows)
+            .with_bands(1)
+            .with_block_size(cols, rows)
+            .with_pixel_type(PixelType::UInt8);
+        let provider = BufferedImageAssetProvider::new(key, config);
+        // Half zero, half 255 — a deterministic validity pattern.
+        let data: Vec<u8> = (0..(cols * rows))
+            .map(|i| if i % 2 == 0 { 255 } else { 0 })
+            .collect();
+        provider.set_block(0, 0, &data).unwrap();
+        Arc::new(provider)
+    }
+
+    #[test]
+    fn writer_mask_emits_photometric_bps_spp_and_nst() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        // Full-res image + its mask.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mask_tags.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(make_image_provider("image:0")),
+                "Image",
+                "desc",
+                &["data".to_string()],
+            )
+            .unwrap();
+        writer
+            .add_asset(
+                "image:0:mask",
+                AssetProvider::Image(make_mask_provider("image:0:mask", 256, 256)),
+                "Mask",
+                "desc",
+                &["mask".to_string()],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
+
+        // The mask IFD is bound to its image by enumeration order.
+        let mask = reader.get_asset("image:0:mask").unwrap();
+        assert_eq!(mask.roles(), &["mask".to_string()]);
+        let dict = mask.metadata().entries(None);
+
+        // Tag 254 NewSubfileType = 4 (transparency mask)
+        assert_eq!(dict.get("254"), Some(&serde_json::json!(4)));
+        // Tag 262 PhotometricInterpretation = 4 (mask)
+        assert_eq!(
+            dict.get("262"),
+            Some(&serde_json::json!(tags::PHOTOMETRIC_MASK as i64))
+        );
+        // Tag 258 BitsPerSample = 1, Tag 277 SamplesPerPixel = 1
+        assert_eq!(dict.get("258"), Some(&serde_json::json!(1)));
+        assert_eq!(dict.get("277"), Some(&serde_json::json!(1)));
+
+        // Mask decodes back to uint8 0/1 (nonzero → 1 coercion).
+        let img = mask.as_image().unwrap();
+        assert_eq!(img.pixel_value_type(), PixelType::UInt8);
+        let (data, _shape) = img.get_block(0, 0, 0, None).unwrap();
+        assert!(
+            data.iter().all(|&v| v == 0 || v == 1),
+            "mask pixels must be coerced to 0/1"
+        );
+        // Original pattern: even indices were 255 → 1, odd were 0 → 0.
+        assert_eq!(data[0], 1);
+        assert_eq!(data[1], 0);
+    }
+
+    #[test]
+    fn writer_mask_has_no_geotiff_tags() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        // GeoTIFF tags on the mask provider must be suppressed (nsft != 0).
+        let meta = BufferedMetadataProvider::new();
+        meta.set("33550", serde_json::json!([0.5, 0.5, 0.0]));
+        meta.set(
+            "34735",
+            serde_json::json!([1, 1, 1, 2, 1024, 0, 1, 1, 3072, 0, 1, 32618]),
+        );
+        let config = MemoryImageConfig::new(256, 256)
+            .with_bands(1)
+            .with_block_size(256, 256)
+            .with_pixel_type(PixelType::UInt8);
+        let mask = BufferedImageAssetProvider::new("image:0:mask", config)
+            .with_metadata(Arc::new(BufferedMetadataProvider::from_provider(&meta)));
+        mask.set_block(0, 0, &vec![255u8; 256 * 256]).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mask_no_geo.tif");
+        let mut writer = TIFFDatasetWriter::new(&path).unwrap();
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(make_image_provider("image:0")),
+                "Image",
+                "desc",
+                &["data".to_string()],
+            )
+            .unwrap();
+        writer
+            .add_asset(
+                "image:0:mask",
+                AssetProvider::Image(Arc::new(mask)),
+                "Mask",
+                "desc",
+                &["mask".to_string()],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        let reader = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
+        let dict = reader
+            .get_asset("image:0:mask")
+            .unwrap()
+            .metadata()
+            .entries(None);
+        assert!(
+            !dict.contains_key("33550"),
+            "mask must not carry pixel scale"
+        );
+        assert!(!dict.contains_key("34735"), "mask must not carry GeoKeys");
+    }
+
+    #[test]
+    fn writer_cog_ordering_places_masks_per_recommendation_3() {
+        // Scrambled input; expected COG order per OGC Recommendation 3:
+        // image → its mask → image overviews (largest→smallest) → mask overviews.
+        let mut writer = TIFFDatasetWriter::new("/tmp/cog_mask_order.tif").unwrap();
+
+        for (key, roles, cols, rows) in [
+            ("image:0:overview:2:mask", vec!["overview", "mask"], 64, 64),
+            ("image:0:overview:1", vec!["overview"], 128, 128),
+            ("image:0:mask", vec!["mask"], 256, 256),
+            ("image:0", vec!["data"], 256, 256),
+            ("image:0:overview:2", vec!["overview"], 64, 64),
+            (
+                "image:0:overview:1:mask",
+                vec!["overview", "mask"],
+                128,
+                128,
+            ),
+        ] {
+            let provider = make_sized_image_provider(key, cols, rows);
+            writer
+                .add_asset(
+                    key,
+                    AssetProvider::Image(provider),
+                    "asset",
+                    "desc",
+                    &roles.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                )
+                .unwrap();
+        }
+
+        writer.sort_assets_for_cog();
+
+        let keys: Vec<&str> = writer.assets.iter().map(|a| a.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "image:0",
+                "image:0:mask",
+                "image:0:overview:1",
+                "image:0:overview:2",
+                "image:0:overview:1:mask",
+                "image:0:overview:2:mask",
+            ]
+        );
+    }
+
+    #[test]
+    fn writer_extract_parent_key_handles_mask_and_overview_suffixes() {
+        assert_eq!(TIFFDatasetWriter::extract_parent_key("image:0"), "image:0");
+        assert_eq!(
+            TIFFDatasetWriter::extract_parent_key("image:0:mask"),
+            "image:0"
+        );
+        assert_eq!(
+            TIFFDatasetWriter::extract_parent_key("image:0:overview:3"),
+            "image:0"
+        );
+        assert_eq!(
+            TIFFDatasetWriter::extract_parent_key("image:0:overview:3:mask"),
+            "image:0"
+        );
+    }
+
+    /// Testing Plan item 7: read → write → read preserves the mask's
+    /// photometric interpretation, NewSubfileType bits, key/role, and packed
+    /// pixel values. The second write re-emits providers read back from the
+    /// first, exercising the full round-trip rather than synthetic input.
+    #[test]
+    fn writer_mask_read_write_read_fidelity() {
+        use crate::tiff::TIFFDatasetReader;
+        use crate::traits::DatasetReader;
+
+        // --- Write #1: image + its mask from synthetic providers. ---
+        let dir = tempfile::tempdir().unwrap();
+        let path1 = dir.path().join("mask_fidelity_1.tif");
+        let mut writer = TIFFDatasetWriter::new(&path1).unwrap();
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(make_image_provider("image:0")),
+                "Image",
+                "desc",
+                &["data".to_string()],
+            )
+            .unwrap();
+        writer
+            .add_asset(
+                "image:0:mask",
+                AssetProvider::Image(make_mask_provider("image:0:mask", 256, 256)),
+                "Mask",
+                "desc",
+                &["mask".to_string()],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        // --- Read #1: capture the mask's tags, role, and pixel values. ---
+        let bytes1 = std::fs::read(&path1).unwrap();
+        let reader1 = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes1)).unwrap();
+        let mask1 = reader1.get_asset("image:0:mask").unwrap();
+        assert_eq!(mask1.roles(), &["mask".to_string()]);
+        let dict1 = mask1.metadata().entries(None);
+        assert_eq!(dict1.get("254"), Some(&serde_json::json!(4)));
+        assert_eq!(
+            dict1.get("262"),
+            Some(&serde_json::json!(tags::PHOTOMETRIC_MASK as i64))
+        );
+        assert_eq!(dict1.get("258"), Some(&serde_json::json!(1)));
+        let (pixels1, _shape) = mask1.as_image().unwrap().get_block(0, 0, 0, None).unwrap();
+
+        // --- Write #2: re-emit the assets read back from write #1. ---
+        let path2 = dir.path().join("mask_fidelity_2.tif");
+        let mut writer2 = TIFFDatasetWriter::new(&path2).unwrap();
+        writer2
+            .add_asset(
+                "image:0",
+                reader1.get_asset("image:0").unwrap(),
+                "Image",
+                "desc",
+                &["data".to_string()],
+            )
+            .unwrap();
+        writer2
+            .add_asset(
+                "image:0:mask",
+                reader1.get_asset("image:0:mask").unwrap(),
+                "Mask",
+                "desc",
+                &["mask".to_string()],
+            )
+            .unwrap();
+        writer2.close().unwrap();
+
+        // --- Read #2: everything must be identical to read #1. ---
+        let bytes2 = std::fs::read(&path2).unwrap();
+        let reader2 = TIFFDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes2)).unwrap();
+        let mask2 = reader2.get_asset("image:0:mask").unwrap();
+        assert_eq!(mask2.roles(), &["mask".to_string()], "role preserved");
+        let dict2 = mask2.metadata().entries(None);
+        assert_eq!(
+            dict2.get("254"),
+            Some(&serde_json::json!(4)),
+            "NewSubfileType bits preserved"
+        );
+        assert_eq!(
+            dict2.get("262"),
+            Some(&serde_json::json!(tags::PHOTOMETRIC_MASK as i64)),
+            "photometric=4 preserved"
+        );
+        assert_eq!(
+            dict2.get("258"),
+            Some(&serde_json::json!(1)),
+            "BitsPerSample=1 preserved"
+        );
+        let (pixels2, _shape) = mask2.as_image().unwrap().get_block(0, 0, 0, None).unwrap();
+        assert_eq!(pixels1, pixels2, "packed mask pixel values preserved");
     }
 
     mod prop {

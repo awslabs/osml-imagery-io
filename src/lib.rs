@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 
 pub mod assembly;
 mod bindings;
+pub mod bitpack;
 pub mod buffered;
 pub mod composite;
 pub mod dted;

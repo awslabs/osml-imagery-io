@@ -207,8 +207,14 @@ underlying file format.
 |------|---------|-------------|
 | `data` | Full-resolution image data | TIFF full-res IFDs, NITF image segments, JPEG, PNG |
 | `overview` | Reduced-resolution image | COG overview IFDs, multi-file R-set images |
+| `mask` | Transparency mask (valid vs. nodata pixels) | TIFF transparency-mask IFDs |
 | `metadata` | Metadata asset | NITF text segments, data extension segments |
 | `graphic` | Graphic/annotation overlay | NITF graphic segments |
+
+An asset may carry more than one role. A COG overview that is itself a
+transparency mask, for example, carries both `overview` and `mask` — a query for
+`roles=["overview"]` returns it alongside the image overviews, so consumers that
+walk the pyramid for rendering should exclude assets that also carry `mask`.
 
 Roles are the primary way to distinguish between different kinds of assets without
 parsing key strings. See [Image Pyramids](#image-pyramids) below for how roles are
@@ -381,6 +387,85 @@ IO.open(["base.ntf", "ovr.ntf"], "r", roles=[["data"], ["overview:1"]])
 # Paths without roles — uses .rN detection
 IO.open(["image.ntf", "image.ntf.r1"], "r")
 ```
+
+## Transparency Masks
+
+Cloud Optimized GeoTIFFs commonly carry a **transparency mask** — a separate 1-bit
+IFD that marks which pixels of an associated image are valid versus nodata. The
+TIFF specification (TIFF 6.0, p.37) defines these as IFDs with
+`PhotometricInterpretation = 4`: the 1-bits define the interior (valid) region and
+the 0-bits define the exterior (nodata).
+
+This library exposes each mask as an ordinary image asset. Because the mask is
+1-bit data, it is unpacked to one `uint8` byte per pixel (`0` or `1`) and flows
+through the same API as any other image — `iminfo` lists it, `imread` returns a
+`uint8` NumPy array, and `tiles`/`IO` treat it as image data. The public
+`PixelType` is unchanged; no packed 1-bit representation crosses the NumPy
+boundary.
+
+### Mask Asset Keys
+
+A mask's key is its associated image's key plus a `:mask` suffix, so the
+association is structural and parseable:
+
+```python
+from aws.osml.io import IO, AssetType
+
+with IO.open(["cog.tif"], "r") as dataset:
+    for key in dataset.get_asset_keys(asset_type=AssetType.Image):
+        asset = dataset.get_asset(key)
+        print(f"{key}: roles={asset.roles}")
+    # image:0: roles=['data']
+    # image:0:mask: roles=['mask']
+    # image:0:overview:1: roles=['overview']
+    # image:0:overview:1:mask: roles=['overview', 'mask']
+```
+
+A mask of the full-resolution image is keyed `image:0:mask`; a mask of an overview
+is keyed off that overview, e.g. `image:0:overview:1:mask`, and carries both the
+`overview` and `mask` roles.
+
+Association is order-based: the reader binds a mask IFD to the most recent
+full-resolution or overview IFD, relying on the COG IFD-ordering guarantee (OGC
+COG Recommendation 3). For a valid but non-COG-ordered TIFF where the ordering is
+ambiguous, the mask is exposed as a standalone `image:N:mask`.
+
+:::{note}
+Reading a mask asset returns its validity bitmap as pixels. The library does
+**not** yet auto-apply the mask as nodata/fill when reading the associated image —
+that is a planned follow-on. To use a mask, read it explicitly and apply it
+yourself.
+:::
+
+### Writing Masks
+
+The writer round-trips a mask that already exists in the dataset model. Provide a
+mask-role image asset keyed with a `:mask` suffix and it is written as a
+`PhotometricInterpretation = 4`, `BitsPerSample = 1`, `SamplesPerPixel = 1` IFD in
+COG-compliant order (image → its mask → image overviews → mask overviews).
+
+Mask input is coerced to strict 0/1 on write: any nonzero sample becomes `1`. This
+means you may supply a `uint8` mask stored as 0/255 (a common convention) and it
+is packed correctly, matching the bilevel coercion used elsewhere in the library.
+
+## Supported Compressions and Bit Depths
+
+The TIFF reader accepts the following compression schemes: uncompressed, LZW,
+Deflate (zlib), Adobe Deflate, PackBits, JPEG, and CCITT Group 3 / Group 4 fax
+(the latter two are bilevel schemes typically used by 1-bit mask IFDs).
+
+Sample bit depths are handled as follows:
+
+- **8, 16, 32, 64 bits** — mapped directly to the corresponding NumPy dtype
+  (`uint8`/`int8`, `uint16`/`int16`, `uint32`/`int32`, `float32`, `float64`).
+- **1, 2, 4 bits** (sub-byte) — unpacked to one `uint8` per sample (MSB-first, with
+  TIFF's per-row byte-boundary padding respected). A 1-bit sample yields `{0, 1}`,
+  a 2-bit sample `{0..3}`, and a 4-bit sample `{0..15}`. This closes the class of
+  Baseline TIFF sub-byte grayscale as well as transparency masks.
+- **12-bit data** lives in a 16-bit storage container (libtiff stores widths in
+  {1, 2, 4, 8, 16, 32, 64}) and round-trips losslessly as `uint16`. There is no
+  significant-bits/ABPP surfacing — that is an NITF concept with no TIFF-tag
+  equivalent, and the 16-bit container preserves every stored value.
 
 ## Discovering Assets
 

@@ -233,6 +233,35 @@ def run_tiff_checks(reader) -> None:
                 f"Tiepoint contains non-numeric values: {tp!r}"
             )
 
+    # Format-general transparency-mask check: any image asset carrying the
+    # `mask` role must decode to uint8 with strict 0/1 validity values. Driven
+    # by role inspection, never by filename — so any TIFF with a mask IFD is
+    # exercised without the test knowing the file exists.
+    for key in reader.get_asset_keys(asset_type=AssetType.Image):
+        asset = reader.get_asset(key)
+        if "mask" not in (asset.roles or []):
+            continue
+
+        grid_rows, grid_cols = asset.block_grid_size
+        block = None
+        for row in range(grid_rows):
+            for col in range(grid_cols):
+                if asset.has_block(row, col, 0):
+                    block = asset.get_block(row, col, 0)
+                    break
+            if block is not None:
+                break
+
+        if block is None:
+            continue
+
+        assert block.dtype == np.uint8, (
+            f"mask asset '{key}' decoded to {block.dtype}, expected uint8"
+        )
+        assert np.isin(block, (0, 1)).all(), (
+            f"mask asset '{key}' has values outside {{0, 1}}"
+        )
+
 
 def run_dted_checks(reader) -> None:
     """DTED-specific checks: elevation data type and grid dimensions."""
