@@ -4,9 +4,16 @@ This module tests the multi-path R-set detection in IO.open(), verifying that
 when multiple paths are provided with .rN suffixes, the reader correctly
 exposes overview assets keyed as image:0:overview:N.
 
+It also covers opening a multi-file pyramid over a *remote* fsspec filesystem:
+a list of remote URLs, a list plus a shared ``filesystem=``, explicit roles, and
+a mixed local/remote list — each pixel-identical to the equivalent local open.
+An in-memory ``MemoryFileSystem`` stands in for S3 (same fsspec contract, no
+network), mirroring ``tests/unit/test_remote_range_read.py``.
+
 Requirements: 4.1, 4.2, 4.3
 """
 
+import io
 import shutil
 import tempfile
 from pathlib import Path
@@ -269,3 +276,168 @@ class TestMultiPathEdgeCases:
 
         with pytest.raises(ValueError, match="R-set pattern"):
             IO.open([str(base_path), str(other_path)], "r")
+
+
+# =============================================================================
+# Remote multi-path pyramids over a fsspec MemoryFileSystem (stands in for S3)
+# =============================================================================
+
+
+class TestMultiPathRemotePyramid:
+    """Open a multi-file R-set pyramid over a remote fsspec filesystem.
+
+    A ``MemoryFileSystem`` (``memory://`` URLs) stands in for S3 — same fsspec
+    ``AsyncFileSystem`` contract, no network. Each remote open is asserted
+    pixel-identical to the equivalent local open, proving remoteness is
+    transparent to the multi-path read path.
+
+    Requirements: 4.1, 4.2, 4.3
+    """
+
+    # Distinct, non-flat pixel data so a mis-routed read would show up as a
+    # pixel diff rather than matching zeros by accident.
+    @staticmethod
+    def _write_nitf_data(path: Path, num_cols: int, num_rows: int, num_bands: int) -> np.ndarray:
+        provider = BufferedImageAssetProvider.create(
+            key="image:0",
+            num_columns=num_cols,
+            num_rows=num_rows,
+            num_bands=num_bands,
+            block_width=min(num_cols, 256),
+            block_height=min(num_rows, 256),
+        )
+        data = (
+            np.arange(num_bands * num_rows * num_cols, dtype=np.uint8)
+            .reshape(num_bands, num_rows, num_cols)
+        )
+        provider.set_full_image(data)
+        writer = IO.open([str(path)], "w", "nitf")
+        writer.add_asset("image:0", provider, "Image", "test", ["data"])
+        writer.close()
+        return data
+
+    @pytest.fixture()
+    def pyramid(self, tmp_dir):
+        """Write a base + .r1 pyramid locally and upload the bytes to a fresh
+        in-memory fsspec filesystem.
+
+        Returns ``(fs, base_local, r1_local, base_key, r1_key)`` where the
+        ``*_key`` values are the scheme-less keys within the memory store.
+        Skips if fsspec is unavailable.
+        """
+        fsspec = pytest.importorskip("fsspec")
+
+        base_local = tmp_dir / "image.ntf"
+        r1_local = tmp_dir / "image.ntf.r1"
+        self._write_nitf_data(base_local, num_cols=512, num_rows=512, num_bands=3)
+        self._write_nitf_data(r1_local, num_cols=128, num_rows=128, num_bands=3)
+
+        fs = fsspec.filesystem("memory")
+        base_key = "/multipath-pyramid/image.ntf"
+        r1_key = "/multipath-pyramid/image.ntf.r1"
+        fs.pipe_file(base_key, base_local.read_bytes())
+        fs.pipe_file(r1_key, r1_local.read_bytes())
+        return fs, base_local, r1_local, base_key, r1_key
+
+    @staticmethod
+    def _base_and_overview_blocks(reader):
+        """Return (base_pixels, overview_pixels) for the first R-set level."""
+        base = np.array(reader.get_asset("image:0").get_block(0, 0, 0).data)
+        ovr = np.array(reader.get_asset("image:0:overview:1").get_block(0, 0, 0).data)
+        return base, ovr
+
+    def _local_reference_blocks(self, base_local, r1_local):
+        with IO.open([str(base_local), str(r1_local)], "r") as reader:
+            return self._base_and_overview_blocks(reader)
+
+    def test_url_list_no_roles_matches_local(self, pyramid):
+        """A list of ``memory://`` URLs (no roles, .rN detection) produces base +
+        overview:1, pixel-identical to the local open."""
+        fs, base_local, r1_local, base_key, r1_key = pyramid
+        urls = [f"memory://{base_key}", f"memory://{r1_key}"]
+
+        with IO.open(urls, "r") as reader:
+            keys = reader.get_asset_keys(asset_type=AssetType.Image)
+            assert "image:0" in keys
+            assert "image:0:overview:1" in keys
+
+            base = reader.get_asset("image:0")
+            assert base.num_columns == 512
+            assert base.num_rows == 512
+            ovr = reader.get_asset("image:0:overview:1")
+            assert ovr.num_columns == 128
+            assert ovr.num_rows == 128
+
+            remote_base, remote_ovr = self._base_and_overview_blocks(reader)
+
+        local_base, local_ovr = self._local_reference_blocks(base_local, r1_local)
+        np.testing.assert_array_equal(remote_base, local_base)
+        np.testing.assert_array_equal(remote_ovr, local_ovr)
+
+    def test_explicit_roles_over_memory(self, pyramid):
+        """A ``memory://`` URL list with explicit roles opens correctly."""
+        fs, base_local, r1_local, base_key, r1_key = pyramid
+        urls = [f"memory://{base_key}", f"memory://{r1_key}"]
+
+        with IO.open(urls, "r", roles=[["data"], ["overview:1"]]) as reader:
+            keys = reader.get_asset_keys(asset_type=AssetType.Image)
+            assert "image:0" in keys
+            assert "image:0:overview:1" in keys
+
+            remote_base, remote_ovr = self._base_and_overview_blocks(reader)
+
+        local_base, local_ovr = self._local_reference_blocks(base_local, r1_local)
+        np.testing.assert_array_equal(remote_base, local_base)
+        np.testing.assert_array_equal(remote_ovr, local_ovr)
+
+    def test_shared_filesystem_with_scheme_less_keys(self, pyramid):
+        """``filesystem=fs`` with plain (scheme-less) keys resolves each entry
+        through the shared filesystem."""
+        fs, base_local, r1_local, base_key, r1_key = pyramid
+
+        with IO.open([base_key, r1_key], "r", filesystem=fs) as reader:
+            keys = reader.get_asset_keys(asset_type=AssetType.Image)
+            assert "image:0" in keys
+            assert "image:0:overview:1" in keys
+
+            remote_base, remote_ovr = self._base_and_overview_blocks(reader)
+
+        local_base, local_ovr = self._local_reference_blocks(base_local, r1_local)
+        np.testing.assert_array_equal(remote_base, local_base)
+        np.testing.assert_array_equal(remote_ovr, local_ovr)
+
+    def test_mixed_local_base_remote_overview(self, pyramid):
+        """A list mixing a local base with a ``memory://`` overview opens
+        correctly (per-entry routing) and matches the all-local open."""
+        fs, base_local, r1_local, base_key, r1_key = pyramid
+        mixed = [str(base_local), f"memory://{r1_key}"]
+
+        with IO.open(mixed, "r") as reader:
+            keys = reader.get_asset_keys(asset_type=AssetType.Image)
+            assert "image:0" in keys
+            assert "image:0:overview:1" in keys
+
+            remote_base, remote_ovr = self._base_and_overview_blocks(reader)
+
+        local_base, local_ovr = self._local_reference_blocks(base_local, r1_local)
+        np.testing.assert_array_equal(remote_base, local_base)
+        np.testing.assert_array_equal(remote_ovr, local_ovr)
+
+    def test_filesystem_with_list_write_mode_raises(self, pyramid):
+        """``filesystem=`` with a list in write mode is rejected (remote write
+        is out of scope)."""
+        fs, _base_local, _r1_local, base_key, r1_key = pyramid
+        with pytest.raises(ValueError):
+            IO.open([base_key, r1_key], "w", "nitf", filesystem=fs)
+
+    def test_filesystem_with_stream_list_raises(self):
+        """``filesystem=`` combined with a StreamList (list of file-like objects)
+        is contradictory and rejected."""
+        fs = pytest.importorskip("fsspec").filesystem("memory")
+        with pytest.raises(ValueError):
+            IO.open(
+                [io.BytesIO(b"not an image"), io.BytesIO(b"nor this")],
+                "r",
+                roles=[["data"], ["overview:1"]],
+                filesystem=fs,
+            )

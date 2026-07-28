@@ -47,7 +47,12 @@ impl DTEDImageAssetProvider {
     }
 
     fn decode_full_grid(&self) -> Result<Vec<u8>, CodecError> {
-        let data = self.source_data.as_bytes();
+        // DTED's single full-image block spans every column record, so decode
+        // needs the whole file. Materialize it (zero-copy for a resident backing,
+        // one bounded fetch for a `Remote` backing) and view the resident bytes;
+        // a remote fetch error propagates via `?`.
+        let resident = self.source_data.materialize()?;
+        let data = resident.as_bytes();
         let cols = self.num_lon_lines as usize;
         let rows = self.num_lat_points as usize;
         let mut output = vec![0i16; rows * cols];

@@ -137,6 +137,13 @@ pub struct JBPImageAssetProvider {
     registry: Arc<StructureRegistry>,
     /// NITF format variant
     format: NitfFormat,
+    /// Lazy-initialized, materialized subheader bytes.
+    ///
+    /// Sliced once from `source_data` (zero-copy for resident backings, a single
+    /// range fetch for a `Remote` backing) and cached here so `subheader_bytes()`
+    /// can hand out a `&[u8]` that lives in `self` — which is what lets
+    /// `subheader()` return a facade borrowing `self` under a `Remote` source.
+    subheader_data: OnceLock<OwnedBuffer>,
     /// Lazy-initialized block decoder
     decoder: OnceLock<Box<dyn BlockDecoder>>,
     /// Image data mask (present for masked IC values like NM, M8, MD)
@@ -170,12 +177,14 @@ impl JBPImageAssetProvider {
         registry: Arc<StructureRegistry>,
         format: NitfFormat,
     ) -> Result<Self, CodecError> {
-        // Parse subheader to check if this is a masked image
+        // Parse subheader to check if this is a masked image. Slice-first so a
+        // `Remote` source fetches only the subheader range (not the whole file).
         let subheader_start = location.subheader_offset as usize;
         let subheader_end = subheader_start + location.subheader_length as usize;
-        let subheader_bytes = &source_data.as_bytes()[subheader_start..subheader_end];
+        let subheader_buffer = source_data.try_slice(subheader_start..subheader_end)?;
 
-        let facade = ImageSubheaderFacade::from_bytes(subheader_bytes, &registry, format)?;
+        let facade =
+            ImageSubheaderFacade::from_bytes(subheader_buffer.as_bytes(), &registry, format)?;
         let ic = facade.ic()?;
         let ic_trimmed = ic.trim();
 
@@ -193,7 +202,7 @@ impl JBPImageAssetProvider {
                 )));
             }
 
-            let image_data = &source_data.as_bytes()[data_start..data_end];
+            let image_data = source_data.try_slice(data_start..data_end)?;
 
             // Get block grid dimensions
             let nbpr = facade.nbpr()?;
@@ -203,12 +212,17 @@ impl JBPImageAssetProvider {
             let imode = facade.imode()?;
 
             let (mask, _bytes_consumed) =
-                ImageDataMask::parse(image_data, num_blocks, num_bands, imode)?;
+                ImageDataMask::parse(image_data.as_bytes(), num_blocks, num_bands, imode)?;
 
             Some(mask)
         } else {
             None
         };
+
+        // Seed the subheader cache with the buffer we just fetched so a later
+        // `subheader()` reuses it instead of re-fetching.
+        let subheader_data = OnceLock::new();
+        let _ = subheader_data.set(subheader_buffer);
 
         Ok(Self {
             key,
@@ -220,31 +234,51 @@ impl JBPImageAssetProvider {
             metadata,
             registry,
             format,
+            subheader_data,
             decoder: OnceLock::new(),
             mask,
         })
     }
 
     /// Get the subheader bytes for this image segment.
-    fn subheader_bytes(&self) -> &[u8] {
+    ///
+    /// Slices the subheader range out of `source_data` on first use (zero-copy for
+    /// resident backings, one range fetch for a `Remote` backing) and caches the
+    /// resulting `OwnedBuffer` in `self` so the returned `&[u8]` borrows from
+    /// `self` and outlives this call — the lifetime the facade needs. Returns
+    /// `Err` if the slice/fetch fails.
+    fn subheader_bytes(&self) -> Result<&[u8], CodecError> {
+        // Cheap path: already materialized.
+        if let Some(buffer) = self.subheader_data.get() {
+            return Ok(buffer.as_bytes());
+        }
         let start = self.location.subheader_offset as usize;
         let end = start + self.location.subheader_length as usize;
-        &self.source_data.as_bytes()[start..end]
+        let buffer = self.source_data.try_slice(start..end)?;
+        // Another thread may have set it first; either way, return the stored one.
+        let _ = self.subheader_data.set(buffer);
+        Ok(self.subheader_data.get().unwrap().as_bytes())
     }
 
-    /// Get the image data as a zero-copy slice of the source buffer.
+    /// Narrow the source buffer to this segment's image-data range **without
+    /// fetching**, so a `Remote` source stays `Remote` and the decoder pulls only
+    /// the ranges it needs (header + the requested tile's parts) on demand. For a
+    /// resident (`Mapped`/`Heap`) source this is a zero-copy sub-view, unchanged.
     fn image_data(&self) -> Result<OwnedBuffer, CodecError> {
         let start = self.location.data_offset as usize;
         let end = start + self.location.data_length as usize;
 
-        self.source_data.try_slice(start..end).map_err(|_| {
-            CodecError::Decode(format!(
+        // Bounds-check against the (logical) source length before narrowing, so an
+        // out-of-range segment is a clean error rather than a `subview` panic.
+        if end > self.source_data.len() {
+            return Err(CodecError::Decode(format!(
                 "Image segment data extends beyond file: offset {} + length {} > file size {}",
                 start,
                 self.location.data_length,
                 self.source_data.len()
-            ))
-        })
+            )));
+        }
+        Ok(self.source_data.subview(start..end))
     }
 
     /// Get or create the block decoder.
@@ -255,7 +289,7 @@ impl JBPImageAssetProvider {
         }
 
         // Initialize the decoder
-        let subheader_bytes = self.subheader_bytes();
+        let subheader_bytes = self.subheader_bytes()?;
         let facade =
             ImageSubheaderFacade::from_bytes(subheader_bytes, &self.registry, self.format)?;
         let image_data = self.image_data()?;
@@ -270,7 +304,7 @@ impl JBPImageAssetProvider {
 
     /// Get the subheader facade for metadata access.
     fn subheader(&self) -> Result<ImageSubheaderFacade<'_>, CodecError> {
-        let subheader_bytes = self.subheader_bytes();
+        let subheader_bytes = self.subheader_bytes()?;
         ImageSubheaderFacade::from_bytes(subheader_bytes, &self.registry, self.format)
     }
 }
@@ -309,7 +343,7 @@ impl AssetMetadata for JBPImageAssetProvider {
             )));
         }
 
-        Ok(self.source_data.as_bytes()[start..end].to_vec())
+        Ok(self.source_data.try_slice(start..end)?.as_bytes().to_vec())
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
@@ -645,7 +679,7 @@ impl AssetMetadata for JBPTextAssetProvider {
             )));
         }
 
-        Ok(self.source_data.as_bytes()[start..end].to_vec())
+        Ok(self.source_data.try_slice(start..end)?.as_bytes().to_vec())
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
@@ -764,7 +798,7 @@ impl AssetMetadata for JBPGraphicsAssetProvider {
             )));
         }
 
-        Ok(self.source_data.as_bytes()[start..end].to_vec())
+        Ok(self.source_data.try_slice(start..end)?.as_bytes().to_vec())
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
@@ -864,7 +898,7 @@ impl AssetMetadata for JBPDataAssetProvider {
             )));
         }
 
-        Ok(self.source_data.as_bytes()[start..end].to_vec())
+        Ok(self.source_data.try_slice(start..end)?.as_bytes().to_vec())
     }
 
     fn metadata(&self) -> Arc<dyn MetadataProvider> {
@@ -1480,6 +1514,127 @@ mod tests {
         let dict = meta.entries(None);
         assert!(dict.contains_key("ID"));
         assert!(dict.contains_key("TITLE"));
+    }
+
+    // Remote-backing tests: the slice-first conversion must work over a `Remote`
+    // `OwnedBuffer` (never tripping the full-buffer `as_bytes()` guard) and must
+    // never fetch the whole file.
+
+    /// Shared `(offset, len)` fetch log produced by the fake reader.
+    type FetchLog = Arc<std::sync::Mutex<Vec<(u64, usize)>>>;
+
+    /// Build a `Remote` `OwnedBuffer` over `data` (no eager header prefetch),
+    /// returning it plus a handle to the fake reader's `(offset, len)` fetch log.
+    fn make_remote_buffer(data: &[u8]) -> (OwnedBuffer, FetchLog) {
+        use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+        let reader = FakeReader::new(data.to_vec());
+        let log = reader.log_handle();
+        let fetcher =
+            StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
+        (OwnedBuffer::from_remote(fetcher), log)
+    }
+
+    #[test]
+    fn image_provider_raw_asset_over_remote() {
+        let (file_data, subheader_len, image_data_len) = create_valid_image_segment();
+        let file_bytes = file_data.as_bytes().to_vec();
+        let file_len = file_bytes.len();
+        let (remote, log) = make_remote_buffer(&file_bytes);
+
+        let definition = create_test_definition();
+        let metadata = Arc::new(JBPSegmentMetadataProvider::from_definition(
+            definition,
+            OwnedBuffer::from_vec(file_bytes[..subheader_len as usize].to_vec()),
+        ));
+        let location = SegmentLocation::new(0, subheader_len, subheader_len, image_data_len);
+        let registry = create_test_registry();
+
+        let provider = JBPImageAssetProvider::new(
+            "image:0".to_string(),
+            "Test Image".to_string(),
+            "A test image segment".to_string(),
+            vec!["data".to_string()],
+            location,
+            remote,
+            metadata,
+            registry,
+            test_format(),
+        )
+        .unwrap();
+
+        // raw_asset() must slice-first (not trip the guard) and return the pixels.
+        let raw = provider.raw_asset().unwrap();
+        assert_eq!(raw.len(), 64 * 64);
+        assert!(raw.iter().all(|&b| b == 0));
+
+        // Metadata access over the remote source works too.
+        assert_eq!(provider.num_rows(), 64);
+        assert_eq!(provider.num_columns(), 64);
+
+        // The whole file was never pulled in a single fetch.
+        let fetches = log.lock().unwrap();
+        assert!(
+            fetches.iter().all(|&(_, len)| len < file_len),
+            "a fetch covered the whole file: {:?}",
+            *fetches
+        );
+    }
+
+    #[test]
+    fn text_provider_raw_asset_over_remote() {
+        let segment_data = b"remote text segment content";
+        let mut file_bytes = Vec::new();
+        file_bytes.extend_from_slice(b"IMG_00001 Test Image Title    "); // 30-byte subheader
+        file_bytes.extend_from_slice(segment_data);
+        let file_len = file_bytes.len();
+        let (remote, log) = make_remote_buffer(&file_bytes);
+
+        let definition = create_test_definition();
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPTextAssetProvider::new(
+            "text:0".to_string(),
+            "Test Text".to_string(),
+            "A test text segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            remote,
+            metadata,
+            "STA".to_string(),
+        );
+
+        assert_eq!(provider.raw_asset().unwrap(), segment_data);
+        let fetches = log.lock().unwrap();
+        assert!(fetches.iter().all(|&(_, len)| len < file_len));
+    }
+
+    #[test]
+    fn data_provider_raw_asset_over_remote() {
+        let segment_data = b"<xml>remote DES data</xml>";
+        let mut file_bytes = Vec::new();
+        file_bytes.extend_from_slice(b"IMG_00001 Test Image Title    "); // 30-byte subheader
+        file_bytes.extend_from_slice(segment_data);
+        let file_len = file_bytes.len();
+        let (remote, log) = make_remote_buffer(&file_bytes);
+
+        let definition = create_test_definition();
+        let metadata = create_test_metadata(definition);
+        let location = SegmentLocation::new(0, 30, 30, segment_data.len() as u64);
+
+        let provider = JBPDataAssetProvider::new(
+            "des:0".to_string(),
+            "Test DES".to_string(),
+            "A test DES segment".to_string(),
+            vec!["metadata".to_string()],
+            location,
+            remote,
+            metadata,
+        );
+
+        assert_eq!(provider.raw_asset().unwrap(), segment_data);
+        let fetches = log.lock().unwrap();
+        assert!(fetches.iter().all(|&(_, len)| len < file_len));
     }
 
     // JBPTextAssetProvider tests

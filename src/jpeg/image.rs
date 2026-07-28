@@ -160,10 +160,14 @@ impl ImageAssetProvider for JPEGImageAssetProvider {
             ));
         }
 
-        // Decompress the JPEG data via libjpeg-turbo
+        // Decompress the JPEG data via libjpeg-turbo. JPEG is a single frame, so
+        // the whole codestream is materialized in one shot — but via `try_slice`
+        // rather than a bare full-buffer `as_bytes()`, so a `Remote` backing
+        // fetches the codestream instead of tripping the slice-before-view guard.
         let decompressor = TjDecompressor::new()?;
+        let codestream = self.source_data.try_slice(0..self.source_data.len())?;
         let interleaved =
-            decompressor.decompress(self.source_data.as_bytes(), self.num_bands as usize)?;
+            decompressor.decompress(codestream.as_bytes(), self.num_bands as usize)?;
 
         // Convert pixel-interleaved to BSQ
         let bsq = Self::interleaved_to_bsq(
@@ -240,5 +244,77 @@ impl ImageAssetProvider for JPEGImageAssetProvider {
 
     fn pad_pixel_value(&self) -> f64 {
         0.0
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::jpeg::ffi::compress_8bit;
+    use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+
+    fn make_jpeg(width: usize, height: usize, num_bands: usize) -> Vec<u8> {
+        let mut src = vec![0u8; width * height * num_bands];
+        for (i, v) in src.iter_mut().enumerate() {
+            *v = (i * 7 % 256) as u8;
+        }
+        compress_8bit(&src, width, height, num_bands, 95).unwrap()
+    }
+
+    fn remote_buffer(data: &[u8]) -> OwnedBuffer {
+        let reader = FakeReader::new(data.to_vec());
+        let fetcher =
+            StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
+        OwnedBuffer::from_remote(fetcher)
+    }
+
+    fn provider(
+        source: OwnedBuffer,
+        width: u32,
+        height: u32,
+        num_bands: u32,
+    ) -> JPEGImageAssetProvider {
+        let metadata = Arc::new(JPEGMetadataProvider::new(std::collections::HashMap::new()));
+        JPEGImageAssetProvider::new(
+            "image:0".to_string(),
+            width,
+            height,
+            num_bands,
+            source,
+            vec!["data".to_string()],
+            metadata,
+        )
+    }
+
+    /// `get_block` materializes the whole single-frame codestream
+    /// via `try_slice` — so it works over a `Remote` backing (fetching the
+    /// codestream) instead of tripping the bare-`as_bytes` guard — and yields the
+    /// same pixels as a resident decode.
+    #[test]
+    fn test_jpeg_get_block_remote_matches_resident() {
+        let jpeg = make_jpeg(16, 16, 1);
+
+        let resident = provider(OwnedBuffer::from_vec(jpeg.clone()), 16, 16, 1);
+        let (r_data, r_shape) = resident.get_block(0, 0, 0, None).unwrap();
+
+        let remote = provider(remote_buffer(&jpeg), 16, 16, 1);
+        let (m_data, m_shape) = remote.get_block(0, 0, 0, None).unwrap();
+
+        assert_eq!(r_shape, m_shape);
+        assert_eq!(r_data, m_data);
+        assert_eq!(m_shape, [1, 16, 16]);
+    }
+
+    #[test]
+    fn test_jpeg_get_block_remote_rgb() {
+        let jpeg = make_jpeg(16, 16, 3);
+        let remote = provider(remote_buffer(&jpeg), 16, 16, 3);
+        let (data, shape) = remote.get_block(0, 0, 0, None).unwrap();
+        assert_eq!(shape, [3, 16, 16]);
+        assert_eq!(data.len(), 3 * 16 * 16);
     }
 }

@@ -18,7 +18,7 @@ use serde_json::json;
 use crate::error::CodecError;
 use crate::j2k::codec::J2KCodec;
 use crate::j2k::image::J2KImageAssetProvider;
-use crate::j2k::markers::parse_main_header;
+use crate::j2k::markers::{main_header_extent, parse_main_header, MainHeaderExtent};
 use crate::j2k::metadata::J2KMetadataProvider;
 use crate::owned_buffer::OwnedBuffer;
 use crate::traits::asset::AssetMetadata;
@@ -40,6 +40,13 @@ const JP2_SIGNATURE: [u8; 12] = [
 
 /// J2K SOC (Start of Codestream) marker.
 const J2K_SOC: [u8; 2] = [0xFF, 0x4F];
+
+/// Initial number of codestream bytes to materialize when scanning a J2K main
+/// header (SOC/SIZ/COD/TLM) from a `Remote` buffer. Most main headers are far
+/// smaller than this; when one is larger (e.g. conformance files with large
+/// PPM/COM segments) the fetch grows adaptively — this is a starting size, not a
+/// hard cap. A resident buffer skips the prefix entirely and scans in place.
+const HEADER_SCAN_PREFIX: usize = 64 * 1024;
 
 /// JP2 contiguous codestream box type ("jp2c").
 const JP2C_BOX_TYPE: [u8; 4] = [0x6A, 0x70, 0x32, 0x63];
@@ -76,38 +83,90 @@ impl J2KDatasetReader {
         Self::from_buffer_with_codec(buffer, codec)
     }
 
+    /// Materialize a resident slice of the codestream that contains the complete
+    /// main header (SOC .. first SOT), for the pure-Rust marker scans.
+    ///
+    /// - **Resident buffer** (`Mapped`/`Heap`): the whole codestream is already in
+    ///   memory, so there is nothing to save by truncating — return the full
+    ///   codestream sub-view (zero-copy). This is always correct regardless of main
+    ///   header size.
+    /// - **Remote buffer**: fetch a bounded prefix and, if the main header does not
+    ///   fit, grow the prefix (doubling) until it does or the whole codestream is
+    ///   fetched. This preserves the bounded-fetch win for normal files while
+    ///   remaining correct for files with an oversized main header.
+    fn materialize_header_region(
+        buffer: &OwnedBuffer,
+        cs_range: Range<usize>,
+    ) -> Result<OwnedBuffer, CodecError> {
+        let cs_len = cs_range.end - cs_range.start;
+
+        // Resident: scan the whole codestream in place (zero-copy).
+        if buffer.resident_bytes().is_some() {
+            return buffer.try_slice(cs_range);
+        }
+
+        // Remote: grow an initial prefix until the main header is fully present.
+        let mut prefix_len = HEADER_SCAN_PREFIX.min(cs_len);
+        loop {
+            let region = buffer.try_slice(cs_range.start..cs_range.start + prefix_len)?;
+            if prefix_len == cs_len {
+                // Whole codestream fetched; nothing more to grow into.
+                return Ok(region);
+            }
+            match main_header_extent(region.as_bytes()) {
+                MainHeaderExtent::Complete(_) => return Ok(region),
+                MainHeaderExtent::Truncated => {
+                    // Grow (double, capped at the codestream length) and retry.
+                    prefix_len = (prefix_len.saturating_mul(2)).min(cs_len);
+                }
+            }
+        }
+    }
+
     /// Construct from an `OwnedBuffer` using a specific codec.
     pub(crate) fn from_buffer_with_codec(
         buffer: OwnedBuffer,
         codec: Arc<dyn J2KCodec>,
     ) -> Result<Self, CodecError> {
-        let data = buffer.as_bytes();
-
         // Validate minimum length
-        if data.len() < 2 {
+        if buffer.len() < 2 {
             return Err(CodecError::InvalidFormat(
                 "Not a valid JPEG 2000 file: too short".to_string(),
             ));
         }
 
-        // Detect format and locate the codestream byte range.
-        let (cs_range, compression_type) = if data.len() >= 12 && data[..12] == JP2_SIGNATURE {
-            let range = Self::find_jp2_codestream_range(data)?;
-            (range, "jp2")
-        } else if data[..2] == J2K_SOC {
-            (0..data.len(), "j2k")
-        } else {
-            return Err(CodecError::InvalidFormat(
-                "Not a valid JPEG 2000 file: invalid signature".to_string(),
-            ));
-        };
+        // Detect format and locate the codestream byte range. JP2 box scanning
+        // and the marker parses below need bytes; for a `Remote` buffer we fetch
+        // only a bounded header prefix rather than the whole file. The codestream
+        // region itself is kept as a (still-`Remote`) sub-view via `subview` so
+        // per-tile decode fetches ranges on demand — never the whole file.
+        let signature = buffer.read_range(0, 12.min(buffer.len()))?;
+        let (cs_range, compression_type) =
+            if signature.len() >= 12 && signature[..12] == JP2_SIGNATURE {
+                let range = Self::find_jp2_codestream_range_buffered(&buffer)?;
+                (range, "jp2")
+            } else if signature[..2] == J2K_SOC {
+                (0..buffer.len(), "j2k")
+            } else {
+                return Err(CodecError::InvalidFormat(
+                    "Not a valid JPEG 2000 file: invalid signature".to_string(),
+                ));
+            };
 
-        let codestream = &data[cs_range.clone()];
+        // Materialize a header region of the codestream large enough to contain
+        // the full main header (SOC .. first SOT) for the pure-Rust marker scans
+        // (SIZ/COD/main header). Most main headers are tiny, but some conformance
+        // files carry large PPM/COM segments whose main header exceeds a fixed
+        // prefix, so a hard truncation is incorrect — `materialize_header_region`
+        // uses the whole codestream when it is already resident and grows the
+        // fetch adaptively for a `Remote` source.
+        let codestream_header = Self::materialize_header_region(&buffer, cs_range.clone())?;
+        let codestream = codestream_header.as_bytes();
 
         // Parse SIZ marker for metadata
         let siz = Self::parse_siz_marker(codestream)?;
 
-        // Get tile info and resolution levels from codec
+        // Get tile info and resolution levels from codec (header-only parses)
         let (tile_width, tile_height, num_tiles_x, num_tiles_y) =
             codec.get_tile_info(codestream)?;
         let num_resolution_levels = codec.get_resolution_levels(codestream)?;
@@ -140,9 +199,11 @@ impl J2KDatasetReader {
             let _ = tile_part_table.set(tlm_table);
         }
 
-        // Slice the buffer to the codestream region (zero-copy)
+        // Narrow the buffer to the codestream region *without* fetching, so a
+        // `Remote` source stays remote (per-tile decode fetches on demand) and a
+        // resident source stays zero-copy.
         let codestream_file_offset = cs_range.start;
-        let source_data = buffer.slice(cs_range);
+        let source_data = buffer.subview(cs_range);
 
         let image_asset = J2KImageAssetProvider::new(
             "image:0".to_string(),
@@ -172,48 +233,45 @@ impl J2KDatasetReader {
         })
     }
 
-    /// Locate the raw J2K codestream byte range within a JP2 container.
+    /// Locate the `jp2c` codestream byte range in a (possibly `Remote`) buffer.
     ///
-    /// Scans JP2 boxes to find the contiguous codestream box (`jp2c`) and
-    /// returns the byte range of its contents. No data is copied.
-    fn find_jp2_codestream_range(data: &[u8]) -> Result<Range<usize>, CodecError> {
+    /// Mirrors [`find_jp2_codestream_range`](Self::find_jp2_codestream_range) but
+    /// reads each JP2 box header as a bounded range fetch rather than indexing a
+    /// resident slice, so a remote JP2 is not forced fully resident just to find
+    /// its codestream box.
+    fn find_jp2_codestream_range_buffered(
+        buffer: &OwnedBuffer,
+    ) -> Result<Range<usize>, CodecError> {
+        let total = buffer.len();
         let mut pos = 0;
 
-        while pos + 8 <= data.len() {
-            let box_len =
-                u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as u64;
-            let box_type = &data[pos + 4..pos + 8];
+        while pos + 8 <= total {
+            let hdr = buffer.read_range(pos, 8)?;
+            let box_len = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as u64;
+            let box_type = &hdr[4..8];
 
             let (header_size, actual_len) = if box_len == 1 {
                 // Extended length box
-                if pos + 16 > data.len() {
+                if pos + 16 > total {
                     return Err(CodecError::InvalidFormat(
                         "Not a valid JP2 file: truncated extended box header".to_string(),
                     ));
                 }
+                let ext = buffer.read_range(pos + 8, 8)?;
                 let ext_len = u64::from_be_bytes([
-                    data[pos + 8],
-                    data[pos + 9],
-                    data[pos + 10],
-                    data[pos + 11],
-                    data[pos + 12],
-                    data[pos + 13],
-                    data[pos + 14],
-                    data[pos + 15],
+                    ext[0], ext[1], ext[2], ext[3], ext[4], ext[5], ext[6], ext[7],
                 ]);
                 (16usize, ext_len)
             } else if box_len == 0 {
                 // Box extends to end of file
-                (8usize, (data.len() - pos) as u64)
+                (8usize, (total - pos) as u64)
             } else {
                 (8usize, box_len)
             };
 
             if box_type == JP2C_BOX_TYPE {
                 let content_start = pos + header_size;
-                let content_end = (pos as u64 + actual_len) as usize;
-                // Clamp to file length (jp2c is often the last box)
-                let content_end = content_end.min(data.len());
+                let content_end = ((pos as u64 + actual_len) as usize).min(total);
                 return Ok(content_start..content_end);
             }
 
@@ -492,7 +550,8 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, // minor version
             0x6A, 0x70, 0x32, 0x20, // compat = "jp2 "
         ]);
-        let result = J2KDatasetReader::find_jp2_codestream_range(&data);
+        let result =
+            J2KDatasetReader::find_jp2_codestream_range_buffered(&OwnedBuffer::from_vec(data));
         assert!(result.is_err());
         match result {
             Err(CodecError::InvalidFormat(msg)) => {
@@ -512,9 +571,12 @@ mod tests {
         data.extend_from_slice(&JP2C_BOX_TYPE);
         data.extend_from_slice(&codestream);
 
-        let range = J2KDatasetReader::find_jp2_codestream_range(&data).unwrap();
+        let range = J2KDatasetReader::find_jp2_codestream_range_buffered(&OwnedBuffer::from_vec(
+            data.clone(),
+        ))
+        .unwrap();
         assert_eq!(&data[range.clone()], &codestream);
-        // Verify it's a zero-copy range into the original buffer
+        // Verify it's a byte range into the original buffer (JP2 sig + box header)
         assert_eq!(range.start, 12 + 8); // JP2 sig (12) + box header (8)
         assert_eq!(range.end, range.start + codestream.len());
     }
@@ -622,6 +684,232 @@ mod tests {
         let mut state = codec.start_encode(&params).unwrap();
         state.encode_tile(0, pixel_data).unwrap();
         state.finalize().unwrap()
+    }
+
+    /// Encode a single-band tiled J2K codestream via the dataset writer (which
+    /// splits the source block into the encoder's tiles), for multi-tile
+    /// remote-decode tests. Returns the assembled `.j2k` bytes.
+    #[cfg(feature = "openjpeg")]
+    fn make_tiled_j2k_codestream(
+        width: u32,
+        height: u32,
+        tile_width: u32,
+        tile_height: u32,
+        bsq_pixels: &[u8],
+    ) -> Vec<u8> {
+        use crate::buffered::{
+            BufferedImageAssetProvider, BufferedMetadataProvider, MemoryImageConfig,
+        };
+        use crate::j2k::writer::J2KDatasetWriter;
+        use crate::traits::{AssetProvider, DatasetWriter};
+        use serde_json::json;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tiled.j2k");
+
+        let config = MemoryImageConfig::new(width, height)
+            .with_bands(1)
+            .with_block_size(width, height)
+            .with_pixel_type(PixelType::UInt8);
+        let provider = BufferedImageAssetProvider::new("image:0", config);
+        provider.set_block(0, 0, bsq_pixels).unwrap();
+
+        let metadata = BufferedMetadataProvider::new();
+        metadata.set("J2K_TILE_WIDTH", json!(tile_width));
+        metadata.set("J2K_TILE_HEIGHT", json!(tile_height));
+
+        let mut writer = J2KDatasetWriter::new(&path).unwrap();
+        writer
+            .add_asset(
+                "image:0",
+                AssetProvider::Image(Arc::new(provider)),
+                "Test",
+                "Test",
+                &[],
+            )
+            .unwrap();
+        writer.set_metadata(Arc::new(metadata)).unwrap();
+        writer.close().unwrap();
+
+        std::fs::read(&path).unwrap()
+    }
+
+    /// Shared `(offset, len)` fetch log produced by the fake reader.
+    #[cfg(feature = "openjpeg")]
+    type FetchLog = std::sync::Arc<std::sync::Mutex<Vec<(u64, usize)>>>;
+
+    /// Build a `Remote` `OwnedBuffer` over `data` (no eager header prefetch) plus
+    /// a handle to the reader's `(offset, len)` fetch log.
+    #[cfg(feature = "openjpeg")]
+    fn remote_buffer(data: &[u8]) -> (OwnedBuffer, FetchLog) {
+        use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+        let reader = FakeReader::new(data.to_vec());
+        let log = reader.log_handle();
+        let fetcher =
+            StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
+        (OwnedBuffer::from_remote(fetcher), log)
+    }
+
+    /// Build a synthetic J2K codestream whose main header is at least
+    /// `min_header_len` bytes, via one or more COM (comment) marker segments,
+    /// followed by a minimal SOT. Each COM body is capped so its `u16` length
+    /// field cannot overflow (real J2K main headers with large comments use
+    /// multiple segments the same way). Used to exercise adaptive header-region
+    /// growth without a real encoder.
+    fn codestream_with_large_main_header(min_header_len: usize) -> Vec<u8> {
+        use crate::j2k::markers::marker_codes;
+        let mut cs = Vec::new();
+        // SOC
+        cs.extend_from_slice(&marker_codes::SOC.to_be_bytes());
+        // SIZ (minimal body)
+        cs.extend_from_slice(&marker_codes::SIZ.to_be_bytes());
+        let siz_body = [0u8; 8];
+        cs.extend_from_slice(&((siz_body.len() + 2) as u16).to_be_bytes());
+        cs.extend_from_slice(&siz_body);
+        // Emit COM segments (0xFF64) until the header reaches min_header_len. Each
+        // COM body is ≤ 0xFFFF - 2 so the u16 length field is valid.
+        const COM_BODY: usize = 60_000;
+        while cs.len() < min_header_len {
+            let body = vec![0x5Au8; COM_BODY];
+            cs.extend_from_slice(&0xFF64u16.to_be_bytes());
+            cs.extend_from_slice(&((body.len() + 2) as u16).to_be_bytes());
+            cs.extend_from_slice(&body);
+        }
+        // SOT (minimal): Lsot=10, Isot=0, Psot=0, TPsot=0, TNsot=1
+        cs.extend_from_slice(&marker_codes::SOT.to_be_bytes());
+        cs.extend_from_slice(&10u16.to_be_bytes());
+        cs.extend_from_slice(&0u16.to_be_bytes()); // Isot
+        cs.extend_from_slice(&0u32.to_be_bytes()); // Psot
+        cs.push(0); // TPsot
+        cs.push(1); // TNsot
+        cs
+    }
+
+    /// A `Remote` buffer whose main header is larger than the initial header
+    /// prefix must grow the fetch until the whole main header is materialized —
+    /// guarding against a fixed 64 KiB prefix truncating large main headers.
+    #[test]
+    fn test_materialize_header_region_grows_for_large_main_header() {
+        use crate::j2k::markers::{main_header_extent, MainHeaderExtent};
+        use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+
+        // COM body larger than the initial HEADER_SCAN_PREFIX forces ≥1 growth.
+        let cs = codestream_with_large_main_header(HEADER_SCAN_PREFIX + 4096);
+        let reader = FakeReader::new(cs.clone());
+        let fetcher =
+            StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
+        let buffer = OwnedBuffer::from_remote(fetcher);
+
+        let region = J2KDatasetReader::materialize_header_region(&buffer, 0..cs.len()).unwrap();
+        // The materialized region must contain the complete main header.
+        assert!(matches!(
+            main_header_extent(region.as_bytes()),
+            MainHeaderExtent::Complete(_)
+        ));
+    }
+
+    /// A resident buffer scans the whole codestream in place regardless of main
+    /// header size (no truncation possible).
+    #[test]
+    fn test_materialize_header_region_resident_uses_whole_codestream() {
+        use crate::j2k::markers::{main_header_extent, MainHeaderExtent};
+
+        let cs = codestream_with_large_main_header(HEADER_SCAN_PREFIX + 4096);
+        let buffer = OwnedBuffer::from_vec(cs.clone());
+        let region = J2KDatasetReader::materialize_header_region(&buffer, 0..cs.len()).unwrap();
+        assert_eq!(region.len(), cs.len());
+        assert!(matches!(
+            main_header_extent(region.as_bytes()),
+            MainHeaderExtent::Complete(_)
+        ));
+    }
+
+    /// A tiled J2K decodes over a `Remote` buffer by pulling only the codestream
+    /// ranges OpenJPEG's own reads touch,
+    /// with no reliance on parsed tile-part metadata, and never fetching the
+    /// whole file in one shot. Pixels are byte-identical to a resident decode.
+    /// Pseudo-random single-band pixels via a reproducible LCG (no runtime RNG).
+    /// High entropy keeps the lossless codestream large.
+    #[cfg(feature = "openjpeg")]
+    fn lcg_pixels(count: usize) -> Vec<u8> {
+        let mut state: u32 = 0x1234_5678;
+        (0..count)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 24) as u8
+            })
+            .collect()
+    }
+
+    /// Correctness: a tiled J2K decodes over a `Remote` buffer with
+    /// pixels byte-identical to a resident decode, across the whole tile grid,
+    /// with no reliance on parsed tile-part metadata.
+    #[cfg(feature = "openjpeg")]
+    #[test]
+    fn test_remote_tiled_j2k_decode_matches_resident() {
+        let (w, h) = (256usize, 256usize);
+        let pixels = lcg_pixels(w * h);
+        let cs = make_tiled_j2k_codestream(w as u32, h as u32, 64, 64, &pixels);
+
+        let resident = J2KDatasetReader::from_buffer(OwnedBuffer::from_vec(cs.clone())).unwrap();
+        let resident_img = resident.get_asset("image:0").unwrap();
+        let resident_img = resident_img.as_image().unwrap();
+
+        let (buffer, log) = remote_buffer(&cs);
+        let remote = J2KDatasetReader::from_buffer(buffer).unwrap();
+        let remote_img = remote.get_asset("image:0").unwrap();
+        let remote_img = remote_img.as_image().unwrap();
+
+        for row in 0..4u32 {
+            for col in 0..4u32 {
+                let (r_data, r_shape) = resident_img.get_block(row, col, 0, None).unwrap();
+                let (m_data, m_shape) = remote_img.get_block(row, col, 0, None).unwrap();
+                assert_eq!(r_shape, m_shape, "shape mismatch at tile ({row},{col})");
+                assert_eq!(m_data, r_data, "pixels mismatch at tile ({row},{col})");
+            }
+        }
+
+        // Construction + decode issued range fetches (never a bare full-buffer
+        // as_bytes, which would panic on a Remote backing).
+        assert!(!log.lock().unwrap().is_empty(), "expected range fetches");
+    }
+
+    /// Bounded-fetch: decoding a single tile of a codestream larger than
+    /// OpenJPEG's internal stream buffer (1 MiB) does not pull the whole file.
+    /// A small file would be swallowed by the stream buffer in one fill, making
+    /// the check vacuous, so the codestream is deliberately sized above it.
+    #[cfg(feature = "openjpeg")]
+    #[test]
+    fn test_remote_j2k_single_tile_does_not_fetch_whole_file() {
+        use crate::j2k::openjpeg::stream_buffer_size;
+
+        // 2048×2048 high-entropy single-band → lossless codestream > 1 MiB;
+        // 256×256 tiles → an 8×8 grid.
+        let (w, h) = (2048usize, 2048usize);
+        let pixels = lcg_pixels(w * h);
+        let cs = make_tiled_j2k_codestream(w as u32, h as u32, 256, 256, &pixels);
+        assert!(
+            cs.len() > stream_buffer_size(),
+            "test codestream ({} bytes) must exceed OpenJPEG's stream buffer ({}) to exercise bounded fetch",
+            cs.len(),
+            stream_buffer_size(),
+        );
+
+        let (buffer, log) = remote_buffer(&cs);
+        let reader = J2KDatasetReader::from_buffer(buffer).unwrap();
+        let img = reader.get_asset("image:0").unwrap();
+        let img = img.as_image().unwrap();
+
+        // Decode a single interior tile.
+        let _ = img.get_block(3, 3, 0, None).unwrap();
+
+        let total_fetched: usize = log.lock().unwrap().iter().map(|(_, len)| *len).sum();
+        assert!(
+            total_fetched < cs.len(),
+            "single-tile remote decode fetched {} of {} bytes — should be less than the whole file",
+            total_fetched,
+            cs.len()
+        );
     }
 
     #[cfg(feature = "openjpeg")]

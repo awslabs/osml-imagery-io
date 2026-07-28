@@ -13,10 +13,11 @@ use pyo3::exceptions::{PyIOError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 
-use crate::bindings::stream::PyWriteStream;
+use crate::bindings::stream::{probe_fsspec_refs, PyReadStream, PyWriteStream};
 use crate::bindings::{PyDatasetReader, PyDatasetWriter};
 use crate::composite::{CompositeDatasetReader, CompositeDatasetWriter};
 use crate::owned_buffer::OwnedBuffer;
+use crate::remote::{HeaderAwarePolicy, StreamFetcher};
 
 /// Accepts a single string, a list of strings, a single file-like object,
 /// or a list of file-like objects from Python.
@@ -211,7 +212,8 @@ impl IO {
     ///     list is required. File-like objects must implement ``.read()``
     ///     for read mode and ``.write()`` + ``.flush()`` for write mode
     ///     (e.g., ``io.BytesIO``, fsspec file handles). Accepts local paths,
-    ///     ``file://`` URIs, and ``s3://`` URIs.
+    ///     ``file://`` URIs, and remote URLs such as ``s3://`` (resolved via
+    ///     fsspec — see ``filesystem``).
     /// :type paths: str | list[str] | BinaryIO | list[BinaryIO]
     /// :param mode: ``"r"`` for reading or ``"w"`` for writing. Defaults to
     ///     ``"r"``.
@@ -221,6 +223,18 @@ impl IO {
     ///     streams. Required when writing to a file with an unrecognized
     ///     extension. Optional otherwise.
     /// :type format: str or None
+    /// :param filesystem: An optional fsspec filesystem instance. When given,
+    ///     ``paths`` is opened through it, so range reads run concurrently over
+    ///     the filesystem's ``cat_ranges``. Accepts both a single path string
+    ///     and a list of paths (an R-set pyramid); the shared filesystem is
+    ///     applied to every entry in the list. When omitted, a remote URL
+    ///     string (e.g. ``s3://bucket/key.tif``) is resolved to a filesystem
+    ///     internally via ``fsspec.core.url_to_fs``. Local paths, ``file://``
+    ///     URIs, and in-memory streams are unaffected and do not require it.
+    ///     Passing ``filesystem`` together with an in-memory/file-like stream,
+    ///     a list of streams, or in write mode is a ``ValueError``. Read mode
+    ///     only.
+    /// :type filesystem: fsspec.AbstractFileSystem or None
     /// :param roles: Explicit role strings for each source. ``list[str]``
     ///     when ``paths`` is a single source, ``list[list[str]]`` when
     ///     ``paths`` is a list. Recognised roles: ``"data"`` designates the
@@ -277,14 +291,36 @@ impl IO {
     /// encoded_bytes = buf.getvalue()
     /// ```
     #[staticmethod]
-    #[pyo3(signature = (paths, mode="r", format=None, roles=None))]
+    #[pyo3(signature = (paths, mode="r", format=None, roles=None, filesystem=None))]
     fn open(
         py: Python<'_>,
         paths: PathsArg,
         mode: &str,
         format: Option<&str>,
         roles: Option<&Bound<'_, PyAny>>,
+        filesystem: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
+        // `filesystem=` is meaningful with a single path string or a list of
+        // paths (an R-set pyramid), in read mode only; the shared filesystem is
+        // applied to every entry. Reject the contradictory combinations up front
+        // so the error is clear rather than silently ignored.
+        if filesystem.is_some() {
+            match &paths {
+                PathsArg::Single(_) | PathsArg::Multiple(_) => {}
+                PathsArg::Stream(_) | PathsArg::StreamList(_) => {
+                    return Err(PyValueError::new_err(
+                        "filesystem= cannot be combined with an in-memory or file-like \
+                         stream; pass a path string (e.g. 's3://bucket/key.tif') instead",
+                    ));
+                }
+            }
+            if mode != "r" {
+                return Err(PyValueError::new_err(
+                    "filesystem= is only supported in read mode ('r')",
+                ));
+            }
+        }
+
         match paths {
             PathsArg::Single(path) => {
                 // Validate the path is not an empty string.
@@ -298,6 +334,16 @@ impl IO {
                 let parsed = ParsedUri::parse(&path);
                 match mode {
                     "r" => {
+                        // A remote source — an explicit `filesystem=` or a URL
+                        // whose scheme resolves to an fsspec filesystem — opens
+                        // through the concurrent `Remote`/`cat_ranges` path.
+                        // Local `file`/plain paths keep the mmap path below.
+                        if let Some(reader) =
+                            try_open_remote_reader(py, &path, filesystem, format)?
+                        {
+                            let reader = PyDatasetReader::new(reader);
+                            return Ok(reader.into_pyobject(py)?.into_any().unbind());
+                        }
                         let reader = create_reader(&parsed, format)?;
                         Ok(reader.into_pyobject(py)?.into_any().unbind())
                     }
@@ -331,13 +377,20 @@ impl IO {
                 let normalized = normalize_roles(roles, paths.len())?;
                 if let Some(roles_per_source) = normalized {
                     // Explicit roles provided — bypass `.rN` filename detection.
-                    return open_multi_path_with_roles(py, &paths, mode, format, &roles_per_source);
+                    return open_multi_path_with_roles(
+                        py,
+                        &paths,
+                        mode,
+                        format,
+                        &roles_per_source,
+                        filesystem,
+                    );
                 }
 
                 // No roles — fall back to the existing `.rN` filename detection.
                 match mode {
                     "r" => {
-                        let reader = create_multi_path_reader(&paths, format)?;
+                        let reader = create_multi_path_reader(py, &paths, format, filesystem)?;
                         Ok(reader.into_pyobject(py)?.into_any().unbind())
                     }
                     "w" => {
@@ -487,19 +540,33 @@ fn extract_primary_image(reader: &dyn DatasetReader) -> Option<Arc<dyn ImageAsse
 /// The first path is opened as the base reader. Additional paths matching
 /// the `.rN` filename pattern are opened independently, and their primary
 /// image assets are re-keyed as `image:0:overview:N` with role `"overview"`.
-fn create_multi_path_reader(paths: &[String], format: Option<&str>) -> PyResult<PyDatasetReader> {
-    let boxed = create_multi_path_reader_boxed(paths, format)?;
+fn create_multi_path_reader(
+    py: Python<'_>,
+    paths: &[String],
+    format: Option<&str>,
+    filesystem: Option<&Bound<'_, PyAny>>,
+) -> PyResult<PyDatasetReader> {
+    let boxed = create_multi_path_reader_boxed(py, paths, format, filesystem)?;
     Ok(PyDatasetReader::new(boxed))
 }
 
 /// Internal: creates a boxed composite reader from multiple paths.
+///
+/// The base and each `.rN` overview open via [`open_source_reader`], so a
+/// remote entry (a remote URL, or any entry when a shared `filesystem` is
+/// supplied) reads through the concurrent fsspec/`cat_ranges` path while local
+/// entries stay memory-mapped. Format detection is deferred per entry: an
+/// explicit `format` wins; otherwise the extension is detected after stripping
+/// the `.rN` suffix (handled inside `open_source_reader`'s remote and local
+/// branches alike).
 fn create_multi_path_reader_boxed(
+    py: Python<'_>,
     paths: &[String],
     format: Option<&str>,
+    filesystem: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Box<dyn DatasetReader>> {
     // Open the base reader from the first path
-    let base_parsed = ParsedUri::parse(&paths[0]);
-    let base_reader = create_reader_boxed(&base_parsed, format)?;
+    let base_reader = open_source_reader(py, &paths[0], filesystem, format)?;
 
     // Collect overview entries: (level, ImageAssetProvider)
     let mut overview_entries: Vec<(u32, Arc<dyn ImageAssetProvider>)> = Vec::new();
@@ -513,74 +580,11 @@ fn create_multi_path_reader_boxed(
             ))
         })?;
 
-        // Strip the .rN suffix for format detection
-        let base_path = strip_rset_suffix(path);
-        let parsed = ParsedUri::parse(&base_path);
-
-        // Create a reader for this R-set file using the actual file path
-        let rset_parsed = ParsedUri::parse(path);
-
-        // Use the base path's extension for format detection, but open the actual file
-        let rset_reader: Box<dyn DatasetReader> = {
-            // Determine format from the stripped path's extension (or explicit format)
-            let rset_format = format.or_else(|| {
-                parsed.extension().map(|e| match e.to_lowercase().as_str() {
-                    "ntf" | "nitf" | "nsif" | "nsf" | "hr1" | "hr2" | "hr3" | "hr4" | "hr5"
-                    | "hr6" | "hr7" | "hr8" => "nitf",
-                    "tif" | "tiff" | "gtif" | "gtiff" => "tiff",
-                    "png" => "png",
-                    "j2k" | "jp2" => "j2k",
-                    "jpg" | "jpeg" => "jpeg",
-                    "dt0" | "dt1" | "dt2" | "dt3" | "dt4" | "dt5" | "avg" | "min" | "max" => "dted",
-                    _ => "",
-                })
-            });
-
-            match rset_format {
-                Some("nitf") | Some("nitf21") | Some("nitf2.1") | Some("nsif") | Some("nsif10")
-                | Some("nsif1.0") | Some("jbp") => {
-                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
-                    let reader = JBPDatasetReader::from_buffer(buffer)?;
-                    Box::new(reader)
-                }
-                #[cfg(feature = "libtiff")]
-                Some("tiff") | Some("tif") => {
-                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
-                    let reader = tiff::TIFFDatasetReader::from_buffer(buffer)?;
-                    Box::new(reader)
-                }
-                Some("png") => {
-                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
-                    let reader = PNGDatasetReader::from_buffer(buffer)?;
-                    Box::new(reader)
-                }
-                #[cfg(feature = "openjpeg")]
-                Some("j2k") | Some("jp2") | Some("jpeg2000") => {
-                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
-                    let reader = J2KDatasetReader::from_buffer(buffer)?;
-                    Box::new(reader)
-                }
-                #[cfg(feature = "libjpeg-turbo")]
-                Some("jpg") | Some("jpeg") => {
-                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
-                    let reader = JPEGDatasetReader::from_buffer(buffer)?;
-                    Box::new(reader)
-                }
-                Some("dted") | Some("dt0") | Some("dt1") | Some("dt2") | Some("dt3")
-                | Some("dt4") | Some("dt5") => {
-                    let buffer = OwnedBuffer::from_mmap(mmap_file(&rset_parsed.path)?);
-                    let reader = DTEDDatasetReader::from_buffer(buffer)?;
-                    Box::new(reader)
-                }
-                _ => {
-                    return Err(CodecError::InvalidFormat(format!(
-                        "Cannot determine format for R-set file: '{}'",
-                        path
-                    ))
-                    .into());
-                }
-            }
-        };
+        // Open the R-set file. `open_source_reader` detects the format from the
+        // `.rN`-stripped extension when `format` is None (both its remote and
+        // local branches strip the suffix), so passing the actual `.rN` path is
+        // correct for either a local or a remote overview.
+        let rset_reader = open_source_reader(py, path, filesystem, format)?;
 
         // Extract the primary image asset from the R-set reader
         let image_provider = extract_primary_image(rset_reader.as_ref()).ok_or_else(|| {
@@ -685,18 +689,26 @@ fn create_reader_boxed(
     parsed: &ParsedUri,
     format: Option<&str>,
 ) -> PyResult<Box<dyn DatasetReader>> {
-    // Validate scheme is supported
+    // Validate scheme is supported. Remote URLs (s3://, …) — single-path or
+    // multi-path — are resolved through fsspec via `try_open_remote_reader`
+    // (invoked by `open_source_reader` for list entries and by `IO.open`
+    // directly for a single path) and never reach here. This guard remains as
+    // defense-in-depth: it fires only for a scheme that reaches the mmap path
+    // without having been intercepted as remote.
     match parsed.scheme.as_str() {
-        "file" => {}
-        "s3" => {
-            return Err(
-                CodecError::Unsupported("S3 URIs are not yet supported".to_string()).into(),
-            );
-        }
+        "file" | "local" => {}
         scheme => {
-            return Err(
-                CodecError::Unsupported(format!("Unsupported URI scheme: {}", scheme)).into(),
-            );
+            // Any non-local scheme (`s3`, `gcs`, `abfs`, `http`, …) is a remote
+            // URL that must be resolved through fsspec, not the memory-mapped
+            // local path. Remote entries are intercepted upstream by
+            // `open_source_reader`/`try_open_remote_reader` and never reach here;
+            // this arm fires only if a remote scheme slips past that routing.
+            return Err(CodecError::Unsupported(format!(
+                "'{}://' URIs must be opened through fsspec (a remote URL or an \
+                 explicit filesystem=), not the memory-mapped local path",
+                scheme
+            ))
+            .into());
         }
     }
 
@@ -1050,6 +1062,267 @@ fn normalize_roles(
 // Stream readers/writers
 // =========================================================================
 
+// =========================================================================
+// Remote range-read wiring (Layer 2 — the only layer that learns a source is
+// remote). A seekable, known-size stream is turned into a `Remote` OwnedBuffer
+// whose `try_slice`/callbacks fetch byte ranges on demand; anything else falls
+// back to the full-read path below. See the remote range-read design.
+// =========================================================================
+
+/// Formats that benefit from a `Remote` `OwnedBuffer` — the **block-capable**
+/// formats, whose readers navigate the buffer via bounded `try_slice` reads and
+/// per-block callbacks rather than materializing the whole file. For these, range
+/// reads turn metadata / index construction and per-tile decode into a few bounded
+/// fetches instead of a whole-file download.
+///
+/// Qualifying today: TIFF (libtiff callbacks), JPEG 2000 (OpenJPEG callbacks),
+/// NITF/JBP (bounded header parse + per-block decode), and DTED (bounded header;
+/// its single full-grid block still materializes on decode, but metadata reads
+/// stay cheap).
+///
+/// Deliberately **excluded**: PNG and standalone JPEG. These are monolithic /
+/// non-blocking — any decode needs the entire codestream — so routing them through
+/// a `Remote` backing would only chunk a mandatory whole-file read into range GETs
+/// for zero benefit (and more round trips). They stay on the full-read fallback,
+/// which downloads once and decodes from memory. (Their readers are nonetheless
+/// `Remote`-safe via `materialize()`, so this is a routing choice, not a
+/// correctness constraint.)
+///
+/// Returns the format-appropriate eager header-region hint (in bytes) when remote
+/// reading is worthwhile, or `None` to take the full-read path.
+fn remote_header_hint(format: &str) -> Option<u64> {
+    // Header + tile-offset tables cluster at the front of these formats; a
+    // conservative eager prefetch coalesces the bootstrap reads. Under-sizing
+    // self-heals via an extra fetch (the prefetch is a pure optimization), so
+    // these are deliberately modest defaults, tuned later against the
+    // bytes-fetched benchmark metric.
+    match format.to_lowercase().as_str() {
+        #[cfg(feature = "libtiff")]
+        "tiff" | "tif" | "gtif" | "gtiff" | "geotiff" => Some(64 * 1024),
+        #[cfg(feature = "openjpeg")]
+        "j2k" | "jp2" | "jpeg2000" => Some(64 * 1024),
+        "nitf" | "nitf21" | "nitf2.1" | "nsif" | "nsif10" | "nsif1.0" | "jbp" => Some(64 * 1024),
+        "dted" | "dt0" | "dt1" | "dt2" | "dt3" | "dt4" | "dt5" => Some(4 * 1024),
+        _ => None,
+    }
+}
+
+/// Probes a Python stream for range-read capability.
+///
+/// Returns `Some(total_size)` when the stream is seekable and its size can be
+/// determined (via a `.size` attribute or `seek(0, SEEK_END)`), and `None`
+/// otherwise (non-seekable, unknown size, or a zero-length source) — signalling
+/// the caller to fall back to the full-read path. Probing never consumes the
+/// stream: the read position is restored to 0 before returning.
+fn probe_seekable_size(py: Python<'_>, stream_obj: &Py<PyAny>) -> Option<u64> {
+    let bound = stream_obj.bind(py);
+
+    // Must be readable and seekable. `seekable()` is the authoritative check;
+    // treat a missing/raising `seekable()` as non-seekable.
+    if !bound.hasattr("read").unwrap_or(false) {
+        return None;
+    }
+    let seekable = bound
+        .call_method0("seekable")
+        .ok()
+        .and_then(|v| v.extract::<bool>().ok())
+        .unwrap_or(false);
+    if !seekable {
+        return None;
+    }
+
+    // Prefer an explicit `.size` attribute (fsspec file handles expose it) to
+    // avoid a seek round-trip; fall back to `seek(0, SEEK_END)`.
+    let size = bound
+        .getattr("size")
+        .ok()
+        .and_then(|v| v.extract::<u64>().ok())
+        .or_else(|| {
+            // whence=2 is SEEK_END; the return value is the resulting position.
+            bound
+                .call_method1("seek", (0u64, 2i32))
+                .ok()
+                .and_then(|v| v.extract::<u64>().ok())
+        })?;
+
+    // Restore the read position so the fetcher and any full-read fallback see a
+    // stream positioned at the start.
+    bound.call_method1("seek", (0u64, 0i32)).ok()?;
+
+    if size == 0 {
+        return None;
+    }
+    Some(size)
+}
+
+/// Attempts to build a `Remote` `OwnedBuffer` over a seekable, known-size
+/// stream for a remote-capable `format`.
+///
+/// Returns `Ok(Some(buffer))` when the stream supports range reads and the
+/// format's readers are remote-safe; `Ok(None)` when the caller should fall
+/// back to the full-read path (`read_stream_bytes` → `from_vec`). The `Py<PyAny>`
+/// is cloned so the caller retains its handle for the fallback path.
+fn try_build_remote_buffer(
+    py: Python<'_>,
+    stream_obj: &Py<PyAny>,
+    format: &str,
+) -> PyResult<Option<OwnedBuffer>> {
+    let Some(header_hint) = remote_header_hint(format) else {
+        return Ok(None);
+    };
+    let Some(total_size) = probe_seekable_size(py, stream_obj) else {
+        return Ok(None);
+    };
+
+    // Recover the fsspec (filesystem, path) back-references from the handle so
+    // range reads route through the concurrent `cat_ranges` path; `None` for a
+    // non-fsspec handle (io.BytesIO, plain file) keeps the serial fallback.
+    let fsspec = probe_fsspec_refs(py, stream_obj);
+    let reader = PyReadStream::new(stream_obj.clone_ref(py), total_size, fsspec);
+    let fetcher = StreamFetcher::with_policy(
+        Box::new(reader),
+        Box::new(HeaderAwarePolicy::new(header_hint)),
+    );
+    Ok(Some(OwnedBuffer::from_remote(fetcher)))
+}
+
+/// Returns `true` when `path` is a URL with a non-local scheme (e.g. `s3://`,
+/// `gcs://`, `http://`) that should be resolved to an fsspec filesystem.
+///
+/// Plain paths, `file://`, and `local://` are local and return `false` so they
+/// stay on the memory-mapped reader. The scheme is validated to be a plausible
+/// URL scheme (alphanumerics plus `+`/`-`/`.`) to avoid treating a Windows
+/// drive path or a `://`-containing filename as a remote URL.
+fn is_remote_url(path: &str) -> bool {
+    match path.find("://") {
+        Some(idx) => {
+            let scheme = &path[..idx];
+            !scheme.is_empty()
+                && scheme != "file"
+                && scheme != "local"
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        }
+        None => false,
+    }
+}
+
+/// Maps a read path's extension to the canonical format string understood by
+/// [`reader_from_buffer`] / [`remote_header_hint`], stripping any `.rN` R-set
+/// suffix first. Returns `None` for an unrecognized or missing extension.
+fn detect_read_format(path: &str) -> Option<String> {
+    let effective_path = strip_rset_suffix(path);
+    let effective_parsed = ParsedUri::parse(&effective_path);
+    effective_parsed
+        .extension()
+        .and_then(|ext| match ext.to_lowercase().as_str() {
+            "ntf" | "nitf" | "nsif" | "nsf" | "hr1" | "hr2" | "hr3" | "hr4" | "hr5" | "hr6"
+            | "hr7" | "hr8" => Some("nitf".to_string()),
+            "tif" | "tiff" | "gtif" | "gtiff" => Some("tiff".to_string()),
+            "png" => Some("png".to_string()),
+            "j2k" | "jp2" => Some("j2k".to_string()),
+            "jpg" | "jpeg" => Some("jpeg".to_string()),
+            "dt0" | "dt1" | "dt2" | "dt3" | "dt4" | "dt5" | "avg" | "min" | "max" => {
+                Some("dted".to_string())
+            }
+            _ => None,
+        })
+}
+
+/// Attempts to open a *remote* single-path source through fsspec, returning
+/// `Ok(Some(reader))` when the source is remote and `Ok(None)` when it is local
+/// (so the caller falls back to the memory-mapped path).
+///
+/// A source is remote when either an explicit `filesystem` is supplied, or the
+/// `path` is a URL with a non-local scheme (`s3://`, …) which is resolved via
+/// `fsspec.core.url_to_fs`. The resolved `(filesystem, path)` is opened as a
+/// seekable handle and handed to [`create_reader_from_stream`], which builds a
+/// `Remote` `OwnedBuffer` whose range reads run concurrently through the
+/// filesystem's `cat_ranges` (recovered from the handle's `.fs`/`.path`).
+///
+/// The format is taken from `format` when given, otherwise detected from the
+/// path extension. This is read-only; write-mode remote sources are rejected by
+/// the caller.
+fn try_open_remote_reader(
+    py: Python<'_>,
+    path: &str,
+    filesystem: Option<&Bound<'_, PyAny>>,
+    format: Option<&str>,
+) -> PyResult<Option<Box<dyn DatasetReader>>> {
+    // Resolve the (filesystem, path-to-open) pair. An explicit filesystem opens
+    // the path verbatim (the fsspec filesystem strips any scheme itself); a bare
+    // remote URL resolves through fsspec.core.url_to_fs.
+    let (fs, open_path): (Bound<'_, PyAny>, String) = match filesystem {
+        Some(fs) => (fs.clone(), path.to_string()),
+        None => {
+            if !is_remote_url(path) {
+                // Local path — the caller's memory-mapped path handles it.
+                return Ok(None);
+            }
+            let url_to_fs = py
+                .import("fsspec")
+                .map_err(|e| {
+                    PyValueError::new_err(format!(
+                        "fsspec is required to open remote URL '{}': {}",
+                        path, e
+                    ))
+                })?
+                .getattr("core")?
+                .getattr("url_to_fs")?;
+            let resolved = url_to_fs.call1((path,)).map_err(|e| {
+                PyIOError::new_err(format!("failed to resolve remote URL '{}': {}", path, e))
+            })?;
+            let fs = resolved.get_item(0)?;
+            let resolved_path: String = resolved.get_item(1)?.extract()?;
+            (fs, resolved_path)
+        }
+    };
+
+    // Resolve the format: explicit wins; otherwise detect from the extension.
+    let fmt = match format {
+        Some(f) => f.to_string(),
+        None => detect_read_format(path).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "Cannot determine format for '{}': no explicit format and the file \
+                 extension is not recognized",
+                path
+            ))
+        })?,
+    };
+
+    // Open a seekable handle and route it through the stream reader, which
+    // builds the Remote/cat_ranges buffer (recovering .fs/.path from the handle).
+    let handle = fs.call_method1("open", (open_path.as_str(), "rb")).map_err(|e| {
+        PyIOError::new_err(format!("failed to open remote source '{}': {}", path, e))
+    })?;
+    let handle_obj: Py<PyAny> = handle.unbind();
+    let reader = create_reader_from_stream_boxed(py, &handle_obj, &fmt)?;
+    Ok(Some(reader))
+}
+
+/// Opens one path entry into a `Box<dyn DatasetReader>`: remote (fsspec) when the
+/// entry is a remote URL or an explicit `filesystem` is supplied; memory-mapped
+/// local otherwise.
+///
+/// This mirrors [`try_open_remote_reader`] but always returns a reader (never
+/// `None`), so it is a drop-in replacement for `create_reader_boxed(&parsed,
+/// format)` in the multi-path read routines. Format detection is deferred to
+/// `try_open_remote_reader` / `create_reader_boxed`, each of which applies its
+/// existing per-entry detection when `format` is `None`.
+fn open_source_reader(
+    py: Python<'_>,
+    path: &str,
+    filesystem: Option<&Bound<'_, PyAny>>,
+    format: Option<&str>,
+) -> PyResult<Box<dyn DatasetReader>> {
+    if let Some(reader) = try_open_remote_reader(py, path, filesystem, format)? {
+        return Ok(reader);
+    }
+    let parsed = ParsedUri::parse(path);
+    create_reader_boxed(&parsed, format)
+}
+
 /// Reads all bytes from a Python stream via `.read()`.
 ///
 /// Validates the stream has a `.read()` method, calls it, and returns the
@@ -1123,20 +1396,37 @@ fn reader_from_buffer(format: &str, buffer: OwnedBuffer) -> PyResult<Box<dyn Dat
 
 /// Creates a `DatasetReader` from a Python stream.
 ///
-/// Calls `.read()` on the stream to obtain all bytes, validates the result,
-/// then dispatches to the appropriate format reader's `from_buffer()`.
-///
-/// Note: reading from a stream loads the entire content into memory. For
-/// large files, prefer the file-path code path which uses memory-mapped I/O.
+/// When the stream is seekable, has a known size, and the format's readers are
+/// remote-safe (TIFF, JPEG 2000), a `Remote` `OwnedBuffer` is built so metadata
+/// and pixel reads pull byte ranges on demand instead of downloading the whole
+/// file. Otherwise — a non-seekable/unknown-size stream, or a format whose
+/// readers still index the whole buffer — this falls back to reading all bytes
+/// up-front via `.read()` and wrapping them in a `Heap` `OwnedBuffer`.
 fn create_reader_from_stream(
     py: Python<'_>,
     stream_obj: &Py<PyAny>,
     format: &str,
 ) -> PyResult<PyDatasetReader> {
-    let data = read_stream_bytes(py, stream_obj)?;
-    let buffer = OwnedBuffer::from_vec(data);
-    let reader = reader_from_buffer(format, buffer)?;
+    let reader = create_reader_from_stream_boxed(py, stream_obj, format)?;
     Ok(PyDatasetReader::new(reader))
+}
+
+/// Creates a boxed `DatasetReader` from a Python stream.
+///
+/// This is the core stream-reader logic returning a `Box<dyn DatasetReader>`;
+/// [`create_reader_from_stream`] wraps it in `PyDatasetReader` for Python
+/// exposure, while remote openers ([`try_open_remote_reader`]) use the box
+/// directly so it can be assembled into composite readers.
+fn create_reader_from_stream_boxed(
+    py: Python<'_>,
+    stream_obj: &Py<PyAny>,
+    format: &str,
+) -> PyResult<Box<dyn DatasetReader>> {
+    let buffer = match try_build_remote_buffer(py, stream_obj, format)? {
+        Some(remote) => remote,
+        None => OwnedBuffer::from_vec(read_stream_bytes(py, stream_obj)?),
+    };
+    reader_from_buffer(format, buffer)
 }
 
 /// Validates that a Python object has `.write()` and `.flush()` methods.
@@ -1233,12 +1523,18 @@ fn open_multi_stream_with_roles(
 
     match mode {
         "r" => {
-            // Read all stream bytes up-front. Wrapping in OwnedBuffer keeps
-            // the data valid for the lifetime of the format readers.
+            // Build one buffer per source, probing each independently: a
+            // seekable, known-size source over a remote-safe format becomes a
+            // `Remote` buffer (range reads on demand); anything else falls back
+            // to the full-read path. A mixed list degrades per-source rather
+            // than all-or-nothing.
             let mut per_source_buffers: Vec<OwnedBuffer> = Vec::with_capacity(streams.len());
             for stream_obj in &streams {
-                let data = read_stream_bytes(py, stream_obj)?;
-                per_source_buffers.push(OwnedBuffer::from_vec(data));
+                let buffer = match try_build_remote_buffer(py, stream_obj, format)? {
+                    Some(remote) => remote,
+                    None => OwnedBuffer::from_vec(read_stream_bytes(py, stream_obj)?),
+                };
+                per_source_buffers.push(buffer);
             }
 
             let base_reader = reader_from_buffer(format, per_source_buffers[base_idx].clone())?;
@@ -1315,18 +1611,20 @@ fn open_multi_path_with_roles(
     mode: &str,
     format: Option<&str>,
     roles_per_source: &[Vec<String>],
+    filesystem: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let (base_idx, overview_entries) = route_by_roles(roles_per_source)?;
 
     match mode {
         "r" => {
-            let base_parsed = ParsedUri::parse(&paths[base_idx]);
-            let base_reader = create_reader_boxed(&base_parsed, format)?;
+            // Base and each overview open via `open_source_reader`, so a remote
+            // entry (remote URL or shared `filesystem`) reads through fsspec and
+            // a local entry stays memory-mapped, decided per source.
+            let base_reader = open_source_reader(py, &paths[base_idx], filesystem, format)?;
 
             let mut overviews: Vec<(u32, Arc<dyn ImageAssetProvider>)> = Vec::new();
             for (level, src_idx) in overview_entries {
-                let parsed = ParsedUri::parse(&paths[src_idx]);
-                let rset_reader = create_reader_boxed(&parsed, format)?;
+                let rset_reader = open_source_reader(py, &paths[src_idx], filesystem, format)?;
                 let image = extract_primary_image(rset_reader.as_ref()).ok_or_else(|| {
                     PyValueError::new_err(format!(
                         "Overview path '{}' does not contain an image asset",
@@ -1540,12 +1838,21 @@ mod tests {
     }
 
     #[test]
-    fn test_create_reader_s3_not_supported() {
+    fn test_create_reader_remote_scheme_routed_to_fsspec() {
+        // The direct mmap reader rejects a remote scheme with a message pointing
+        // at the fsspec path. Remote entries are normally intercepted upstream by
+        // `open_source_reader`, so this guard is defense-in-depth. The message is
+        // scheme-generic (names the scheme + fsspec), not S3-only. Only `s3` is
+        // asserted here because `ParsedUri::parse` extracts only `file`/`s3`
+        // schemes; other remote URLs are parsed as local paths and fail at mmap.
         let parsed = ParsedUri::parse("s3://bucket/key/image.ntf");
         let result = create_reader(&parsed, None);
         assert!(result.is_err());
         let err_str = format!("{:?}", result.err());
-        assert!(err_str.contains("S3"));
+        assert!(
+            err_str.contains("fsspec") && err_str.contains("s3://"),
+            "expected scheme-generic fsspec routing hint, got: {err_str}"
+        );
     }
 
     #[test]
@@ -1710,7 +2017,8 @@ mod tests {
         ];
 
         // Use create_multi_path_reader_boxed to get a Box<dyn DatasetReader>
-        let reader = create_multi_path_reader_boxed(&paths, None).unwrap();
+        let reader =
+            Python::attach(|py| create_multi_path_reader_boxed(py, &paths, None, None).unwrap());
 
         // Should have base image + overview
         let all_keys = reader.get_asset_keys(None, None);
@@ -1764,7 +2072,8 @@ mod tests {
             rset1_file.to_str().unwrap().to_string(),
         ];
 
-        let reader = create_multi_path_reader_boxed(&paths, None).unwrap();
+        let reader =
+            Python::attach(|py| create_multi_path_reader_boxed(py, &paths, None, None).unwrap());
 
         let all_keys = reader.get_asset_keys(None, None);
         assert!(all_keys.contains(&"image:0".to_string()));
@@ -1811,7 +2120,8 @@ mod tests {
             rset_file.to_str().unwrap().to_string(),
         ];
 
-        let reader = create_multi_path_reader_boxed(&paths, None).unwrap();
+        let reader =
+            Python::attach(|py| create_multi_path_reader_boxed(py, &paths, None, None).unwrap());
 
         // Get the overview asset and verify it has tile_byte_ranges
         // (NC compression should have tile byte ranges)
@@ -1836,7 +2146,7 @@ mod tests {
             other_path.to_str().unwrap().to_string(),
         ];
 
-        let result = create_multi_path_reader_boxed(&paths, None);
+        let result = Python::attach(|py| create_multi_path_reader_boxed(py, &paths, None, None));
         assert!(result.is_err(), "Should reject non-R-set additional paths");
     }
 
@@ -1861,7 +2171,8 @@ mod tests {
             rset_file.to_str().unwrap().to_string(),
         ];
 
-        let reader = create_multi_path_reader_boxed(&paths, None).unwrap();
+        let reader =
+            Python::attach(|py| create_multi_path_reader_boxed(py, &paths, None, None).unwrap());
 
         // Image filter should include both base and overview
         let image_keys = reader.get_asset_keys(Some(AssetType::Image), None);
@@ -2255,6 +2566,254 @@ mod tests {
         let (base, overviews) = route_by_roles(&roles).unwrap();
         assert_eq!(base, 0);
         assert!(overviews.is_empty());
+    }
+
+    // =========================================================================
+    // Remote range-read wiring tests
+    // =========================================================================
+
+    /// Build a Python file-like object from source code that logs `seek`/`read`
+    /// calls, so a test can assert range reads never pull the whole file.
+    #[cfg(test)]
+    fn make_logging_stream<'py>(
+        py: Python<'py>,
+        data: &[u8],
+        seekable: bool,
+        expose_size: bool,
+    ) -> Bound<'py, PyAny> {
+        let code = format!(
+            "\
+import io
+class LoggingStream:
+    def __init__(self, data):
+        self._buf = io.BytesIO(data)
+        self.reads = []
+        self.total_read = 0
+        self._seekable = {seekable}
+        if {expose_size}:
+            self.size = len(data)
+    def seekable(self):
+        return self._seekable
+    def seek(self, offset, whence=0):
+        return self._buf.seek(offset, whence)
+    def tell(self):
+        return self._buf.tell()
+    def read(self, n=-1):
+        pos = self._buf.tell()
+        b = self._buf.read(n)
+        self.reads.append((pos, len(b)))
+        self.total_read += len(b)
+        return b
+",
+            seekable = if seekable { "True" } else { "False" },
+            expose_size = if expose_size { "True" } else { "False" },
+        );
+        let globals = pyo3::types::PyDict::new(py);
+        py.run(&std::ffi::CString::new(code).unwrap(), Some(&globals), None)
+            .unwrap();
+        let cls = globals.get_item("LoggingStream").unwrap().unwrap();
+        let py_bytes = PyBytes::new(py, data);
+        cls.call1((py_bytes,)).unwrap()
+    }
+
+    #[test]
+    fn test_is_remote_url() {
+        // Non-local schemes are remote.
+        assert!(is_remote_url("s3://bucket/key.tif"));
+        assert!(is_remote_url("gcs://bucket/key.tif"));
+        assert!(is_remote_url("http://host/key.tif"));
+        assert!(is_remote_url("https://host/key.tif"));
+        // Local schemes and plain paths are not.
+        assert!(!is_remote_url("file:///path/to/image.ntf"));
+        assert!(!is_remote_url("local:///path/to/image.ntf"));
+        assert!(!is_remote_url("/path/to/image.ntf"));
+        assert!(!is_remote_url("image.ntf"));
+        assert!(!is_remote_url("relative/path/image.ntf"));
+        // A `://` in a filename with an implausible scheme is not a URL.
+        assert!(!is_remote_url("://weird"));
+    }
+
+    #[test]
+    fn test_detect_read_format() {
+        assert_eq!(detect_read_format("s3://b/k/image.ntf").as_deref(), Some("nitf"));
+        assert_eq!(detect_read_format("image.tif").as_deref(), Some("tiff"));
+        assert_eq!(detect_read_format("image.jp2").as_deref(), Some("j2k"));
+        assert_eq!(detect_read_format("image.dt1").as_deref(), Some("dted"));
+        // R-set suffix is stripped before detection.
+        assert_eq!(detect_read_format("image.ntf.r1").as_deref(), Some("nitf"));
+        // Unknown / missing extensions yield None.
+        assert_eq!(detect_read_format("image.xyz"), None);
+        assert_eq!(detect_read_format("noext"), None);
+    }
+
+    #[test]
+    fn test_remote_header_hint_only_for_block_capable_formats() {
+        // TIFF and J2K are remote-safe via callbacks.
+        #[cfg(feature = "libtiff")]
+        {
+            assert!(remote_header_hint("tiff").is_some());
+            assert!(remote_header_hint("tif").is_some());
+            assert!(remote_header_hint("geotiff").is_some());
+        }
+        #[cfg(feature = "openjpeg")]
+        {
+            assert!(remote_header_hint("j2k").is_some());
+            assert!(remote_header_hint("jp2").is_some());
+        }
+        // NITF/JBP and DTED are block-capable with bounded header parses,
+        // so they take the remote path.
+        assert!(remote_header_hint("nitf").is_some());
+        assert!(remote_header_hint("nsif").is_some());
+        assert!(remote_header_hint("dted").is_some());
+        assert!(remote_header_hint("dt1").is_some());
+        // PNG and standalone JPEG are monolithic/non-blocking: a decode needs the
+        // whole codestream, so chunking it into range GETs has no benefit. They
+        // stay on the full-read fallback (their readers are nonetheless
+        // Remote-safe via materialize(); this is a routing choice).
+        assert!(remote_header_hint("png").is_none());
+        assert!(remote_header_hint("jpeg").is_none());
+    }
+
+    #[test]
+    fn test_probe_seekable_size_via_seek_end() {
+        Python::attach(|py| {
+            let stream = make_logging_stream(py, &[7u8; 500], true, false);
+            let obj: Py<PyAny> = stream.clone().unbind();
+            let size = probe_seekable_size(py, &obj);
+            assert_eq!(size, Some(500));
+            // Probing must restore the read position to the start.
+            let pos: u64 = stream.call_method0("tell").unwrap().extract().unwrap();
+            assert_eq!(pos, 0);
+        });
+    }
+
+    #[test]
+    fn test_probe_seekable_size_prefers_size_attr() {
+        Python::attach(|py| {
+            let stream = make_logging_stream(py, &[0u8; 321], true, true);
+            let obj: Py<PyAny> = stream.unbind();
+            assert_eq!(probe_seekable_size(py, &obj), Some(321));
+        });
+    }
+
+    #[test]
+    fn test_probe_non_seekable_returns_none() {
+        Python::attach(|py| {
+            let stream = make_logging_stream(py, &[0u8; 100], false, false);
+            let obj: Py<PyAny> = stream.unbind();
+            assert_eq!(probe_seekable_size(py, &obj), None);
+        });
+    }
+
+    #[test]
+    fn test_probe_empty_stream_returns_none() {
+        Python::attach(|py| {
+            let stream = make_logging_stream(py, &[], true, false);
+            let obj: Py<PyAny> = stream.unbind();
+            // A zero-length source falls back to the full-read path (which
+            // raises the "no data" error there), so probing yields None.
+            assert_eq!(probe_seekable_size(py, &obj), None);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "libtiff")]
+    fn test_remote_tiff_stream_reads_without_full_download() {
+        // Open a real TIFF over a seekable logging stream and assert the whole
+        // file is never pulled in a single read and total bytes read stays
+        // below the file size — i.e. it went through the Remote range path.
+        let tiff_path = "data/unit/tiff-256x256-1band-8bit-tiled-deflate.tif";
+        let Ok(file_bytes) = std::fs::read(tiff_path) else {
+            return; // Skip if the unit data file is unavailable.
+        };
+        let file_len = file_bytes.len();
+
+        Python::attach(|py| {
+            let stream = make_logging_stream(py, &file_bytes, true, false);
+            let obj: Py<PyAny> = stream.clone().unbind();
+
+            // Build the Remote buffer the same way create_reader_from_stream
+            // does, then drive the format reader so we can query it directly.
+            let buffer = try_build_remote_buffer(py, &obj, "tiff")
+                .unwrap()
+                .expect("a seekable, sized TIFF stream must take the remote path");
+            let reader =
+                reader_from_buffer("tiff", buffer).expect("remote TIFF reader should construct");
+
+            // Metadata must be readable.
+            let keys = reader.get_asset_keys(Some(AssetType::Image), None);
+            assert!(!keys.is_empty(), "expected an image asset");
+
+            // No single read covered the whole file, and the total bytes read
+            // stayed below the file size — proof this used range reads, not a
+            // full download.
+            let reads: Vec<(u64, usize)> = stream
+                .getattr("reads")
+                .unwrap()
+                .extract::<Vec<(u64, usize)>>()
+                .unwrap();
+            assert!(
+                reads.iter().all(|(_, len)| *len < file_len),
+                "a single read covered the whole {}-byte file: {:?}",
+                file_len,
+                reads
+            );
+            let total_read: usize = stream.getattr("total_read").unwrap().extract().unwrap();
+            assert!(
+                total_read < file_len,
+                "read {} bytes of a {}-byte file — expected a partial range read",
+                total_read,
+                file_len
+            );
+        });
+    }
+
+    #[test]
+    fn test_non_seekable_stream_falls_back_to_full_read() {
+        // A non-seekable stream must not take the remote path even for a
+        // remote-safe format — it falls back to the full-read path.
+        Python::attach(|py| {
+            let stream = make_logging_stream(py, &[1u8; 200], false, false);
+            let obj: Py<PyAny> = stream.unbind();
+            let built = try_build_remote_buffer(py, &obj, "tiff").unwrap();
+            assert!(
+                built.is_none(),
+                "a non-seekable stream must fall back to full read"
+            );
+        });
+    }
+
+    #[test]
+    fn test_open_source_reader_local_branch() {
+        // A plain (non-URL) local path takes the mmap branch and yields a reader,
+        // identical to create_reader_boxed. The remote split is gated by
+        // is_remote_url, which is false for this path.
+        let base_path = std::path::Path::new("data/unit/nitf21-256x256-3band-8bit-nc.ntf");
+        if !base_path.exists() {
+            return;
+        }
+        let path = base_path.to_str().unwrap();
+        // Gate assertion: a plain path is not a remote URL, so no filesystem is
+        // supplied and open_source_reader must take the local branch.
+        assert!(!is_remote_url(path));
+
+        Python::attach(|py| {
+            let reader = open_source_reader(py, path, None, None).unwrap();
+            let keys = reader.get_asset_keys(Some(AssetType::Image), None);
+            assert_eq!(keys, vec!["image:0"]);
+        });
+    }
+
+    #[test]
+    fn test_unsupported_format_falls_back_even_when_seekable() {
+        Python::attach(|py| {
+            let stream = make_logging_stream(py, &[1u8; 200], true, true);
+            let obj: Py<PyAny> = stream.unbind();
+            // PNG readers are not remote-safe → no remote buffer even though the
+            // stream is seekable and sized.
+            let built = try_build_remote_buffer(py, &obj, "png").unwrap();
+            assert!(built.is_none(), "PNG must not take the remote path");
+        });
     }
 
     // =========================================================================

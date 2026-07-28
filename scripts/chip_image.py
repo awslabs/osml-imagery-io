@@ -6,10 +6,16 @@ region from a source image and save it using the library's own PNGDatasetWriter.
 Supports any format the IO library can read, including NITF (.ntf),
 TIFF/GeoTIFF (.tif, .tiff), and PNG (.png).
 
+The input may be a local file path or a remote URL (e.g. ``s3://bucket/key.ntf``).
+Remote sources are read with on-demand byte-range requests via fsspec, so only
+the tiles overlapping the requested region are fetched — the whole file is never
+downloaded. The output PNG is always written to a local path.
+
 Usage:
-    python scripts/chip_image_local.py input.ntf output.png --bbox 0 0 512 512
-    python scripts/chip_image_local.py input.tif output.png --bbox 0 0 512 512
-    python scripts/chip_image_local.py input.ntf output.png --bbox 100 200 300 400 --asset image:0
+    python scripts/chip_image.py input.ntf output.png --bbox 0 0 512 512
+    python scripts/chip_image.py input.tif output.png --bbox 0 0 512 512
+    python scripts/chip_image.py s3://bucket/input.ntf output.png --bbox 0 0 512 512
+    python scripts/chip_image.py input.ntf output.png --bbox 100 200 300 400 --asset image:0
 
 The bounding box is specified as: x_min y_min x_max y_max (column/row coordinates)
 """
@@ -25,6 +31,20 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from aws.osml.io import IO, AssetType, BufferedImageAssetProvider, PixelType  # noqa: E402
+
+
+def _is_remote_url(path: str) -> bool:
+    """Return True if *path* is a remote URL rather than a local file path.
+
+    A remote URL has an explicit scheme other than ``file`` (e.g. ``s3://``,
+    ``https://``). ``IO.open`` resolves such URLs to an fsspec filesystem and
+    reads them with byte-range requests. Local paths and ``file://`` URIs use
+    the memory-mapped path instead.
+    """
+    for scheme in ("s3://", "gs://", "gcs://", "az://", "abfs://", "http://", "https://"):
+        if path.startswith(scheme):
+            return True
+    return False
 
 
 def extract_region(
@@ -187,7 +207,8 @@ def chip_image(
     """Extract a chip from an image and save as PNG.
 
     Args:
-        input_path: Path to the input image file
+        input_path: Path to the input image file, or a remote URL such as
+            ``s3://bucket/key.ntf``
         output_path: Path for the output PNG file
         bbox: Bounding box as (x_min, y_min, x_max, y_max)
         asset_key: Optional asset key (uses first image if not specified)
@@ -195,17 +216,24 @@ def chip_image(
     Returns:
         0 on success, 1 on error
     """
-    input_file = Path(input_path)
     output_file = Path(output_path)
 
-    if not input_file.exists():
-        print(f"Error: Input file not found: {input_path}", file=sys.stderr)
-        return 1
+    is_remote = _is_remote_url(input_path)
+    if is_remote:
+        # Remote source — a bare URL string routes through fsspec range reads.
+        source = input_path
+    else:
+        # Local path — validate up front for a friendly error, then open.
+        input_file = Path(input_path)
+        if not input_file.exists():
+            print(f"Error: Input file not found: {input_path}", file=sys.stderr)
+            return 1
+        source = str(input_file)
 
     x_min, y_min, x_max, y_max = bbox
 
     try:
-        with IO.open([str(input_file)], "r") as reader:
+        with IO.open(source, "r") as reader:
             # Find the image asset
             if asset_key:
                 if not reader.has_asset(asset_key):
@@ -222,7 +250,7 @@ def chip_image(
                 image_asset = reader.get_asset(asset_key)
 
             # Print info about the source
-            print(f"Source: {input_file}")
+            print(f"Source: {input_path}")
             print(f"Asset: {asset_key}")
             print(f"Image size: {image_asset.num_columns} x {image_asset.num_rows}")
             print(f"Bands: {image_asset.num_bands}")
@@ -256,18 +284,23 @@ def main():
         epilog="""
 Examples:
     # Extract a 512x512 chip from the top-left corner
-    python scripts/chip_image_local.py input.ntf output.png --bbox 0 0 512 512
+    python scripts/chip_image.py input.ntf output.png --bbox 0 0 512 512
 
     # Extract a chip from a GeoTIFF file
-    python scripts/chip_image_local.py input.tif output.png --bbox 0 0 512 512
+    python scripts/chip_image.py input.tif output.png --bbox 0 0 512 512
+
+    # Extract a chip directly from an S3-hosted NITF (only the overlapping
+    # tiles are fetched — no full download)
+    python scripts/chip_image.py s3://bucket/input.ntf output.png --bbox 0 0 512 512
 
     # Extract a region from a specific asset
-    python scripts/chip_image_local.py input.ntf output.png --bbox 100 200 400 500 --asset image:1
+    python scripts/chip_image.py input.ntf output.png --bbox 100 200 400 500 --asset image:1
 """
     )
     parser.add_argument(
         "input",
-        help="Path to the input image file (NITF, TIFF/GeoTIFF, PNG)"
+        help="Path to the input image file, or a remote URL such as "
+             "s3://bucket/key.ntf (NITF, TIFF/GeoTIFF, PNG)"
     )
     parser.add_argument(
         "output",

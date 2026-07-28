@@ -259,8 +259,8 @@ class TestProperty7EndToEndDecodeEquivalence:
                 block_via_io = asset.get_block(0, 0, 0)
 
             # Path B: Read via Kerchunk index + codec
-            parser = OversightMLParser(local_paths=str(path))
-            ms = parser(url=str(path))
+            parser = OversightMLParser()
+            ms = parser(str(path))
 
             from aws.osml.io.virtualizarr_parsers import write_tile_index
 

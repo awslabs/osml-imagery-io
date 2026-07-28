@@ -73,16 +73,15 @@ impl TIFFDatasetReader {
     /// `NewSubfileType`, and creates one `TIFFImageAssetProvider` per
     /// full-resolution IFD.
     pub fn from_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
-        let data = buffer.as_bytes();
-
-        // Validate magic bytes before handing to libtiff
-        if data.len() < 4 {
+        // Validate magic bytes before handing to libtiff. Fetch only the 4-byte
+        // header (a bounded range) so a `Remote` buffer is not forced resident.
+        if buffer.len() < 4 {
             return Err(CodecError::InvalidFormat(
                 "Data too short to be a valid TIFF file".to_string(),
             ));
         }
-        let magic = &data[0..4];
-        let byte_order = match magic {
+        let magic = buffer.read_range(0, 4)?;
+        let byte_order = match magic.as_slice() {
             [0x49, 0x49, 0x2A, 0x00] | [0x49, 0x49, 0x2B, 0x00] => "LittleEndian",
             [0x4D, 0x4D, 0x00, 0x2A] | [0x4D, 0x4D, 0x00, 0x2B] => "BigEndian",
             _ => {
@@ -93,7 +92,7 @@ impl TIFFDatasetReader {
             }
         };
 
-        let handle = TiffHandle::from_bytes(data)?;
+        let handle = TiffHandle::from_buffer(buffer.clone())?;
         let handle = Arc::new(Mutex::new(handle));
 
         let num_directories = {
@@ -761,7 +760,7 @@ mod tests {
         );
     }
 
-    /// Phase 3: full COG mask layout per OGC COG Recommendation 3
+    /// Full COG mask layout per OGC COG Recommendation 3
     /// (image → its mask → image overviews → mask overviews). NewSubfileType
     /// values: 0 (image), 4 (mask), 1×5 (image overviews), 5×5 (mask overviews).
     #[test]
@@ -809,7 +808,7 @@ mod tests {
         );
     }
 
-    /// Phase 3: role-based filtering with masks present. A query for `mask`
+    /// Role-based filtering with masks present. A query for `mask`
     /// returns all masks (full-res + overview masks); a query for `overview`
     /// returns image overviews *and* mask overviews (dual role).
     #[test]
@@ -845,7 +844,7 @@ mod tests {
         assert_eq!(data_keys, vec!["image:0"]);
     }
 
-    /// Phase 3: a mask IFD (NewSubfileType=4) appearing before any full-res
+    /// A mask IFD (NewSubfileType=4) appearing before any full-res
     /// image — non-COG ordering — falls back to a standalone `image:N:mask`
     /// rather than mis-associating.
     #[test]
@@ -868,7 +867,7 @@ mod tests {
         );
     }
 
-    /// Phase 3: a mask-of-overview IFD (NewSubfileType=5) appearing before any
+    /// A mask-of-overview IFD (NewSubfileType=5) appearing before any
     /// full-res image also falls back to a standalone `image:N:mask`.
     #[test]
     fn test_out_of_order_overview_mask_falls_back_to_standalone() {

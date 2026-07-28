@@ -93,6 +93,9 @@ class TestComputeAccessPatterns:
 
 from scripts.generate_benchmark_report import (  # noqa: E402
     _extract_access_pattern,
+    _extract_source,
+    _strip_source_suffix,
+    generate_comparison_table,
     generate_table,
 )
 
@@ -112,6 +115,11 @@ class TestExtractAccessPattern:
         name = "test_bench_zarr_read[Synth Large NC-large_roi-local]"
         assert _extract_access_pattern(name) == "large roi"
 
+    def test_parses_pattern_with_virtual_suffix(self):
+        """The IO benchmarks parametrize a ``virtual`` source dimension."""
+        name = "test_bench_io_read[WV Pan J2K-single_tile-virtual]"
+        assert _extract_access_pattern(name) == "single tile"
+
     def test_returns_none_for_block_read(self):
         name = "test_bench_block_read[Large NITF-UL]"
         assert _extract_access_pattern(name) is None
@@ -125,11 +133,52 @@ class TestExtractAccessPattern:
         assert _extract_access_pattern(name) is None
 
 
-def _make_entry(name: str, group: str = "block_read") -> dict:
+class TestExtractSource:
+    """Tests for _extract_source()."""
+
+    def test_prefers_extra_info_source_mode(self):
+        entry = {
+            "name": "test_bench_metadata_read[Large NITF-virtual]",
+            "extra_info": {"source_mode": "virtual"},
+        }
+        assert _extract_source(entry) == "virtual"
+
+    def test_falls_back_to_id_suffix(self):
+        entry = {"name": "test_bench_metadata_read[Large NITF-local]"}
+        assert _extract_source(entry) == "local"
+
+    def test_recognizes_s3_suffix(self):
+        entry = {"name": "test_bench_zarr_read[WV Pan J2K-single_tile-s3]"}
+        assert _extract_source(entry) == "s3"
+
+    def test_returns_none_when_no_source(self):
+        entry = {"name": "test_bench_metadata_read[Large NITF]"}
+        assert _extract_source(entry) is None
+
+
+class TestStripSourceSuffix:
+    """Tests for _strip_source_suffix()."""
+
+    def test_strips_virtual(self):
+        assert _strip_source_suffix("Synth Medium C8-virtual") == "Synth Medium C8"
+
+    def test_strips_local(self):
+        assert _strip_source_suffix("Synth Small TIFF-local") == "Synth Small TIFF"
+
+    def test_leaves_label_without_suffix(self):
+        assert _strip_source_suffix("Large NITF") == "Large NITF"
+
+    def test_does_not_strip_non_source_suffix(self):
+        # A dataset name containing a hyphen but no recognized source suffix.
+        assert _strip_source_suffix("WV 8-band") == "WV 8-band"
+
+
+def _make_entry(name: str, group: str = "block_read", extra_info: dict | None = None) -> dict:
     """Create a minimal benchmark entry for testing."""
     return {
         "name": name,
         "group": group,
+        "extra_info": extra_info or {},
         "stats": {
             "min": 0.001,
             "max": 0.005,
@@ -203,3 +252,128 @@ class TestGenerateTable:
         table = generate_table(entries, group_name="tile_read_zarr_local")
         header = table.split("\n")[0]
         assert header.count("|") == 10  # 9 columns → 10 pipe chars
+
+    def test_single_source_group_omits_source_column(self):
+        """A group with only one source (e.g. per-backend Zarr) keeps its layout."""
+        entries = [
+            _make_entry("test_bench_zarr_read[WV Pan J2K-single_tile-local]",
+                        group="tile_read_zarr_local"),
+            _make_entry("test_bench_zarr_read[Synth Medium C3-small_roi-local]",
+                        group="tile_read_zarr_local"),
+        ]
+        table = generate_table(entries, group_name="tile_read_zarr_local")
+        assert "Source" not in table.split("\n")[0]
+
+    def test_mixed_source_group_adds_source_column(self):
+        """A group parametrizing local+virtual surfaces a Source column."""
+        entries = [
+            _make_entry("test_bench_io_read[Large NITF-single_tile-local]",
+                        group="tile_read_io", extra_info={"source_mode": "local"}),
+            _make_entry("test_bench_io_read[Large NITF-single_tile-virtual]",
+                        group="tile_read_io", extra_info={"source_mode": "virtual"}),
+        ]
+        table = generate_table(entries, group_name="tile_read_io")
+        lines = table.split("\n")
+        assert "Source" in lines[0]
+        # Both source values appear, and the dataset label is clean.
+        assert "local" in table and "virtual" in table
+        for data_row in lines[2:4]:
+            assert "Large NITF" in data_row
+            assert "single_tile" not in data_row
+
+    def test_fetch_fraction_column_surfaced_when_present(self):
+        """The virtual fetch_fraction becomes a Fetch % column (as a percentage)."""
+        entries = [
+            _make_entry("test_bench_metadata_read[Synth Small TIFF-local]",
+                        group="metadata", extra_info={"source_mode": "local"}),
+            _make_entry("test_bench_metadata_read[Synth Small TIFF-virtual]",
+                        group="metadata",
+                        extra_info={"source_mode": "virtual", "fetch_fraction": 0.063}),
+        ]
+        table = generate_table(entries, group_name="metadata")
+        assert "Fetch %" in table.split("\n")[0]
+        assert "6.3" in table
+
+    def test_metadata_group_strips_source_suffix_from_dataset(self):
+        """metadata ids are dataset-source (no access pattern); Dataset stays clean."""
+        entries = [
+            _make_entry("test_bench_metadata_read[Synth Medium C8-local]",
+                        group="metadata", extra_info={"source_mode": "local"}),
+            _make_entry("test_bench_metadata_read[Synth Medium C8-virtual]",
+                        group="metadata", extra_info={"source_mode": "virtual"}),
+        ]
+        table = generate_table(entries, group_name="metadata")
+        for data_row in table.split("\n")[2:4]:
+            assert "Synth Medium C8" in data_row
+            assert "C8-local" not in data_row
+            assert "C8-virtual" not in data_row
+
+    def test_s3_source_mode_surfaced(self):
+        """A real-S3 IO run shows up as its own Source row."""
+        entries = [
+            _make_entry("test_bench_io_read[WV Pan J2K-single_tile-local]",
+                        group="tile_read_io", extra_info={"source_mode": "local"}),
+            _make_entry("test_bench_io_read[WV Pan J2K-single_tile-s3]",
+                        group="tile_read_io",
+                        extra_info={"source_mode": "s3", "fetch_fraction": 0.001}),
+        ]
+        table = generate_table(entries, group_name="tile_read_io")
+        assert "Source" in table.split("\n")[0]
+        assert "s3" in table
+        # Dataset label stays clean even with the -s3 suffix.
+        for data_row in table.split("\n")[2:4]:
+            assert "WV Pan J2K" in data_row
+            assert "single_tile" not in data_row
+
+
+class TestGenerateComparisonTable:
+    """Tests for generate_comparison_table() with source-aware columns."""
+
+    def test_io_group_expands_by_source(self):
+        """An IO group with local/virtual/s3 becomes one column per source."""
+        entries = {
+            "tile_read_io": [
+                _make_entry("test_bench_io_read[WV Pan J2K-single_tile-local]",
+                            group="tile_read_io", extra_info={"source_mode": "local"}),
+                _make_entry("test_bench_io_read[WV Pan J2K-single_tile-virtual]",
+                            group="tile_read_io", extra_info={"source_mode": "virtual"}),
+                _make_entry("test_bench_io_read[WV Pan J2K-single_tile-s3]",
+                            group="tile_read_io", extra_info={"source_mode": "s3"}),
+            ],
+        }
+        table = generate_comparison_table(entries)
+        assert table is not None
+        header = table.split("\n")[0]
+        assert "IO (local)" in header
+        assert "IO (virtual)" in header
+        assert "IO (s3)" in header
+
+    def test_io_and_zarr_s3_are_distinct_columns(self):
+        """IO s3 and Zarr S3 must not collapse into one column."""
+        entries = {
+            "tile_read_io": [
+                _make_entry("test_bench_io_read[WV Pan J2K-single_tile-local]",
+                            group="tile_read_io", extra_info={"source_mode": "local"}),
+                _make_entry("test_bench_io_read[WV Pan J2K-single_tile-s3]",
+                            group="tile_read_io", extra_info={"source_mode": "s3"}),
+            ],
+            "tile_read_zarr_s3": [
+                _make_entry("test_bench_zarr_read[WV Pan J2K-single_tile-s3]",
+                            group="tile_read_zarr_s3"),
+            ],
+        }
+        table = generate_comparison_table(entries)
+        assert table is not None
+        header = table.split("\n")[0]
+        assert "IO (s3)" in header
+        assert "Zarr S3" in header
+
+    def test_returns_none_for_single_column(self):
+        """Fewer than two comparable columns → no comparison table."""
+        entries = {
+            "tile_read_zarr_local": [
+                _make_entry("test_bench_zarr_read[WV Pan J2K-single_tile-local]",
+                            group="tile_read_zarr_local"),
+            ],
+        }
+        assert generate_comparison_table(entries) is None

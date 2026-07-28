@@ -7,14 +7,18 @@ VirtualiZarr parser for generating virtual Zarr datasets from imagery files.
 for any format supported by `IO.open()`: NITF, standalone JPEG 2000, TIFF, and
 GeoTIFF.
 
-The parser supports both single-file and multi-file inputs:
+The parser conforms to the VirtualiZarr parser callable protocol
+`(url, registry) -> ManifestStore`. It reads bytes by opening `url` with fsspec
+and handing the seekable handle to `IO.open()`, which issues on-demand byte-range
+reads for the block-capable formats — so a local path and an `s3://` URL follow
+the same code path and neither downloads the whole file to build the index.
 
-- **Single file** — pass a single path and URL. If the file contains overview
-  assets (e.g. COG overview IFDs), the parser builds a hierarchical store
-  automatically. Otherwise it produces a flat store.
-- **Multi-file pyramid** — pass a list of paths and URLs, one per resolution
-  level. The parser builds a hierarchical store with GeoZarr `multiscales`
-  metadata describing the pyramid structure.
+- **Single file** — pass one URL. If the file contains overview assets (e.g. COG
+  overview IFDs), the parser builds a hierarchical store automatically.
+- **Multi-file pyramid** — pass the base URL; sibling `.r1`/`.r2`/… R-set
+  companions are discovered on the same filesystem and mapped to overview levels.
+  The parser builds a hierarchical store with GeoZarr `multiscales` metadata
+  describing the pyramid structure.
 
 ```{note}
 `virtualizarr` is an optional dependency. Install with `pip install osml-imagery-io[virtualizarr]`
@@ -32,30 +36,35 @@ to enable parser support.
 
 ### Constructor
 
-`OversightMLParser(local_paths)` accepts either a single path string or a list
-of paths. A single string is wrapped in a list internally.
+`OversightMLParser()` takes no parse-time configuration — the URL passed when
+the parser is called is the single source of truth for both reading and chunk
+references.
 
 ```python
-# Single file
-parser = OversightMLParser(local_paths="/data/image.ntf")
-
-# Multi-file pyramid (one file per resolution level)
-parser = OversightMLParser(local_paths=["/data/image.ntf", "/data/image.ntf.r1"])
+parser = OversightMLParser()
 ```
 
 ### Calling the parser
 
-`parser(url)` accepts either a single URL string or a list of URLs. A single
-URL is used for all chunk references. A list must have the same length as
-`local_paths` — each URL corresponds to the local path at the same index.
+`parser(url, registry=None)` reads and indexes the imagery at `url`. Local
+paths, `file://` URIs, and `s3://` URIs all work (opened via fsspec). Chunk
+references in the returned store point at `url`. R-set overview companions
+(`<url>.r1`, `<url>.r2`, …) are discovered automatically.
 
 ```python
-# Single URL — used for all assets
-store = parser(url="s3://bucket/image.ntf")
+# Local file (chunk refs point at the local path)
+store = parser("/data/image.ntf")
 
-# Multiple URLs — one per file in the pyramid
-store = parser(url=["s3://bucket/image.ntf", "s3://bucket/image.ntf.r1"])
+# Remote file — range reads, no full download
+store = parser("s3://bucket/image.ntf")
+
+# Multi-file pyramid — image.ntf.r1 etc. auto-discovered from the base URL
+store = parser("s3://bucket/image.ntf")
 ```
+
+To relocate chunk references (portable `{{base}}` indexes, or index a local copy
+but reference an `s3://` location), use `write_tile_index`'s `template_base` /
+`url_overrides` arguments — see below.
 
 ### Flat vs hierarchical output
 
@@ -136,5 +145,29 @@ A `zarr_conventions` array in the root attributes declares convention identity:
 hierarchical and serializes accordingly. For hierarchical stores, the output
 Kerchunk JSON uses path-prefixed keys (e.g. `0/data/0.0.0`, `1/data/0.0.0`)
 and includes the root `multiscales` metadata in `.zattrs`.
+
+Relocating chunk references is a serialization-time concern controlled by two
+mutually exclusive keyword arguments:
+
+- **`template_base`** — pass `"{{base}}"` to produce a portable index whose
+  chunk-reference URLs are rewritten to `{{base}}<filename>` and emit a Kerchunk
+  v1 `"templates": {"base": ""}` dict. At read time the base is supplied via
+  `template_overrides={"base": "s3://bucket/path/"}`.
+- **`url_overrides`** — an explicit `{old_url: new_url}` mapping, e.g. index a
+  local copy and point the references at the `s3://` location the data will be
+  served from.
+
+```python
+# Portable index (resolve base URL at read time)
+parser = OversightMLParser()
+store = parser("local/image.ntf")
+write_tile_index(store, "image.json", template_base="{{base}}")
+
+# Index a local copy, reference the remote location
+write_tile_index(
+    store, "image.json",
+    url_overrides={os.path.abspath("local/image.ntf"): "s3://bucket/image.ntf"},
+)
+```
 
 

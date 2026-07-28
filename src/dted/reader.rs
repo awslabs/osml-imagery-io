@@ -40,13 +40,20 @@ impl DTEDDatasetReader {
     /// metadata, and verifies the file length is consistent with the
     /// declared grid dimensions.
     pub fn from_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
-        let data = buffer.as_bytes();
-
-        if data.len() < DATA_OFFSET {
+        // The UHL/DSI/ACC header lives in the first `DATA_OFFSET` bytes. Read only
+        // that bounded prefix (zero-copy for a resident backing, one small fetch
+        // for a `Remote` backing) — the elevation records are materialized later,
+        // on demand, by the image provider's `decode_full_grid`. `buffer.len()` is
+        // the total source size and is available without fetching.
+        let total_len = buffer.len();
+        if total_len < DATA_OFFSET {
             return Err(CodecError::InvalidFormat(
                 "DTED file too short: must be at least 3428 bytes for UHL+DSI+ACC".to_string(),
             ));
         }
+
+        let header = buffer.try_slice(0..DATA_OFFSET)?;
+        let data = header.as_bytes();
 
         let uhl = Uhl::parse(data)?;
         let dsi = Dsi::parse(data)?;
@@ -55,10 +62,10 @@ impl DTEDDatasetReader {
         let rec_size = record_size(uhl.num_lat_points);
         let expected_size = DATA_OFFSET + (uhl.num_lon_lines as usize) * rec_size;
 
-        if data.len() < expected_size {
+        if total_len < expected_size {
             return Err(CodecError::InvalidFormat(format!(
                 "DTED file too short: expected {} bytes ({} records × {} bytes + {} header), got {}",
-                expected_size, uhl.num_lon_lines, rec_size, DATA_OFFSET, data.len()
+                expected_size, uhl.num_lon_lines, rec_size, DATA_OFFSET, total_len
             )));
         }
 
@@ -298,5 +305,67 @@ mod tests {
         reader.close().unwrap();
         assert!(!reader.has_asset("elevation"));
         assert!(reader.get_asset("elevation").is_err());
+    }
+
+    // =========================================================================
+    // Remote-backing tests
+    // =========================================================================
+
+    use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+
+    /// Shared `(offset, len)` fetch log produced by the fake reader.
+    type FetchLog = std::sync::Arc<std::sync::Mutex<Vec<(u64, usize)>>>;
+
+    fn remote_buffer(data: &[u8], hint: u64) -> (OwnedBuffer, FetchLog) {
+        let reader = FakeReader::new(data.to_vec());
+        let log = reader.log_handle();
+        let fetcher =
+            StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(hint)));
+        (OwnedBuffer::from_remote(fetcher), log)
+    }
+
+    #[test]
+    fn test_remote_construction_reads_only_header() {
+        // A large DTED grid so the header (3428 bytes) is a small fraction of the
+        // file; construction must read only the bounded header, not the records.
+        let data = make_valid_dted(120, 120);
+        let file_len = data.len();
+        assert!(file_len > DATA_OFFSET * 4, "test file should be sizable");
+
+        let (remote, log) = remote_buffer(&data, 4 * 1024);
+        let reader = DTEDDatasetReader::from_buffer(remote).expect("remote DTED construction");
+        assert!(reader.has_asset("elevation"));
+
+        // Construction fetched only the header region, far short of the whole file.
+        let total: usize = log.lock().unwrap().iter().map(|&(_, l)| l).sum();
+        assert!(
+            total < file_len,
+            "construction fetched {} of {} bytes — expected header only",
+            total,
+            file_len
+        );
+    }
+
+    #[test]
+    fn test_remote_block_decode_matches_resident() {
+        let data = make_valid_dted(3, 4);
+
+        let (remote, _log) = remote_buffer(&data, 0);
+        let reader = DTEDDatasetReader::from_buffer(remote).unwrap();
+        let asset = reader.get_asset("elevation").unwrap();
+        let image = asset.as_image().unwrap();
+        let (remote_px, remote_shape) = image.get_block(0, 0, 0, None).unwrap();
+
+        let resident = DTEDDatasetReader::from_buffer(OwnedBuffer::from_vec(data.clone())).unwrap();
+        let (res_px, res_shape) = resident
+            .get_asset("elevation")
+            .unwrap()
+            .as_image()
+            .unwrap()
+            .get_block(0, 0, 0, None)
+            .unwrap();
+
+        assert_eq!(remote_shape, res_shape);
+        assert_eq!(remote_px, res_px, "remote DTED pixels differ from resident");
     }
 }

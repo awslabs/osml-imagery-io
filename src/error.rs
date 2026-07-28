@@ -100,7 +100,7 @@ pub enum CodecError {
     },
 
     // =========================================================================
-    // Image masking error variants (Phase 6)
+    // Image masking error variants
     // =========================================================================
     /// Block not found error for out-of-grid coordinates.
     ///
@@ -159,6 +159,15 @@ pub enum CodecError {
     /// - 5.1: CodecError SHALL include a Python variant carrying the exception message
     #[error("Python error: {0}")]
     Python(String),
+
+    /// Remote range-fetch failure.
+    ///
+    /// Returned when a `Remote`-backed [`OwnedBuffer`](crate::owned_buffer::OwnedBuffer)
+    /// cannot fetch a requested byte range from its underlying source (e.g. a
+    /// network error on an fsspec/s3fs stream). It carries the underlying reason
+    /// plus the range that failed, and maps to a Python `IOError`.
+    #[error("Remote fetch error: {0}")]
+    Remote(String),
 }
 
 impl From<CodecError> for PyErr {

@@ -5,7 +5,6 @@
 //! converts it to band-sequential format, performing endian swaps and interleave
 //! conversions as needed.
 
-use std::borrow::Cow;
 use std::sync::Mutex;
 
 use crate::error::CodecError;
@@ -17,6 +16,31 @@ use crate::jbp::image::types::{InterleaveMode, PixelJustification, PixelValueTyp
 use crate::owned_buffer::OwnedBuffer;
 
 use super::decoder::{swap_be_to_ne, BlockDecoder};
+
+/// Raw block bytes read from the image data, held so their `&[u8]` view outlives
+/// the read.
+///
+/// Slicing a `Remote`-backed [`OwnedBuffer`] returns an *owned* `Heap` sub-buffer
+/// (the fetched bytes), not a borrow of the source, so a full-block read cannot
+/// return a `&[u8]` borrowing `self.image_data`. This holder owns whichever
+/// representation the read produced — a freshly built `Vec` (bit-packed / edge
+/// blocks) or a sliced `OwnedBuffer` (a full block: zero-copy for resident
+/// backings, the fetched bytes for `Remote`) — and hands out a `&[u8]` view.
+enum BlockBytes {
+    /// Assembled bytes (bit-packed unpack, or an edge block gathered row-by-row).
+    Owned(Vec<u8>),
+    /// A contiguous sub-view of the image data (full block).
+    Buffer(OwnedBuffer),
+}
+
+impl BlockBytes {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            BlockBytes::Owned(v) => v,
+            BlockBytes::Buffer(b) => b.as_bytes(),
+        }
+    }
+}
 
 /// Default tile height in rows for the tiled BIP→BSQ transpose.
 /// Chosen so that one tile's worth of destination writes fits in L2 cache.
@@ -338,17 +362,17 @@ impl UncompressedBlockDecoder {
                 let block_offset = band_offset + block_index * single_band_block_size;
                 let end = block_offset + single_band_block_size;
 
-                if end > self.image_data.as_bytes().len() {
+                if end > self.image_data.len() {
                     return Err(CodecError::Decode(format!(
                         "Block data out of bounds: offset {} + {} > {}",
                         block_offset,
                         single_band_block_size,
-                        self.image_data.as_bytes().len()
+                        self.image_data.len()
                     )));
                 }
 
-                let packed = &self.image_data.as_bytes()[block_offset..end];
-                let unpacked = self.unpack_bitstream(packed, num_pixels);
+                let packed = self.image_data.try_slice(block_offset..end)?;
+                let unpacked = self.unpack_bitstream(packed.as_bytes(), num_pixels);
                 output.extend_from_slice(&unpacked);
             }
 
@@ -365,18 +389,19 @@ impl UncompressedBlockDecoder {
                     let row_offset = block_offset + (row as usize) * (self.nppbh as usize) * bpp;
                     let row_bytes = (actual_cols as usize) * bpp;
 
-                    if row_offset + row_bytes > self.image_data.as_bytes().len() {
+                    if row_offset + row_bytes > self.image_data.len() {
                         return Err(CodecError::Decode(format!(
                             "Block data out of bounds: offset {} + {} > {}",
                             row_offset,
                             row_bytes,
-                            self.image_data.as_bytes().len()
+                            self.image_data.len()
                         )));
                     }
 
-                    output.extend_from_slice(
-                        &self.image_data.as_bytes()[row_offset..row_offset + row_bytes],
-                    );
+                    let row_slice = self
+                        .image_data
+                        .try_slice(row_offset..row_offset + row_bytes)?;
+                    output.extend_from_slice(row_slice.as_bytes());
                 }
             }
 
@@ -393,18 +418,18 @@ impl UncompressedBlockDecoder {
         block_col: u32,
         actual_rows: u32,
         actual_cols: u32,
-    ) -> Result<Cow<'_, [u8]>, CodecError> {
+    ) -> Result<BlockBytes, CodecError> {
         let offset = self.block_offset(block_row, block_col) as usize;
         let nominal_block_size = self.block_size_bytes();
 
         // Bit-packed path: unpack bitstream bands into container-sized pixels
         if self.is_bit_packed() {
-            if offset + nominal_block_size > self.image_data.as_bytes().len() {
+            if offset + nominal_block_size > self.image_data.len() {
                 return Err(CodecError::Decode(format!(
                     "Block data out of bounds: offset {} + {} > {}",
                     offset,
                     nominal_block_size,
-                    self.image_data.as_bytes().len()
+                    self.image_data.len()
                 )));
             }
 
@@ -417,29 +442,31 @@ impl UncompressedBlockDecoder {
             for band in 0..self.nbands as usize {
                 let band_start = offset + band * packed_band_size;
                 let band_end = band_start + packed_band_size;
-                let packed = &self.image_data.as_bytes()[band_start..band_end];
-                let unpacked = self.unpack_bitstream(packed, num_pixels);
+                let packed = self.image_data.try_slice(band_start..band_end)?;
+                let unpacked = self.unpack_bitstream(packed.as_bytes(), num_pixels);
                 output.extend_from_slice(&unpacked);
             }
 
-            return Ok(Cow::Owned(output));
+            return Ok(BlockBytes::Owned(output));
         }
 
         let bpp = self.bytes_per_pixel();
 
-        // For full blocks, borrow directly from the buffer — zero-copy
+        // For full blocks, slice the buffer directly — zero-copy for resident
+        // backings, one fetch for a `Remote` backing (which returns owned bytes).
         if actual_rows == self.nppbv && actual_cols == self.nppbh {
-            if offset + nominal_block_size > self.image_data.as_bytes().len() {
+            if offset + nominal_block_size > self.image_data.len() {
                 return Err(CodecError::Decode(format!(
                     "Block data out of bounds: offset {} + {} > {}",
                     offset,
                     nominal_block_size,
-                    self.image_data.as_bytes().len()
+                    self.image_data.len()
                 )));
             }
-            return Ok(Cow::Borrowed(
-                &self.image_data.as_bytes()[offset..offset + nominal_block_size],
-            ));
+            let block = self
+                .image_data
+                .try_slice(offset..offset + nominal_block_size)?;
+            return Ok(BlockBytes::Buffer(block));
         }
 
         // For edge blocks, we need to extract only the valid pixels
@@ -455,18 +482,19 @@ impl UncompressedBlockDecoder {
                     for row in 0..actual_rows {
                         let row_offset = band_offset + (row as usize) * (self.nppbh as usize) * bpp;
                         let row_bytes = (actual_cols as usize) * bpp;
-                        if row_offset + row_bytes > self.image_data.as_bytes().len() {
+                        if row_offset + row_bytes > self.image_data.len() {
                             return Err(CodecError::Decode(format!(
                                 "Block data out of bounds at row {}: offset {} + {} > {}",
                                 row,
                                 row_offset,
                                 row_bytes,
-                                self.image_data.as_bytes().len()
+                                self.image_data.len()
                             )));
                         }
-                        output.extend_from_slice(
-                            &self.image_data.as_bytes()[row_offset..row_offset + row_bytes],
-                        );
+                        let row_slice = self
+                            .image_data
+                            .try_slice(row_offset..row_offset + row_bytes)?;
+                        output.extend_from_slice(row_slice.as_bytes());
                     }
                 }
             }
@@ -478,19 +506,20 @@ impl UncompressedBlockDecoder {
                         let pixel_offset = offset
                             + ((row as usize) * (self.nppbh as usize) + (col as usize))
                                 * pixel_size;
-                        if pixel_offset + pixel_size > self.image_data.as_bytes().len() {
+                        if pixel_offset + pixel_size > self.image_data.len() {
                             return Err(CodecError::Decode(format!(
                                 "Pixel data out of bounds at ({}, {}): offset {} + {} > {}",
                                 row,
                                 col,
                                 pixel_offset,
                                 pixel_size,
-                                self.image_data.as_bytes().len()
+                                self.image_data.len()
                             )));
                         }
-                        output.extend_from_slice(
-                            &self.image_data.as_bytes()[pixel_offset..pixel_offset + pixel_size],
-                        );
+                        let pixel_slice = self
+                            .image_data
+                            .try_slice(pixel_offset..pixel_offset + pixel_size)?;
+                        output.extend_from_slice(pixel_slice.as_bytes());
                     }
                 }
             }
@@ -503,26 +532,27 @@ impl UncompressedBlockDecoder {
                             + ((row as usize) * (self.nbands as usize) + (band as usize))
                                 * row_size;
                         let actual_row_bytes = (actual_cols as usize) * bpp;
-                        if row_offset + actual_row_bytes > self.image_data.as_bytes().len() {
+                        if row_offset + actual_row_bytes > self.image_data.len() {
                             return Err(CodecError::Decode(format!(
                                 "Row data out of bounds at row {}, band {}: offset {} + {} > {}",
                                 row,
                                 band,
                                 row_offset,
                                 actual_row_bytes,
-                                self.image_data.as_bytes().len()
+                                self.image_data.len()
                             )));
                         }
-                        output.extend_from_slice(
-                            &self.image_data.as_bytes()[row_offset..row_offset + actual_row_bytes],
-                        );
+                        let row_slice = self
+                            .image_data
+                            .try_slice(row_offset..row_offset + actual_row_bytes)?;
+                        output.extend_from_slice(row_slice.as_bytes());
                     }
                 }
             }
             InterleaveMode::S => unreachable!("IMODE S handled separately"),
         }
 
-        Ok(Cow::Owned(output))
+        Ok(BlockBytes::Owned(output))
     }
 
     /// Apply band selection to block data.
@@ -608,6 +638,7 @@ impl BlockDecoder for UncompressedBlockDecoder {
             InterleaveMode::P => {
                 let raw_data =
                     self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?;
+                let raw_data = raw_data.as_slice();
 
                 let out_bands = match bands {
                     Some(b) if !b.is_empty() => b.len(),
@@ -625,7 +656,7 @@ impl BlockDecoder for UncompressedBlockDecoder {
 
                 if data_size >= PARALLEL_THRESHOLD {
                     fused_bip_to_bsq_swap_parallel(
-                        &raw_data,
+                        raw_data,
                         &mut scratch[..output_size],
                         actual_rows as usize,
                         actual_cols as usize,
@@ -636,7 +667,7 @@ impl BlockDecoder for UncompressedBlockDecoder {
                     )?;
                 } else {
                     fused_bip_to_bsq_swap(
-                        &raw_data,
+                        raw_data,
                         &mut scratch[..output_size],
                         actual_rows as usize,
                         actual_cols as usize,
@@ -654,8 +685,8 @@ impl BlockDecoder for UncompressedBlockDecoder {
 
             // ── IMODE=S/B: already BSQ → swap into scratch, then band-select ──
             InterleaveMode::S | InterleaveMode::B => {
-                let raw_data: Cow<'_, [u8]> = match self.imode {
-                    InterleaveMode::S => Cow::Owned(self.read_block_mode_s(
+                let raw_data: BlockBytes = match self.imode {
+                    InterleaveMode::S => BlockBytes::Owned(self.read_block_mode_s(
                         block_row,
                         block_col,
                         actual_rows,
@@ -667,7 +698,7 @@ impl BlockDecoder for UncompressedBlockDecoder {
                 };
 
                 // Swap big-endian → native-endian into scratch
-                let swapped = swap_be_to_ne(&raw_data, bpp);
+                let swapped = swap_be_to_ne(raw_data.as_slice(), bpp);
 
                 // Apply band selection if specified
                 let num_bands = bands.map(|b| b.len() as u32).unwrap_or(self.nbands);
@@ -687,7 +718,7 @@ impl BlockDecoder for UncompressedBlockDecoder {
                     self.read_block_mode_bpr(block_row, block_col, actual_rows, actual_cols)?;
 
                 let bsq_data = to_band_sequential(
-                    &raw_data,
+                    raw_data.as_slice(),
                     self.imode,
                     actual_rows,
                     actual_cols,
@@ -757,17 +788,22 @@ impl BlockDecoder for UncompressedBlockDecoder {
 
         // Validate offset is within bounds
         let offset_usize = offset as usize;
-        if offset_usize + block_size > self.image_data.as_bytes().len() {
+        if offset_usize + block_size > self.image_data.len() {
             return Err(CodecError::Decode(format!(
                 "Block offset {} + size {} exceeds image data length {}",
                 offset,
                 block_size,
-                self.image_data.as_bytes().len()
+                self.image_data.len()
             )));
         }
 
-        // Borrow directly from the buffer — zero-copy
-        let raw_data: &[u8] = &self.image_data.as_bytes()[offset_usize..offset_usize + block_size];
+        // Slice the block bytes — zero-copy for resident backings, one fetch for
+        // a `Remote` backing (which returns owned bytes). Held so `raw_data`
+        // (borrowed below) outlives the imode branches.
+        let raw_buffer = self
+            .image_data
+            .try_slice(offset_usize..offset_usize + block_size)?;
+        let raw_data: &[u8] = raw_buffer.as_bytes();
         let pixels_per_band = (actual_rows as usize) * (actual_cols as usize);
 
         match self.imode {
@@ -1529,6 +1565,136 @@ mod tests {
             assert_eq!(block_data.len(), 16);
             // All pixels should be 1
             assert!(block_data.iter().all(|&b| b == 1));
+        }
+    }
+
+    mod remote_tests {
+        use super::*;
+        use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+        use std::sync::Arc;
+
+        /// `(offset, len)` fetch log produced by the fake reader.
+        type FetchLog = Arc<std::sync::Mutex<Vec<(u64, usize)>>>;
+
+        /// Build a decoder whose `image_data` is a `Remote` `OwnedBuffer` over
+        /// `data` (no eager header prefetch), plus the reader's fetch log.
+        #[allow(clippy::too_many_arguments)]
+        fn create_remote_decoder(
+            nrows: u32,
+            ncols: u32,
+            nbpr: u32,
+            nbpc: u32,
+            nppbh: u32,
+            nppbv: u32,
+            nbands: u32,
+            nbpp: u8,
+            imode: InterleaveMode,
+            data: Vec<u8>,
+        ) -> (UncompressedBlockDecoder, FetchLog) {
+            let reader = FakeReader::new(data);
+            let log = reader.log_handle();
+            let fetcher =
+                StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
+            let decoder = UncompressedBlockDecoder {
+                image_data: OwnedBuffer::from_remote(fetcher),
+                nrows,
+                ncols,
+                nbpr,
+                nbpc,
+                nppbh,
+                nppbv,
+                nbands,
+                nbpp,
+                abpp: nbpp,
+                pvtype: PixelValueType::UnsignedInt,
+                pjust: PixelJustification::Right,
+                imode,
+                ic: "NC".to_string(),
+                scratch: Mutex::new(Vec::new()),
+            };
+            (decoder, log)
+        }
+
+        /// A full remote decode must match the resident decode byte-for-byte and
+        /// must never fetch the whole image data in a single range.
+        #[test]
+        fn remote_decode_matches_resident_and_is_partial() {
+            // 8x8 image, 2x2 block grid (4x4 blocks), 3 bands, IMODE=B.
+            let data = create_test_image_data_bsq(8, 8, 3, 1);
+            // Note: BSQ helper lays out band-major over the whole image; for a
+            // block-organized decode we just need identical bytes on both paths.
+            let resident =
+                create_test_decoder(8, 8, 2, 2, 4, 4, 3, 8, InterleaveMode::B, data.clone());
+            let total_len = data.len();
+            let (remote, log) =
+                create_remote_decoder(8, 8, 2, 2, 4, 4, 3, 8, InterleaveMode::B, data);
+
+            for row in 0..2 {
+                for col in 0..2 {
+                    let (r_data, r_shape) = resident.decode_block(row, col, 0, None).unwrap();
+                    let (m_data, m_shape) = remote.decode_block(row, col, 0, None).unwrap();
+                    assert_eq!(r_shape, m_shape);
+                    assert_eq!(r_data, m_data, "block ({row},{col}) differs");
+                }
+            }
+
+            // The guard never fired (we got here) and no single fetch covered the
+            // whole image data buffer.
+            let log = log.lock().unwrap();
+            assert!(!log.is_empty(), "expected at least one range fetch");
+            assert!(
+                log.iter().all(|&(_, len)| len < total_len),
+                "a fetch covered the whole file: {log:?} (total {total_len})"
+            );
+        }
+
+        /// Edge-block (P-mode) and band-selected remote decode also work.
+        #[test]
+        fn remote_edge_block_and_band_selection() {
+            // 6x6 image, 4x4 blocks → 2x2 grid with edge blocks, 3 bands, IMODE=P.
+            let nrows = 6;
+            let ncols = 6;
+            // IMODE=P full-block-size layout: nbpr*nbpc blocks, each nppbh*nppbv*nbands.
+            let block_size = 4 * 4 * 3;
+            let data: Vec<u8> = (0..(4 * block_size)).map(|i| (i % 251) as u8).collect();
+            let resident = create_test_decoder(
+                nrows,
+                ncols,
+                2,
+                2,
+                4,
+                4,
+                3,
+                8,
+                InterleaveMode::P,
+                data.clone(),
+            );
+            let (remote, _log) =
+                create_remote_decoder(nrows, ncols, 2, 2, 4, 4, 3, 8, InterleaveMode::P, data);
+
+            for (row, col) in [(0u32, 0u32), (0, 1), (1, 0), (1, 1)] {
+                let (r, rs) = resident.decode_block(row, col, 0, Some(&[0, 2])).unwrap();
+                let (m, ms) = remote.decode_block(row, col, 0, Some(&[0, 2])).unwrap();
+                assert_eq!(rs, ms);
+                assert_eq!(r, m, "edge block ({row},{col}) differs");
+            }
+        }
+
+        /// `decode_block_at_offset` works over a `Remote` backing.
+        #[test]
+        fn remote_decode_block_at_offset() {
+            let mut data = vec![0u8; 16];
+            data.extend(vec![1u8; 16]);
+            let resident =
+                create_test_decoder(4, 8, 2, 1, 4, 4, 1, 8, InterleaveMode::B, data.clone());
+            let (remote, _log) =
+                create_remote_decoder(4, 8, 2, 1, 4, 4, 1, 8, InterleaveMode::B, data);
+
+            let (r, rs) = resident.decode_block_at_offset(16, 0, 1, 0, None).unwrap();
+            let (m, ms) = remote.decode_block_at_offset(16, 0, 1, 0, None).unwrap();
+            assert_eq!(rs, ms);
+            assert_eq!(r, m);
+            assert!(m.iter().all(|&b| b == 1));
         }
     }
 

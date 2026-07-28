@@ -55,6 +55,12 @@ impl JPEGDatasetReader {
     /// NOT decode pixel data — that is deferred to `get_block()` calls on
     /// the `ImageAssetProvider`.
     pub fn from_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
+        // Standalone JPEG is a single frame with no block structure: decoding
+        // needs the whole codestream. Materialize once (zero-copy for a resident
+        // backing, one bounded fetch for a `Remote` backing) and hand the resident
+        // buffer to the provider so the deferred `get_block` decode views it
+        // directly. A remote fetch error propagates via `?`.
+        let buffer = buffer.materialize()?;
         let data = buffer.as_bytes();
 
         // Validate minimum length
@@ -255,6 +261,42 @@ mod tests {
     // =========================================================================
     // DatasetReader trait tests
     // =========================================================================
+
+    /// Standalone JPEG is a single frame (monolithic): construction materializes
+    /// the whole codestream. This proves it does so over a `Remote` backing
+    /// without tripping the `as_bytes()` guard, and decodes to the
+    /// same pixels as the resident path.
+    #[test]
+    fn test_remote_construction_and_decode_matches_resident() {
+        use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+
+        let (jpeg_data, _src) = make_jpeg(16, 16, 3, 95);
+
+        let fetcher = StreamFetcher::with_policy(
+            Box::new(FakeReader::new(jpeg_data.clone())),
+            Box::new(HeaderAwarePolicy::new(0)),
+        );
+        let remote = JPEGDatasetReader::from_buffer(OwnedBuffer::from_remote(fetcher)).unwrap();
+        let (remote_px, remote_shape) = remote
+            .get_asset("image:0")
+            .unwrap()
+            .as_image()
+            .unwrap()
+            .get_block(0, 0, 0, None)
+            .unwrap();
+
+        let resident = JPEGDatasetReader::from_buffer(OwnedBuffer::from_vec(jpeg_data)).unwrap();
+        let (res_px, res_shape) = resident
+            .get_asset("image:0")
+            .unwrap()
+            .as_image()
+            .unwrap()
+            .get_block(0, 0, 0, None)
+            .unwrap();
+
+        assert_eq!(remote_shape, res_shape);
+        assert_eq!(remote_px, res_px);
+    }
 
     #[test]
     fn test_roundtrip_grayscale() {

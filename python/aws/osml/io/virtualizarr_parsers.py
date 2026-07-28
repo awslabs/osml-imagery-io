@@ -13,26 +13,105 @@ Usage::
 
     from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
-    parser = OversightMLParser(local_paths="/data/image.ntf")
-    manifest_store = parser(url="s3://bucket/image.ntf")
+    parser = OversightMLParser()
+    manifest_store = parser("s3://bucket/image.ntf")  # range reads, no full download
 
-Portable indexes (no URL required at index time)::
+The URL is the single source of truth: it is both read (via fsspec) and written
+into the chunk references.  Relocatable / portable indexes are produced at
+serialization time — see :func:`write_tile_index` (``template_base`` /
+``url_overrides``)::
 
-    parser = OversightMLParser(local_paths="/data/image.ntf")
-    manifest_store = parser()  # uses filename-only refs with {{base}} template
+    parser = OversightMLParser()
+    manifest_store = parser("/data/image.ntf")
+    write_tile_index(manifest_store, "image.json", template_base="{{base}}")
 """
 
 from __future__ import annotations
 
 import base64
 import os
+import posixpath
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from aws.osml.io._io import IO, AssetType
 
 if TYPE_CHECKING:
     pass
+
+
+# ---------------------------------------------------------------------------
+# URL → format derivation
+# ---------------------------------------------------------------------------
+
+# Map a file extension to the format string ``IO.open`` expects when reading
+# from a stream (a file-like object has no filename to auto-detect from).  This
+# mirrors ``convenience._EXTENSION_TO_FORMAT`` but is kept local so the parser
+# module has no import-time dependency on the convenience layer.
+_URL_EXTENSION_TO_FORMAT: dict[str, str] = {
+    ".ntf": "nitf",
+    ".nitf": "nitf",
+    ".nsif": "nitf",
+    ".tif": "geotiff",
+    ".tiff": "geotiff",
+    ".gtif": "geotiff",
+    ".gtiff": "geotiff",
+    ".j2k": "j2k",
+    ".jp2": "j2k",
+    ".jpx": "j2k",
+    ".png": "png",
+    ".jpg": "jpeg",
+    ".jpeg": "jpeg",
+    ".dt0": "dted",
+    ".dt1": "dted",
+    ".dt2": "dted",
+    ".dt3": "dted",
+    ".dt4": "dted",
+    ".dt5": "dted",
+}
+
+# R-set companion suffix, e.g. ``image.ntf.r1`` is overview level 1 of
+# ``image.ntf``.  Matches the ``.rN`` convention IO.open uses for local R-set
+# pyramids.
+_RSET_SUFFIX = re.compile(r"\.r(\d+)$", re.IGNORECASE)
+
+
+def _url_path(url: str) -> str:
+    """Return the path component of *url* (scheme-agnostic).
+
+    For a plain local path the whole string is the path; for a URL such as
+    ``s3://bucket/key.ntf`` only ``/bucket/key.ntf`` is returned.  Used purely
+    for extension / ``.rN`` inspection, never for opening bytes.
+    """
+    split = urlsplit(url)
+    # No scheme (plain local path) → urlsplit puts everything in ``path``.
+    if not split.scheme:
+        return url
+    return split.path
+
+
+def _format_from_url(url: str) -> str:
+    """Derive the ``IO.open`` format string from a URL's file extension.
+
+    The base file's extension determines the format; any ``.rN`` R-set suffix
+    is stripped first so ``image.ntf.r1`` is recognized as NITF.
+
+    Raises
+    ------
+    ValueError
+        If the extension is not recognized.
+    """
+    path = _RSET_SUFFIX.sub("", _url_path(url))
+    ext = posixpath.splitext(path)[1].lower()
+    fmt = _URL_EXTENSION_TO_FORMAT.get(ext)
+    if fmt is None:
+        supported = ", ".join(sorted(_URL_EXTENSION_TO_FORMAT))
+        raise ValueError(
+            f"Cannot determine imagery format from URL '{url}'. "
+            f"Recognized extensions: {supported}"
+        )
+    return fmt
 
 
 # ---------------------------------------------------------------------------
@@ -435,62 +514,97 @@ def _build_multiscale_group(levels, source_url, multi_range_refs, downsampling_m
     )
 
 
+def _discover_rset_companions(url: str) -> dict[int, str]:
+    """Discover ``.rN`` R-set companion URLs for a base *url*.
+
+    Multi-file NITF pyramids store each overview level in a sibling file named
+    ``<base>.r1``, ``<base>.r2``, …  Given the base *url*, this globs the
+    containing filesystem (via fsspec, so it works for local paths, ``file://``,
+    and ``s3://`` alike) for companions and returns ``{level: companion_url}``
+    including ``{0: url}`` for the base.  Companion URLs are reconstructed by
+    appending the ``.rN`` suffix to *url*, preserving its scheme and directory.
+
+    Levels may be sparse (e.g. ``.r1`` and ``.r3`` with no ``.r2``); each
+    discovered level is keyed by its own number.  A filesystem that cannot glob
+    degrades gracefully to the base URL only.
+    """
+    import fsspec
+
+    companions: dict[int, str] = {0: url}
+    try:
+        fs, path = fsspec.core.url_to_fs(url)
+        matches = fs.glob(path + ".r*")
+    except Exception:
+        return companions
+    for match in matches:
+        m = _RSET_SUFFIX.search(str(match))
+        if m:
+            level = int(m.group(1))
+            # Reconstruct the companion URL from the base URL so the scheme and
+            # directory match exactly (glob returns bare filesystem paths).
+            companions[level] = f"{url}.r{level}"
+    return companions
+
+
 class OversightMLParser:
     """VirtualiZarr parser for any imagery format supported by IO.open().
 
     Supports NITF (2.0, 2.1, NSIF 1.0, SICD, SIDD), standalone JPEG 2000
-    (.j2k, .jp2), TIFF, and GeoTIFF.  Format detection is handled by
-    ``IO.open()`` — the parser itself is format-agnostic.
+    (.j2k, .jp2), TIFF, and GeoTIFF.  Format detection is derived from the URL
+    extension — the parser itself is format-agnostic.
 
-    Parameters
-    ----------
-    local_paths : str or list[str]
-        Path(s) to the local imagery file(s) to scan.  A single string is
-        wrapped in a list automatically.  For multi-file pyramids, pass one
-        path per resolution level.
+    Conforms to the VirtualiZarr parser protocol: an instance is a callable
+    ``(url: str, registry) -> ManifestStore``.  Bytes are read by opening *url*
+    with fsspec and handing the seekable handle to :func:`IO.open`, which issues
+    on-demand byte-range reads for the block-capable formats (TIFF, JPEG 2000,
+    NITF, DTED) — so a local path and an ``s3://`` URL follow the same code path
+    and neither downloads the whole file to build the index.
+
+    Multi-file R-set pyramids are reconstructed automatically: given a base
+    *url*, sibling ``<base>.r1`` / ``.r2`` / … files are discovered on the same
+    filesystem and mapped to overview levels.
 
     Examples
     --------
-    Portable index (no URL needed at index time)::
+    Index a local file (chunk refs point at the same local path)::
 
-        parser = OversightMLParser(local_paths="/data/image.ntf")
-        manifest_store = parser()  # refs use {{base}}filename.ntf
+        parser = OversightMLParser()
+        manifest_store = parser("/data/image.ntf")
 
-    Absolute URL index::
+    Index a remote file directly (range reads, no full download)::
 
-        parser = OversightMLParser(local_paths="/data/image.ntf")
-        manifest_store = parser(url="s3://bucket/image.ntf")
+        parser = OversightMLParser()
+        manifest_store = parser("s3://bucket/image.ntf")
 
-    Multi-file pyramid::
+    Multi-file pyramid (``image.ntf`` + ``image.ntf.r1`` auto-discovered)::
 
-        parser = OversightMLParser(local_paths=["/data/image.ntf", "/data/image.ntf.r1"])
-        manifest_store = parser(url=["s3://bucket/image.ntf", "s3://bucket/image.ntf.r1"])
+        parser = OversightMLParser()
+        manifest_store = parser("s3://bucket/image.ntf")
+
+    See :func:`write_tile_index` for portable (``{{base}}``-template) and
+    URL-rewritten output — relocating chunk references is a serialization-time
+    concern, not a parse-time one.
     """
 
-    def __init__(self, local_paths: str | list[str]):
-        if isinstance(local_paths, str):
-            local_paths = [local_paths]
-        self.local_paths = local_paths
+    def __init__(self):
+        # No parse-time configuration: the URL passed to __call__ is the single
+        # source of truth for both reading and chunk-reference targets.
+        pass
 
-    def __call__(self, url: str | list[str] | None = None, registry=None, **kwargs):
-        """Scan the local file(s) and build a ManifestStore.
+    def __call__(self, url: str, registry=None, **kwargs):
+        """Scan the imagery at *url* and build a ManifestStore.
 
         Parameters
         ----------
-        url : str, list[str], or None
-            Cloud URI(s) written into chunk references.  A single string is
-            used for all assets (e.g. a COG with embedded overviews).  A list
-            must have the same length as ``local_paths`` — each URL
-            corresponds to the local path at the same index.
-
-            When ``None`` (the default), chunk references use the local
-            filename prefixed with the Kerchunk template variable
-            ``{{base}}``.  This produces a portable index that can be
-            resolved at read time by passing
-            ``template_overrides={"base": "s3://bucket/path/"}`` to
-            ``MultiReferenceFileSystem`` or ``ReferenceFileSystem``.
-        registry : optional
-            Object store registry (accepted for protocol conformance, ignored).
+        url : str
+            URL or path of the imagery file to index.  Opened via fsspec, so
+            local paths, ``file://`` URIs, and ``s3://`` URIs all work.  Chunk
+            references in the returned store point at this URL.  R-set overview
+            companions (``<url>.r1``, …) are discovered automatically.
+        registry : ObjectStoreRegistry, optional
+            Passed through to the returned ``ManifestStore`` for VirtualiZarr
+            protocol conformance (used to resolve chunk-data object stores at
+            read time).  The parser reads its own bytes via fsspec.
 
         Returns
         -------
@@ -500,51 +614,53 @@ class OversightMLParser:
         Raises
         ------
         ValueError
-            If the file contains no indexable image segments, or if *url* is
-            a list whose length does not match ``local_paths``.
+            If the file contains no indexable image segments, or the format
+            cannot be derived from the URL extension.
         """
+        import contextlib
+
         _import_virtualizarr()
 
+        import fsspec
         from virtualizarr.manifests import ManifestStore
 
-        # --- URL normalization ---
-        use_templates = url is None
-        if url is None:
-            # Portable mode: use local paths during parsing (VirtualiZarr
-            # requires absolute paths or URIs in ChunkEntry).  The write
-            # step will rewrite these to {{base}}filename.
-            urls = [os.path.abspath(p) for p in self.local_paths]
-        elif isinstance(url, str):
-            urls: list[str] = [url]
-        else:
-            urls = list(url)
-            if len(urls) != len(self.local_paths):
-                raise ValueError(
-                    f"url list length ({len(urls)}) must match "
-                    f"local_paths length ({len(self.local_paths)})"
-                )
+        if not isinstance(url, str):
+            raise TypeError(
+                f"url must be a string (path or URI), got {type(url).__name__}. "
+                "Multi-file R-set pyramids are discovered automatically from the "
+                "base URL."
+            )
 
-        # --- Build URL lookup from paths ---
-        # Map overview level N → urls[i] by parsing .rN suffix from each path.
-        # The base path (no .rN or .r0) maps to urls[0].
-        # When a single URL is provided for multiple paths, all levels use urls[0].
-        _rset_pattern = re.compile(r"\.r(\d+)$")
-        url_by_overview_level: dict[int, str] = {0: urls[0]}
-        for i, p in enumerate(self.local_paths):
-            # Use urls[i] when available, otherwise fall back to urls[0]
-            # (single URL string → replicated for all paths)
-            u = urls[i] if i < len(urls) else urls[0]
-            m = _rset_pattern.search(p)
-            if m:
-                level = int(m.group(1))
-                url_by_overview_level[level] = u
-            else:
-                # Base file (no .rN suffix) — always level 0
-                url_by_overview_level[0] = u
+        fmt = _format_from_url(url)
+
+        # --- Discover R-set companions and map each level → URL ---
+        url_by_overview_level = _discover_rset_companions(url)
+        # Sorted levels: 0 (base) first, then overviews ascending.
+        sorted_levels = sorted(url_by_overview_level)
 
         multi_range_refs: dict[str, list] = {}
 
-        with IO.open(self.local_paths, "r") as reader:
+        with contextlib.ExitStack() as stack:
+            # Open one fsspec handle per level. IO.open routes each seekable,
+            # sized handle through the Remote OwnedBuffer (range reads).
+            handles = [
+                stack.enter_context(fsspec.open(url_by_overview_level[level], "rb"))
+                for level in sorted_levels
+            ]
+
+            if len(handles) == 1:
+                reader = stack.enter_context(IO.open(handles[0], "r", format=fmt))
+            else:
+                # Multi-source R-set: level 0 is the base ("data"), the rest are
+                # overviews. Explicit roles are required for stream lists (no
+                # filenames to derive .rN from).
+                roles = [
+                    ["data"] if level == 0 else [f"overview:{level}"]
+                    for level in sorted_levels
+                ]
+                reader = stack.enter_context(
+                    IO.open(handles, "r", format=fmt, roles=roles)
+                )
             keys = reader.get_asset_keys(asset_type=AssetType.Image)
 
             # Collect all (key, asset) tuples
@@ -571,7 +687,7 @@ class OversightMLParser:
             levels = []
 
             # Level 0: primary parent asset
-            parent_url = url_by_overview_level.get(0, urls[0])
+            parent_url = url_by_overview_level.get(0, url)
             parent_array = _build_manifest_array(
                 primary_asset, parent_url, multi_range_refs,
                 key_prefix="0/data/"
@@ -587,7 +703,7 @@ class OversightMLParser:
             if primary_key in overviews:
                 for level_num, ovr_asset in overviews[primary_key]:
                     ovr_url = url_by_overview_level.get(
-                        level_num, urls[0]
+                        level_num, url
                     )
                     ovr_array = _build_manifest_array(
                         ovr_asset, ovr_url, multi_range_refs,
@@ -603,7 +719,7 @@ class OversightMLParser:
             group = None
             if levels:
                 group = _build_multiscale_group(
-                    levels, urls[0], multi_range_refs,
+                    levels, url, multi_range_refs,
                     downsampling_method=kwargs.get(
                         "downsampling_method"
                     ),
@@ -611,22 +727,16 @@ class OversightMLParser:
 
             if group is None:
                 raise ValueError(
-                    f"No indexable image segments found in "
-                    f"{self.local_paths}"
+                    f"No indexable image segments found in {url}"
                 )
 
-            store = ManifestStore(group=group)
+            store = ManifestStore(group=group, registry=registry)
 
+        # Attach the multi-range references so ``write_tile_index`` can patch
+        # non-contiguous chunk entries into their multi-range form.  Relocating
+        # references (portable ``{{base}}`` templating, URL overrides) is a
+        # serialization-time concern handled entirely by ``write_tile_index``.
         store.multi_range_refs = multi_range_refs
-        store.use_templates = use_templates
-        if use_templates:
-            # Build mapping: absolute local path → {{base}}filename
-            store.template_rewrites = {
-                os.path.abspath(p): "{{base}}" + os.path.basename(p)
-                for p in self.local_paths
-            }
-        else:
-            store.template_rewrites = {}
         return store
 
 
@@ -684,7 +794,51 @@ def _rewrite_refs_urls(refs: dict, rewrites: dict) -> dict:
     return patched
 
 
-def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segments, use_templates, template_rewrites):
+def _collect_ref_urls(refs: dict, source: str | None) -> set[str]:
+    """Collect the distinct chunk-reference URLs present in *refs*.
+
+    Each list-valued entry (single-range ``[url, offset, length]`` or
+    multi-range ``[url, [[o, l], ...]]``) contributes its URL (first element).
+    *source*, when given, is included so the root ``source`` attribute is
+    rewritten alongside the chunk refs.
+    """
+    urls: set[str] = set()
+    if source:
+        urls.add(source)
+    for v in refs.values():
+        if isinstance(v, list) and v and isinstance(v[0], str):
+            urls.add(v[0])
+    return urls
+
+
+def _build_url_rewrites(urls, template_base, url_overrides):
+    """Build a ``{concrete_url: replacement_url}`` rewrite mapping.
+
+    *template_base* (e.g. ``"{{base}}"``) maps each URL to
+    ``template_base + basename`` for relocatable/portable indexes.
+    *url_overrides* is an explicit ``{old: new}`` mapping (e.g. rewrite a local
+    read path to the ``s3://`` URL the data will live at).  The two are
+    mutually exclusive.
+    """
+    if template_base is not None:
+        return {
+            u: f"{template_base}{posixpath.basename(_url_path(u))}"
+            for u in urls
+        }
+    if not url_overrides:
+        return {}
+    # Make matching tolerant of the ``file://`` normalization VirtualiZarr
+    # applies to bare local paths: an override keyed on a plain local path also
+    # matches the ``file://<abspath>`` form that appears in the stored refs.
+    rewrites: dict[str, str] = {}
+    for old, new in url_overrides.items():
+        rewrites[old] = new
+        if "://" not in old:
+            rewrites[f"file://{os.path.abspath(old)}"] = new
+    return rewrites
+
+
+def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segments, template_base, url_overrides):
     """Serialize a hierarchical ManifestStore with GeoZarr multiscales metadata.
 
     Walks the ManifestGroup tree and builds a flat refs dict with
@@ -693,11 +847,16 @@ def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segment
     :func:`_build_multiscale_group`.  Each subgroup's arrays are serialized
     individually via ``dataset_to_kerchunk_refs`` and their keys are prefixed
     with the subgroup path (e.g. ``0/data/0.0.0``).
+
+    URL relocation (``template_base`` for portable ``{{base}}`` indexes, or an
+    explicit ``url_overrides`` mapping) is applied here at serialization time.
     """
     import json
 
     from virtualizarr.accessor import dataset_to_kerchunk_refs
     from virtualizarr.manifests import ManifestGroup, ManifestStore
+
+    use_templates = template_base is not None
 
     group = store._group
 
@@ -726,13 +885,7 @@ def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segment
 
     # Root group metadata
     root_attrs = group.metadata.attributes if group.metadata else {}
-    if template_rewrites and "source" in root_attrs:
-        src = root_attrs["source"]
-        if src in template_rewrites:
-            root_attrs = dict(root_attrs)
-            root_attrs["source"] = template_rewrites[src]
     refs[".zgroup"] = json.dumps({"zarr_format": 2})
-    refs[".zattrs"] = json.dumps(root_attrs)
 
     # Each subgroup — serialize via dataset_to_kerchunk_refs and prefix keys
     for sg_name, sg in group.groups.items():
@@ -746,14 +899,22 @@ def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segment
         for k, v in temp_refs.items():
             refs[f"{sg_name}/{k}"] = v
 
-    # Patch multi-range refs
-    if template_rewrites:
-        multi_range_refs = _rewrite_refs_urls(multi_range_refs, template_rewrites)
+    # Patch multi-range refs into the flat refs dict.
     refs = _patch_multi_range_refs(refs, multi_range_refs)
 
-    # Rewrite URLs for portable indexes
-    if template_rewrites:
-        refs = _rewrite_refs_urls(refs, template_rewrites)
+    # Compute and apply URL relocation (portable template or explicit overrides)
+    # over every concrete URL that appears in the refs, plus the root source.
+    source = root_attrs.get("source") if isinstance(root_attrs, dict) else None
+    rewrites = _build_url_rewrites(
+        _collect_ref_urls(refs, source), template_base, url_overrides
+    )
+    if rewrites:
+        if source in rewrites:
+            root_attrs = dict(root_attrs)
+            root_attrs["source"] = rewrites[source]
+        refs = _rewrite_refs_urls(refs, rewrites)
+
+    refs[".zattrs"] = json.dumps(root_attrs)
 
     if ext == ".json":
         kerchunk = {"version": 1, "refs": refs}
@@ -783,17 +944,33 @@ def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segment
         )
 
 
-def write_tile_index(store, output: str, segments: list[str] | None = None) -> None:
+def write_tile_index(
+    store,
+    output: str,
+    segments: list[str] | None = None,
+    *,
+    template_base: str | None = None,
+    url_overrides: dict[str, str] | None = None,
+) -> None:
     """Write a tile index to JSON or Parquet with multi-range support.
 
     This is the recommended way to serialize a ``ManifestStore`` produced by
     :class:`OversightMLParser`.  It handles the multi-range reference entries
     that VirtualiZarr's built-in serialization does not support.
 
-    When the store was created with ``url=None`` (portable mode), the
-    serialized output includes a Kerchunk v1 ``"templates"`` dict with
-    ``{"base": ""}`` so that ``{{base}}`` placeholders in chunk reference
-    URLs can be resolved at read time via ``template_overrides``.
+    By default chunk references point at the URL the store was parsed from.
+    Relocating those references is a serialization-time concern controlled here:
+
+    - **Portable / relocatable index** — pass ``template_base="{{base}}"`` to
+      rewrite every chunk-reference URL to ``{{base}}<filename>`` and emit a
+      Kerchunk v1 ``"templates": {"base": ""}`` dict.  At read time the base is
+      supplied via ``template_overrides={"base": "s3://bucket/path/"}`` to
+      ``MultiReferenceFileSystem`` / ``ReferenceFileSystem``.
+    - **Explicit URL rewrite** — pass ``url_overrides={old_url: new_url}`` to
+      remap concrete URLs (e.g. index by reading a local copy, then point the
+      references at the ``s3://`` location the data will be served from).
+
+    ``template_base`` and ``url_overrides`` are mutually exclusive.
 
     Parameters
     ----------
@@ -805,35 +982,54 @@ def write_tile_index(store, output: str, segments: list[str] | None = None) -> N
     segments : list[str], optional
         Subgroup keys to include (e.g. ``["0", "2"]``).  If ``None``, all
         subgroups are included.
+    template_base : str, optional
+        When given (typically ``"{{base}}"``), produces a portable index whose
+        chunk-reference URLs are rewritten to ``template_base + basename``.
+    url_overrides : dict[str, str], optional
+        Explicit ``{concrete_url: replacement_url}`` rewrite applied to chunk
+        references and the root ``source`` attribute.
 
     Raises
     ------
     ValueError
-        If the output extension is not ``.json`` or ``.parquet``, or if
-        a requested segment is not found.
+        If the output extension is not ``.json`` or ``.parquet``, if a
+        requested segment is not found, or if both ``template_base`` and
+        ``url_overrides`` are given.
 
     Examples
     --------
-    Portable index (resolve URL at read time)::
+    Absolute URL index (references point at the parsed URL)::
 
-        parser = OversightMLParser(local_paths="local/image.ntf")
-        store = parser()  # no url — portable mode
+        parser = OversightMLParser()
+        store = parser("s3://my-bucket/imagery/image.ntf")
         write_tile_index(store, "image.tile_index.json")
 
-    Absolute URL index::
+    Portable index (resolve base URL at read time)::
 
-        parser = OversightMLParser(local_paths="local/image.ntf")
-        store = parser(url="s3://my-bucket/imagery/image.ntf")
-        write_tile_index(store, "image.tile_index.json")
+        parser = OversightMLParser()
+        store = parser("local/image.ntf")
+        write_tile_index(store, "image.tile_index.json", template_base="{{base}}")
+
+    Index a local copy, reference the remote location::
+
+        parser = OversightMLParser()
+        store = parser("local/image.ntf")
+        write_tile_index(
+            store, "image.tile_index.json",
+            url_overrides={os.path.abspath("local/image.ntf"): "s3://bucket/image.ntf"},
+        )
     """
     from pathlib import Path
 
+    if template_base is not None and url_overrides:
+        raise ValueError(
+            "template_base and url_overrides are mutually exclusive"
+        )
+
     ext = Path(output).suffix.lower()
     multi_range_refs = getattr(store, "multi_range_refs", {}) or {}
-    use_templates = getattr(store, "use_templates", False)
-    template_rewrites = getattr(store, "template_rewrites", {}) or {}
 
     _write_hierarchical_tile_index(
         store, output, ext, multi_range_refs, segments,
-        use_templates, template_rewrites,
+        template_base, url_overrides,
     )

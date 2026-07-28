@@ -113,18 +113,18 @@ impl J2KImageAssetProvider {
         }
     }
 
-    /// Returns a reference to the raw codestream bytes.
-    #[inline]
-    fn codestream(&self) -> &[u8] {
-        self.source_data.as_bytes()
-    }
-
     /// Ensure the tile-part offset table is populated, triggering a SOT scan if needed.
+    ///
+    /// The SOT scan reads across the whole codestream. For a `Remote` source the
+    /// bytes are fetched (via `try_slice`) rather than assumed resident; this
+    /// path only runs when a caller requests `tile_byte_ranges` (a bulk-read
+    /// optimization) and the header carried no TLM table.
     fn ensure_tile_part_table(&self) -> Result<&TilePartOffsetTable, CodecError> {
         if let Some(table) = self.tile_part_table.get() {
             return Ok(table);
         }
-        let table = scan_sot_markers(self.codestream(), self.first_sot_offset)?;
+        let codestream = self.source_data.try_slice(0..self.source_data.len())?;
+        let table = scan_sot_markers(codestream.as_bytes(), self.first_sot_offset)?;
         let _ = self.tile_part_table.set(table);
         Ok(self.tile_part_table.get().unwrap())
     }
@@ -211,9 +211,12 @@ impl ImageAssetProvider for J2KImageAssetProvider {
             resolution_level,
             region: None,
         };
+        // Decode via the buffer-backed entry point: for a `Remote` source the
+        // codec fetches only the codestream ranges this tile touches; for a
+        // resident source it is a zero-copy slice.
         let result = self
             .codec
-            .decode_tile(self.codestream(), tile_index, &params)?;
+            .decode_tile_source(&self.source_data, tile_index, &params)?;
 
         let bps = self.pixel_type.bytes_per_pixel();
         let band_size = (result.width * result.height) as usize * bps;

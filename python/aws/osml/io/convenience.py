@@ -148,6 +148,22 @@ def _is_file_like(obj: object) -> bool:
     )
 
 
+def _open_for_read(IO, path, format: str | None, filesystem: object | None):
+    """Open *path* for reading, forwarding *format* and *filesystem* to ``IO.open``.
+
+    Centralizes the keyword-argument assembly shared by :func:`imread`,
+    :func:`iminfo`, and :func:`tiles` so the ``format``/``filesystem`` handling
+    stays consistent. Only non-``None`` keywords are passed, preserving
+    ``IO.open``'s extension-based format detection and local-path defaults.
+    """
+    kwargs = {}
+    if format is not None:
+        kwargs["format"] = format
+    if filesystem is not None:
+        kwargs["filesystem"] = filesystem
+    return IO.open(path, "r", **kwargs)
+
+
 def _resolve_asset_key(dataset, asset: str | None) -> str:
     """Resolve the image asset key to use for reading.
 
@@ -303,6 +319,7 @@ def imread(
     resolution_level: int = 0,
     fill_value: int | float = 0,
     format: str | None = None,
+    filesystem: object | None = None,
 ) -> NDArray:
     """Read an image file (or a windowed region) as a NumPy array.
 
@@ -343,6 +360,12 @@ def imread(
         Explicit format string (e.g. ``"png"``, ``"nitf"``). Required
         when reading from a stream. If ``None`` and *path* is a string,
         the format is inferred from the file extension.
+    filesystem : fsspec.AbstractFileSystem or None
+        Optional fsspec filesystem instance to open *path* through, enabling
+        concurrent range reads over a remote object store. When ``None``, a
+        remote URL string (e.g. ``s3://bucket/key.tif``) is resolved to a
+        filesystem internally; local paths and streams are unaffected. Cannot
+        be combined with a file-like *path*.
 
     Returns
     -------
@@ -368,9 +391,7 @@ def imread(
             "(e.g., format='png')"
         )
 
-    open_args = (path, "r", format) if format is not None else (path, "r")
-
-    with IO.open(*open_args) as dataset:
+    with _open_for_read(IO, path, format, filesystem) as dataset:
         # Resolve which asset to read
         asset_key = _resolve_asset_key(dataset, asset)
         image_asset = dataset.get_asset(asset_key)
@@ -1145,6 +1166,7 @@ def iminfo(
     *,
     asset: str | None = None,
     format: str | None = None,
+    filesystem: object | None = None,
 ) -> ImageInfo:
     """Get image metadata without reading pixel data.
 
@@ -1165,6 +1187,12 @@ def iminfo(
         Explicit format string (e.g. ``"png"``, ``"nitf"``). Required
         when reading from a stream. If ``None`` and *path* is a string,
         the format is inferred from the file extension.
+    filesystem : fsspec.AbstractFileSystem or None
+        Optional fsspec filesystem instance to open *path* through, enabling
+        concurrent range reads over a remote object store. When ``None``, a
+        remote URL string (e.g. ``s3://bucket/key.tif``) is resolved to a
+        filesystem internally; local paths and streams are unaffected. Cannot
+        be combined with a file-like *path*.
 
     Returns
     -------
@@ -1191,9 +1219,7 @@ def iminfo(
             "(e.g., format='png')"
         )
 
-    open_args = (path, "r", format) if format is not None else (path, "r")
-
-    with IO.open(*open_args) as dataset:
+    with _open_for_read(IO, path, format, filesystem) as dataset:
         asset_key = _resolve_asset_key(dataset, asset)
         image_asset = dataset.get_asset(asset_key)
 
@@ -1227,6 +1253,7 @@ def tiles(
     resolution_level: int = 0,
     fill_value: int | float = 0,
     format: str | None = None,
+    filesystem: object | None = None,
 ) -> Iterator[Tile]:
     """Iterate over fixed-size tiles of an image.
 
@@ -1263,6 +1290,12 @@ def tiles(
         Explicit format string (e.g. ``"png"``, ``"nitf"``). Required
         when reading from a stream. If ``None`` and *path* is a string,
         the format is inferred from the file extension.
+    filesystem : fsspec.AbstractFileSystem or None
+        Optional fsspec filesystem instance to open *path* through, enabling
+        concurrent range reads over a remote object store. When ``None``, a
+        remote URL string (e.g. ``s3://bucket/key.tif``) is resolved to a
+        filesystem internally; local paths and streams are unaffected. Cannot
+        be combined with a file-like *path*.
 
     Yields
     ------
@@ -1304,9 +1337,7 @@ def tiles(
     stride_w = tile_w - overlap_w
     stride_h = tile_h - overlap_h
 
-    open_args = (path, "r", format) if format is not None else (path, "r")
-
-    with IO.open(*open_args) as dataset:
+    with _open_for_read(IO, path, format, filesystem) as dataset:
         # Resolve which asset to read
         asset_key = _resolve_asset_key(dataset, asset)
         image_asset = dataset.get_asset(asset_key)

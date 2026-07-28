@@ -316,6 +316,62 @@ pub fn parse_main_header(codestream: &[u8]) -> Result<MainHeaderInfo, CodecError
     })
 }
 
+/// Whether a prefix of a codestream contains the complete main header.
+///
+/// Used to size the header region materialized before [`parse_main_header`]:
+/// scanning stops at the first SOT (main header complete) or when a marker
+/// segment's declared length runs past the prefix (need more bytes). It never
+/// errors — a malformed codestream is left for `parse_main_header` to report.
+#[derive(Debug, PartialEq, Eq)]
+pub enum MainHeaderExtent {
+    /// The first SOT was found at this offset; the main header is fully present.
+    Complete(usize),
+    /// The scan reached the end of the prefix without finding SOT; a larger
+    /// region is needed to contain the full main header.
+    Truncated,
+}
+
+/// Scan `prefix` (a leading slice of a codestream) to determine whether it holds
+/// the complete main header (SOC .. first SOT).
+///
+/// Mirrors the marker walk in [`parse_main_header`] but does no allocation and
+/// returns [`MainHeaderExtent::Truncated`] instead of erroring when a segment
+/// extends past `prefix`. A prefix too short to even validate SOC/SIZ is treated
+/// as `Truncated` (grow and retry); genuine format errors surface later from
+/// `parse_main_header` on the grown region.
+pub fn main_header_extent(prefix: &[u8]) -> MainHeaderExtent {
+    if prefix.len() < 4 || read_u16(prefix, 0) != marker_codes::SOC {
+        // Can't even see SOC+SIZ marker code yet; ask for more.
+        return MainHeaderExtent::Truncated;
+    }
+
+    let mut pos: usize = 2; // past SOC
+    while pos + 2 <= prefix.len() {
+        let marker = read_u16(prefix, pos);
+        if marker == marker_codes::SOT {
+            return MainHeaderExtent::Complete(pos);
+        }
+
+        // Delimiter markers with no length field (EPH, reserved 0x30–0x3F).
+        let second_byte = (marker & 0xFF) as u8;
+        if second_byte == 0x92 || (0x30..=0x3F).contains(&second_byte) {
+            pos += 2;
+            continue;
+        }
+
+        if pos + 4 > prefix.len() {
+            return MainHeaderExtent::Truncated;
+        }
+        let marker_length = read_u16(prefix, pos + 2) as usize;
+        let segment_total = 2 + marker_length;
+        if pos + segment_total > prefix.len() {
+            return MainHeaderExtent::Truncated;
+        }
+        pos += segment_total;
+    }
+    MainHeaderExtent::Truncated
+}
+
 /// Build a tile-part offset table by scanning SOT markers in the codestream.
 ///
 /// Starts scanning from `first_sot_offset` and reads each SOT marker to
@@ -517,17 +573,37 @@ pub fn build_minimal_codestream(
     tile_parts: &[(u64, u64)],
     codestream: &[u8],
 ) -> Vec<u8> {
+    // Resolve each (offset, length) into the tile-part byte slice, dropping any
+    // range that falls outside the codestream (matching the prior behavior, where
+    // an out-of-range first part yielded `isot = None` and out-of-range parts were
+    // simply not copied — an out-of-range slice would have panicked, so callers
+    // only ever pass in-range parts).
+    let part_slices: Vec<&[u8]> = tile_parts
+        .iter()
+        .filter_map(|&(offset, length)| {
+            let start = offset as usize;
+            let end = start + length as usize;
+            codestream.get(start..end)
+        })
+        .collect();
+    build_minimal_codestream_from_parts(decode_header, &part_slices)
+}
+
+/// Construct a minimal single-tile codestream from tile-part byte slices.
+///
+/// Identical to [`build_minimal_codestream`] but takes the tile-part *bytes*
+/// directly rather than `(offset, length)` pairs into a whole codestream. This
+/// is the seam a `Remote` decoder uses: it fetches only the target tile's
+/// byte ranges (via `OwnedBuffer::read_range`) and hands the resulting slices
+/// here, so the whole codestream never needs to be resident.
+///
+/// # Arguments
+/// * `decode_header` - Main header with TLM markers stripped
+/// * `tile_parts` - The tile-part byte slices, in order (SOT .. end of part)
+pub fn build_minimal_codestream_from_parts(decode_header: &[u8], tile_parts: &[&[u8]]) -> Vec<u8> {
     // Extract the original tile index from the first tile-part before patching.
     // This is needed to compute actual edge tile dimensions for SIZ rewrite.
-    let isot = tile_parts.first().and_then(|&(offset, length)| {
-        let start = offset as usize;
-        let end = start + length as usize;
-        if end <= codestream.len() {
-            extract_isot(&codestream[start..end])
-        } else {
-            None
-        }
-    });
+    let isot = tile_parts.first().and_then(|part| extract_isot(part));
 
     // Rewrite SIZ to describe a single-tile image with the actual tile dimensions.
     // For interior tiles this is a no-op; for edge tiles it fixes the decode.
@@ -536,14 +612,11 @@ pub fn build_minimal_codestream(
         None => decode_header.to_vec(),
     };
 
-    let total_tile_bytes: u64 = tile_parts.iter().map(|(_, len)| len).sum();
-    let capacity = header.len() + total_tile_bytes as usize + 2; // +2 for EOC
+    let total_tile_bytes: usize = tile_parts.iter().map(|p| p.len()).sum();
+    let capacity = header.len() + total_tile_bytes + 2; // +2 for EOC
     let mut out = Vec::with_capacity(capacity);
     out.extend_from_slice(&header);
-    for &(offset, length) in tile_parts {
-        let start = offset as usize;
-        let end = start + length as usize;
-        let tile_part = &codestream[start..end];
+    for tile_part in tile_parts {
         // Patch SOT marker: set Isot (bytes 4-5) to 0 so OpenJPEG sees tile_index=0.
         // SOT layout: marker(2) + Lsot(2) + Isot(2) + Psot(4) + TPsot(1) + TNsot(1)
         if tile_part.len() >= 6 && tile_part[0] == 0xFF && tile_part[1] == 0x90 {
@@ -644,6 +717,46 @@ mod tests {
         cs.extend_from_slice(&[0u8; 4]); // only 4 bytes of body
         let err = parse_main_header(&cs).unwrap_err();
         assert!(err.to_string().contains("extends beyond codestream"));
+    }
+
+    #[test]
+    fn test_main_header_extent_complete() {
+        // A full codestream (SOC..SOT) reports Complete at the SOT offset.
+        let cs = build_codestream(&[(marker_codes::COD, &[0u8; 4])]);
+        let info = parse_main_header(&cs).unwrap();
+        assert_eq!(
+            main_header_extent(&cs),
+            MainHeaderExtent::Complete(info.first_sot_offset as usize)
+        );
+    }
+
+    #[test]
+    fn test_main_header_extent_truncated_prefix() {
+        // A prefix that stops mid-main-header (before SOT) reports Truncated,
+        // instead of erroring the way parse_main_header would.
+        let cs = build_codestream(&[(marker_codes::COD, &[0u8; 4])]);
+        let sot_off = parse_main_header(&cs).unwrap().first_sot_offset as usize;
+        // Cut off a few bytes before the SOT so the scan can't reach it.
+        let prefix = &cs[..sot_off.saturating_sub(2)];
+        assert_eq!(main_header_extent(prefix), MainHeaderExtent::Truncated);
+    }
+
+    #[test]
+    fn test_main_header_extent_truncated_mid_segment() {
+        // A prefix that ends inside a marker segment's declared length is
+        // Truncated (the segment "extends beyond" the prefix).
+        let mut cs = Vec::new();
+        cs.extend_from_slice(&marker_codes::SOC.to_be_bytes());
+        cs.extend_from_slice(&marker_codes::SIZ.to_be_bytes());
+        cs.extend_from_slice(&100u16.to_be_bytes()); // declares a large body
+        cs.extend_from_slice(&[0u8; 4]); // but only 4 bytes present
+        assert_eq!(main_header_extent(&cs), MainHeaderExtent::Truncated);
+    }
+
+    #[test]
+    fn test_main_header_extent_too_short_for_soc() {
+        assert_eq!(main_header_extent(&[0xFF]), MainHeaderExtent::Truncated);
+        assert_eq!(main_header_extent(&[]), MainHeaderExtent::Truncated);
     }
 
     #[test]

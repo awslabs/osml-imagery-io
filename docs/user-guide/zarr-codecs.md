@@ -381,7 +381,7 @@ exactly two elements — the spatial Y and X axes. The bands axis is not include
 ```{note}
 The GeoZarr effort also defines `proj:` (CRS information) and `spatial:`
 (affine transforms, bounding boxes) conventions. These are not yet implemented
-in this library and are planned for a future phase. When added, their entries
+in this library but are planned. When added, their entries
 will appear in the `zarr_conventions` array alongside the multiscales entry.
 ```
 
@@ -490,8 +490,8 @@ provides one URL per file.
 decoding at multiple resolution levels through wavelet decomposition. In the
 current implementation, the parser does not auto-expand these into pyramid
 levels — only explicitly provided assets (COG overview IFDs or R-set files)
-produce a hierarchy. Auto-expansion of J2K resolution levels is planned for a
-future phase, where each level would use the same codec with a different
+produce a hierarchy. Auto-expansion of J2K resolution levels is planned,
+where each level would use the same codec with a different
 `resolution_level` parameter and reference only the tile-part byte ranges needed
 for that level.
 
@@ -525,12 +525,13 @@ support natively.
 ```python
 from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
-# Generate a portable index — no URL needed at index time
-parser = OversightMLParser(local_paths="local/image.ntf")
-store = parser()
+# Index a local copy
+parser = OversightMLParser()
+store = parser("local/image.ntf")
 
-# Serialize as Kerchunk JSON (or .parquet) with multi-range support
-write_tile_index(store, "image.ntf.tile_index.json")
+# Serialize a portable index — chunk refs use {{base}}filename, resolved at
+# read time via template_overrides (Kerchunk JSON or .parquet, multi-range aware)
+write_tile_index(store, "image.ntf.tile_index.json", template_base="{{base}}")
 ```
 
 Upload both the image and the index to S3:
@@ -547,11 +548,23 @@ s3.upload_file(
 )
 ```
 
-If you already know the final S3 location at index time, you can pass `url`
-directly and skip `template_overrides` at read time:
+If you already know the final S3 location at index time, rewrite the references
+to it with `url_overrides` and skip `template_overrides` at read time:
 
 ```python
-store = parser(url="s3://my-bucket/imagery/image.ntf")
+import os
+
+write_tile_index(
+    store, "image.ntf.tile_index.json",
+    url_overrides={os.path.abspath("local/image.ntf"): "s3://my-bucket/imagery/image.ntf"},
+)
+```
+
+Or index the remote file directly (range reads, no local copy needed):
+
+```python
+store = OversightMLParser()("s3://my-bucket/imagery/image.ntf")
+write_tile_index(store, "image.ntf.tile_index.json")
 ```
 
 ### Step 2: Open and access tiles
@@ -619,27 +632,24 @@ of them at read time (assuming the files are co-located).
 from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
 # A COG with embedded overviews — single file, portable index
-parser = OversightMLParser(local_paths="local/image.tif")
-store = parser()
-write_tile_index(store, "image.tif.tile_index.json")
+parser = OversightMLParser()
+store = parser("local/image.tif")
+write_tile_index(store, "image.tif.tile_index.json", template_base="{{base}}")
 ```
 
 For a COG with two overview levels, the resulting JSON contains subgroups `"0"`
 (full resolution), `"1"` (first overview), and `"2"` (second overview). All
 chunk references point to byte ranges within the same file.
 
-The same workflow works for multi-file NITF R-set pyramids. Pass multiple paths
-and the index will contain `{{base}}image.ntf`, `{{base}}image.ntf.r1`, etc.:
+The same workflow works for multi-file NITF R-set pyramids. The parser discovers
+the `.r1`/`.r2`/… companions from the base path automatically, and the index will
+contain `{{base}}image.ntf`, `{{base}}image.ntf.r1`, etc.:
 
 ```python
-# Multi-file NITF pyramid (R-set convention)
-parser = OversightMLParser(local_paths=[
-    "local/image.ntf",
-    "local/image.ntf.r1",
-    "local/image.ntf.r2",
-])
-store = parser()
-write_tile_index(store, "image.ntf.tile_index.json")
+# Multi-file NITF pyramid (R-set convention) — companions auto-discovered
+parser = OversightMLParser()
+store = parser("local/image.ntf")  # local/image.ntf.r1, .r2 discovered alongside
+write_tile_index(store, "image.ntf.tile_index.json", template_base="{{base}}")
 ```
 
 ### Step 2: Open the pyramid and read tiles at different levels

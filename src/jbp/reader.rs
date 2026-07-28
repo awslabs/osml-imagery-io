@@ -96,10 +96,30 @@ impl JBPDatasetReader {
         options: JBPReaderOptions,
     ) -> Result<Self, CodecError> {
         let mut warnings = Vec::new();
-        let data = buffer.as_bytes();
+
+        // NITF is a block-capable, multi-GB-tiled format: only the file header
+        // (magic, security fields, FL, HL, and the segment-info arrays) is needed
+        // at construction — the image/text/DES segments are materialized later, on
+        // demand, by the asset providers. The whole file header is contained in the
+        // first `HL` bytes, and `HL` itself sits early (before the segment-info
+        // arrays). So we read a bounded prefix, parse `HL`, then ensure we hold
+        // exactly `0..HL`, re-fetching only if `HL` exceeds the prefix. This keeps
+        // remote index construction cheap (a few bounded range reads) instead of a
+        // whole-file download. `buffer.len()` is the total source size, available
+        // without fetching.
+        let total_len = buffer.len();
+
+        // A conservative header prefix. HL sits within the first few hundred bytes;
+        // the segment-info arrays that `from_header` reads extend to HL. This
+        // matches the IO layer's default remote header-region hint, so on a
+        // `Remote` backing the eager prefetch and this read coalesce into one fetch.
+        const HEADER_PROBE: usize = 64 * 1024;
+        let probe_len = HEADER_PROBE.min(total_len);
+        let probe = buffer.try_slice(0..probe_len)?;
+        let probe_data = probe.as_bytes();
 
         // Validate magic number and detect format
-        let format = validate_nitf_magic(data)?;
+        let format = validate_nitf_magic(probe_data)?;
 
         // Create structure registry for all NITF structure definitions
         // All definitions are loaded from KSY files in data/structures/
@@ -116,48 +136,62 @@ impl JBPDatasetReader {
                     ))
                 })?;
 
-        // Parse file header to get segment offsets
-        let accessor =
-            StructureAccessor::new(file_header_definition.clone(), data).map_err(|e| {
-                JBPError::ValidationError {
+        // Read HL from the probe (HL precedes the segment-info arrays, so the
+        // probe always covers it).
+        let header_length = {
+            let probe_accessor = StructureAccessor::new(file_header_definition.clone(), probe_data)
+                .map_err(|e| JBPError::ValidationError {
                     message: format!("Failed to create header accessor: {}", e),
-                }
+                })?;
+            probe_accessor
+                .get("HL")
+                .map_err(|e| JBPError::ValidationError {
+                    message: format!("Failed to read HL field: {}", e),
+                })?
+                .as_u64()
+                .map_err(|e| JBPError::ValidationError {
+                    message: format!("Failed to parse HL as u64: {}", e),
+                })? as usize
+        };
+
+        // Ensure we hold the full file header (`0..HL`). If it fits within the
+        // probe we already have it (zero-copy narrow); otherwise fetch it once.
+        let header_buf = if header_length <= probe_len {
+            probe.subview(0..header_length)
+        } else {
+            buffer.try_slice(0..header_length)?
+        };
+        let header_data = header_buf.as_bytes();
+
+        // Parse the full file header over the resident header bytes.
+        let accessor = StructureAccessor::new(file_header_definition.clone(), header_data)
+            .map_err(|e| JBPError::ValidationError {
+                message: format!("Failed to create header accessor: {}", e),
             })?;
 
         // Validate CLEVEL
         Self::validate_clevel(&accessor, &mut warnings);
 
-        // Get header length
-        let header_length = accessor
-            .get("HL")
-            .map_err(|e| JBPError::ValidationError {
-                message: format!("Failed to read HL field: {}", e),
-            })?
-            .as_u64()
-            .map_err(|e| JBPError::ValidationError {
-                message: format!("Failed to parse HL as u64: {}", e),
-            })? as usize;
-
         // Calculate segment offsets. The closure is only called for legacy
         // streaming-mode files that use all-9s sentinel values in segment length
         // fields — it provides the actual file size so the sentinel can be resolved
         // to a real byte count. For normal files the closure is never invoked.
-        let data_len = data.len() as u64;
+        let data_len = total_len as u64;
         let segment_offsets = SegmentOffsets::from_header(&accessor, || data_len)?;
 
         // Validate segment counts
         Self::validate_segment_counts(&accessor, &segment_offsets, &mut warnings)?;
 
-        // Create file metadata provider (zero-copy slice of header)
-        let raw_header_bytes = buffer.slice(0..header_length);
+        // Create file metadata provider (resident header bytes). Clone is O(1)
+        // (refcount) and keeps `header_buf` borrowable by `accessor` below.
         let file_metadata = Arc::new(JBPFileMetadataProvider::from_definition(
             file_header_definition.clone(),
-            raw_header_bytes,
+            header_buf.clone(),
         ));
 
         // Validate file length if enabled
         if options.validate_file_length {
-            Self::validate_file_length(&accessor, &segment_offsets, data.len(), &mut warnings);
+            Self::validate_file_length(&accessor, &segment_offsets, total_len, &mut warnings);
         }
 
         Ok(Self {
@@ -701,7 +735,7 @@ impl JBPDatasetReader {
                         if let Ok(overflow_tres) = overflow::fetch_overflow_tres(
                             udofl,
                             &self.segment_offsets.des,
-                            self.source_data.as_bytes(),
+                            &self.source_data,
                         ) {
                             tre_envelopes.extend(overflow_tres);
                         }
@@ -712,7 +746,7 @@ impl JBPDatasetReader {
                         if let Ok(overflow_tres) = overflow::fetch_overflow_tres(
                             ixsofl,
                             &self.segment_offsets.des,
-                            self.source_data.as_bytes(),
+                            &self.source_data,
                         ) {
                             tre_envelopes.extend(overflow_tres);
                         }
@@ -756,7 +790,7 @@ impl JBPDatasetReader {
                         if let Ok(overflow_tres) = overflow::fetch_overflow_tres(
                             sxsofl,
                             &self.segment_offsets.des,
-                            self.source_data.as_bytes(),
+                            &self.source_data,
                         ) {
                             tre_envelopes.extend(overflow_tres);
                         }
@@ -800,7 +834,7 @@ impl JBPDatasetReader {
                         if let Ok(overflow_tres) = overflow::fetch_overflow_tres(
                             txsofl,
                             &self.segment_offsets.des,
-                            self.source_data.as_bytes(),
+                            &self.source_data,
                         ) {
                             tre_envelopes.extend(overflow_tres);
                         }
@@ -1573,6 +1607,119 @@ mod tests {
         assert_eq!(offsets.text.len(), 1);
         assert_eq!(offsets.des.len(), 0);
         assert_eq!(offsets.res.len(), 0);
+    }
+}
+
+/// Remote-backing tests: prove `JBPDatasetReader` constructs and
+/// decodes over a `Remote` `OwnedBuffer` without downloading the whole file.
+///
+/// These use the real NC unit file and a `FakeReader` (an in-memory
+/// `RangeReader` with an `(offset, len)` fetch log). The key assertions are that
+/// header parse + block decode produce byte-identical output to the resident
+/// path, and that no single fetch ever covers the whole file — the tripwire that
+/// catches a regression back to a full-buffer `as_bytes()`.
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+    use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+    use std::path::Path;
+
+    const NC_UNIT_FILE: &str = "data/unit/nitf21-256x256-3band-8bit-nc.ntf";
+
+    /// Shared `(offset, len)` fetch log produced by the fake reader.
+    type FetchLog = std::sync::Arc<std::sync::Mutex<Vec<(u64, usize)>>>;
+
+    /// Build a `Remote` `OwnedBuffer` over `data` plus a handle to the fetch log.
+    /// A 64 KiB header prefetch mirrors the IO layer's NITF hint.
+    fn remote_buffer(data: &[u8]) -> (OwnedBuffer, FetchLog) {
+        let reader = FakeReader::new(data.to_vec());
+        let log = reader.log_handle();
+        let fetcher = StreamFetcher::with_policy(
+            Box::new(reader),
+            Box::new(HeaderAwarePolicy::new(64 * 1024)),
+        );
+        (OwnedBuffer::from_remote(fetcher), log)
+    }
+
+    fn read_nc_file() -> Option<Vec<u8>> {
+        let path = Path::new(NC_UNIT_FILE);
+        if !path.exists() {
+            eprintln!("skipping: {} not found", NC_UNIT_FILE);
+            return None;
+        }
+        std::fs::read(path).ok()
+    }
+
+    #[test]
+    fn remote_construction_is_bounded_and_metadata_matches() {
+        let Some(bytes) = read_nc_file() else { return };
+        let file_len = bytes.len();
+
+        let (remote, log) = remote_buffer(&bytes);
+        let reader = JBPDatasetReader::from_buffer(remote).expect("remote JBP construction");
+
+        // Construction must not have pulled the whole file in one shot.
+        let calls = log.lock().unwrap().clone();
+        assert!(
+            !calls.is_empty(),
+            "expected at least one bounded header fetch"
+        );
+        assert!(
+            calls.iter().all(|&(_, len)| len < file_len),
+            "a single construction fetch covered the whole file: {:?}",
+            calls
+        );
+
+        // Asset keys + dimensions match the resident reader.
+        let resident = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes.clone())).unwrap();
+        assert_eq!(
+            reader.get_asset_keys(None, None),
+            resident.get_asset_keys(None, None)
+        );
+    }
+
+    #[test]
+    fn remote_nc_block_decode_matches_resident() {
+        let Some(bytes) = read_nc_file() else { return };
+        let file_len = bytes.len();
+
+        let (remote, log) = remote_buffer(&bytes);
+        let reader = JBPDatasetReader::from_buffer(remote).unwrap();
+        let key = reader
+            .get_asset_keys(Some(AssetType::Image), None)
+            .into_iter()
+            .next()
+            .expect("an image asset");
+        let asset = reader.get_asset(&key).unwrap();
+        let image = asset.as_image().expect("image variant");
+        let (remote_px, remote_shape) = image.get_block(0, 0, 0, None).expect("remote get_block");
+
+        // Resident reference.
+        let resident = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes.clone())).unwrap();
+        let r_asset = resident.get_asset(&key).unwrap();
+        let r_image = r_asset.as_image().unwrap();
+        let (res_px, res_shape) = r_image.get_block(0, 0, 0, None).unwrap();
+
+        assert_eq!(remote_shape, res_shape);
+        assert_eq!(remote_px, res_px, "remote NC pixels differ from resident");
+
+        // Note: this unit file is a *single* 256×256 block covering the whole
+        // image, so decoding that one block legitimately materializes all image
+        // bytes — "never fetch the whole file" is a multi-block property (proven by
+        // the `nc_decoder` remote tests with synthetic multi-block data) and a
+        // construction-path property (proven above), not a single-block one. Here
+        // we assert only correctness (byte-identity to the resident decode). Guard
+        // against a pathological re-read that exceeds the file, though.
+        let calls = log.lock().unwrap().clone();
+        let total: usize = calls.iter().map(|&(_, len)| len).sum();
+        let _ = file_len; // total fetched may approach file size for a single block
+        assert!(
+            total <= file_len + 64 * 1024,
+            "fetched {} bytes for a {}-byte file (excess re-reads): {:?}",
+            total,
+            file_len,
+            calls
+        );
     }
 }
 

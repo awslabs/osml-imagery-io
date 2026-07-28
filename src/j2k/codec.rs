@@ -280,6 +280,28 @@ pub trait J2KCodec: Send + Sync {
         tile_index: u32,
         params: &J2KDecodeParams,
     ) -> Result<J2KDecodeResult, CodecError>;
+
+    /// Decode a single tile from a codestream held in an [`OwnedBuffer`], which
+    /// may be a `Remote` (fetch-on-demand) source.
+    ///
+    /// This is the always-works entry point for remote decode: a codec that can
+    /// drive its own byte-range access (e.g. via the OpenJPEG stream callbacks)
+    /// materializes only the codestream ranges it touches — never the whole file
+    /// — with no reliance on parsed tile-part metadata.
+    ///
+    /// The default implementation materializes the entire codestream via
+    /// [`OwnedBuffer::try_slice`] and delegates to [`decode_tile`](Self::decode_tile),
+    /// preserving behavior for codecs (and test mocks) that only accept a slice.
+    /// `OpenJpegCodec` overrides it with a streaming implementation.
+    fn decode_tile_source(
+        &self,
+        source: &crate::owned_buffer::OwnedBuffer,
+        tile_index: u32,
+        params: &J2KDecodeParams,
+    ) -> Result<J2KDecodeResult, CodecError> {
+        let resident = source.try_slice(0..source.len())?;
+        self.decode_tile(resident.as_bytes(), tile_index, params)
+    }
 }
 
 #[cfg(test)]

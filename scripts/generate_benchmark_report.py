@@ -130,13 +130,20 @@ def _extract_operation(name: str) -> str:
 
 _ACCESS_PATTERNS = frozenset({"single_tile", "small_roi", "large_roi"})
 
+# Backend/source suffixes that may trail a benchmark label. ``local``/``s3`` are
+# the Zarr-read backends; ``virtual`` is the Remote-OwnedBuffer range-read source
+# dimension added to the IO/metadata/index-gen benchmarks (bytes flow through a
+# Python file-like handle — BytesIO / fsspec — rather than direct disk access).
+_BACKEND_SUFFIXES = frozenset({"local", "s3", "virtual"})
+
 
 def _extract_access_pattern(name: str) -> str | None:
     """Extract access pattern from benchmark name if present.
 
     Handles two ID formats:
     - Zarr: ``test_bench_zarr_read[WV Pan J2K-single_tile-local]``
-    - Native: ``test_bench_native_read[WV Pan J2K-single_tile]``
+    - IO: ``test_bench_io_read[WV Pan J2K-single_tile-virtual]``
+      (and, historically, the backend-less ``WV Pan J2K-single_tile``)
 
     Returns:
         A human-readable access pattern string (e.g. ``"single tile"``),
@@ -148,7 +155,7 @@ def _extract_access_pattern(name: str) -> str | None:
 
     # Try 3-segment format first: label-pattern-backend
     rest, last = label.rsplit("-", 1)
-    if last in ("local", "s3") and "-" in rest:
+    if last in _BACKEND_SUFFIXES and "-" in rest:
         _dataset, pattern = rest.rsplit("-", 1)
         if pattern in _ACCESS_PATTERNS:
             return pattern.replace("_", " ")
@@ -164,6 +171,7 @@ def _extract_access_pattern(name: str) -> str | None:
 def _strip_access_suffixes(label: str) -> str:
     """Strip access pattern and optional backend suffix from a dataset label.
 
+    ``"WV Pan J2K-single_tile-virtual"`` → ``"WV Pan J2K"``
     ``"WV Pan J2K-single_tile-local"`` → ``"WV Pan J2K"``
     ``"WV Pan J2K-single_tile"`` → ``"WV Pan J2K"``
     """
@@ -172,7 +180,7 @@ def _strip_access_suffixes(label: str) -> str:
 
     # Try 3-segment: strip backend then pattern
     rest, last = label.rsplit("-", 1)
-    if last in ("local", "s3") and "-" in rest:
+    if last in _BACKEND_SUFFIXES and "-" in rest:
         maybe_dataset, pattern = rest.rsplit("-", 1)
         if pattern in _ACCESS_PATTERNS:
             return maybe_dataset
@@ -183,6 +191,54 @@ def _strip_access_suffixes(label: str) -> str:
         return maybe_dataset
 
     return label
+
+
+def _strip_source_suffix(label: str) -> str:
+    """Strip a trailing recognized source suffix from a dataset label.
+
+    ``"Synth Medium C8-virtual"`` → ``"Synth Medium C8"``.  Used for the
+    metadata/index-gen groups whose ids are ``dataset-source`` with no access
+    pattern (unlike the tile-read ids handled by ``_strip_access_suffixes``).
+    """
+    if "-" not in label:
+        return label
+    rest, last = label.rsplit("-", 1)
+    return rest if last in _BACKEND_SUFFIXES else label
+
+
+def _clean_dataset(label: str) -> str:
+    """Strip access-pattern and/or trailing source suffixes from a label.
+
+    Strips an access pattern (and its trailing backend) first, then any bare
+    trailing source suffix left on ids that carry no access pattern — so the
+    Dataset cell shows only the dataset name for every id shape.
+    """
+    return _strip_source_suffix(_strip_access_suffixes(label))
+
+
+def _extract_source(entry: dict) -> str | None:
+    """Return the source/backend dimension for a benchmark entry, or ``None``.
+
+    Prefers the explicit ``extra_info.source_mode`` recorded by the
+    IO/metadata/index-gen benchmarks (``"local"`` / ``"virtual"``); falls back
+    to a recognized trailing suffix on the benchmark id (``-local`` / ``-virtual``
+    / ``-s3``).  Returns ``None`` when the entry carries no source dimension.
+    """
+    source = entry.get("extra_info", {}).get("source_mode")
+    if source:
+        return source
+
+    label = _extract_dataset_label(entry.get("name", ""))
+    if "-" not in label:
+        return None
+    _rest, last = label.rsplit("-", 1)
+    return last if last in _BACKEND_SUFFIXES else None
+
+
+def _extract_fetch_fraction(entry: dict) -> float | None:
+    """Return the remote ``fetch_fraction`` from ``extra_info`` if present."""
+    frac = entry.get("extra_info", {}).get("fetch_fraction")
+    return float(frac) if isinstance(frac, (int, float)) else None
 
 
 def group_benchmarks(benchmarks: list[dict]) -> dict[str, list[dict]]:
@@ -200,58 +256,75 @@ def group_benchmarks(benchmarks: list[dict]) -> dict[str, list[dict]]:
 def generate_table(entries: list[dict], group_name: str = "") -> str:
     """Generate a MyST-compatible Markdown table for a list of benchmark entries.
 
-    When *group_name* contains ``tile_read``, an extra **Access Pattern** column
-    is inserted between Dataset and Min.  For all other groups the original
-    eight-column format is preserved unchanged.
+    Columns are added on demand so each group shows only what it carries:
+
+    - **Access Pattern** — when *group_name* contains ``tile_read``.
+    - **Source** — when the group mixes ≥2 source dimensions in one group
+      (e.g. the IO/metadata/index-gen benchmarks that parametrize
+      ``local`` and ``virtual`` together). Groups with a single source — such as
+      the per-backend Zarr groups (``tile_read_zarr_local`` /
+      ``tile_read_zarr_s3``), whose group name already carries the backend —
+      omit it, preserving the original layout.
+    - **Fetch %** — when any entry records a ``fetch_fraction``; blank for
+      direct-access (``local``) rows. Surfaces the range-read reduction the
+      ``virtual`` / ``s3`` runs measure (bytes fetched ÷ file size).
     """
     is_tile_read = "tile_read" in group_name
 
+    sources = {s for e in entries if (s := _extract_source(e)) is not None}
+    show_source = len(sources) >= 2
+    show_fetch = any(_extract_fetch_fraction(e) is not None for e in entries)
+
+    headers = ["Operation", "Dataset"]
     if is_tile_read:
-        header = "| Operation | Dataset | Access Pattern | Min | Max | Mean | Median | StdDev | Rounds |"
-        separator = "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
-    else:
-        header = "| Operation | Dataset | Min | Max | Mean | Median | StdDev | Rounds |"
-        separator = "| --- | --- | --- | --- | --- | --- | --- | --- |"
+        headers.append("Access Pattern")
+    if show_source:
+        headers.append("Source")
+    if show_fetch:
+        headers.append("Fetch %")
+    headers += ["Min", "Max", "Mean", "Median", "StdDev", "Rounds"]
 
-    rows = [header, separator]
+    rows = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
 
-    sorted_entries = sorted(entries, key=lambda e: e.get("stats", {}).get("mean", 0))
+    # Sort by (dataset, access pattern, source, mean) so local/remote pairs for
+    # the same dataset sit next to each other rather than interleaving by time.
+    def _sort_key(e: dict) -> tuple:
+        label = _extract_dataset_label(e.get("name", ""))
+        return (
+            _clean_dataset(label),
+            _extract_access_pattern(e.get("name", "")) or "",
+            _extract_source(e) or "",
+            e.get("stats", {}).get("mean", 0),
+        )
 
-    for entry in sorted_entries:
+    for entry in sorted(entries, key=_sort_key):
         name = entry.get("name", "")
         stats = entry.get("stats", {})
-        operation = _extract_operation(name)
         label = _extract_dataset_label(name)
 
-        if is_tile_read:
-            access_pattern = _extract_access_pattern(name) or ""
-            # Strip access-pattern and backend suffixes from the label so only
-            # the dataset name is shown (e.g. "WV Pan J2K" instead of
-            # "WV Pan J2K-single_tile-local").
-            dataset = _strip_access_suffixes(label)
-            row = (
-                f"| {operation} "
-                f"| {dataset} "
-                f"| {access_pattern} "
-                f"| {format_time(stats.get('min', 0))} "
-                f"| {format_time(stats.get('max', 0))} "
-                f"| {format_time(stats.get('mean', 0))} "
-                f"| {format_time(stats.get('median', 0))} "
-                f"| {format_time(stats.get('stddev', 0))} "
-                f"| {stats.get('rounds', 0)} |"
-            )
+        cells = [_extract_operation(name)]
+        # Strip access-pattern/backend suffixes from the label whenever the group
+        # surfaces those as their own columns, so the Dataset cell stays clean.
+        if is_tile_read or show_source:
+            cells.append(_clean_dataset(label))
         else:
-            row = (
-                f"| {operation} "
-                f"| {label} "
-                f"| {format_time(stats.get('min', 0))} "
-                f"| {format_time(stats.get('max', 0))} "
-                f"| {format_time(stats.get('mean', 0))} "
-                f"| {format_time(stats.get('median', 0))} "
-                f"| {format_time(stats.get('stddev', 0))} "
-                f"| {stats.get('rounds', 0)} |"
-            )
-        rows.append(row)
+            cells.append(label)
+        if is_tile_read:
+            cells.append(_extract_access_pattern(name) or "")
+        if show_source:
+            cells.append(_extract_source(entry) or "")
+        if show_fetch:
+            frac = _extract_fetch_fraction(entry)
+            cells.append(f"{frac * 100:.1f}" if frac is not None else "")
+        cells += [
+            format_time(stats.get("min", 0)),
+            format_time(stats.get("max", 0)),
+            format_time(stats.get("mean", 0)),
+            format_time(stats.get("median", 0)),
+            format_time(stats.get("stddev", 0)),
+            str(stats.get("rounds", 0)),
+        ]
+        rows.append("| " + " | ".join(cells) + " |")
 
     return "\n".join(rows) + "\n\nAll times in milliseconds (ms)."
 
@@ -260,9 +333,9 @@ def generate_table(entries: list[dict], group_name: str = "") -> str:
 # Comparison summary
 # ---------------------------------------------------------------------------
 
-_READ_GROUPS = ("tile_read_native", "tile_read_zarr_local", "tile_read_zarr_s3")
+_READ_GROUPS = ("tile_read_io", "tile_read_zarr_local", "tile_read_zarr_s3")
 _GROUP_LABELS = {
-    "tile_read_native": "Native",
+    "tile_read_io": "IO",
     "tile_read_zarr_local": "Zarr Local",
     "tile_read_zarr_s3": "Zarr S3",
 }
@@ -271,48 +344,70 @@ _GROUP_LABELS = {
 def _comparison_key(entry: dict) -> tuple[str, str]:
     """Return (dataset, access_pattern) for a tile-read benchmark entry."""
     name = entry.get("name", "")
-    dataset = _strip_access_suffixes(_extract_dataset_label(name))
+    dataset = _clean_dataset(_extract_dataset_label(name))
     pattern = _extract_access_pattern(name) or ""
     return (dataset, pattern)
 
 
-def generate_comparison_table(groups: dict[str, list[dict]]) -> str | None:
-    """Build a side-by-side comparison of mean times across read groups.
+# Order sources deterministically within a group's columns: the IO-abstraction
+# cost ladder — direct disk access → virtualized (Python file-like) IO → network.
+_SOURCE_ORDER = {"local": 0, "virtual": 1, "s3": 2}
 
-    Returns a Markdown table string, or ``None`` if fewer than two read
-    groups are present.
+
+def generate_comparison_table(groups: dict[str, list[dict]]) -> str | None:
+    """Build a side-by-side comparison of mean times across read paths.
+
+    Each column is a (group, source) pair.  Groups that carry an internal source
+    dimension (``tile_read_io`` — local/virtual/s3 in one group) expand into
+    one column per source, so the range-read paths are compared rather than
+    collapsed; the per-backend Zarr groups stay as a single column each (their
+    backend is already encoded in the group name).
+
+    Returns a Markdown table string, or ``None`` if fewer than two columns are
+    present.
     """
     present = [g for g in _READ_GROUPS if g in groups]
-    if len(present) < 2:
+
+    # Build the ordered list of (group, source, column_label) columns.
+    columns: list[tuple[str, str | None, str]] = []
+    for group_name in present:
+        sources = {s for e in groups[group_name] if (s := _extract_source(e)) is not None}
+        base = _GROUP_LABELS[group_name]
+        if len(sources) >= 2:
+            for src in sorted(sources, key=lambda s: _SOURCE_ORDER.get(s, 99)):
+                columns.append((group_name, src, f"{base} ({src})"))
+        else:
+            columns.append((group_name, None, base))
+
+    if len(columns) < 2:
         return None
 
-    # Collect mean times keyed by (dataset, pattern) per group
-    means: dict[str, dict[tuple[str, str], float]] = {}
-    for group_name in present:
-        means[group_name] = {}
+    # Collect mean times keyed by (dataset, pattern) for each column.
+    means: dict[int, dict[tuple[str, str], float]] = {}
+    for col_idx, (group_name, src, _label) in enumerate(columns):
+        means[col_idx] = {}
         for entry in groups[group_name]:
-            key = _comparison_key(entry)
-            means[group_name][key] = entry.get("stats", {}).get("mean", 0)
+            if src is not None and _extract_source(entry) != src:
+                continue
+            means[col_idx][_comparison_key(entry)] = entry.get("stats", {}).get("mean", 0)
 
-    # Union of all keys, sorted by native mean (or first available)
     all_keys = sorted(
         {k for m in means.values() for k in m},
-        key=lambda k: means[present[0]].get(k, float("inf")),
+        key=lambda k: means[0].get(k, float("inf")),
     )
 
     if not all_keys:
         return None
 
-    # Build header
-    col_headers = " | ".join(_GROUP_LABELS[g] for g in present)
+    col_headers = " | ".join(label for _g, _s, label in columns)
     header = f"| Dataset | Access Pattern | {col_headers} |"
-    separator = "| --- | --- |" + " --- |" * len(present)
+    separator = "| --- | --- |" + " --- |" * len(columns)
 
     rows = [header, separator]
     for dataset, pattern in all_keys:
         values = []
-        for g in present:
-            val = means[g].get((dataset, pattern))
+        for col_idx in range(len(columns)):
+            val = means[col_idx].get((dataset, pattern))
             values.append(format_time(val) if val is not None else "—")
         vals_str = " | ".join(values)
         rows.append(f"| {dataset} | {pattern} | {vals_str} |")
@@ -343,12 +438,26 @@ def generate_report(benchmarks: list[dict]) -> str:
         lines.append("")
 
     for group_name, entries in groups.items():
-        lines.append(f"### {group_name.replace('_', ' ').title()}")
+        lines.append(f"### {_group_heading(group_name)}")
         lines.append("")
         lines.append(generate_table(entries, group_name=group_name))
         lines.append("")
 
     return "\n".join(lines)
+
+
+# Section headings that ``str.title()`` would mangle (it lowercases the tail of
+# each word, turning acronyms like "IO"/"S3" into "Io"/"S3").  Map them explicitly.
+_GROUP_HEADINGS = {
+    "tile_read_io": "Tile Read IO",
+    "tile_read_zarr_local": "Tile Read Zarr Local",
+    "tile_read_zarr_s3": "Tile Read Zarr S3",
+}
+
+
+def _group_heading(group_name: str) -> str:
+    """Human-readable section heading for a benchmark group name."""
+    return _GROUP_HEADINGS.get(group_name, group_name.replace("_", " ").title())
 
 
 # ---------------------------------------------------------------------------

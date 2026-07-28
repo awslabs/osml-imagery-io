@@ -9,7 +9,7 @@ for repeated iterations on the same file.
 
 The benchmark suite produces five result groups:
 
-- **Tile Read Native** — Block reads through the native IO path using access
+- **Tile Read IO** — Block reads through the `IO.open` read path using access
   patterns (single tile, small ROI, large ROI) that match the Zarr benchmarks for
   direct comparison.
 - **Tile Read Zarr Local** — Tile reads through `MultiReferenceFileSystem` +
@@ -18,10 +18,50 @@ The benchmark suite produces five result groups:
   TiffTileCodec for TIFF/COG).
 - **Tile Read Zarr S3** — Same Zarr path but with S3 as the backing store. Only
   included when `OSML_IO_BENCHMARK_S3_BUCKET` is set.
-- **Index Generation** — End-to-end time to scan a local file and produce a Kerchunk
+- **Index Generation** — End-to-end time to scan a file and produce a Kerchunk
   JSON tile index via `OversightMLParser` + `write_tile_index()`. Includes
   multi-resolution index generation for COG and NITF R-set pyramids.
 - **Metadata** — Time to open a dataset, read file-level and image asset metadata.
+
+### Source dimensions
+
+The **Tile Read IO**, **Index Generation**, and **Metadata** groups each run
+across a `Source` dimension (shown as a column in those tables). The three modes
+form an IO-abstraction cost ladder — direct disk access → virtualized IO →
+network IO — so cost generally rises left to right once a dataset is large enough
+that the abstraction and network overhead dominate:
+
+- **local** — open the dataset by path (memory-mapped; direct disk access, with
+  the Rust core reading at the system level). The default; always runs.
+- **virtual** — drive the `Remote` `OwnedBuffer` range-read path via a seekable,
+  sized **Python file-like handle** (virtualized IO — the abstraction that opens
+  the source up to `BytesIO` and fsspec). Runs **offline** (no S3 or credentials)
+  by reading the same local file through a byte-range-counting handle, and records
+  a `Fetch %` metric (bytes fetched ÷ file size) quantifying the range-read
+  reduction. This isolates the cost of the file-like/range-read layer from network
+  latency.
+- **s3** — the same `Remote` path over a **real** `s3fs` handle, so reads are HTTP
+  range GETs directly against the bucket — `IO.open(s3_handle, format=…)` and
+  `OversightMLParser("s3://…")` with **no Zarr layer**. This is the remote read
+  path the range-read feature exists to enable, and adds network IO on top of the
+  same virtualized path. Present only when `OSML_IO_BENCHMARK_S3_BUCKET` is set
+  (and `s3fs` + credentials are available).
+
+  The `s3` runs are slow by nature — each timed round is a full cold-start decode
+  over the network, and a large JPEG 2000 without TLM markers re-scans much of the
+  file per round (read amplification, not a hang). Timed rounds default to **3**
+  for `s3` (vs. 10 for `local`/`virtual`); override with
+  `OSML_IO_BENCHMARK_S3_ROUNDS=N`. The s3fs read-ahead block cache is disabled so
+  each read is a direct range GET and the recorded bytes-fetched reflects real
+  network traffic.
+
+The **Read Performance Comparison** table at the top of the report expands the
+IO group into one column per source (e.g. `IO (local)`, `IO (virtual)`,
+`IO (s3)`) alongside `Zarr Local` / `Zarr S3`, so the direct-range-read path
+and the Zarr pipeline can be compared side by side for the same dataset and access
+pattern. Note that IO `s3` and `Zarr S3` are distinct paths: the IO path issues
+range reads straight into the format reader, while Zarr goes through the
+`MultiReferenceFileSystem` + codec pipeline.
 
 ## Dataset Coverage
 
@@ -72,9 +112,10 @@ the synthetic datasets.
 
 ### 2. Upload benchmark data to S3 (optional — for S3 benchmarks)
 
-The S3 Zarr benchmarks read tiles over the network from an S3 bucket. The bucket
-must mirror the same relative paths that `benchmark_datasets.yaml` uses under
-`OSML_IO_BENCHMARK_DATA`.
+The S3 benchmarks read over the network from an S3 bucket — both the IO
+range-read path (`IO.open` / `OversightMLParser` directly against `s3://`) and the
+Zarr tile-read path. The bucket must mirror the same relative paths that
+`benchmark_datasets.yaml` uses under `OSML_IO_BENCHMARK_DATA`.
 
 **Prerequisites:**
 
@@ -143,12 +184,12 @@ make html -C docs
 
 ## Comparison Axes
 
-The Tile Read Native and Tile Read Zarr Local groups use the same access patterns
+The Tile Read IO and Tile Read Zarr Local groups use the same access patterns
 (single tile, small ROI, large ROI) on the same datasets, so their results are
 directly comparable:
 
-- **Native IO vs Zarr-from-local**: Isolates the Zarr/fsspec/codec overhead.
-  Compare `tile_read_native` against `tile_read_zarr_local` for the same dataset
+- **IO read vs Zarr-from-local**: Isolates the Zarr/fsspec/codec overhead.
+  Compare `tile_read_io` against `tile_read_zarr_local` for the same dataset
   and access pattern.
 - **Zarr-from-local vs Zarr-from-S3**: Measures the network latency impact.
   Compare `tile_read_zarr_local` against `tile_read_zarr_s3`.

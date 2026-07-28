@@ -49,7 +49,13 @@ impl PNGDatasetReader {
     /// image asset provider with BSQ pixel data. The buffer is not retained
     /// after construction — PNG decodes eagerly into pixel data.
     pub fn from_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
-        let data = buffer.as_bytes();
+        // PNG is a single monolithic zlib stream with no block structure: decoding
+        // needs every byte. Materialize the whole buffer up front (zero-copy for a
+        // resident backing, one bounded fetch for a `Remote` backing) so the
+        // decode below views resident bytes and any remote fetch error propagates
+        // via `?` rather than an infallible-`as_bytes()` panic.
+        let resident = buffer.materialize()?;
+        let data = resident.as_bytes();
         // Validate PNG signature
         if data.len() < 8 || data[..8] != PNG_SIGNATURE {
             return Err(CodecError::InvalidFormat(
@@ -782,5 +788,55 @@ mod tests {
         let meta = reader.metadata();
         let dict = meta.entries(None);
         assert!(dict.contains_key("PLTE"));
+    }
+
+    // =========================================================================
+    // Remote-backing tests
+    // =========================================================================
+
+    use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+
+    fn remote_buffer(data: &[u8]) -> OwnedBuffer {
+        let reader = FakeReader::new(data.to_vec());
+        let fetcher =
+            StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
+        OwnedBuffer::from_remote(fetcher)
+    }
+
+    /// PNG is monolithic (a single zlib stream): decode legitimately materializes
+    /// the whole buffer. This proves it does so over a `Remote` backing without
+    /// tripping the `as_bytes()` guard, and yields the same pixels as the resident
+    /// decode (remoteness is transparent to output).
+    #[test]
+    fn test_remote_decode_matches_resident() {
+        let interleaved: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        let data = make_png(
+            2,
+            2,
+            png::ColorType::Rgb,
+            png::BitDepth::Eight,
+            &interleaved,
+        );
+
+        let remote = PNGDatasetReader::from_buffer(remote_buffer(&data)).unwrap();
+        let (remote_px, remote_shape) = remote
+            .get_asset("image:0")
+            .unwrap()
+            .as_image()
+            .unwrap()
+            .get_block(0, 0, 0, None)
+            .unwrap();
+
+        let resident = PNGDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
+        let (res_px, res_shape) = resident
+            .get_asset("image:0")
+            .unwrap()
+            .as_image()
+            .unwrap()
+            .get_block(0, 0, 0, None)
+            .unwrap();
+
+        assert_eq!(remote_shape, res_shape);
+        assert_eq!(remote_px, res_px);
     }
 }

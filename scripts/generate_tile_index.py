@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
-"""Generate a Kerchunk tile index from a local imagery file.
+"""Generate a Kerchunk tile index from a local or remote imagery file.
 
 This script creates a tile index that maps image tile coordinates to byte
 ranges in the source file. The index can be saved as JSON or Parquet and
 is compatible with fsspec's ReferenceFileSystem for cloud-native access.
 
+The source may be a local file path or a remote URL (e.g.
+``s3://bucket/image.ntf``). The index is built with on-demand byte-range reads,
+so indexing a remote file does not download the whole object. Chunk references
+in the index point at the source you pass here, unless ``--source-uri`` rewrites
+them (see below).
+
 Usage:
+    # Index a remote file directly — refs point at the S3 URL.
+    python scripts/generate_tile_index.py s3://bucket/image.ntf
+
+    # Index a local copy, but point refs at where the data will be served.
     python scripts/generate_tile_index.py image.ntf --source-uri s3://bucket/image.ntf
-    python scripts/generate_tile_index.py image.ntf --source-uri s3://bucket/image.ntf -o index.parquet
-    python scripts/generate_tile_index.py image.ntf --source-uri s3://bucket/image.ntf --list-segments
+
+    # Parquet output, or list segments without indexing.
+    python scripts/generate_tile_index.py s3://bucket/image.ntf -o index.parquet
+    python scripts/generate_tile_index.py image.ntf --list-segments
 """
 
 import argparse
@@ -22,11 +34,28 @@ sys.path.insert(0, str(project_root))
 
 from aws.osml.io import IO, AssetType  # noqa: E402
 
+# URL schemes that IO.open resolves to an fsspec filesystem for range reads.
+_REMOTE_SCHEMES = ("s3://", "gs://", "gcs://", "az://", "abfs://", "http://", "https://")
+
+
+def _is_remote_url(path: str) -> bool:
+    """Return True if *path* is a remote URL rather than a local file path."""
+    return path.startswith(_REMOTE_SCHEMES)
+
+
+def _open_source(path: str):
+    """Open *path* for reading, routing remote URLs through fsspec range reads.
+
+    A bare URL string (``s3://…``) is passed to ``IO.open`` directly so it
+    resolves to an fsspec filesystem; a local path is passed as-is.
+    """
+    return IO.open(path, "r")
+
 
 def list_segments(path: str) -> int:
     """Print available image segment keys for a dataset file."""
     try:
-        with IO.open([path], "r") as reader:
+        with _open_source(path) as reader:
             keys = reader.get_asset_keys(asset_type=AssetType.Image)
     except Exception as e:
         print(f"Error opening {path}: {e}", file=sys.stderr)
@@ -39,7 +68,7 @@ def list_segments(path: str) -> int:
     print(f"Image segments in {path}:")
     for key in keys:
         try:
-            with IO.open([path], "r") as reader:
+            with _open_source(path) as reader:
                 asset = reader.get_asset(key)
                 dims = f"{asset.num_columns}x{asset.num_rows}, {asset.num_bands} band(s)"
                 grid = asset.block_grid_size
@@ -114,8 +143,24 @@ def _write_parquet(vds, output: str, multi_range_refs: dict | None = None) -> No
     out.flush()
 
 
-def generate_index(path: str, source_uri: str, output: str, segments: list[str] | None) -> int:
-    """Generate a tile index and save it to disk."""
+def generate_index(
+    path: str,
+    source_uri: str | None,
+    output: str,
+    segments: list[str] | None,
+) -> int:
+    """Generate a tile index and save it to disk.
+
+    Args:
+        path: Local path or remote URL of the imagery to index. The index is
+            built by reading this source with byte-range requests.
+        source_uri: Optional URL to embed in the chunk references instead of
+            *path*. Use this when indexing a local copy of data that will be
+            served from a different (e.g. ``s3://``) location. When ``None``,
+            references point at *path* itself.
+        output: Output index path (``.json`` or ``.parquet``).
+        segments: Optional list of image asset keys to include (default: all).
+    """
     from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
     ext = Path(output).suffix.lower()
@@ -123,8 +168,17 @@ def generate_index(path: str, source_uri: str, output: str, segments: list[str] 
         print(f"Error: Unsupported output extension '{ext}'. Use .json or .parquet", file=sys.stderr)
         return 1
 
-    print(f"Source file:  {path}")
-    print(f"Source URI:   {source_uri}")
+    # The VirtualiZarr manifest requires an absolute posix path or a URI for
+    # every chunk reference. Remote URLs already qualify; a local path is
+    # resolved to an absolute path before indexing.
+    if _is_remote_url(path):
+        parse_source = path
+    else:
+        parse_source = str(Path(path).resolve())
+
+    print(f"Source:       {path}")
+    if source_uri and source_uri != path:
+        print(f"Refs point at: {source_uri}")
     if segments:
         print(f"Segments:     {', '.join(segments)}")
     else:
@@ -134,8 +188,8 @@ def generate_index(path: str, source_uri: str, output: str, segments: list[str] 
 
     t0 = time.perf_counter()
     try:
-        parser = OversightMLParser(local_paths=path)
-        store = parser(url=source_uri)
+        parser = OversightMLParser()
+        store = parser(parse_source)
     except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -149,9 +203,17 @@ def generate_index(path: str, source_uri: str, output: str, segments: list[str] 
     if num_multi:
         print(f"  {num_multi} multi-range entries (interleaved tile-parts)")
 
+    # Relocate chunk references only when --source-uri names a different
+    # location than the source that was read. ``write_tile_index`` matches the
+    # override key against both the raw and ``file://``-normalized forms, so the
+    # resolved absolute path used for parsing is the correct key here.
+    url_overrides = None
+    if source_uri and source_uri != path:
+        url_overrides = {parse_source: source_uri}
+
     t1 = time.perf_counter()
     try:
-        write_tile_index(store, output, segments=segments)
+        write_tile_index(store, output, segments=segments, url_overrides=url_overrides)
     except (ImportError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -177,21 +239,25 @@ def _human_size(nbytes: int) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Generate a Kerchunk tile index from a local imagery file.",
+        description="Generate a Kerchunk tile index from a local or remote imagery file.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Generate a JSON tile index for a NITF file
+    # Index a remote NITF directly — chunk refs point at the S3 URL
+    python scripts/generate_tile_index.py s3://my-bucket/image.ntf
+
+    # Index a local file — chunk refs point at the local path
+    python scripts/generate_tile_index.py image.ntf
+
+    # Index a local copy but point refs at the S3 location it will be served from
     python scripts/generate_tile_index.py image.ntf \\
         --source-uri s3://my-bucket/image.ntf
 
-    # Generate a Parquet tile index
-    python scripts/generate_tile_index.py image.ntf \\
-        --source-uri s3://my-bucket/image.ntf -o index.parquet
+    # Parquet output
+    python scripts/generate_tile_index.py s3://my-bucket/image.ntf -o index.parquet
 
     # Index only specific segments
-    python scripts/generate_tile_index.py multi_segment.ntf \\
-        --source-uri s3://my-bucket/multi_segment.ntf \\
+    python scripts/generate_tile_index.py s3://my-bucket/multi_segment.ntf \\
         --segments image:0 image:2
 
     # List available segments without generating an index
@@ -200,12 +266,14 @@ Examples:
     )
     parser.add_argument(
         "path",
-        help="Path to the local imagery file (NITF, TIFF, J2K, JPEG, PNG)",
+        help="Path to the imagery file, or a remote URL such as "
+        "s3://bucket/image.ntf (NITF, TIFF, J2K, JPEG, PNG)",
     )
     parser.add_argument(
         "--source-uri",
         help="Cloud URI to embed in tile references (e.g. s3://bucket/image.ntf). "
-        "Required unless --list-segments is used.",
+        "Use when indexing a local copy of data that will be served from a "
+        "different location. When omitted, references point at the source above.",
     )
     parser.add_argument(
         "-o",
@@ -230,9 +298,6 @@ Examples:
 
     if args.list_segments:
         return list_segments(args.path)
-
-    if not args.source_uri:
-        parser.error("--source-uri is required when generating a tile index")
 
     output = args.output
     if output is None:

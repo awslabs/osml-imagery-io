@@ -10,10 +10,13 @@ Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6,
 """
 
 import io
+from pathlib import Path
 
 import numpy as np
 import pytest
 from aws.osml.io import IO, iminfo, imread, imsave, tiles
+
+UNIT_DATA = Path("data/unit")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -952,3 +955,126 @@ class TestUnknownRolePassesThrough:
             keys = reader.get_asset_keys()
             # At minimum, the base image should be accessible
             assert len(keys) >= 1
+
+
+# ===========================================================================
+# Remote range-read wiring tests
+# ===========================================================================
+
+
+class _RangeLoggingStream:
+    """A seekable file-like object that logs every ``read`` range.
+
+    Wraps an in-memory buffer and records ``(offset, length)`` for each read so a
+    test can assert the reader pulled byte ranges on demand instead of
+    downloading the whole file. ``total_read`` accumulates bytes returned.
+    """
+
+    def __init__(self, data: bytes):
+        self._buf = io.BytesIO(data)
+        self._size = len(data)
+        self.reads: list[tuple[int, int]] = []
+        self.total_read = 0
+
+    def seekable(self) -> bool:
+        return True
+
+    def seek(self, offset, whence=0):
+        return self._buf.seek(offset, whence)
+
+    def tell(self):
+        return self._buf.tell()
+
+    def read(self, n=-1):
+        pos = self._buf.tell()
+        b = self._buf.read(n)
+        self.reads.append((pos, len(b)))
+        self.total_read += len(b)
+        return b
+
+
+class _NonSeekableStream:
+    """A file-like object that reports it is not seekable (full-read fallback)."""
+
+    def __init__(self, data: bytes):
+        self._buf = io.BytesIO(data)
+
+    def seekable(self) -> bool:
+        return False
+
+    def read(self, n=-1):
+        return self._buf.read(n)
+
+
+TIFF_UNIT = UNIT_DATA / "tiff-256x256-1band-8bit-tiled-deflate.tif"
+
+
+class TestRemoteRangeReadTiff:
+    """A seekable, sized TIFF stream reads via byte ranges, not a full download.
+
+    Opening a TIFF via a file-like object with range-logging ``read``/``seek``
+    completes without pulling the whole file.
+    """
+
+    @pytest.mark.skipif(not TIFF_UNIT.exists(), reason="TIFF unit data unavailable")
+    def test_tiff_stream_no_full_download(self):
+        file_bytes = TIFF_UNIT.read_bytes()
+        stream = _RangeLoggingStream(file_bytes)
+
+        with IO.open(stream, "r", format="tiff") as reader:
+            keys = reader.get_asset_keys()
+            assert len(keys) >= 1
+            asset = reader.get_asset(keys[0])
+            # Reading metadata + a tile must succeed over the range path.
+            block = asset.get_block(0, 0, 0)
+            assert block is not None
+
+        # No single read covered the whole file, and the cumulative bytes read
+        # stayed below the file size — proof the reader used range reads.
+        assert stream.reads, "expected at least one range read"
+        assert all(
+            length < len(file_bytes) for _, length in stream.reads
+        ), f"a single read covered the whole file: {stream.reads}"
+        assert stream.total_read < len(file_bytes), (
+            f"read {stream.total_read} of {len(file_bytes)} bytes — "
+            "expected a partial range read, not a full download"
+        )
+
+    @pytest.mark.skipif(not TIFF_UNIT.exists(), reason="TIFF unit data unavailable")
+    def test_tiff_stream_pixels_match_full_read(self):
+        """Remote range-read pixels are identical to a full in-memory read."""
+        file_bytes = TIFF_UNIT.read_bytes()
+
+        remote_stream = _RangeLoggingStream(file_bytes)
+        with IO.open(remote_stream, "r", format="tiff") as reader:
+            key = reader.get_asset_keys()[0]
+            remote_block = np.array(reader.get_asset(key).get_block(0, 0, 0).data)
+
+        with IO.open(io.BytesIO(file_bytes), "r", format="tiff") as reader:
+            key = reader.get_asset_keys()[0]
+            full_block = np.array(reader.get_asset(key).get_block(0, 0, 0).data)
+
+        np.testing.assert_array_equal(remote_block, full_block)
+
+
+class TestRemoteRangeReadFallback:
+    """Non-seekable / non-remote-safe formats fall back to the full-read path."""
+
+    @pytest.mark.skipif(not TIFF_UNIT.exists(), reason="TIFF unit data unavailable")
+    def test_non_seekable_tiff_falls_back(self):
+        """A non-seekable TIFF stream still reads via the full-download path."""
+        file_bytes = TIFF_UNIT.read_bytes()
+        stream = _NonSeekableStream(file_bytes)
+
+        with IO.open(stream, "r", format="tiff") as reader:
+            keys = reader.get_asset_keys()
+            assert len(keys) >= 1
+
+    def test_png_stream_still_works(self):
+        """PNG readers are not remote-safe, so a seekable PNG stream must fall
+        back to full read and still decode correctly."""
+        data = _make_test_image()
+        buf = _write_png_to_buffer(data)
+        # BytesIO is seekable+sized, but PNG must NOT take the remote path.
+        result = imread(buf, format="png")
+        np.testing.assert_array_equal(result, data)

@@ -6,6 +6,7 @@ structurally identical output to the original inline implementation.
 Requirements: 7.1, 7.2
 """
 
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -55,6 +56,15 @@ def tmp_dir():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def _chunk_url(path: Path) -> str:
+    """Return the chunk-reference URL a local parse of *path* produces.
+
+    ``OversightMLParser`` reads via fsspec, which normalizes a bare local path
+    to a ``file://<abspath>`` URI in the stored chunk references.
+    """
+    return f"file://{os.path.abspath(str(path))}"
+
+
 class TestBuildManifestArrayBehaviorPreserving:
     """Verify that the extracted _build_manifest_array produces correct ManifestStore output.
 
@@ -73,9 +83,10 @@ class TestBuildManifestArrayBehaviorPreserving:
         path = tmp_dir / "test.ntf"
         _write_nitf(path, num_cols=128, num_rows=128, num_bands=3)
 
-        url = "s3://bucket/test.ntf"
-        parser = OversightMLParser(local_paths=str(path))
-        store = parser(url=url)
+        # The root ``source`` attribute records the URL exactly as passed.
+        url = str(path)
+        parser = OversightMLParser()
+        store = parser(str(path))
 
         # Root group has subgroup "0" with a "data" array
         group = store._group
@@ -106,7 +117,7 @@ class TestBuildManifestArrayBehaviorPreserving:
         num_cols, num_rows, num_bands = 128, 128, 3
         _write_nitf(path, num_cols=num_cols, num_rows=num_rows, num_bands=num_bands)
 
-        store = OversightMLParser(local_paths=str(path))(url="s3://bucket/test.ntf")
+        store = OversightMLParser()(str(path))
         array = store._group.groups["0"].arrays["data"]
 
         # Shape: (bands, rows, cols)
@@ -127,17 +138,18 @@ class TestBuildManifestArrayBehaviorPreserving:
         path = tmp_dir / "test.ntf"
         _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
 
-        store = OversightMLParser(local_paths=str(path))(url="s3://bucket/test.ntf")
+        store = OversightMLParser()(str(path))
         array = store._group.groups["0"].arrays["data"]
 
         manifest = array.manifest
         # Single tile for 128x128 image with 256x256 block size → 1 chunk
         assert len(manifest) > 0, "Chunk manifest should have at least one entry"
 
-        # Each entry should reference the correct URL
+        # Each entry should reference the parsed URL
+        expected_url = _chunk_url(path)
         for _key, entry in manifest.items():
-            assert entry["path"] == "s3://bucket/test.ntf", (
-                f"Expected chunk path 's3://bucket/test.ntf', got '{entry['path']}'"
+            assert entry["path"] == expected_url, (
+                f"Expected chunk path '{expected_url}', got '{entry['path']}'"
             )
             assert entry["offset"] >= 0
             assert entry["length"] > 0
@@ -151,7 +163,7 @@ class TestBuildManifestArrayBehaviorPreserving:
         _write_nitf(path, num_cols=256, num_rows=256, num_bands=1,
                      block_width=64, block_height=64)
 
-        store = OversightMLParser(local_paths=str(path))(url="s3://bucket/test.ntf")
+        store = OversightMLParser()(str(path))
         array = store._group.groups["0"].arrays["data"]
 
         manifest = array.manifest
@@ -167,74 +179,74 @@ class TestBuildManifestArrayBehaviorPreserving:
         path = tmp_dir / "test.ntf"
         _write_nitf(path, num_cols=64, num_rows=64, num_bands=1)
 
-        store = OversightMLParser(local_paths=str(path))(url="s3://bucket/test.ntf")
+        store = OversightMLParser()(str(path))
         multi_range_refs = getattr(store, "multi_range_refs", None)
         assert isinstance(multi_range_refs, dict), (
             f"Expected multi_range_refs to be a dict, got {type(multi_range_refs)}"
         )
 
 
-class TestConstructorVariants:
-    """Verify OversightMLParser constructor normalizes local_paths correctly.
-
-    Requirements: 1.1, 1.2, 1.3
+class TestParserProtocolSignature:
+    """Verify OversightMLParser conforms to the VirtualiZarr (url, registry)
+    callable protocol.
     """
 
-    def test_single_string_positional(self):
-        """A single string positional arg is wrapped in a list."""
+    def test_no_constructor_arguments(self):
+        """The parser takes no parse-time configuration."""
         from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
-        parser = OversightMLParser("file.ntf")
-        assert parser.local_paths == ["file.ntf"]
+        parser = OversightMLParser()
+        assert callable(parser)
 
-    def test_list_of_strings_positional(self):
-        """A list of strings positional arg is stored as-is."""
+    def test_url_must_be_a_string(self, tmp_dir):
+        """A non-string url (e.g. the old list form) raises TypeError."""
         from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
-        parser = OversightMLParser(["a.ntf", "b.ntf"])
-        assert parser.local_paths == ["a.ntf", "b.ntf"]
+        parser = OversightMLParser()
+        with pytest.raises(TypeError, match="url must be a string"):
+            parser(["a.ntf", "b.ntf"])
 
-    def test_single_string_keyword(self):
-        """A single string via keyword arg is wrapped in a list."""
+    def test_unrecognized_extension_raises_value_error(self, tmp_dir):
+        """A URL whose extension maps to no format raises ValueError."""
         from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
-        parser = OversightMLParser(local_paths="file.ntf")
-        assert parser.local_paths == ["file.ntf"]
+        parser = OversightMLParser()
+        with pytest.raises(ValueError, match="Cannot determine imagery format"):
+            parser(str(tmp_dir / "mystery.xyz"))
 
-
-class TestURLNormalization:
-    """Verify OversightMLParser.__call__ normalizes the url parameter correctly.
-
-    Requirements: 2.1, 2.2, 2.3, 2.4
-    """
-
-    def test_single_url_string_with_multiple_paths(self, tmp_dir):
-        """A single URL string with 2 paths is used for all assets (no error)."""
+    def test_registry_is_threaded_into_store(self, tmp_dir):
+        """The registry argument is passed through to the ManifestStore."""
         from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
-        # Create 2 small NITF files
-        path_base = tmp_dir / "image.ntf"
-        path_r1 = tmp_dir / "image.ntf.r1"
-        _write_nitf(path_base, num_cols=128, num_rows=128, num_bands=1)
-        _write_nitf(path_r1, num_cols=64, num_rows=64, num_bands=1)
+        path = tmp_dir / "image.ntf"
+        _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
 
-        parser = OversightMLParser([str(path_base), str(path_r1)])
-        url = "s3://bucket/image.ntf"
-        store = parser(url=url)
+        parser = OversightMLParser()
+        # A None registry is valid (ManifestStore default); the call must accept
+        # the keyword and succeed.
+        store = parser(str(path), registry=None)
+        assert store is not None
 
-        # Should succeed without error; all chunk refs use the single URL
-        group = store._group
-        for sg in group.groups.values():
+
+class TestURLReadSource:
+    """Verify the parsed URL is the single source of truth for reading and refs."""
+
+    def test_local_url_becomes_chunk_ref(self, tmp_dir):
+        """Chunk references point at the (fsspec-normalized) parsed URL."""
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+        path = tmp_dir / "image.ntf"
+        _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
+
+        store = OversightMLParser()(str(path))
+        expected = _chunk_url(path)
+        for sg in store._group.groups.values():
             for array in sg.arrays.values():
                 for _key, entry in array.manifest.items():
-                    assert entry["path"] == url
+                    assert entry["path"] == expected
 
-    def test_url_list_matching_path_count(self, tmp_dir):
-        """A URL list matching path count is used as-is (no error).
-
-        With R-set naming (.r1 suffix), the parser produces a hierarchical
-        store with subgroups instead of a flat store with arrays.
-        """
+    def test_rset_companions_auto_discovered(self, tmp_dir):
+        """Sibling ``.rN`` files are discovered from the base URL (no list)."""
         from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
         path_base = tmp_dir / "image.ntf"
@@ -242,23 +254,97 @@ class TestURLNormalization:
         _write_nitf(path_base, num_cols=128, num_rows=128, num_bands=1)
         _write_nitf(path_r1, num_cols=64, num_rows=64, num_bands=1)
 
-        parser = OversightMLParser([str(path_base), str(path_r1)])
-        urls = ["s3://bucket/image.ntf", "s3://bucket/image.ntf.r1"]
-        store = parser(url=urls)
-
-        # Should succeed without error — produces hierarchical store
+        store = OversightMLParser()(str(path_base))
         group = store._group
         assert len(group.groups) == 2, (
             f"Expected 2 subgroups for R-set pyramid, got {len(group.groups)}"
         )
 
-    def test_url_list_wrong_length_raises_value_error(self):
-        """A URL list with wrong length raises ValueError."""
+
+class TestParseUsesRangeReads:
+    """Verify index construction reads byte ranges on demand, not a full download.
+
+    This is the bootstrap the remote-IO design targets: parsing a block-capable
+    source builds the tile index from bounded header/offset-table reads rather
+    than pulling the whole file into memory.
+    """
+
+    def test_parse_does_not_download_whole_file(self, tmp_dir, monkeypatch):
+        """Parsing a large tiled TIFF pulls fewer bytes than its size.
+
+        TIFF keeps its tile offsets in the header, so index construction reads
+        only the header + offset table — not the pixel data.  A ~1 MB tiled
+        image makes the range-read bound observable (the tiny checked-in unit
+        files fit entirely within the 64 KiB header prefetch).
+        """
+        import fsspec
+        from aws.osml.io import imsave
         from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
-        parser = OversightMLParser(["a.ntf", "b.ntf", "c.ntf"])
-        with pytest.raises(ValueError, match="url list length"):
-            parser(url=["s3://bucket/a.ntf", "s3://bucket/b.ntf"])
+        path = tmp_dir / "big.tif"
+        data = np.random.RandomState(0).randint(0, 255, (1, 1024, 1024), dtype=np.uint8)
+        imsave(str(path), data, compression="none", block_size=(256, 256))
+        file_size = path.stat().st_size
+        assert file_size > 64 * 1024
+
+        # Count bytes at BOTH fetch layers: the handle's stateful `.read()` (the
+        # serial fallback) and the filesystem's concurrent `cat_ranges` (the
+        # cursor-free path the lock refactor routes concurrent reads through).
+        # After the concurrent-read work, an fsspec-backed source fetches ranges
+        # via `cat_ranges` on the filesystem, bypassing the handle's `.read()`, so
+        # counting only `.read()` would observe zero bytes and miss a real
+        # download regression. Summing both layers keeps the bound observable
+        # regardless of which path the reader takes.
+        counter = {"total": 0}
+        real_open = fsspec.open
+
+        class _CountingHandle:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def read(self, n=-1):
+                b = self._inner.read(n)
+                counter["total"] += len(b)
+                return b
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        class _CountingOpener:
+            def __init__(self, of):
+                self._of = of
+
+            def __enter__(self):
+                return _CountingHandle(self._of.__enter__())
+
+            def __exit__(self, *exc):
+                return self._of.__exit__(*exc)
+
+        def counting_open(url, *args, **kwargs):
+            return _CountingOpener(real_open(url, *args, **kwargs))
+
+        monkeypatch.setattr(fsspec, "open", counting_open)
+
+        # Wrap the LocalFileSystem's cat_ranges so concurrent range fetches are
+        # tallied too (the class method covers every instance the parser opens).
+        local_fs_cls = type(fsspec.filesystem("file"))
+        real_cat_ranges = local_fs_cls.cat_ranges
+
+        def counting_cat_ranges(self, paths, starts, ends, *args, **kwargs):
+            result = real_cat_ranges(self, paths, starts, ends, *args, **kwargs)
+            for chunk in result:
+                counter["total"] += len(chunk)
+            return result
+
+        monkeypatch.setattr(local_fs_cls, "cat_ranges", counting_cat_ranges)
+
+        store = OversightMLParser()(str(path))
+        assert store is not None
+
+        assert 0 < counter["total"] < file_size, (
+            f"parse read {counter['total']} of {file_size} bytes — expected a "
+            "bounded range read, not a full download"
+        )
 
 
 class TestClassifyAssets:
@@ -548,8 +634,8 @@ class TestMultiFileRSetPyramid:
         _write_nitf(path_base, num_cols=512, num_rows=512, num_bands=1)
         _write_nitf(path_r1, num_cols=256, num_rows=256, num_bands=1)
 
-        parser = OversightMLParser([str(path_base), str(path_r1)])
-        store = parser(url=["s3://b/image.ntf", "s3://b/image.ntf.r1"])
+        parser = OversightMLParser()
+        store = parser(str(path_base))
 
         group = store._group
         assert len(group.groups) == 2, (
@@ -566,8 +652,8 @@ class TestMultiFileRSetPyramid:
         _write_nitf(path_base, num_cols=512, num_rows=512, num_bands=1)
         _write_nitf(path_r1, num_cols=256, num_rows=256, num_bands=1)
 
-        parser = OversightMLParser([str(path_base), str(path_r1)])
-        store = parser(url=["s3://b/image.ntf", "s3://b/image.ntf.r1"])
+        parser = OversightMLParser()
+        store = parser(str(path_base))
 
         group = store._group
         arr_0 = group.groups["0"].arrays["data"]
@@ -590,10 +676,10 @@ class TestMultiFileRSetPyramid:
         _write_nitf(path_base, num_cols=512, num_rows=512, num_bands=1)
         _write_nitf(path_r1, num_cols=256, num_rows=256, num_bands=1)
 
-        url_base = "s3://b/image.ntf"
-        url_r1 = "s3://b/image.ntf.r1"
-        parser = OversightMLParser([str(path_base), str(path_r1)])
-        store = parser(url=[url_base, url_r1])
+        url_base = _chunk_url(path_base)
+        url_r1 = _chunk_url(path_r1)
+        parser = OversightMLParser()
+        store = parser(str(path_base))
 
         group = store._group
 
@@ -618,8 +704,8 @@ class TestMultiFileRSetPyramid:
         _write_nitf(path_base, num_cols=512, num_rows=512, num_bands=1)
         _write_nitf(path_r1, num_cols=256, num_rows=256, num_bands=1)
 
-        parser = OversightMLParser([str(path_base), str(path_r1)])
-        store = parser(url=["s3://b/image.ntf", "s3://b/image.ntf.r1"])
+        parser = OversightMLParser()
+        store = parser(str(path_base))
 
         group = store._group
         attrs = group.metadata.attributes
@@ -642,8 +728,13 @@ class TestMultiFileRSetPyramid:
         assert layout[1]["transform"]["scale"] == [2.0, 2.0]
         assert layout[1]["transform"]["translation"] == [0.0, 0.0]
 
-    def test_out_of_order_rset_paths_produce_correct_levels(self, tmp_dir):
-        """Out-of-order paths produce correct overview levels from filenames."""
+    def test_sparse_rset_levels_produce_correct_levels(self, tmp_dir):
+        """Sparse R-set levels (.r1 and .r3, no .r2) map to correct levels.
+
+        Companions are auto-discovered from the base URL, so the on-disk level
+        numbers (1, 3) — not their discovery order — determine the overview
+        levels.
+        """
         from aws.osml.io.virtualizarr_parsers import OversightMLParser
 
         path_base = tmp_dir / "img.ntf"
@@ -653,11 +744,8 @@ class TestMultiFileRSetPyramid:
         _write_nitf(path_r1, num_cols=256, num_rows=256, num_bands=1)
         _write_nitf(path_r3, num_cols=128, num_rows=128, num_bands=1)
 
-        # Pass paths out of order: base, r3, r1
-        parser = OversightMLParser([str(path_base), str(path_r3), str(path_r1)])
-        store = parser(
-            url=["s3://b/img.ntf", "s3://b/img.ntf.r3", "s3://b/img.ntf.r1"]
-        )
+        parser = OversightMLParser()
+        store = parser(str(path_base))
 
         group = store._group
 
@@ -699,12 +787,14 @@ class TestMultiFileRSetPyramid:
         assert layout[2]["transform"]["scale"] == [2.0, 2.0]
 
         # Verify URL mapping: r1 chunks use r1 URL, r3 chunks use r3 URL
+        url_r1 = _chunk_url(path_r1)
+        url_r3 = _chunk_url(path_r3)
         for _key, entry in group.groups["1"].arrays["data"].manifest.items():
-            assert entry["path"] == "s3://b/img.ntf.r1", (
+            assert entry["path"] == url_r1, (
                 f"Level 1 (from .r1) should use r1 URL, got '{entry['path']}'"
             )
         for _key, entry in group.groups["2"].arrays["data"].manifest.items():
-            assert entry["path"] == "s3://b/img.ntf.r3", (
+            assert entry["path"] == url_r3, (
                 f"Level 2 (from .r3) should use r3 URL, got '{entry['path']}'"
             )
 
@@ -724,9 +814,9 @@ class TestSingleFileBackwardCompat:
         path = tmp_dir / "single.ntf"
         _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
 
-        url = "s3://bucket/single.ntf"
-        parser = OversightMLParser(str(path))
-        store = parser(url=url)
+        url = str(path)
+        parser = OversightMLParser()
+        store = parser(str(path))
 
         group = store._group
 
@@ -778,8 +868,7 @@ class TestWriteTileIndex:
         path = tmp_dir / "flat.ntf"
         _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
 
-        url = "s3://bucket/flat.ntf"
-        store = OversightMLParser(str(path))(url=url)
+        store = OversightMLParser()(str(path))
 
         output = str(tmp_dir / "flat.tile_index.json")
         write_tile_index(store, output)
@@ -830,11 +919,11 @@ class TestWriteTileIndex:
         _write_nitf(path_base, num_cols=256, num_rows=256, num_bands=1)
         _write_nitf(path_r1, num_cols=128, num_rows=128, num_bands=1)
 
-        url_base = "s3://bucket/image.ntf"
-        url_r1 = "s3://bucket/image.ntf.r1"
-        store = OversightMLParser([str(path_base), str(path_r1)])(
-            url=[url_base, url_r1]
-        )
+        # Serialized JSON refs record the URL as passed (base) and the
+        # auto-discovered companion (base + ".r1").
+        url_base = str(path_base)
+        url_r1 = f"{str(path_base)}.r1"
+        store = OversightMLParser()(str(path_base))
 
         output = str(tmp_dir / "hierarchical.tile_index.json")
         write_tile_index(store, output)
@@ -926,9 +1015,7 @@ class TestWriteTileIndex:
         _write_nitf(path_base, num_cols=256, num_rows=256, num_bands=1)
         _write_nitf(path_r1, num_cols=128, num_rows=128, num_bands=1)
 
-        store = OversightMLParser([str(path_base), str(path_r1)])(
-            url=["s3://bucket/image.ntf", "s3://bucket/image.ntf.r1"]
-        )
+        store = OversightMLParser()(str(path_base))
 
         output = str(tmp_dir / "hierarchical.tile_index.parquet")
         write_tile_index(store, output)
@@ -959,9 +1046,7 @@ class TestWriteTileIndex:
         _write_nitf(path_r1, num_cols=256, num_rows=256, num_bands=1)
         _write_nitf(path_r3, num_cols=128, num_rows=128, num_bands=1)
 
-        store = OversightMLParser([str(path_base), str(path_r1), str(path_r3)])(
-            url=["s3://b/img.ntf", "s3://b/img.ntf.r1", "s3://b/img.ntf.r3"]
-        )
+        store = OversightMLParser()(str(path_base))
 
         output = str(tmp_dir / "filtered.tile_index.json")
         write_tile_index(store, output, segments=["0", "2"])
@@ -1044,12 +1129,11 @@ class TestEndToEndPyramidRoundTrip:
         writer_r1.add_asset("image:0", provider_r1, "Image", "r1", ["data"])
         writer_r1.close()
 
-        # 2. Generate hierarchical tile index JSON
-        #    Use file:// URLs so fsspec can resolve them locally
-        url_base = path_base.as_uri()
-        url_r1 = path_r1.as_uri()
-        parser = OversightMLParser([str(path_base), str(path_r1)])
-        store = parser(url=[url_base, url_r1])
+        # 2. Generate hierarchical tile index JSON.  Parsing the local base
+        #    path auto-discovers the .r1 companion and produces file:// chunk
+        #    refs that fsspec can resolve locally.
+        parser = OversightMLParser()
+        store = parser(str(path_base))
 
         output = str(tmp_dir / "pyramid.tile_index.json")
         write_tile_index(store, output)
@@ -1214,55 +1298,42 @@ class TestEndToEndPyramidRoundTrip:
 
 
 class TestPortableIndex:
-    """Verify portable index creation (url=None) and template-based resolution.
+    """Verify portable index creation via ``write_tile_index(template_base=…)``.
 
-    When url is omitted, chunk references use {{base}}filename instead of
-    absolute URLs.  The serialized JSON includes a Kerchunk v1 "templates"
-    dict with {"base": ""}.  At read time, template_overrides resolves the
+    Relocating chunk references is a serialization-time concern: passing
+    ``template_base="{{base}}"`` rewrites each chunk-reference URL to
+    ``{{base}}filename`` and emits a Kerchunk v1 "templates" dict with
+    ``{"base": ""}``.  At read time, ``template_overrides`` resolves the
     placeholders.
     """
 
-    def test_url_none_produces_template_refs(self, tmp_dir):
-        """Parser with url=None stores local file URI in chunk entries
-        and sets use_templates flag for write-time rewriting."""
-        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+    def test_template_base_uses_basename_only(self, tmp_dir):
+        """template_base rewrites chunk refs to {{base}}filename (basename only)."""
+        import json
 
-        path = tmp_dir / "image.ntf"
-        _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
-
-        store = OversightMLParser(str(path))()
-
-        # Check that use_templates flag is set
-        assert store.use_templates is True
-        assert len(store.template_rewrites) == 1
-
-        # ChunkEntry uses a path derived from the local file
-        group = store._group
-        array = group.groups["0"].arrays["data"]
-        manifest = array.manifest
-        entry = manifest["0.0.0"]
-        # VirtualiZarr may convert to file:// URI; just verify it ends
-        # with the filename
-        assert entry["path"].endswith("image.ntf"), (
-            f"Expected path ending with 'image.ntf', got '{entry['path']}'"
-        )
-
-    def test_url_none_with_subdirectory_uses_basename_only(self, tmp_dir):
-        """template_rewrites maps the chunk path to {{base}}filename."""
-        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
         subdir = tmp_dir / "deep" / "nested"
         subdir.mkdir(parents=True)
         path = subdir / "myfile.ntf"
         _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
 
-        store = OversightMLParser(str(path))()
+        store = OversightMLParser()(str(path))
+        output = str(tmp_dir / "portable.tile_index.json")
+        write_tile_index(store, output, template_base="{{base}}")
 
-        # template_rewrites should map the chunk path → {{base}}myfile.ntf
-        rewrites = store.template_rewrites
-        assert len(rewrites) == 1
-        rewrite_value = list(rewrites.values())[0]
-        assert rewrite_value == "{{base}}myfile.ntf"
+        with open(output) as f:
+            data = json.load(f)
+        refs = data["refs"]
+        chunk_keys = [
+            k for k in refs
+            if k.startswith("0/data/") and not k.split("/")[-1].startswith(".")
+        ]
+        assert chunk_keys
+        for k in chunk_keys:
+            assert refs[k][0] == "{{base}}myfile.ntf", (
+                f"Expected '{{{{base}}}}myfile.ntf', got '{refs[k][0]}'"
+            )
 
     def test_flat_json_includes_templates_dict(self, tmp_dir):
         """Flat store JSON output includes "templates": {"base": ""}."""
@@ -1273,9 +1344,9 @@ class TestPortableIndex:
         path = tmp_dir / "image.ntf"
         _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
 
-        store = OversightMLParser(str(path))()
+        store = OversightMLParser()(str(path))
         output = str(tmp_dir / "portable.tile_index.json")
-        write_tile_index(store, output)
+        write_tile_index(store, output, template_base="{{base}}")
 
         with open(output) as f:
             data = json.load(f)
@@ -1307,9 +1378,9 @@ class TestPortableIndex:
         _write_nitf(path_base, num_cols=256, num_rows=256, num_bands=1)
         _write_nitf(path_r1, num_cols=128, num_rows=128, num_bands=1)
 
-        store = OversightMLParser([str(path_base), str(path_r1)])()
+        store = OversightMLParser()(str(path_base))
         output = str(tmp_dir / "portable_hier.tile_index.json")
-        write_tile_index(store, output)
+        write_tile_index(store, output, template_base="{{base}}")
 
         with open(output) as f:
             data = json.load(f)
@@ -1345,7 +1416,7 @@ class TestPortableIndex:
             )
 
     def test_absolute_url_does_not_include_templates(self, tmp_dir):
-        """When url is provided, no templates dict is emitted."""
+        """Without template_base, no templates dict is emitted."""
         import json
 
         from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
@@ -1353,7 +1424,7 @@ class TestPortableIndex:
         path = tmp_dir / "image.ntf"
         _write_nitf(path, num_cols=128, num_rows=128, num_bands=1)
 
-        store = OversightMLParser(str(path))(url="s3://bucket/image.ntf")
+        store = OversightMLParser()(str(path))
         output = str(tmp_dir / "absolute.tile_index.json")
         write_tile_index(store, output)
 
@@ -1361,7 +1432,7 @@ class TestPortableIndex:
             data = json.load(f)
 
         assert "templates" not in data, (
-            "Absolute URL index should not contain 'templates'"
+            "Non-portable index should not contain 'templates'"
         )
 
     def test_portable_index_round_trip_with_template_overrides(self, tmp_dir):
@@ -1399,10 +1470,10 @@ class TestPortableIndex:
         writer.add_asset("image:0", provider, "Image", "test", ["data"])
         writer.close()
 
-        # Create portable index (no URL)
-        store = OversightMLParser(str(path))()
+        # Create portable index (template_base rewrites refs to {{base}}filename)
+        store = OversightMLParser()(str(path))
         index_path = str(tmp_dir / "image.tile_index.json")
-        write_tile_index(store, index_path)
+        write_tile_index(store, index_path, template_base="{{base}}")
 
         # Verify the JSON has templates
         with open(index_path) as f:

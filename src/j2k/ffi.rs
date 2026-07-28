@@ -12,6 +12,7 @@ use std::ptr;
 use std::ptr::NonNull;
 
 use crate::error::CodecError;
+use crate::owned_buffer::OwnedBuffer;
 
 use super::sys::{
     self, opj_codec_t, opj_cparameters_t, opj_dparameters_t, opj_image_cmptparm_t, opj_image_t,
@@ -194,6 +195,112 @@ unsafe extern "C" fn memory_seek_callback(p_nb_bytes: i64, p_user_data: *mut c_v
 unsafe extern "C" fn memory_read_free_callback(p_user_data: *mut c_void) {
     if !p_user_data.is_null() {
         drop(Box::from_raw(p_user_data as *mut MemoryReadStreamData));
+    }
+}
+
+// -----------------------------------------------------------------------------
+// OwnedBuffer-backed read stream (Remote-capable)
+//
+// These callbacks mirror the resident `MemoryReadStreamData` ones but pull bytes
+// from an `OwnedBuffer` that may be `Remote`. OpenJPEG drives its own
+// seeks/reads through these, so for a tiled codestream it materializes only the
+// ranges it actually touches — never the whole file — with no reliance on parsed
+// tile-part metadata. When the buffer is resident (`Mapped`/`Heap`) the read
+// takes a zero-copy fast path.
+// -----------------------------------------------------------------------------
+
+/// User data for an [`OwnedBuffer`]-backed read stream.
+struct BufferReadStreamData {
+    buffer: OwnedBuffer,
+    len: usize,
+    pos: usize,
+}
+
+/// Read callback for an [`OwnedBuffer`]-backed stream.
+unsafe extern "C" fn buffer_read_callback(
+    p_buffer: *mut c_void,
+    p_nb_bytes: usize,
+    p_user_data: *mut c_void,
+) -> usize {
+    if p_user_data.is_null() || p_buffer.is_null() {
+        return usize::MAX; // Error indicator
+    }
+
+    let stream_data = &mut *(p_user_data as *mut BufferReadStreamData);
+    let remaining = stream_data.len.saturating_sub(stream_data.pos);
+    let to_read = p_nb_bytes.min(remaining);
+
+    if to_read == 0 {
+        return usize::MAX; // EOF
+    }
+
+    // Fast path: resident bytes.
+    if let Some(bytes) = stream_data.buffer.resident_bytes() {
+        ptr::copy_nonoverlapping(
+            bytes.as_ptr().add(stream_data.pos),
+            p_buffer as *mut u8,
+            to_read,
+        );
+        stream_data.pos += to_read;
+        return to_read;
+    }
+
+    // Remote: fetch the requested range on demand.
+    match stream_data.buffer.read_range(stream_data.pos, to_read) {
+        Ok(data) => {
+            ptr::copy_nonoverlapping(data.as_ptr(), p_buffer as *mut u8, data.len());
+            stream_data.pos += data.len();
+            data.len()
+        }
+        Err(_) => usize::MAX,
+    }
+}
+
+/// Skip callback for an [`OwnedBuffer`]-backed stream.
+unsafe extern "C" fn buffer_skip_callback(p_nb_bytes: i64, p_user_data: *mut c_void) -> i64 {
+    if p_user_data.is_null() {
+        return -1;
+    }
+
+    let stream_data = &mut *(p_user_data as *mut BufferReadStreamData);
+
+    if p_nb_bytes < 0 {
+        let skip = (-p_nb_bytes) as usize;
+        if skip > stream_data.pos {
+            stream_data.pos = 0;
+        } else {
+            stream_data.pos -= skip;
+        }
+    } else {
+        let skip = p_nb_bytes as usize;
+        let new_pos = stream_data.pos.saturating_add(skip);
+        stream_data.pos = new_pos.min(stream_data.len);
+    }
+
+    p_nb_bytes
+}
+
+/// Seek callback for an [`OwnedBuffer`]-backed stream.
+unsafe extern "C" fn buffer_seek_callback(p_nb_bytes: i64, p_user_data: *mut c_void) -> c_int {
+    if p_user_data.is_null() || p_nb_bytes < 0 {
+        return OPJ_FALSE;
+    }
+
+    let stream_data = &mut *(p_user_data as *mut BufferReadStreamData);
+    let new_pos = p_nb_bytes as usize;
+
+    if new_pos > stream_data.len {
+        return OPJ_FALSE;
+    }
+
+    stream_data.pos = new_pos;
+    OPJ_TRUE
+}
+
+/// Free callback for an [`OwnedBuffer`]-backed read stream.
+unsafe extern "C" fn buffer_read_free_callback(p_user_data: *mut c_void) {
+    if !p_user_data.is_null() {
+        drop(Box::from_raw(p_user_data as *mut BufferReadStreamData));
     }
 }
 
@@ -607,6 +714,44 @@ impl OjpStream {
         Ok(Self {
             ptr,
             _user_data: None, // User data is managed by OpenJPEG via free callback
+        })
+    }
+
+    /// Create a read stream over an [`OwnedBuffer`] (which may be `Remote`).
+    ///
+    /// OpenJPEG drives all reads through the buffer-backed callbacks, fetching
+    /// byte ranges on demand for a `Remote` source (and taking a zero-copy path
+    /// for a resident one). The `OwnedBuffer` is cheap to clone (refcount), so
+    /// the stream owns its own handle for its whole lifetime.
+    pub fn from_owned_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
+        let ptr = unsafe { sys::opj_stream_create(sys::OPJ_STREAM_DEFAULT_BUFFER_SIZE, OPJ_TRUE) };
+        if ptr.is_null() {
+            return Err(CodecError::Decode("Failed to create read stream".into()));
+        }
+
+        let len = buffer.len();
+        let user_data = Box::new(BufferReadStreamData {
+            buffer,
+            len,
+            pos: 0,
+        });
+        let user_data_ptr = Box::into_raw(user_data);
+
+        unsafe {
+            sys::opj_stream_set_read_function(ptr, Some(buffer_read_callback));
+            sys::opj_stream_set_skip_function(ptr, Some(buffer_skip_callback));
+            sys::opj_stream_set_seek_function(ptr, Some(buffer_seek_callback));
+            sys::opj_stream_set_user_data(
+                ptr,
+                user_data_ptr as *mut c_void,
+                Some(buffer_read_free_callback),
+            );
+            sys::opj_stream_set_user_data_length(ptr, len as u64);
+        }
+
+        Ok(Self {
+            ptr,
+            _user_data: None, // Managed by OpenJPEG via the free callback
         })
     }
 

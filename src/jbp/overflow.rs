@@ -24,6 +24,7 @@
 use super::error::JBPError;
 use super::tre::TreEnvelope;
 use super::types::SegmentLocation;
+use crate::owned_buffer::OwnedBuffer;
 use crate::parser::StructureAccessor;
 
 /// Source header type for TRE overflow.
@@ -417,7 +418,9 @@ pub fn get_file_header_overflow_indices(
 ///
 /// * `des_index` - 1-based DES segment index (from overflow field)
 /// * `des_locations` - Slice of DES segment locations
-/// * `file_data` - Complete file data buffer
+/// * `source` - The source buffer.  Only the referenced DES segment's byte
+///   range is read, via [`OwnedBuffer::read_range`] — so a `Remote` backing
+///   fetches just that range rather than the whole file.
 ///
 /// # Returns
 ///
@@ -436,7 +439,7 @@ pub fn get_file_header_overflow_indices(
 pub fn fetch_overflow_tres(
     des_index: u16,
     des_locations: &[SegmentLocation],
-    file_data: &[u8],
+    source: &OwnedBuffer,
 ) -> Result<Vec<TreEnvelope>, JBPError> {
     // Return empty vec if index is 0 (no overflow)
     if des_index == 0 {
@@ -462,17 +465,23 @@ pub fn fetch_overflow_tres(
     let data_end = data_start + des_loc.data_length as usize;
 
     // Validate we have enough data
-    if data_end > file_data.len() {
+    if data_end > source.len() {
         return Err(JBPError::UnexpectedEof {
             expected: data_end,
-            available: file_data.len(),
+            available: source.len(),
         });
     }
 
-    let des_data = &file_data[data_start..data_end];
+    // Read only this DES segment's byte range (bounded fetch for a Remote
+    // backing; a copy of the resident slice otherwise).
+    let des_data = source
+        .read_range(data_start, des_loc.data_length as usize)
+        .map_err(|e| JBPError::ValidationError {
+            message: format!("failed to read overflow DES range: {}", e),
+        })?;
 
     // Parse TRE envelopes from the DES data
-    TreEnvelope::parse_all(des_data)
+    TreEnvelope::parse_all(&des_data)
 }
 
 /// Helper function to extract an overflow field value from an accessor.
@@ -517,7 +526,9 @@ mod tests {
         let des_locations = vec![SegmentLocation::new(0, 100, 100, 50)];
         let file_data = vec![0u8; 200];
 
-        let result = fetch_overflow_tres(0, &des_locations, &file_data).unwrap();
+        let result =
+            fetch_overflow_tres(0, &des_locations, &OwnedBuffer::from_vec(file_data.clone()))
+                .unwrap();
         assert!(result.is_empty());
     }
 
@@ -527,7 +538,8 @@ mod tests {
         let file_data = vec![0u8; 200];
 
         // Index 2 is out of bounds (only 1 DES segment)
-        let result = fetch_overflow_tres(2, &des_locations, &file_data);
+        let result =
+            fetch_overflow_tres(2, &des_locations, &OwnedBuffer::from_vec(file_data.clone()));
         assert!(result.is_err());
 
         match result {
@@ -545,7 +557,8 @@ mod tests {
         let file_data = vec![0u8; 200];
 
         // Any non-zero index is invalid with empty DES list
-        let result = fetch_overflow_tres(1, &des_locations, &file_data);
+        let result =
+            fetch_overflow_tres(1, &des_locations, &OwnedBuffer::from_vec(file_data.clone()));
         assert!(result.is_err());
 
         match result {
@@ -570,7 +583,9 @@ mod tests {
         let mut file_data = vec![0u8; 100];
         file_data.extend_from_slice(tre_data);
 
-        let result = fetch_overflow_tres(1, &des_locations, &file_data).unwrap();
+        let result =
+            fetch_overflow_tres(1, &des_locations, &OwnedBuffer::from_vec(file_data.clone()))
+                .unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].tag, "GEOLOB");
@@ -589,7 +604,9 @@ mod tests {
         let mut file_data = vec![0u8; 50];
         file_data.extend_from_slice(&tre_data);
 
-        let result = fetch_overflow_tres(1, &des_locations, &file_data).unwrap();
+        let result =
+            fetch_overflow_tres(1, &des_locations, &OwnedBuffer::from_vec(file_data.clone()))
+                .unwrap();
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].tag, "GEOLOB");
@@ -620,7 +637,9 @@ mod tests {
         file_data.extend_from_slice(tre_data_2);
 
         // Fetch from DES index 2 (1-based)
-        let result = fetch_overflow_tres(2, &des_locations, &file_data).unwrap();
+        let result =
+            fetch_overflow_tres(2, &des_locations, &OwnedBuffer::from_vec(file_data.clone()))
+                .unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].tag, "SECOND");
@@ -633,7 +652,8 @@ mod tests {
         let des_locations = vec![SegmentLocation::new(0, 50, 50, 1000)];
         let file_data = vec![0u8; 100]; // Only 100 bytes, but DES claims 1000
 
-        let result = fetch_overflow_tres(1, &des_locations, &file_data);
+        let result =
+            fetch_overflow_tres(1, &des_locations, &OwnedBuffer::from_vec(file_data.clone()));
         assert!(result.is_err());
 
         match result {
@@ -654,7 +674,9 @@ mod tests {
         let des_locations = vec![SegmentLocation::new(0, 50, 50, 0)];
         let file_data = vec![0u8; 50];
 
-        let result = fetch_overflow_tres(1, &des_locations, &file_data).unwrap();
+        let result =
+            fetch_overflow_tres(1, &des_locations, &OwnedBuffer::from_vec(file_data.clone()))
+                .unwrap();
         assert!(result.is_empty());
     }
 
@@ -1091,7 +1113,7 @@ mod property_tests {
             let result = fetch_overflow_tres(
                 target_index as u16,
                 &des_locations,
-                &file_data,
+                &OwnedBuffer::from_vec(file_data.clone()),
             );
 
             // Verify the fetch succeeded
@@ -1148,7 +1170,7 @@ mod property_tests {
             let file_data = vec![0u8; num_des * 100];
 
             // Fetch with index 0 (no overflow)
-            let result = fetch_overflow_tres(0, &des_locations, &file_data);
+            let result = fetch_overflow_tres(0, &des_locations, &OwnedBuffer::from_vec(file_data.clone()));
 
             prop_assert!(result.is_ok(), "Zero index should not error");
             prop_assert!(result.unwrap().is_empty(), "Zero index should return empty vec");
@@ -1179,7 +1201,7 @@ mod property_tests {
 
             // Try to fetch with an invalid index (beyond DES count)
             let invalid_index = (num_des as u16) + extra_offset;
-            let result = fetch_overflow_tres(invalid_index, &des_locations, &file_data);
+            let result = fetch_overflow_tres(invalid_index, &des_locations, &OwnedBuffer::from_vec(file_data.clone()));
 
             prop_assert!(result.is_err(), "Invalid index should error");
 

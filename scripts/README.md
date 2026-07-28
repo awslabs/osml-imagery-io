@@ -9,7 +9,7 @@ Example scripts demonstrating common workflows with the osml-imagery-io library.
 | Script | Description |
 |--------|-------------|
 | `survey_datasets.py` | Scan a directory for image files and print a summary table of formats, dimensions, compression, etc. |
-| `describe_dataset.py` | Dump detailed information about a single dataset file — assets, metadata, SICD/SIDD XML content. |
+| `describe_dataset.py` | Dump detailed information about a single dataset file (local path or S3 URL) — assets, metadata, SICD/SIDD XML content. |
 
 ```bash
 # Survey all images in a directory
@@ -20,21 +20,27 @@ python scripts/survey_datasets.py data/integration -r
 
 # Describe a NITF file with full metadata
 python scripts/describe_dataset.py image.ntf --metadata
+
+# Describe an S3-hosted NITF (only headers/metadata are fetched)
+python scripts/describe_dataset.py s3://bucket/image.ntf --metadata
 ```
 
 ### Read & Chip
 
 | Script | Description |
 |--------|-------------|
-| `chip_image_local.py` | Extract a rectangular region from a local file (NITF, TIFF, PNG) and save as PNG. |
+| `chip_image.py` | Extract a rectangular region from a file (NITF, TIFF, PNG) — local path or S3 URL — and save as PNG. Remote sources fetch only the overlapping tiles. |
 | `chip_image_zarr.py` | Extract a region via a Zarr tile index (local or S3). Supports multiscale indexes with `--level`. |
 
 ```bash
 # Chip from a local NITF file
-python scripts/chip_image_local.py input.ntf chip.png --bbox 0 0 512 512
+python scripts/chip_image.py input.ntf chip.png --bbox 0 0 512 512
+
+# Chip directly from an S3-hosted NITF (only the overlapping tiles are fetched)
+python scripts/chip_image.py s3://bucket/input.ntf chip.png --bbox 0 0 512 512
 
 # Chip from a specific asset
-python scripts/chip_image_local.py input.ntf chip.png --bbox 0 0 512 512 --asset image:1
+python scripts/chip_image.py input.ntf chip.png --bbox 0 0 512 512 --asset image:1
 
 # Chip from a Zarr tile index at resolution level 2
 python scripts/chip_image_zarr.py index.json chip.png --bbox 0 0 256 256 --level 2
@@ -49,7 +55,7 @@ python scripts/chip_image_zarr.py s3://bucket/index.parquet chip.png --bbox 0 0 
 |--------|-------------|
 | `generate_synthetic_image.py` | Create a single-level test image with checkerboard pattern and tile IDs. Supports NITF, TIFF, PNG, J2K, JPEG with various compression modes. |
 | `generate_synthetic_image_pyramid.py` | Create a multi-resolution image pyramid as a COG (single TIFF with overviews) or NITF R-set (separate files per level). Each tile is labeled with its resolution level and grid coordinates. |
-| `generate_tile_index.py` | Build a Zarr tile index (JSON or Parquet) from a local imagery file for cloud-native access via fsspec/Zarr. |
+| `generate_tile_index.py` | Build a Zarr tile index (JSON or Parquet) from a local or S3-hosted imagery file for cloud-native access via fsspec/Zarr. |
 
 ```bash
 # Generate a 1024x1024 RGB NITF with JPEG 2000 compression
@@ -61,7 +67,10 @@ python scripts/generate_synthetic_image_pyramid.py pyramid.tif --mode cog --band
 # Generate a 4-level NITF R-set pyramid
 python scripts/generate_synthetic_image_pyramid.py pyramid.ntf --mode rset --levels 4
 
-# Generate a Zarr tile index for cloud access
+# Build a tile index directly from an S3-hosted file (refs point at the S3 URL)
+python scripts/generate_tile_index.py s3://bucket/image.ntf -o index.json
+
+# Or index a local copy and point the refs at where it will be served from
 python scripts/generate_tile_index.py image.ntf --source-uri s3://bucket/image.ntf -o index.json
 ```
 
@@ -73,8 +82,8 @@ Generate a pyramid, index it, then chip from multiple resolution levels:
 # 1. Generate a 3-level COG
 python scripts/generate_synthetic_image_pyramid.py pyramid.tif --mode cog --bands 3
 
-# 2. Build a tile index
-python scripts/generate_tile_index.py pyramid.tif --source-uri file://$(pwd)/pyramid.tif -o pyramid.tile_index.json
+# 2. Build a tile index (refs point at the local pyramid.tif)
+python scripts/generate_tile_index.py pyramid.tif -o pyramid.tile_index.json
 
 # 3. Chip from each level
 python scripts/chip_image_zarr.py pyramid.tile_index.json level0.png --bbox 384 384 640 640 --level 0

@@ -5,8 +5,14 @@ This script uses the IO/DatasetReader APIs to dump information about
 a dataset file, including overall dataset info and each asset. Supports
 NITF (.ntf, .nitf, .nsf), TIFF/GeoTIFF (.tif, .tiff), and PNG (.png) formats.
 
+The dataset may be a local file path or a remote URL (e.g.
+``s3://bucket/key.ntf``). Remote sources are opened with on-demand byte-range
+requests via fsspec, so describing a multi-GB remote file fetches only the
+headers and metadata it needs rather than downloading the whole object.
+
 Usage:
     python scripts/describe_dataset.py image.ntf
+    python scripts/describe_dataset.py s3://bucket/image.ntf --metadata
     python scripts/describe_dataset.py image.tif --metadata
     python scripts/describe_dataset.py image.png --metadata
 """
@@ -23,6 +29,11 @@ sys.path.insert(0, str(project_root))
 
 from aws.osml.io import IO, AssetType  # noqa: E402
 from aws.osml.io.tiff.utils import TagNameResolver  # noqa: E402
+
+# URL schemes that IO.open resolves to an fsspec filesystem for range reads.
+# A path with one of these prefixes is a remote source; anything else (including
+# a bare path or a ``file://`` URI) is treated as local.
+_REMOTE_SCHEMES = ("s3://", "gs://", "gcs://", "az://", "abfs://", "http://", "https://")
 
 # TIFF tags that are internal file-structure lookup tables, not useful for
 # human inspection.  These are skipped when formatting TIFF metadata.
@@ -61,6 +72,27 @@ _NITF_SKIP_FIELDS = {
     # DES subheader: user-defined subheader container
     "DESSHL", "DESSHF",
 }
+
+
+def _is_remote_url(path: str) -> bool:
+    """Return True if *path* is a remote URL rather than a local file path."""
+    return path.startswith(_REMOTE_SCHEMES)
+
+
+def _remote_size(path: str) -> int | None:
+    """Return the byte size of a remote object, or None if unavailable.
+
+    Uses fsspec to stat the object without reading its contents. Any failure
+    (missing fsspec backend, permission error, object not found) returns None
+    so the caller can fall back to a size-unknown display.
+    """
+    try:
+        import fsspec
+
+        fs, resolved = fsspec.core.url_to_fs(path)
+        return fs.size(resolved)
+    except Exception:
+        return None
 
 
 def _is_tiff(asset) -> bool:
@@ -225,19 +257,32 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
     Returns:
         0 on success, 1 on error
     """
-    file_path = Path(path)
+    is_remote = _is_remote_url(path)
 
-    if not file_path.exists():
-        print(f"Error: File not found: {path}", file=sys.stderr)
-        return 1
+    if is_remote:
+        # Remote source — a bare URL string routes through fsspec range reads.
+        source = path
+        size = _remote_size(path)
+        is_nitf = _is_nitf_file(Path(path))
+    else:
+        # Local path — validate up front for a friendly error, then open.
+        file_path = Path(path)
+        if not file_path.exists():
+            print(f"Error: File not found: {path}", file=sys.stderr)
+            return 1
+        source = str(file_path)
+        size = file_path.stat().st_size
+        is_nitf = _is_nitf_file(file_path)
 
-    print(f"Dataset: {file_path}")
-    print(f"Size: {file_path.stat().st_size} bytes")
+    print(f"Dataset: {path}")
+    if size is not None:
+        print(f"Size: {size} bytes")
+    else:
+        print("Size: (unknown)")
     print()
 
     try:
-        with IO.open([str(file_path)], "r") as reader:
-            is_nitf = _is_nitf_file(file_path)
+        with IO.open(source, "r") as reader:
 
             # Dataset-level metadata
             if show_metadata:
@@ -313,6 +358,9 @@ Examples:
     # Describe a NITF file
     python scripts/describe_dataset.py image.ntf
 
+    # Describe an S3-hosted NITF with full metadata (only headers are fetched)
+    python scripts/describe_dataset.py s3://bucket/image.ntf --metadata
+
     # Describe a GeoTIFF file with full metadata
     python scripts/describe_dataset.py image.tif --metadata
 
@@ -322,7 +370,8 @@ Examples:
     )
     parser.add_argument(
         "path",
-        help="Path to the dataset file (NITF, TIFF/GeoTIFF, PNG)"
+        help="Path to the dataset file, or a remote URL such as "
+             "s3://bucket/key.ntf (NITF, TIFF/GeoTIFF, PNG)"
     )
     parser.add_argument(
         "--metadata", "-m",

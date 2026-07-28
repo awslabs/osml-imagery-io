@@ -30,9 +30,15 @@ use crate::jbp::image::types::{InterleaveMode, PixelValueType};
 use crate::owned_buffer::OwnedBuffer;
 
 use crate::j2k::markers::{
-    build_minimal_codestream, parse_main_header, scan_sot_markers, TilePartOffsetTable,
+    build_minimal_codestream_from_parts, main_header_extent, parse_main_header, scan_sot_markers,
+    MainHeaderExtent, TilePartOffsetTable,
 };
 use crate::j2k::{J2KCodec, J2KDecodeParams};
+
+/// Initial header-region fetch size for a `Remote` codestream (mirrors the
+/// standalone reader's `HEADER_SCAN_PREFIX`). The region grows adaptively if a
+/// codestream carries a main header larger than this.
+const HEADER_SCAN_PREFIX: usize = 64 * 1024;
 
 // =============================================================================
 // Jpeg2000BlockDecoder
@@ -125,6 +131,15 @@ impl Jpeg2000BlockDecoder {
         codestream: OwnedBuffer,
         codec: Arc<dyn J2KCodec>,
     ) -> Result<Self, CodecError> {
+        // Keep the isolated per-block/segment codestream as a (possibly `Remote`)
+        // buffer — do NOT materialize it whole. Construction parses only a bounded
+        // header region below, and `decode_block` fetches just the target tile's
+        // byte ranges on demand (TLM present) or falls back to a header-driven
+        // scan (TLM absent). For a resident (`Mapped`/`Heap`) backing every access
+        // below is zero-copy; for a `Remote` backing a `get_block` fetches header +
+        // the tile's ranges instead of the whole segment. Masked (M8/MD) images
+        // decode per-block via `decode_block_at_offset`, which materializes the
+        // referenced block range on demand.
         let ic = subheader.ic()?.trim().to_string();
         let imode = subheader.imode()?;
 
@@ -177,16 +192,18 @@ impl Jpeg2000BlockDecoder {
         // Validate codestream magic bytes (SOC marker: 0xFF4F)
         // For masked images, the codestream starts with the mask table, not the SOC marker.
         // The actual J2K codestreams are at offsets specified in the mask table.
+        // Read only a bounded prefix (12 bytes) so a `Remote` codestream is not
+        // materialized whole just to check the signature.
         if !is_masked {
-            let cs_bytes = codestream.as_bytes();
-            if cs_bytes.len() < 2 {
+            let magic = codestream.read_range(0, 12.min(codestream.len()))?;
+            if magic.len() < 2 {
                 return Err(CodecError::InvalidFormat(
                     "Invalid JPEG 2000 codestream: too short (less than 2 bytes)".into(),
                 ));
             }
-            if cs_bytes[0] != 0xFF || cs_bytes[1] != 0x4F {
+            if magic[0] != 0xFF || magic[1] != 0x4F {
                 // Detect JP2 file format container (signature box: 0x0000000C 6A502020)
-                if cs_bytes.len() >= 12 && cs_bytes[4..8] == [0x6A, 0x50, 0x20, 0x20] {
+                if magic.len() >= 8 && magic[4..8] == [0x6A, 0x50, 0x20, 0x20] {
                     return Err(CodecError::Unsupported(
                         "JPEG 2000 image data contains a JP2 file format container \
                          (detected JP2 signature box) instead of a raw J2K codestream. \
@@ -197,7 +214,7 @@ impl Jpeg2000BlockDecoder {
                 return Err(CodecError::InvalidFormat(format!(
                     "Invalid JPEG 2000 codestream: missing SOC marker at offset 0 \
                      (found 0x{:02X}{:02X}, expected 0xFF4F)",
-                    cs_bytes[0], cs_bytes[1]
+                    magic[0], magic[1]
                 )));
             }
         }
@@ -211,9 +228,12 @@ impl Jpeg2000BlockDecoder {
         let nbands = subheader.band_count()? as u32;
         let comrat = subheader.comrat()?;
 
-        // Extract main header for non-masked images
+        // Extract main header for non-masked images. Parse over a bounded header
+        // region (SOC .. first SOT) rather than the whole codestream: zero-copy for
+        // a resident backing, an adaptive bounded fetch for a `Remote` backing.
         let (decode_header, first_sot_offset, tile_part_table) = if !is_masked {
-            let header_info = parse_main_header(codestream.as_bytes())?;
+            let header_region = Self::materialize_header_region(&codestream)?;
+            let header_info = parse_main_header(header_region.as_bytes())?;
             let table = OnceLock::new();
             // If TLM markers present, populate tile_part_table eagerly
             if let Some(tlm_table) = header_info.tlm_offset_table {
@@ -251,6 +271,40 @@ impl Jpeg2000BlockDecoder {
         })
     }
 
+    /// Materialize a codestream header region large enough to hold the full main
+    /// header (SOC .. first SOT), for the pure-Rust marker scans and the codec's
+    /// header-only parses (`get_tile_info` / `get_resolution_levels`).
+    ///
+    /// Zero-copy for a resident (`Mapped`/`Heap`) codestream (returns the whole
+    /// sub-view, which is already in memory). For a `Remote` codestream it fetches
+    /// a bounded prefix and grows it (doubling, capped at the codestream length)
+    /// until the main header fits — so a normal file costs one bounded fetch and a
+    /// file with an oversized PPM/COM main header still parses correctly. Mirrors
+    /// `J2KImageAssetProvider`'s `materialize_header_region` in `j2k/reader.rs`.
+    fn materialize_header_region(codestream: &OwnedBuffer) -> Result<OwnedBuffer, CodecError> {
+        let cs_len = codestream.len();
+
+        // Resident: the whole codestream is already in memory; scan it in place.
+        if codestream.resident_bytes().is_some() {
+            return codestream.try_slice(0..cs_len);
+        }
+
+        // Remote: grow an initial prefix until the main header is fully present.
+        let mut prefix_len = HEADER_SCAN_PREFIX.min(cs_len);
+        loop {
+            let region = codestream.try_slice(0..prefix_len)?;
+            if prefix_len == cs_len {
+                return Ok(region);
+            }
+            match main_header_extent(region.as_bytes()) {
+                MainHeaderExtent::Complete(_) => return Ok(region),
+                MainHeaderExtent::Truncated => {
+                    prefix_len = (prefix_len.saturating_mul(2)).min(cs_len);
+                }
+            }
+        }
+    }
+
     /// Get or compute the number of resolution levels.
     ///
     /// For masked images, returns 1 since each block has its own codestream
@@ -268,9 +322,10 @@ impl Jpeg2000BlockDecoder {
             return Ok(1);
         }
 
-        let levels = self
-            .codec
-            .get_resolution_levels(self.codestream.as_bytes())?;
+        // Header-only parse: use a bounded header region (zero-copy for a resident
+        // codestream, a bounded fetch for a `Remote` one), never the whole segment.
+        let header_region = Self::materialize_header_region(&self.codestream)?;
+        let levels = self.codec.get_resolution_levels(header_region.as_bytes())?;
         // Ignore the result of set() - if another thread set it first, that's fine
         let _ = self.num_resolution_levels.set(levels);
         Ok(levels)
@@ -295,7 +350,10 @@ impl Jpeg2000BlockDecoder {
             return Ok(info);
         }
 
-        let info = self.codec.get_tile_info(self.codestream.as_bytes())?;
+        // Header-only parse: use a bounded header region (zero-copy for a resident
+        // codestream, a bounded fetch for a `Remote` one), never the whole segment.
+        let header_region = Self::materialize_header_region(&self.codestream)?;
+        let info = self.codec.get_tile_info(header_region.as_bytes())?;
         // Ignore the result of set() - if another thread set it first, that's fine
         let _ = self.tile_info.set(info);
         Ok(info)
@@ -316,7 +374,13 @@ impl Jpeg2000BlockDecoder {
         let first_sot = self.first_sot_offset.ok_or_else(|| {
             CodecError::InvalidFormat("Cannot scan SOT markers for masked images".to_string())
         })?;
-        let table = scan_sot_markers(self.codestream.as_bytes(), first_sot)?;
+        // Reached only when TLM markers are absent (no eager table). Building the
+        // SOT table inherently walks every tile-part across the codestream, so this
+        // materializes the whole segment (zero-copy for a resident backing; a single
+        // whole-segment fetch for a `Remote` one — the documented TLM-absent
+        // floor). TLM-present files never reach here.
+        let resident = self.codestream.materialize()?;
+        let table = scan_sot_markers(resident.as_bytes(), first_sot)?;
         // Ignore set result — if another thread set it first, that's fine
         let _ = self.tile_part_table.set(table);
         Ok(self.tile_part_table.get().unwrap())
@@ -439,7 +503,13 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
 
         // Decode the specific tile
         let result = if self.decode_header.is_some() {
-            // Non-masked path: construct minimal single-tile codestream
+            // Non-masked path: construct a minimal single-tile codestream from just
+            // this tile's byte ranges. `ensure_tile_part_table` gives the per-tile
+            // (offset, length) ranges from TLM (no scan) or a one-time SOT scan;
+            // we then fetch *only* those ranges (`read_range`) rather than the whole
+            // segment. For a `Remote` backing this is the bandwidth win: header +
+            // this tile's parts, not ~100% of the file. For a resident backing each
+            // `read_range` is a cheap copy of already-mapped bytes.
             let table = self.ensure_tile_part_table()?;
             let tile_parts: Vec<(u64, u64)> = table
                 .iter()
@@ -453,14 +523,27 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
                     resolution_level,
                 ));
             }
+            // Fetch this tile's parts in one batched call (bounded ranges into the
+            // codestream). For a `Remote` backing this issues a single `read_many`
+            // → `cat_ranges`, so the scattered tile-parts fetch concurrently rather
+            // than one at a time; for a resident backing it is N cheap copies.
+            let ranges: Vec<(usize, usize)> = tile_parts
+                .iter()
+                .map(|&(offset, length)| (offset as usize, length as usize))
+                .collect();
+            let part_bytes: Vec<Vec<u8>> = self.codestream.read_ranges(&ranges)?;
+            let part_slices: Vec<&[u8]> = part_bytes.iter().map(|v| v.as_slice()).collect();
             let decode_header = self.decode_header.as_ref().unwrap();
             let minimal_codestream =
-                build_minimal_codestream(decode_header, &tile_parts, self.codestream.as_bytes());
+                build_minimal_codestream_from_parts(decode_header, &part_slices);
             self.codec.decode_tile(&minimal_codestream, 0, &params)?
         } else {
-            // Masked path: fall through to existing full-codestream path
+            // Masked path: decode the (already isolated) block codestream. The
+            // segment is materialized on demand; masked blocks are reached via
+            // `decode_block_at_offset` in practice, so this branch is rarely hit.
+            let resident = self.codestream.materialize()?;
             self.codec
-                .decode_tile(self.codestream.as_bytes(), tile_index, &params)?
+                .decode_tile(resident.as_bytes(), tile_index, &params)?
         };
 
         // Calculate expected tile dimensions at this resolution level
@@ -599,32 +682,37 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
             });
         }
 
-        // Validate offset is within bounds
+        // Validate offset is within bounds (uses the logical length, no fetch).
         let offset_usize = offset as usize;
-        if offset_usize >= self.codestream.as_bytes().len() {
+        let cs_len = self.codestream.len();
+        if offset_usize >= cs_len {
             return Err(CodecError::Decode(format!(
                 "Block offset {} exceeds codestream length {}",
-                offset,
-                self.codestream.as_bytes().len()
+                offset, cs_len
             )));
         }
 
-        // Extract the J2K codestream starting at the offset
-        // For masked J2K images, each block has its own complete codestream
-        let block_codestream = &self.codestream.as_bytes()[offset_usize..];
+        // Narrow to the block's codestream (offset .. end of segment) *without*
+        // fetching: a `Remote` backing stays `Remote`, so OpenJPEG's callbacks pull
+        // only the ranges this block touches; a resident backing stays zero-copy.
+        // Each masked block is its own single-tile codestream; OpenJPEG stops at the
+        // block's EOC, so the trailing segment bytes in the sub-view are ignored
+        // (same as the prior `&codestream_bytes[offset..]` behavior).
+        let block_codestream = self.codestream.subview(offset_usize..cs_len);
 
-        // Validate codestream magic bytes (SOC marker: 0xFF4F)
-        if block_codestream.len() < 2 {
+        // Validate codestream magic bytes (SOC marker: 0xFF4F) from a bounded read.
+        let magic = block_codestream.read_range(0, 2.min(block_codestream.len()))?;
+        if magic.len() < 2 {
             return Err(CodecError::Decode(format!(
                 "Block codestream at offset {} too short (less than 2 bytes)",
                 offset
             )));
         }
-        if block_codestream[0] != 0xFF || block_codestream[1] != 0x4F {
+        if magic[0] != 0xFF || magic[1] != 0x4F {
             return Err(CodecError::Decode(format!(
                 "Invalid J2K codestream at offset {}: missing SOC marker \
                  (found 0x{:02X}{:02X}, expected 0xFF4F)",
-                offset, block_codestream[0], block_codestream[1]
+                offset, magic[0], magic[1]
             )));
         }
 
@@ -635,7 +723,9 @@ impl BlockDecoder for Jpeg2000BlockDecoder {
             region: None,
         };
 
-        let result = self.codec.decode_tile(block_codestream, 0, &params)?;
+        let result = self
+            .codec
+            .decode_tile_source(&block_codestream, 0, &params)?;
 
         // For masked images, use block dimensions from subheader (NPPBH, NPPBV)
         // For non-masked images, use tile dimensions from the J2K codestream
@@ -1238,6 +1328,168 @@ mod tests {
             result,
             Err(CodecError::InvalidBlockCoordinates(0, 1, 0))
         ));
+    }
+
+    /// A masked decoder over a `Remote` `OwnedBuffer` codestream decodes via
+    /// `decode_block`'s masked branch, which now materializes the codestream on
+    /// demand (`materialize()`) rather than assuming it was pre-materialized in
+    /// `new`. The fetch stays bounded and decode matches the resident path.
+    #[test]
+    fn test_remote_materialized_codestream_decodes() {
+        use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+
+        // Same bytes as create_mock_codestream(), served from a Remote source.
+        let bytes = vec![0xFF, 0x4F, 0xFF, 0x51, 0x00, 0x00, 0x00, 0x00];
+        let reader = FakeReader::new(bytes.clone());
+        let log = reader.log_handle();
+        let fetcher =
+            StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
+        // Keep the codestream `Remote` — the masked decode path must fetch it on
+        // demand (previously `new` pre-materialized it; it no longer does).
+        let codestream = OwnedBuffer::from_remote(fetcher);
+
+        let codec = Arc::new(MockJ2KCodec::new().with_decode_result(64, 64, 3, 8));
+        let decoder = Jpeg2000BlockDecoder {
+            codestream,
+            nrows: 64,
+            ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
+            nbands: 3,
+            nbpp: 8,
+            pvtype: PixelValueType::UnsignedInt,
+            ic: "M8".to_string(),
+            is_masked: true,
+            comrat: None,
+            codec,
+            num_resolution_levels: OnceLock::new(),
+            tile_info: OnceLock::new(),
+            decode_header: None,
+            first_sot_offset: None,
+            tile_part_table: OnceLock::new(),
+        };
+
+        // Masked path calls codestream.as_bytes(); must not panic on the guard.
+        let (data, shape) = decoder.decode_block(0, 0, 0, None).unwrap();
+        assert_eq!(shape, [3, 64, 64]);
+        assert_eq!(data.len(), 64 * 64 * 3);
+        // The isolated codestream was fetched once, not the "whole file" (there is
+        // only one range here, but assert the fetch happened and stayed bounded).
+        let log = log.lock().unwrap();
+        assert!(log.iter().all(|&(_, len)| len <= bytes.len()));
+    }
+
+    /// With TLM present (tile-part table pre-populated, as `new` does when the
+    /// codestream carries TLM), a non-masked `decode_block` over a `Remote`
+    /// codestream fetches **only the target tile's byte range** — not the whole
+    /// segment and not other tiles' bytes. This is the targeted-tile bandwidth fix.
+    #[test]
+    fn test_remote_decode_block_fetches_only_target_tile_parts() {
+        use crate::j2k::markers::TilePartEntry;
+        use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+
+        // A synthetic codestream large enough that "whole file" is unambiguous.
+        // Layout (offsets are what we record in the tile-part table):
+        //   [0..64)      main header / decode header region (SOC + SIZ + ...)
+        //   [64..1064)   tile 0's tile-part bytes (starts with an SOT marker)
+        //   [1064..2064) tile 1's tile-part bytes (starts with an SOT marker)
+        let mut cs = vec![0u8; 2064];
+        cs[0] = 0xFF;
+        cs[1] = 0x4F; // SOC (kept resident-independent; not parsed here)
+                      // Give each tile-part a valid-looking SOT so the Isot-patch branch runs.
+        let sot = |buf: &mut [u8]| {
+            buf[0] = 0xFF;
+            buf[1] = 0x90; // SOT
+            buf[2] = 0x00;
+            buf[3] = 0x0A; // Lsot
+        };
+        sot(&mut cs[64..]);
+        sot(&mut cs[1064..]);
+        let file_len = cs.len();
+
+        // A pre-populated TLM table: tile 0 at [64,1064), tile 1 at [1064,2064).
+        let table: TilePartOffsetTable = vec![
+            TilePartEntry {
+                tile_index: 0,
+                offset: 64,
+                length: 1000,
+            },
+            TilePartEntry {
+                tile_index: 1,
+                offset: 1064,
+                length: 1000,
+            },
+        ];
+        let tile_part_table = OnceLock::new();
+        let _ = tile_part_table.set(table);
+        // Pre-populate the grid/level caches so this test isolates the *decode*
+        // fetch (a real reader populates these from a bounded header region at
+        // metadata time; here the synthetic file is smaller than the 64 KiB header
+        // prefetch, which would otherwise coalesce into one whole-file read).
+        let tile_info = OnceLock::new();
+        let _ = tile_info.set((64u32, 64u32, 1u32, 2u32));
+        let num_resolution_levels = OnceLock::new();
+        let _ = num_resolution_levels.set(1u32);
+
+        // Remote codestream + fetch log (no eager prefetch).
+        let reader = FakeReader::new(cs.clone());
+        let log = reader.log_handle();
+        let fetcher =
+            StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
+        let codestream = OwnedBuffer::from_remote(fetcher);
+
+        // 2x1 tile grid; MockCodec ignores the codestream bytes and returns a tile.
+        let codec = Arc::new(
+            MockJ2KCodec::new()
+                .with_decode_result(64, 128, 1, 8)
+                .with_tile_grid(64, 64, 1, 2),
+        );
+        let decoder = Jpeg2000BlockDecoder {
+            codestream,
+            nrows: 128,
+            ncols: 64,
+            nppbh: 64,
+            nppbv: 64,
+            nbands: 1,
+            nbpp: 8,
+            pvtype: PixelValueType::UnsignedInt,
+            ic: "C8".to_string(),
+            is_masked: false,
+            comrat: None,
+            codec,
+            num_resolution_levels,
+            tile_info,
+            decode_header: Some(cs[..64].to_vec()),
+            first_sot_offset: Some(64),
+            tile_part_table,
+        };
+
+        // Decode tile (1, 0) — tile_index 1, whose parts live at [1064, 2064).
+        let _ = decoder.decode_block(1, 0, 0, None).unwrap();
+
+        let fetches = log.lock().unwrap();
+        // No single fetch covered the whole file.
+        assert!(
+            fetches.iter().all(|&(_, len)| len < file_len),
+            "a fetch covered the whole file: {:?}",
+            *fetches
+        );
+        // Total bytes fetched is bounded by tile 1's part (1000 B) plus slack —
+        // and strictly less than the full codestream. Tile 0's bytes are NOT read.
+        let total: usize = fetches.iter().map(|(_, len)| *len).sum();
+        assert!(
+            total < file_len,
+            "decoding tile 1 fetched {total} of {file_len} bytes — should not pull the whole segment"
+        );
+        // Every fetch must lie within tile 1's byte range [1064, 2064); tile 0's
+        // range [64, 1064) must never be touched.
+        assert!(
+            fetches
+                .iter()
+                .all(|&(off, len)| off >= 1064 && off + len as u64 <= file_len as u64),
+            "a fetch fell outside tile 1's range [1064, {file_len}): {:?}",
+            *fetches
+        );
     }
 
     #[test]

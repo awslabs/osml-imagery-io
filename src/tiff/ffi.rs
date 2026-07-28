@@ -13,6 +13,7 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 
 use crate::error::CodecError;
+use crate::owned_buffer::OwnedBuffer;
 
 use super::sys;
 
@@ -90,9 +91,16 @@ fn install_error_handlers() {
 // =============================================================================
 
 /// Memory read stream data for TIFFClientOpen callbacks.
-/// Holds a pointer to the byte slice data, total length, and current read position.
+///
+/// Holds the source [`OwnedBuffer`], its total length, and the current read
+/// position. The buffer may be resident (`Mapped`/`Heap`) or `Remote`
+/// (fetch-on-demand); the read callback takes a zero-copy fast path from the
+/// resident bytes when available and otherwise fetches the requested range
+/// through the buffer's range seam. Because libtiff is opened with
+/// `mode="rm"` / `mapproc=None`, every byte it touches flows through these
+/// callbacks, so a `Remote` source is never forced fully resident.
 pub(crate) struct MemoryReadStreamData {
-    data: *const u8,
+    source: OwnedBuffer,
     len: usize,
     pos: usize,
 }
@@ -113,10 +121,22 @@ unsafe extern "C" fn tiff_read_proc(clientdata: *mut c_void, buf: *mut c_void, s
         return 0;
     }
 
-    ptr::copy_nonoverlapping(stream.data.add(stream.pos), buf as *mut u8, to_read);
-    stream.pos += to_read;
+    // Fast path: resident bytes — copy directly, no fetch.
+    if let Some(bytes) = stream.source.resident_bytes() {
+        ptr::copy_nonoverlapping(bytes.as_ptr().add(stream.pos), buf as *mut u8, to_read);
+        stream.pos += to_read;
+        return to_read as i64;
+    }
 
-    to_read as i64
+    // Remote: fetch exactly the requested range on demand.
+    match stream.source.read_range(stream.pos, to_read) {
+        Ok(data) => {
+            ptr::copy_nonoverlapping(data.as_ptr(), buf as *mut u8, data.len());
+            stream.pos += data.len();
+            data.len() as i64
+        }
+        Err(_) => -1,
+    }
 }
 
 /// POSIX-style write callback for libtiff.
@@ -439,22 +459,82 @@ pub(crate) struct IfdTagEntry {
 
 const MAX_IFD_ENTRIES: u64 = 4096;
 
+/// Byte source for [`IfdReader`]: either resident bytes (zero-copy indexing) or
+/// a `Remote` [`OwnedBuffer`] whose bytes are fetched on demand.
+///
+/// TIFF IFD/tag parsing does many small reads at scattered offsets. For a
+/// resident source these index a borrowed slice directly. For a `Remote` source
+/// each read fetches through the buffer's range seam; because the default
+/// prefetch policy coalesces the header region into one fetch, the IFD-region
+/// reads that follow are served from cache rather than issuing one request per
+/// field. Tag *data* offsets (which may point anywhere in the file) are fetched
+/// as bounded ranges — never the whole file.
+enum ByteSource<'a> {
+    Resident(&'a [u8]),
+    Remote(&'a OwnedBuffer),
+}
+
+impl<'a> ByteSource<'a> {
+    /// Total length of the underlying source.
+    fn total_len(&self) -> usize {
+        match self {
+            ByteSource::Resident(s) => s.len(),
+            ByteSource::Remote(b) => b.len(),
+        }
+    }
+
+    /// Read a fixed-size chunk at `offset`, fetching for a `Remote` source.
+    fn read_n<const N: usize>(&self, offset: usize) -> Result<[u8; N], CodecError> {
+        if offset + N > self.total_len() {
+            return Err(CodecError::Decode(format!(
+                "Read {} bytes out of bounds at offset {}",
+                N, offset
+            )));
+        }
+        let mut out = [0u8; N];
+        match self {
+            ByteSource::Resident(s) => out.copy_from_slice(&s[offset..offset + N]),
+            ByteSource::Remote(b) => out.copy_from_slice(&b.read_range(offset, N)?),
+        }
+        Ok(out)
+    }
+
+    /// Read `len` bytes at `offset` as a (possibly borrowed) slice.
+    fn bytes_at(
+        &self,
+        offset: usize,
+        len: usize,
+    ) -> Result<std::borrow::Cow<'a, [u8]>, CodecError> {
+        if offset + len > self.total_len() {
+            return Err(CodecError::Decode(format!(
+                "Read {} bytes out of bounds at offset {}",
+                len, offset
+            )));
+        }
+        Ok(match self {
+            ByteSource::Resident(s) => std::borrow::Cow::Borrowed(&s[offset..offset + len]),
+            ByteSource::Remote(b) => std::borrow::Cow::Owned(b.read_range(offset, len)?),
+        })
+    }
+}
+
 struct IfdReader<'a> {
-    raw: &'a [u8],
+    source: ByteSource<'a>,
     is_little_endian: bool,
     is_bigtiff: bool,
 }
 
 impl<'a> IfdReader<'a> {
-    fn new(raw: &'a [u8], is_bigtiff: bool) -> Result<Self, CodecError> {
+    fn new(source: ByteSource<'a>, is_bigtiff: bool) -> Result<Self, CodecError> {
         let min_header = if is_bigtiff { 16 } else { 8 };
-        if raw.len() < min_header {
+        if source.total_len() < min_header {
             return Err(CodecError::Decode(
                 "TIFF data too short for header".to_string(),
             ));
         }
 
-        let is_little_endian = match (raw[0], raw[1]) {
+        let bom = source.read_n::<2>(0)?;
+        let is_little_endian = match (bom[0], bom[1]) {
             (0x49, 0x49) => true,
             (0x4D, 0x4D) => false,
             _ => {
@@ -465,20 +545,19 @@ impl<'a> IfdReader<'a> {
         };
 
         Ok(Self {
-            raw,
+            source,
             is_little_endian,
             is_bigtiff,
         })
     }
 
+    /// Total length of the underlying source (resident or remote).
+    fn source_len(&self) -> usize {
+        self.source.total_len()
+    }
+
     fn read_u16(&self, offset: usize) -> Result<u16, CodecError> {
-        if offset + 2 > self.raw.len() {
-            return Err(CodecError::Decode(format!(
-                "Read u16 out of bounds at offset {}",
-                offset
-            )));
-        }
-        let bytes: [u8; 2] = [self.raw[offset], self.raw[offset + 1]];
+        let bytes = self.source.read_n::<2>(offset)?;
         Ok(if self.is_little_endian {
             u16::from_le_bytes(bytes)
         } else {
@@ -487,13 +566,7 @@ impl<'a> IfdReader<'a> {
     }
 
     fn read_i16(&self, offset: usize) -> Result<i16, CodecError> {
-        if offset + 2 > self.raw.len() {
-            return Err(CodecError::Decode(format!(
-                "Read i16 out of bounds at offset {}",
-                offset
-            )));
-        }
-        let bytes: [u8; 2] = [self.raw[offset], self.raw[offset + 1]];
+        let bytes = self.source.read_n::<2>(offset)?;
         Ok(if self.is_little_endian {
             i16::from_le_bytes(bytes)
         } else {
@@ -502,18 +575,7 @@ impl<'a> IfdReader<'a> {
     }
 
     fn read_u32(&self, offset: usize) -> Result<u32, CodecError> {
-        if offset + 4 > self.raw.len() {
-            return Err(CodecError::Decode(format!(
-                "Read u32 out of bounds at offset {}",
-                offset
-            )));
-        }
-        let bytes: [u8; 4] = [
-            self.raw[offset],
-            self.raw[offset + 1],
-            self.raw[offset + 2],
-            self.raw[offset + 3],
-        ];
+        let bytes = self.source.read_n::<4>(offset)?;
         Ok(if self.is_little_endian {
             u32::from_le_bytes(bytes)
         } else {
@@ -522,18 +584,7 @@ impl<'a> IfdReader<'a> {
     }
 
     fn read_i32(&self, offset: usize) -> Result<i32, CodecError> {
-        if offset + 4 > self.raw.len() {
-            return Err(CodecError::Decode(format!(
-                "Read i32 out of bounds at offset {}",
-                offset
-            )));
-        }
-        let bytes: [u8; 4] = [
-            self.raw[offset],
-            self.raw[offset + 1],
-            self.raw[offset + 2],
-            self.raw[offset + 3],
-        ];
+        let bytes = self.source.read_n::<4>(offset)?;
         Ok(if self.is_little_endian {
             i32::from_le_bytes(bytes)
         } else {
@@ -542,22 +593,7 @@ impl<'a> IfdReader<'a> {
     }
 
     fn read_u64(&self, offset: usize) -> Result<u64, CodecError> {
-        if offset + 8 > self.raw.len() {
-            return Err(CodecError::Decode(format!(
-                "Read u64 out of bounds at offset {}",
-                offset
-            )));
-        }
-        let bytes: [u8; 8] = [
-            self.raw[offset],
-            self.raw[offset + 1],
-            self.raw[offset + 2],
-            self.raw[offset + 3],
-            self.raw[offset + 4],
-            self.raw[offset + 5],
-            self.raw[offset + 6],
-            self.raw[offset + 7],
-        ];
+        let bytes = self.source.read_n::<8>(offset)?;
         Ok(if self.is_little_endian {
             u64::from_le_bytes(bytes)
         } else {
@@ -566,22 +602,7 @@ impl<'a> IfdReader<'a> {
     }
 
     fn read_i64(&self, offset: usize) -> Result<i64, CodecError> {
-        if offset + 8 > self.raw.len() {
-            return Err(CodecError::Decode(format!(
-                "Read i64 out of bounds at offset {}",
-                offset
-            )));
-        }
-        let bytes: [u8; 8] = [
-            self.raw[offset],
-            self.raw[offset + 1],
-            self.raw[offset + 2],
-            self.raw[offset + 3],
-            self.raw[offset + 4],
-            self.raw[offset + 5],
-            self.raw[offset + 6],
-            self.raw[offset + 7],
-        ];
+        let bytes = self.source.read_n::<8>(offset)?;
         Ok(if self.is_little_endian {
             i64::from_le_bytes(bytes)
         } else {
@@ -590,18 +611,7 @@ impl<'a> IfdReader<'a> {
     }
 
     fn read_f32(&self, offset: usize) -> Result<f32, CodecError> {
-        if offset + 4 > self.raw.len() {
-            return Err(CodecError::Decode(format!(
-                "Read f32 out of bounds at offset {}",
-                offset
-            )));
-        }
-        let bytes: [u8; 4] = [
-            self.raw[offset],
-            self.raw[offset + 1],
-            self.raw[offset + 2],
-            self.raw[offset + 3],
-        ];
+        let bytes = self.source.read_n::<4>(offset)?;
         Ok(if self.is_little_endian {
             f32::from_le_bytes(bytes)
         } else {
@@ -610,22 +620,7 @@ impl<'a> IfdReader<'a> {
     }
 
     fn read_f64(&self, offset: usize) -> Result<f64, CodecError> {
-        if offset + 8 > self.raw.len() {
-            return Err(CodecError::Decode(format!(
-                "Read f64 out of bounds at offset {}",
-                offset
-            )));
-        }
-        let bytes: [u8; 8] = [
-            self.raw[offset],
-            self.raw[offset + 1],
-            self.raw[offset + 2],
-            self.raw[offset + 3],
-            self.raw[offset + 4],
-            self.raw[offset + 5],
-            self.raw[offset + 6],
-            self.raw[offset + 7],
-        ];
+        let bytes = self.source.read_n::<8>(offset)?;
         Ok(if self.is_little_endian {
             f64::from_le_bytes(bytes)
         } else {
@@ -704,7 +699,7 @@ impl<'a> IfdReader<'a> {
         let mut entries = Vec::with_capacity(capped_count);
         for i in 0..capped_count {
             let eo = entries_start + i * entry_size;
-            if eo + entry_size > self.raw.len() {
+            if eo + entry_size > self.source_len() {
                 break;
             }
             let tag = self.read_u16(eo)? as u32;
@@ -757,7 +752,7 @@ impl<'a> IfdReader<'a> {
 
         for i in 0..capped_count {
             let eo = entries_start + i * entry_size;
-            if eo + entry_size > self.raw.len() {
+            if eo + entry_size > self.source_len() {
                 break;
             }
             let t = self.read_u16(eo)? as u32;
@@ -821,10 +816,27 @@ impl Drop for TiffHandle {
 impl TiffHandle {
     /// Open a TIFF from a byte slice using `TIFFClientOpen` with memory callbacks.
     ///
+    /// Convenience wrapper that wraps `data` in a resident `OwnedBuffer`. Prefer
+    /// [`from_buffer`](Self::from_buffer) when a (possibly `Remote`) buffer is
+    /// already in hand so a remote source is never forced fully resident.
+    ///
     /// Returns `CodecError::InvalidFormat` if the data is not a valid TIFF or
     /// if `TIFFClientOpen` fails for any reason.
     pub fn from_bytes(data: &[u8]) -> Result<Self, CodecError> {
-        if data.is_empty() {
+        Self::from_buffer(OwnedBuffer::from_vec(data.to_vec()))
+    }
+
+    /// Open a TIFF from an [`OwnedBuffer`] using `TIFFClientOpen` with memory
+    /// callbacks.
+    ///
+    /// The buffer may be `Remote`: libtiff drives all reads through
+    /// `tiff_read_proc`/`tiff_seek_proc` (mapping stays disabled), which fetch
+    /// byte ranges on demand, so the file is never forced fully resident.
+    ///
+    /// Returns `CodecError::InvalidFormat` if the data is not a valid TIFF or
+    /// if `TIFFClientOpen` fails for any reason.
+    pub fn from_buffer(buffer: OwnedBuffer) -> Result<Self, CodecError> {
+        if buffer.is_empty() {
             return Err(CodecError::InvalidFormat(
                 "Cannot open TIFF from empty data".to_string(),
             ));
@@ -836,9 +848,10 @@ impl TiffHandle {
         let _ = take_last_error();
         let _ = take_last_warning();
 
+        let len = buffer.len();
         let stream_data = Box::new(MemoryReadStreamData {
-            data: data.as_ptr(),
-            len: data.len(),
+            source: buffer,
+            len,
             pos: 0,
         });
 
@@ -1003,18 +1016,28 @@ impl TiffHandle {
     ///
     /// Only available for read-mode handles (requires access to raw bytes).
     pub fn enumerate_ifd_tags(&self) -> Result<Vec<IfdTagEntry>, CodecError> {
-        let raw = match &self._stream_data {
-            StreamData::Read(rd) => unsafe { std::slice::from_raw_parts(rd.data, rd.len) },
-            StreamData::Write(_) => {
-                return Err(CodecError::Decode(
-                    "enumerate_ifd_tags requires a read-mode handle".to_string(),
-                ));
-            }
-        };
-
-        let reader = IfdReader::new(raw, self.is_bigtiff())?;
+        let source = self.ifd_byte_source("enumerate_ifd_tags")?;
+        let reader = IfdReader::new(source, self.is_bigtiff())?;
         let ifd_offset = reader.walk_to_ifd(self.current_directory())?;
         reader.enumerate_entries(ifd_offset)
+    }
+
+    /// Build a [`ByteSource`] over the read-mode source buffer for IFD parsing.
+    ///
+    /// Takes a zero-copy borrow of the resident bytes when available
+    /// (`Mapped`/`Heap`) and otherwise wraps the `Remote` buffer so parsing
+    /// fetches ranges on demand. Errors on a write-mode handle.
+    fn ifd_byte_source(&self, caller: &str) -> Result<ByteSource<'_>, CodecError> {
+        match &self._stream_data {
+            StreamData::Read(rd) => Ok(match rd.source.resident_bytes() {
+                Some(bytes) => ByteSource::Resident(bytes),
+                None => ByteSource::Remote(&rd.source),
+            }),
+            StreamData::Write(_) => Err(CodecError::Decode(format!(
+                "{} requires a read-mode handle",
+                caller
+            ))),
+        }
     }
 
     /// Read a tag value from the current IFD given its [`IfdTagEntry`].
@@ -1033,16 +1056,8 @@ impl TiffHandle {
     pub fn read_tag_value(&self, entry: &IfdTagEntry) -> Result<serde_json::Value, CodecError> {
         use serde_json::Value;
 
-        let raw = match &self._stream_data {
-            StreamData::Read(rd) => unsafe { std::slice::from_raw_parts(rd.data, rd.len) },
-            StreamData::Write(_) => {
-                return Err(CodecError::Decode(
-                    "read_tag_value requires a read-mode handle".to_string(),
-                ));
-            }
-        };
-
-        let reader = IfdReader::new(raw, self.is_bigtiff())?;
+        let source = self.ifd_byte_source("read_tag_value")?;
+        let reader = IfdReader::new(source, self.is_bigtiff())?;
 
         // TIFF field type sizes in bytes
         let type_size = match entry.field_type {
@@ -1085,13 +1100,13 @@ impl TiffHandle {
             reader.read_data_offset(entry_offset)? as usize
         };
 
-        if data_offset + total_bytes > raw.len() {
+        if data_offset + total_bytes > reader.source_len() {
             return Err(CodecError::Decode(format!(
                 "Tag {} data at offset {} extends beyond file (need {} bytes, file is {} bytes)",
                 entry.tag,
                 data_offset,
                 total_bytes,
-                raw.len()
+                reader.source_len()
             )));
         }
 
@@ -1100,20 +1115,18 @@ impl TiffHandle {
         match entry.field_type {
             // BYTE (1)
             1 => {
+                let block = reader.source.bytes_at(data_offset, total_bytes)?;
                 if count == 1 {
-                    Ok(Value::from(raw[data_offset] as u64))
+                    Ok(Value::from(block[0] as u64))
                 } else {
-                    let arr: Vec<Value> = (0..count)
-                        .map(|i| Value::from(raw[data_offset + i] as u64))
-                        .collect();
+                    let arr: Vec<Value> = block.iter().map(|&b| Value::from(b as u64)).collect();
                     Ok(Value::Array(arr))
                 }
             }
             // ASCII (2)
             2 => {
-                let end = data_offset + count;
-                let slice = &raw[data_offset..end];
-                let s = std::str::from_utf8(slice)
+                let block = reader.source.bytes_at(data_offset, count)?;
+                let s = std::str::from_utf8(&block)
                     .unwrap_or("")
                     .trim_end_matches('\0');
                 Ok(Value::String(s.to_string()))
@@ -1167,20 +1180,19 @@ impl TiffHandle {
             }
             // SBYTE (6)
             6 => {
+                let block = reader.source.bytes_at(data_offset, total_bytes)?;
                 if count == 1 {
-                    Ok(Value::from(raw[data_offset] as i8 as i64))
+                    Ok(Value::from(block[0] as i8 as i64))
                 } else {
-                    let arr: Vec<Value> = (0..count)
-                        .map(|i| Value::from(raw[data_offset + i] as i8 as i64))
-                        .collect();
+                    let arr: Vec<Value> =
+                        block.iter().map(|&b| Value::from(b as i8 as i64)).collect();
                     Ok(Value::Array(arr))
                 }
             }
             // UNDEFINED (7) — always array of byte values
             7 => {
-                let arr: Vec<Value> = (0..count)
-                    .map(|i| Value::from(raw[data_offset + i] as u64))
-                    .collect();
+                let block = reader.source.bytes_at(data_offset, count)?;
+                let arr: Vec<Value> = block.iter().map(|&b| Value::from(b as u64)).collect();
                 Ok(Value::Array(arr))
             }
             // SSHORT (8)
@@ -2131,6 +2143,74 @@ mod tests {
             assert_eq!(handle.number_of_directories(), 1);
         });
         join_handle.join().unwrap();
+    }
+
+    // =========================================================================
+    // Remote-backed TIFF decode
+    // =========================================================================
+
+    use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+    use std::sync::{Arc as StdArc, Mutex as StdMutex};
+
+    /// Shared `(offset, len)` fetch log produced by the fake reader.
+    type FetchLog = StdArc<StdMutex<Vec<(u64, usize)>>>;
+
+    /// Build a `Remote` `OwnedBuffer` over `data` (no eager header prefetch) plus
+    /// a handle to the reader's `(offset, len)` fetch log.
+    fn remote_tiff_buffer(data: &[u8]) -> (OwnedBuffer, FetchLog) {
+        let reader = FakeReader::new(data.to_vec());
+        let log = reader.log_handle();
+        let fetcher =
+            StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
+        (OwnedBuffer::from_remote(fetcher), log)
+    }
+
+    #[test]
+    fn test_from_buffer_remote_reads_strip_without_full_download() {
+        let data = make_minimal_tiff();
+        let (buffer, log) = remote_tiff_buffer(&data);
+
+        // libtiff drives every read through our callbacks (mode="rm", mapproc=None),
+        // so a Remote source is never forced fully resident.
+        let handle = TiffHandle::from_buffer(buffer).unwrap();
+        assert_eq!(handle.number_of_directories(), 1);
+        assert!(!handle.is_tiled());
+
+        // Metadata read via the custom IFD parser also fetches ranges, not the file.
+        let entries = handle.enumerate_ifd_tags().unwrap();
+        assert_eq!(entries.len(), 9);
+        let iw = handle.get_field_u32(tags::IMAGE_WIDTH).unwrap();
+        assert_eq!(iw, 4);
+
+        // Decode the single strip and verify the pixels are correct.
+        let strip = handle.read_encoded_strip(0).unwrap();
+        assert_eq!(strip, &[10, 20, 30, 40, 50, 60, 70, 80]);
+
+        // The whole file was never pulled in a single fetch; libtiff issues many
+        // small range reads instead. (Total bytes fetched may exceed file size
+        // because libtiff re-reads regions across seeks — the invariant we assert
+        // is that no single fetch covered the entire file.)
+        let calls = log.lock().unwrap();
+        assert!(!calls.is_empty(), "expected at least one range fetch");
+        assert!(
+            calls.iter().all(|&(_, len)| len < data.len()),
+            "no single fetch should cover the whole file; calls={:?}",
+            &*calls
+        );
+    }
+
+    #[test]
+    fn test_remote_and_resident_decode_are_identical() {
+        let data = make_minimal_tiff();
+
+        let resident = TiffHandle::from_bytes(&data).unwrap();
+        let resident_strip = resident.read_encoded_strip(0).unwrap();
+
+        let (buffer, _log) = remote_tiff_buffer(&data);
+        let remote = TiffHandle::from_buffer(buffer).unwrap();
+        let remote_strip = remote.read_encoded_strip(0).unwrap();
+
+        assert_eq!(resident_strip, remote_strip);
     }
 
     /// Helper: create a minimal tiled TIFF via the write path with optional
@@ -3177,7 +3257,7 @@ mod tests {
         data[16..24].copy_from_slice(&count_bytes);
 
         // Use IfdReader directly to verify capping (libtiff rejects large counts)
-        let reader = IfdReader::new(&data, true).unwrap();
+        let reader = IfdReader::new(ByteSource::Resident(&data), true).unwrap();
         let entries = reader.enumerate_entries(16).unwrap();
         // IfdReader caps at 4096 entries but only parses what fits in the buffer
         assert!(entries.len() <= MAX_IFD_ENTRIES as usize);

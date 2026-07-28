@@ -416,6 +416,16 @@ impl JpegNitfBlockDecoder {
             ));
         }
 
+        // Materialize the image data to resident bytes once (slice-first). The
+        // JPEG NITF decoder scans the concatenated per-block JPEG streams to find
+        // their boundaries (`compute_block_offsets`) and decodes each block from a
+        // contiguous `&[u8]`, so it needs the segment resident. For a resident
+        // backing this `try_slice` is zero-copy; for a `Remote` backing it fetches
+        // the (already-isolated) image segment once so the full-buffer `as_bytes()`
+        // guard never fires. In the production `IO.open` path the segment is
+        // already resident (fetched by `image_data()`), so this is a no-op.
+        let image_data = image_data.try_slice(0..image_data.len())?;
+
         let ic = subheader.ic()?.trim().to_string();
         let nrows = subheader.nrows()?;
         let ncols = subheader.ncols()?;
@@ -504,9 +514,12 @@ impl JpegNitfBlockDecoder {
         let total_blocks = (self.nbpc * self.nbpr) as usize;
         let mut offsets = Vec::with_capacity(total_blocks);
 
+        // The image data is resident after construction (materialized in `new`).
+        let image_bytes = self.image_data.as_bytes();
+
         // For single-block images, the entire data is one JPEG stream
         if total_blocks == 1 {
-            offsets.push((0, self.image_data.as_bytes().len()));
+            offsets.push((0, image_bytes.len()));
             return offsets;
         }
 
@@ -519,7 +532,7 @@ impl JpegNitfBlockDecoder {
         let mut current_offset = 0;
 
         for _ in 0..total_blocks {
-            if current_offset >= self.image_data.as_bytes().len() {
+            if current_offset >= image_bytes.len() {
                 // No more data - remaining blocks will have invalid offsets
                 offsets.push((current_offset, current_offset));
                 continue;
@@ -530,10 +543,9 @@ impl JpegNitfBlockDecoder {
                 // [4-byte len BE][JPEG stream] repeated per band
                 let block_start = current_offset;
                 for band in 0..self.nbands {
-                    if current_offset + 4 > self.image_data.as_bytes().len() {
+                    if current_offset + 4 > image_bytes.len() {
                         break;
                     }
-                    let image_bytes = self.image_data.as_bytes();
                     let length = u32::from_be_bytes([
                         image_bytes[current_offset],
                         image_bytes[current_offset + 1],
@@ -541,16 +553,16 @@ impl JpegNitfBlockDecoder {
                         image_bytes[current_offset + 3],
                     ]) as usize;
                     current_offset += 4 + length;
-                    if current_offset > self.image_data.as_bytes().len() {
+                    if current_offset > image_bytes.len() {
                         // Truncated stream — clamp to data length
-                        current_offset = self.image_data.as_bytes().len();
+                        current_offset = image_bytes.len();
                         break;
                     }
                     let _ = band; // suppress unused warning
                 }
                 offsets.push((block_start, current_offset));
             } else {
-                let remaining_data = &self.image_data.as_bytes()[current_offset..];
+                let remaining_data = &image_bytes[current_offset..];
 
                 // Find the end of this JPEG stream (EOI marker)
                 if let Some(jpeg_len) = find_jpeg_end(remaining_data) {
@@ -559,8 +571,8 @@ impl JpegNitfBlockDecoder {
                     current_offset = end_offset;
                 } else {
                     // No EOI found - use remaining data as the last block
-                    offsets.push((current_offset, self.image_data.as_bytes().len()));
-                    current_offset = self.image_data.as_bytes().len();
+                    offsets.push((current_offset, image_bytes.len()));
+                    current_offset = image_bytes.len();
                 }
             }
         }
@@ -655,16 +667,18 @@ impl BlockDecoder for JpegNitfBlockDecoder {
 
         let (start_offset, end_offset) = block_offsets[block_index];
 
-        if start_offset >= end_offset || end_offset > self.image_data.as_bytes().len() {
+        // The image data is resident after construction (materialized in `new`).
+        let image_bytes = self.image_data.as_bytes();
+        if start_offset >= end_offset || end_offset > image_bytes.len() {
             return Err(CodecError::Decode(format!(
                 "Invalid block offsets: start={}, end={}, data_len={}",
                 start_offset,
                 end_offset,
-                self.image_data.as_bytes().len()
+                image_bytes.len()
             )));
         }
 
-        let block_jpeg_data = &self.image_data.as_bytes()[start_offset..end_offset];
+        let block_jpeg_data = &image_bytes[start_offset..end_offset];
 
         // Decode the JPEG data
         // For single-band or RGB/YCbCr with IMODE=P, use decode_block
@@ -751,17 +765,19 @@ impl BlockDecoder for JpegNitfBlockDecoder {
 
         // For masked JPEG (M3), the offset points to the start of the JPEG stream
         // We need to find the end of the JPEG stream (look for EOI marker 0xFFD9)
+        // The image data is resident after construction (materialized in `new`).
+        let image_bytes = self.image_data.as_bytes();
         let offset_usize = offset as usize;
-        if offset_usize >= self.image_data.as_bytes().len() {
+        if offset_usize >= image_bytes.len() {
             return Err(CodecError::Decode(format!(
                 "Block offset {} exceeds image data length {}",
                 offset,
-                self.image_data.as_bytes().len()
+                image_bytes.len()
             )));
         }
 
         // Find the end of the JPEG stream by looking for EOI marker
-        let jpeg_data = &self.image_data.as_bytes()[offset_usize..];
+        let jpeg_data = &image_bytes[offset_usize..];
         let jpeg_end = find_jpeg_end(jpeg_data).ok_or_else(|| {
             CodecError::Decode("Could not find JPEG EOI marker in block data".into())
         })?;
@@ -1464,6 +1480,53 @@ mod tests {
             data.extend_from_slice(b"00000");
 
             data
+        }
+
+        /// A single-block C3 image decodes identically whether its image data is
+        /// a resident (`Heap`) or a `Remote` `OwnedBuffer`, and the `Remote`
+        /// backing never trips the full-buffer `as_bytes()` guard.
+        #[test]
+        fn test_remote_image_data_decodes_like_resident() {
+            use crate::jpeg::ffi::compress_8bit;
+            use crate::remote::{FakeReader, HeaderAwarePolicy, StreamFetcher};
+
+            let registry = StructureRegistry::new();
+            let subheader_data = create_c3_image_subheader();
+            let facade = match ImageSubheaderFacade::from_bytes(
+                &subheader_data,
+                &registry,
+                NitfFormat::Nitf21,
+            ) {
+                Ok(f) => f,
+                Err(_) => {
+                    eprintln!("Skipping test: could not parse test subheader");
+                    return;
+                }
+            };
+
+            // 64x64 8-bit grayscale, single block (matches the subheader).
+            let src: Vec<u8> = (0..64 * 64).map(|i| (i % 256) as u8).collect();
+            let jpeg = compress_8bit(&src, 64, 64, 1, 90).unwrap();
+
+            let resident_decoder =
+                JpegNitfBlockDecoder::new(&facade, OwnedBuffer::from_vec(jpeg.clone())).unwrap();
+
+            let reader = FakeReader::new(jpeg.clone());
+            let log = reader.log_handle();
+            let fetcher =
+                StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
+            let remote_decoder =
+                JpegNitfBlockDecoder::new(&facade, OwnedBuffer::from_remote(fetcher)).unwrap();
+
+            let (r_data, r_shape) = resident_decoder.decode_block(0, 0, 0, None).unwrap();
+            let (m_data, m_shape) = remote_decoder.decode_block(0, 0, 0, None).unwrap();
+            assert_eq!(r_shape, m_shape);
+            assert_eq!(r_data, m_data);
+
+            // The image segment was fetched (once, at construction) and no fetch
+            // exceeded the segment length.
+            let log = log.lock().unwrap();
+            assert!(log.iter().all(|&(_, len)| len <= jpeg.len()));
         }
 
         #[test]

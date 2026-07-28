@@ -21,6 +21,7 @@ pub mod jpeg;
 pub mod owned_buffer;
 pub mod parser;
 pub mod png;
+pub mod remote;
 #[cfg(feature = "libtiff")]
 pub mod tiff;
 mod traits;

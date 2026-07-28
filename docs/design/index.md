@@ -7,6 +7,7 @@ Technical design documentation for osml-imagery-io internals.
 
 api-design
 zarr-codec-design
+remote-range-read
 parser-design
 property-testing
 native-library-ffi

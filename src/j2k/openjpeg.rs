@@ -29,6 +29,7 @@ use std::os::raw::c_int;
 use std::sync::Arc;
 
 use crate::error::CodecError;
+use crate::owned_buffer::OwnedBuffer;
 
 use super::codec::{
     J2KCodec, J2KCodecCapabilities, J2KDecodeParams, J2KDecodeResult, J2KEncodeParams,
@@ -124,6 +125,13 @@ fn bytes_per_sample_for_precision(precision: u8) -> Result<usize, CodecError> {
 /// ```
 pub struct OpenJpegCodec {
     num_threads: usize,
+}
+
+/// OpenJPEG's internal stream read-buffer size. Exposed for tests that need a
+/// codestream larger than one buffer fill to observe partial (range) reads.
+#[cfg(test)]
+pub(crate) fn stream_buffer_size() -> usize {
+    sys::OPJ_STREAM_DEFAULT_BUFFER_SIZE
 }
 
 impl OpenJpegCodec {
@@ -520,7 +528,58 @@ impl J2KCodec for OpenJpegCodec {
         }
 
         // Get tile info to validate tile_index
-        let (tile_width, tile_height, num_tiles_x, num_tiles_y) = self.get_tile_info(codestream)?;
+        let tile_grid = self.get_tile_info(codestream)?;
+
+        // Create input stream over the resident codestream, then run the shared
+        // decode core.
+        let stream = OjpStream::from_memory_read(codestream)?;
+        self.decode_tile_with_stream(&stream, tile_grid, tile_index, params)
+    }
+
+    fn decode_tile_source(
+        &self,
+        source: &OwnedBuffer,
+        tile_index: u32,
+        params: &J2KDecodeParams,
+    ) -> Result<J2KDecodeResult, CodecError> {
+        // Parse the tile grid from a bounded header region only — never the whole
+        // file. `get_tile_info` needs the SOC + SIZ marker, and SIZ is always the
+        // first marker segment immediately after SOC, so a fixed prefix reliably
+        // contains it (the prefix comfortably exceeds any real SIZ segment).
+        let header_len = HEADER_SCAN_PREFIX.min(source.len());
+        let header = source.try_slice(0..header_len)?;
+        let tile_grid = self.get_tile_info(header.as_bytes())?;
+
+        // Drive OpenJPEG over the (possibly Remote) buffer: its own seeks/reads
+        // fetch only the codestream ranges this tile needs.
+        let stream = OjpStream::from_owned_buffer(source.clone())?;
+        self.decode_tile_with_stream(&stream, tile_grid, tile_index, params)
+    }
+}
+
+/// Bytes to materialize when scanning a J2K main header (SOC/SIZ/COD) from a
+/// `Remote` source. J2K main headers are well under 64 KiB in practice; this is
+/// a prefetch hint, not a correctness bound — an undersized prefix simply
+/// triggers a wider fetch when the SIZ scan runs past it.
+const HEADER_SCAN_PREFIX: usize = 64 * 1024;
+
+impl OpenJpegCodec {
+    /// Shared tile-decode core, driven by an already-constructed [`OjpStream`].
+    ///
+    /// The stream may be resident-backed ([`OjpStream::from_memory_read`]) or
+    /// `OwnedBuffer`-backed ([`OjpStream::from_owned_buffer`], which fetches
+    /// ranges on demand). OpenJPEG's own reads flow through the stream callbacks,
+    /// so for a `Remote` source only the codestream ranges the decoder touches
+    /// are materialized. Full image dimensions come from the parsed header
+    /// (`read_header`), avoiding a redundant marker scan.
+    fn decode_tile_with_stream(
+        &self,
+        stream: &OjpStream,
+        tile_grid: (u32, u32, u32, u32),
+        tile_index: u32,
+        params: &J2KDecodeParams,
+    ) -> Result<J2KDecodeResult, CodecError> {
+        let (tile_width, tile_height, num_tiles_x, num_tiles_y) = tile_grid;
         let total_tiles = num_tiles_x * num_tiles_y;
 
         if tile_index >= total_tiles {
@@ -544,11 +603,15 @@ impl J2KCodec for OpenJpegCodec {
 
         codec.setup_decoder(&mut dparams)?;
 
-        // Create input stream
-        let stream = OjpStream::from_memory_read(codestream)?;
-
         // Read header
-        let image = codec.read_header(&stream)?;
+        let image = codec.read_header(stream)?;
+
+        // Capture full image dimensions from the header *before* decoding a tile:
+        // `get_decoded_tile` mutates the image's x0/x1/y0/y1 to the decoded tile's
+        // region, so reading them afterward would report the tile size, not the
+        // full image size (this drives edge-tile clamping below).
+        let full_width = image.width();
+        let full_height = image.height();
 
         // Set resolution factor if needed
         if params.resolution_level > 0 {
@@ -556,7 +619,7 @@ impl J2KCodec for OpenJpegCodec {
         }
 
         // Decode specific tile
-        codec.get_decoded_tile(&stream, &image, tile_index)?;
+        codec.get_decoded_tile(stream, &image, tile_index)?;
 
         // Extract decoded data
         let num_components = image.num_components();
@@ -578,9 +641,6 @@ impl J2KCodec for OpenJpegCodec {
         // For edge tiles, the actual dimensions may be smaller
         let tile_row = tile_index / num_tiles_x;
         let tile_col = tile_index % num_tiles_x;
-
-        // Get full image dimensions
-        let (full_width, full_height, _) = self.get_dimensions(codestream)?;
 
         // Calculate actual tile dimensions (may be smaller for edge tiles)
         let tile_x0 = tile_col * tile_width;

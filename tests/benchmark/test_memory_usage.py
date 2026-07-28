@@ -1,11 +1,26 @@
 """Benchmark: peak memory usage during file open.
 
 Measures peak RSS delta during IO.open() + get_asset_keys() + get_asset() for
-synthetic uncompressed files across formats. The goal is to establish a baseline
-showing ~2x file-size memory overhead from the redundant full-buffer copy on open.
+synthetic uncompressed files across formats.
 
-Synthetic files are ~50 MB each (uncompressed) to isolate the mmap->heap copy
-cost without codec memory dominating.
+Three source dimensions are contrasted so the memory profile of the virtualized
+range-read path is directly comparable to the two whole-file paths:
+
+- ``local`` — open the dataset by path (mmap; direct disk access). The OS
+  demand-pages from disk, so peak RSS reflects only the touched pages (metadata
+  + first asset).
+- ``virtual`` — open a seekable, sized Python file-like handle that reads from
+  disk on demand, driving the ``Remote`` ``OwnedBuffer`` range-read path. Peak
+  RSS is bounded by the fetched header ranges + prefetch, NOT the whole file.
+  This is the clearest differentiator the remote range-read design targets.
+- ``full_download`` — open a non-seekable file-like handle, forcing the legacy
+  full-read path (``read_stream_bytes`` → whole-file ``Vec<u8>``). Peak RSS
+  grows by ~the file size — the behavior the ``virtual`` mode avoids.
+
+For the block-capable formats (nitf, tiff, j2k, dted) the ``virtual`` run must
+hold materially less than the ``full_download`` run for metadata-only access.
+Monolithic formats (jpeg) stay on the full-read path regardless, so only their
+``local`` / ``full_download`` modes are measured.
 
 Run with::
 
@@ -26,6 +41,8 @@ from aws.osml.io import (
     PixelType,
     imsave,
 )
+
+from tests.benchmark.conftest import _format_from_path, _remote_capable
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -182,15 +199,102 @@ def format_name(request):
     return request.param
 
 
-def _measure_open_rss(path: str) -> int:
+# The subprocess bodies below open the file three different ways.  Each returns
+# the peak-RSS delta (bytes) from just after imports to just after the open +
+# first-asset access, on stdout.  A subprocess is used so ``ru_maxrss`` (a
+# monotonic peak over the process lifetime) reflects only this one operation.
+
+# ``local`` — open by path (mmap).
+_OPEN_LOCAL = """
+reader = IO.open(["{path}"], "r")
+keys = reader.get_asset_keys(asset_type=AssetType.Image)
+if keys:
+    asset = reader.get_asset(keys[0])
+reader.close()
+"""
+
+# ``virtual`` — seekable, sized Python handle reading from disk on demand → the
+# ``Remote`` ``OwnedBuffer`` range-read path.  Peak RSS is bounded by the
+# fetched header ranges + prefetch, not the whole file.
+_OPEN_VIRTUAL = """
+import os
+
+class DiskRangeHandle:
+    def __init__(self, path):
+        self._f = open(path, "rb")
+        self.size = os.path.getsize(path)
+    def seekable(self):
+        return True
+    def seek(self, o, w=0):
+        return self._f.seek(o, w)
+    def tell(self):
+        return self._f.tell()
+    def read(self, n=-1):
+        return self._f.read(n)
+    def close(self):
+        return self._f.close()
+
+handle = DiskRangeHandle("{path}")
+reader = IO.open(handle, "r", format="{fmt}")
+keys = reader.get_asset_keys(asset_type=AssetType.Image)
+if keys:
+    asset = reader.get_asset(keys[0])
+reader.close()
+handle.close()
+"""
+
+# ``full_download`` — non-seekable handle forces the legacy full-read path
+# (whole-file Vec<u8>).  Peak RSS grows by ~the file size.
+_OPEN_FULL_DOWNLOAD = """
+class NonSeekableHandle:
+    def __init__(self, path):
+        self._f = open(path, "rb")
+    def seekable(self):
+        return False
+    def read(self, n=-1):
+        return self._f.read(n)
+    def close(self):
+        return self._f.close()
+
+handle = NonSeekableHandle("{path}")
+reader = IO.open(handle, "r", format="{fmt}")
+keys = reader.get_asset_keys(asset_type=AssetType.Image)
+if keys:
+    asset = reader.get_asset(keys[0])
+reader.close()
+handle.close()
+"""
+
+_OPEN_BODIES = {
+    "local": _OPEN_LOCAL,
+    "virtual": _OPEN_VIRTUAL,
+    "full_download": _OPEN_FULL_DOWNLOAD,
+}
+
+
+@pytest.fixture(params=list(_OPEN_BODIES), ids=list(_OPEN_BODIES))
+def mem_source_mode(request) -> str:
+    """Yield the memory-benchmark source mode.
+
+    ``local`` (mmap), ``virtual`` (Remote OwnedBuffer range reads through a
+    Python file-like handle), and ``full_download`` (legacy non-seekable full
+    read) so peak RSS is directly comparable across the three whole-vs-range
+    paths.
+    """
+    return request.param
+
+
+def _measure_open_rss(path: str, mode: str, fmt: str) -> int:
     """Measure RSS increase from opening a file and accessing its first asset.
 
-    Uses a fork-based approach: measure RSS before and after the open sequence.
-    Because ru_maxrss is monotonically increasing (peak over process lifetime),
-    we use a subprocess to get an isolated measurement.
+    ``mode`` selects how the file is opened (``local`` / ``virtual`` /
+    ``full_download``).  Because ``ru_maxrss`` is monotonically increasing
+    (peak over process lifetime), we use a subprocess to get an isolated
+    measurement per mode.
     """
     import subprocess
 
+    open_body = _OPEN_BODIES[mode].format(path=path, fmt=fmt)
     script = f"""
 import resource
 import platform
@@ -211,11 +315,7 @@ gc.collect()
 rss_before = peak_rss()
 
 # Open and access asset
-reader = IO.open(["{path}"], "r")
-keys = reader.get_asset_keys(asset_type=AssetType.Image)
-if keys:
-    asset = reader.get_asset(keys[0])
-reader.close()
+{open_body}
 
 rss_after = peak_rss()
 delta = rss_after - rss_before
@@ -233,12 +333,13 @@ print(delta)
 
 
 @pytest.mark.benchmark
-def test_memory_open_peak_rss(synthetic_files, format_name):
+def test_memory_open_peak_rss(synthetic_files, format_name, mem_source_mode):
     """Measure peak RSS delta during IO.open + get_asset_keys + get_asset.
 
-    The expected baseline behavior (before the zero-copy fix) is that peak
-    RSS grows by approximately 2x the file size: once for the mmap and once
-    for the heap copy made inside from_bytes().
+    The ``virtual`` mode drives the ``Remote`` ``OwnedBuffer`` range-read path;
+    its peak RSS must be bounded by the fetched header ranges + prefetch, not
+    the file size — contrasted here with the ``local`` mmap path and the legacy
+    ``full_download`` (non-seekable full-read) path, which grows by ~file size.
     """
     if format_name not in synthetic_files:
         pytest.skip(f"Synthetic {format_name} file not available")
@@ -246,19 +347,37 @@ def test_memory_open_peak_rss(synthetic_files, format_name):
     entry = synthetic_files[format_name]
     path = str(entry["path"])
     file_size = entry["size_bytes"]
+    fmt = _format_from_path(Path(path))
 
-    rss_delta = _measure_open_rss(path)
+    # A ``virtual`` run only makes sense for the block-capable formats routed
+    # through the Remote path; monolithic formats stay on the full-read path.
+    if mem_source_mode == "virtual" and not _remote_capable(Path(path)):
+        pytest.skip(
+            f"{format_name} is not remote-capable; monolithic formats stay on "
+            "the full-read path (covered by the full_download mode)"
+        )
+
+    rss_delta = _measure_open_rss(path, mem_source_mode, fmt)
 
     ratio = rss_delta / file_size if file_size > 0 else 0
 
     # Report results
     print(f"\n{'='*60}")
-    print(f"Format: {format_name}")
+    print(f"Format: {format_name}  Source: {mem_source_mode}")
     print(f"File size: {file_size / (1024*1024):.1f} MB")
     print(f"RSS delta: {rss_delta / (1024*1024):.1f} MB")
     print(f"Ratio (RSS/file): {ratio:.2f}x")
     print(f"{'='*60}")
 
-    # The test passes regardless — this is a measurement, not an assertion.
-    # The ratio is recorded for before/after comparison.
     assert rss_delta >= 0, "RSS should not decrease during open"
+
+    # The ``virtual`` metadata/first-asset open must stay bounded — it fetches
+    # only header ranges + prefetch, never the whole file.  Assert its peak RSS
+    # is materially below the file size (allowing generous slack for allocator
+    # rounding and interpreter noise on the ~10s-of-MB synthetic files).
+    if mem_source_mode == "virtual" and file_size > 4 * 1024 * 1024:
+        assert rss_delta < file_size, (
+            f"virtual open of {format_name} used {rss_delta} bytes RSS for a "
+            f"{file_size}-byte file — expected a bounded range read, not a "
+            "full-file materialization"
+        )

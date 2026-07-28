@@ -65,8 +65,9 @@ pixels = imread("large_image.ntf")
 
 Any object with a standard `.read()` / `.write()` interface works — `io.BytesIO`,
 fsspec handles, HTTP response bodies, or any duck-typed object with the required
-methods. This is convenient when you already have bytes in memory or want to
-encode directly to a buffer without touching the filesystem.
+methods. This is convenient when you already have bytes in memory, want to read
+directly from cloud storage, or want to encode directly to a buffer without
+touching the filesystem.
 
 ```python
 import io
@@ -83,19 +84,100 @@ buffer = io.BytesIO()
 imsave(buffer, data, format="jpeg")
 ```
 
-### Trade-offs
+### Remote reading without a full download
 
-Stream sources are read entirely into memory via a single `.read()` call. For
-large files (multi-GB NITF imagery) this can be problematic:
+The library reads remote objects with on-demand byte-range requests instead of
+downloading the whole file. Opening the dataset and reading metadata or specific
+tiles fetches only the bytes those operations touch (headers, offset tables, and
+the requested tiles), so a multi-GB remote file becomes practical to inspect and
+read from over the network.
 
-- **Memory pressure** — the full file must fit in RAM, unlike memory-mapped paths
-  which load pages on demand.
-- **Latency for remote files** — if the stream backs cloud storage (e.g., an
-  fsspec S3 handle), the entire file must be downloaded before decoding begins.
+There are three ways to point the library at a remote source, all equivalent:
 
-For efficient access to large remote imagery without downloading the full file,
-use the [VirtualiZarr tile-based access](zarr-codecs.md) path. It issues HTTP
-range requests for only the tiles you need:
+```python
+from aws.osml.io import IO, imread
+import fsspec
+
+# 1. A remote URL string — resolved to an fsspec filesystem internally.
+pixels = imread("s3://bucket/large_image.ntf", format="nitf")
+
+# 2. An explicit fsspec filesystem instance + path via filesystem=.
+fs = fsspec.filesystem("s3")
+with IO.open("s3://bucket/large_image.ntf", "r", format="nitf", filesystem=fs) as dataset:
+    block = dataset.get_asset("image:0").get_block(0, 0)
+
+# 3. A raw fsspec/s3fs file-like handle (also works — see note below).
+with fsspec.open("s3://bucket/large_image.ntf", "rb") as handle:
+    with IO.open(handle, "r", format="nitf") as dataset:
+        block = dataset.get_asset("image:0").get_block(0, 0)  # fetches only this tile's ranges
+```
+
+The `filesystem=` parameter is accepted by `IO.open`, `imread`, `iminfo`, and
+`tiles`. When it is omitted, a remote URL string is resolved to a filesystem
+internally via `fsspec.core.url_to_fs`.
+
+:::{note}
+Prefer a URL string or `filesystem=` over a raw handle. When the library has the
+`(filesystem, path)` pair it fetches a tile's scattered byte ranges
+**concurrently** (via fsspec's `cat_ranges`), which is markedly faster over a
+high-latency object store. A raw handle still works — the library recovers the
+filesystem from the handle's `.fs`/`.path` where it can — but this is a
+best-effort fallback. Passing `filesystem=` together with a file-like or
+in-memory (`io.BytesIO`) source raises `ValueError`, because the two are
+contradictory.
+:::
+
+Range reading applies to the **block-capable** formats — NITF, TIFF/GeoTIFF, JPEG
+2000, and DTED. For these, `IO.open`, `iminfo`, `tiles`, and
+`DatasetReader.get_block` all read incrementally. Peak memory tracks the fetched
+ranges (plus a small header prefetch), not the file size.
+
+The `format` argument is required for streams (there is no filename to infer from);
+see [The `format` parameter](#the-format-parameter) below.
+
+#### Tuning concurrency: the connection pool
+
+Concurrent range fetches share the underlying s3fs/botocore connection pool,
+which defaults to **10** connections (`MAX_POOL_CONNECTIONS`). For workloads that
+fan many blocks out across threads, raising the pool can improve throughput —
+construct the filesystem with a larger `max_pool_connections` and pass it via
+`filesystem=`:
+
+```python
+import fsspec
+from aws.osml.io import IO
+
+fs = fsspec.filesystem("s3", config_kwargs={"max_pool_connections": 32})
+with IO.open("s3://bucket/large_image.ntf", "r", format="nitf", filesystem=fs) as dataset:
+    ...
+```
+
+This is **optional and environment-dependent** — measure before adopting it. The
+default pool of 10 is already enough to fetch a single tile's parts concurrently;
+the larger pool only pays off once many blocks are read in parallel (e.g. a
+threaded region-of-interest read), and the actual benefit scales with per-request
+latency (larger cross-region, smaller in-region).
+
+### When the full file is read
+
+Two cases fall back to reading the entire stream into memory via a single `.read()`:
+
+- **Monolithic formats (PNG, standalone JPEG).** These have no sub-file structure to
+  exploit — a whole-file read is the only decode strategy — so they are read in full
+  even from a seekable handle.
+- **Non-seekable or unknown-size streams** (e.g. a plain `io.BytesIO`, a pipe, or an
+  HTTP body with no length). With no way to issue range reads, the library reads the
+  stream fully, exactly as earlier versions did.
+
+For these cases, the same trade-offs as before apply — the full file must fit in RAM,
+and a remote source is downloaded before decoding begins.
+
+### Bulk tile access via VirtualiZarr
+
+For repeated, tile-parallel access to large remote imagery — especially building an
+index once and serving many reads — the [VirtualiZarr tile-based access](zarr-codecs.md)
+path remains preferred. It persists per-tile byte offsets so fsspec issues direct
+range GETs per chunk with no re-scan:
 
 ```python
 import zarr
@@ -117,7 +199,9 @@ root = zarr.open_group(store, mode="r", zarr_format=2)
 tile = np.asarray(root["0/data"][0:3, 0:256, 0:256])
 ```
 
-See [Cloud Imagery Access via Zarr](zarr-codecs.md) for the full workflow.
+See [Cloud Imagery Access via Zarr](zarr-codecs.md) for the full workflow. Building
+the index (`OversightMLParser`) over a remote `url` itself uses range reads, so even
+index construction no longer requires a full download.
 
 Alternatively, download the remote file to a local path first to get
 memory-mapped performance:
@@ -153,12 +237,14 @@ and `.hr1` through `.hr8` (High Resolution Elevation products).
 
 ### When streams are a good fit
 
+- You are reading a block-capable format (NITF, TIFF/GeoTIFF, JPEG 2000, DTED) from
+  a seekable, sized handle (fsspec/s3fs) and want range reads instead of a full
+  download — including large remote files
 - The file is small enough to fit in memory (PNG thumbnails, JPEG tiles, small
   NITF chips)
 - You already have the bytes in memory (HTTP response bodies, message payloads)
 - You want to encode output directly to a buffer without a temporary file (tile
   server responses)
-- You are using fsspec handles for moderate-sized files from cloud storage
 
 ## Dataset Structure
 
@@ -318,6 +404,48 @@ analysis tools. They are not part of the JBP/NITF specification — there is no
 internal metadata linking an R-set file to its parent. The relationship is purely
 by filename convention.
 :::
+
+#### Remote multi-file pyramids
+
+Multi-file pyramids may live on a remote object store. When reading, each entry
+in the list is resolved the same way a single remote path is (see [Remote
+reading without a full download](#remote-reading-without-a-full-download)) —
+remote entries open through fsspec with on-demand byte-range requests, local
+entries stay memory-mapped. There are two ways to point `IO.open` at a remote
+pyramid, mirroring the single-path forms:
+
+```python
+from aws.osml.io import IO
+import fsspec
+
+# 1. A list of remote URLs — each resolved to an fsspec filesystem internally.
+urls = [
+    "s3://bucket/image.ntf",
+    "s3://bucket/image.ntf.r1",
+    "s3://bucket/image.ntf.r2",
+]
+with IO.open(urls, "r") as dataset:
+    print(dataset.get_asset_keys())  # image:0, image:0:overview:1, ...
+
+# 2. A shared filesystem + scheme-less keys via filesystem=.
+fs = fsspec.filesystem("s3")
+keys = ["bucket/image.ntf", "bucket/image.ntf.r1", "bucket/image.ntf.r2"]
+with IO.open(keys, "r", filesystem=fs) as dataset:
+    overview = dataset.get_asset("image:0:overview:1")
+```
+
+The `.rN` naming convention is detected on the key regardless of scheme, so
+`s3://bucket/image.ntf.r1` is recognized as an overview exactly like the local
+`image.ntf.r1`. When `filesystem=` is passed, the single shared filesystem is
+applied to every entry — the natural case when the base and its overviews live
+under one bucket. Entries are decided per source, so a list mixing a local base
+with remote overviews (or vice-versa) opens correctly.
+
+Remote multi-file pyramids are **read mode only**. Passing `filesystem=` with a
+list of paths in write mode raises `ValueError`, as does passing it with a list
+of streams (a stream has no `(filesystem, path)` to resolve). Remote pyramids
+are opened through `IO.open` directly — `imread`, `iminfo`, and `tiles` remain
+single-image convenience wrappers.
 
 Some things to keep in mind with multi-file pyramids:
 
