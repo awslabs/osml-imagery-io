@@ -24,7 +24,7 @@ doc: |
   Reference: STDI-0002 Volume 1, Appendix AP - SODDXA v1.0
 
 seq:
-  - id: XML_DATA
+  - id: CEDATA
     size-eos: true
     doc: |
       XML Data Content
