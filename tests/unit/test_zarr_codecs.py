@@ -8,9 +8,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 from aws.osml.io.zarr_codecs import (
+    DtedTileCodec,
     JbpBlockCodec,
     Jpeg2000Codec,
     JpegCodec,
+    TiffTileCodec,
+    _is_numcodecs_buffer,
     decode_jbp_block,
     decode_jpeg,
 )
@@ -526,3 +529,92 @@ class TestCodecABCConformance:
     # reloading the module with zarr mocked out would break the already-defined
     # classes in this test file. A true test would require a subprocess with zarr
     # uninstalled, which is outside the scope of unit tests.
+
+
+class TestIsNumcodecsBuffer:
+    """_is_numcodecs_buffer distinguishes a single buffer (numcodecs filter
+    protocol) from the batch of (buffer, spec) pairs BytesBytesCodec.decode
+    receives."""
+
+    @pytest.mark.parametrize("buf", [
+        b"\x00\x01",
+        bytearray(b"\x00\x01"),
+        memoryview(b"\x00\x01"),
+        np.zeros(4, dtype=np.uint8),
+    ], ids=["bytes", "bytearray", "memoryview", "ndarray"])
+    def test_buffer_like_inputs(self, buf):
+        assert _is_numcodecs_buffer(buf)
+
+    @pytest.mark.parametrize("batch", [
+        [],
+        [(b"\x00", None)],
+        iter([(b"\x00", None)]),
+    ], ids=["empty-list", "pair-list", "generator"])
+    def test_batch_inputs(self, batch):
+        assert not _is_numcodecs_buffer(batch)
+
+
+def _all_codecs():
+    return [
+        Jpeg2000Codec(),
+        JpegCodec(bits_per_pixel=8, num_bands=1, block_width=8, block_height=8, imode="B", color_space="MONO"),
+        JbpBlockCodec(num_bands=1, block_height=2, block_width=2, nbpp=8, imode="B", pvtype="INT"),
+        TiffTileCodec(tile_width=2, tile_height=2),
+        DtedTileCodec(),
+    ]
+
+
+class TestV3PipelineDecode:
+    """decode() called with a batch of (buffer, spec) pairs — the zarr v3
+    codec pipeline calling convention — routes to BytesBytesCodec.decode
+    instead of the numcodecs shim.
+
+    The end-to-end tests in tests/property/zarr read through kerchunk/v2
+    metadata, which only exercises the single-buffer numcodecs path; these
+    tests cover the v3 pipeline entry point.
+    """
+
+    @pytest.mark.parametrize("codec", _all_codecs(), ids=lambda c: type(c).__name__)
+    def test_batch_call_routes_to_v3_decode(self, codec):
+        """A batch argument reaches the inherited async decode, which handles
+        an empty batch without touching the payload decoder."""
+        import asyncio
+
+        assert list(asyncio.run(codec.decode([]))) == []
+
+    def test_zarr_v3_read_through_codec_pipeline(self, tmp_path):
+        """A zarr v3-format array whose codec chain includes JbpBlockCodec
+        reads back the original pixels.
+
+        The store is written by hand (metadata via to_dict() plus raw chunk
+        files) because the codecs are decode-only.
+        """
+        import json
+
+        import zarr
+
+        codec = JbpBlockCodec(num_bands=1, block_height=2, block_width=2, nbpp=8, imode="B", pvtype="INT")
+        data = np.arange(16, dtype=np.uint8).reshape(1, 4, 4)
+
+        metadata = {
+            "zarr_format": 3,
+            "node_type": "array",
+            "shape": [1, 4, 4],
+            "data_type": "uint8",
+            "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [1, 2, 2]}},
+            "chunk_key_encoding": {"name": "default"},
+            "fill_value": 0,
+            "codecs": [
+                {"name": "bytes", "configuration": {"endian": "little"}},
+                codec.to_dict(),
+            ],
+        }
+        (tmp_path / "zarr.json").write_text(json.dumps(metadata))
+        for r in range(2):
+            for c in range(2):
+                chunk_path = tmp_path / "c" / "0" / str(r) / str(c)
+                chunk_path.parent.mkdir(parents=True, exist_ok=True)
+                chunk_path.write_bytes(data[:, r * 2:(r + 1) * 2, c * 2:(c + 1) * 2].tobytes())
+
+        arr = zarr.open_array(str(tmp_path), mode="r")
+        np.testing.assert_array_equal(np.asarray(arr[:]), data)
