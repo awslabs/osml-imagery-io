@@ -63,6 +63,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install Python deps
+        # The remote-IO tests use pyo3's auto-initialize to embed the runner's
+        # system python3 and import fsspec at runtime. Install fsspec into that
+        # same interpreter — do NOT add actions/setup-python, which puts a
+        # relocated hostedtoolcache python on PATH whose stdlib the embedded
+        # interpreter can't locate (init_fs_encoding failure).
+        run: python3 -m pip install --break-system-packages fsspec
       - name: Install native deps
         run: |
           sudo apt-get update && sudo apt-get install -y cmake libjpeg-turbo8-dev libturbojpeg0-dev libtiff-dev
