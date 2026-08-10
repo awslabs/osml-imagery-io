@@ -210,16 +210,16 @@ impl RangeReader for PyReadStream {
             })?;
             let mut out: Vec<Vec<u8>> = Vec::with_capacity(ranges.len());
             for (i, item) in items.enumerate() {
-                let item = item
-                    .map_err(|e| CodecError::Remote(format!("cat_ranges iteration failed: {}", e)))?;
+                let item = item.map_err(|e| {
+                    CodecError::Remote(format!("cat_ranges iteration failed: {}", e))
+                })?;
                 let py_bytes = item.cast::<PyBytes>().map_err(|_| {
                     CodecError::Remote("cat_ranges must return bytes for each range".to_string())
                 })?;
                 let data = py_bytes.as_bytes();
-                let expected = ranges
-                    .get(i)
-                    .map(|&(_, l)| l)
-                    .ok_or_else(|| CodecError::Remote("cat_ranges returned too many ranges".to_string()))?;
+                let expected = ranges.get(i).map(|&(_, l)| l).ok_or_else(|| {
+                    CodecError::Remote("cat_ranges returned too many ranges".to_string())
+                })?;
                 if data.len() != expected {
                     let (offset, _) = ranges[i];
                     return Err(CodecError::Remote(format!(
@@ -344,14 +344,13 @@ handle = fs.open(p, 'rb')
             let globals = pyo3::types::PyDict::new(py);
             py.run(&std::ffi::CString::new(code).unwrap(), Some(&globals), None)
                 .unwrap();
-            let handle: Py<PyAny> = globals
-                .get_item("handle")
-                .unwrap()
-                .unwrap()
-                .unbind();
+            let handle: Py<PyAny> = globals.get_item("handle").unwrap().unwrap().unbind();
 
             let fsspec = probe_fsspec_refs(py, &handle);
-            assert!(fsspec.is_some(), "LocalFileSystem handle should expose .fs/.path");
+            assert!(
+                fsspec.is_some(),
+                "LocalFileSystem handle should expose .fs/.path"
+            );
 
             let stream = PyReadStream::new(handle, 256, fsspec);
             let ranges = [(100u64, 10usize), (0, 4), (250, 6)];
@@ -421,7 +420,11 @@ handle = fs.open(p, 'rb')
             let stream = PyReadStream::new(handle, 16, fsspec);
             // Request 10 bytes starting at 12 — only 4 are available.
             let err = stream.read_many(&[(12, 10)]).unwrap_err();
-            assert!(matches!(err, CodecError::Remote(_)), "unexpected error: {:?}", err);
+            assert!(
+                matches!(err, CodecError::Remote(_)),
+                "unexpected error: {:?}",
+                err
+            );
         });
     }
 

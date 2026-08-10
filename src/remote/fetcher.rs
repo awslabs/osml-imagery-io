@@ -210,9 +210,7 @@ impl StreamFetcher {
             .reader
             .read_many(&[(offset, len)])?
             .pop()
-            .ok_or_else(|| {
-                CodecError::Remote("self-heal fetch returned no data".to_string())
-            })?;
+            .ok_or_else(|| CodecError::Remote("self-heal fetch returned no data".to_string()))?;
         self.lock_state()?.cache.insert(offset, data.clone());
         Ok(data)
     }
@@ -607,7 +605,14 @@ pub(crate) mod tests {
         let fetcher =
             StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
         // Six scattered parts, à la a J2K tile's tile-parts.
-        let ranges = [(13, 40), (500, 100), (900, 20), (1200, 64), (1600, 8), (1900, 50)];
+        let ranges = [
+            (13, 40),
+            (500, 100),
+            (900, 20),
+            (1200, 64),
+            (1600, 8),
+            (1900, 50),
+        ];
         fetcher.read_ranges(&ranges).unwrap();
         let many = many_log.lock().unwrap();
         assert_eq!(many.len(), 1, "expected exactly one batched read_many call");
@@ -625,8 +630,10 @@ pub(crate) mod tests {
         let batched = batch.read_ranges(&ranges).unwrap();
 
         let reader_serial = FakeReader::new(data.clone());
-        let serial =
-            StreamFetcher::with_policy(Box::new(reader_serial), Box::new(HeaderAwarePolicy::new(0)));
+        let serial = StreamFetcher::with_policy(
+            Box::new(reader_serial),
+            Box::new(HeaderAwarePolicy::new(0)),
+        );
         for (i, &(o, l)) in ranges.iter().enumerate() {
             assert_eq!(batched[i], serial.read_range(o, l).unwrap());
         }
@@ -647,7 +654,9 @@ pub(crate) mod tests {
         assert_eq!(calls(&log).len(), 1);
         assert_eq!(many_log.lock().unwrap().as_slice(), &[vec![(100, 50)]]);
         // A batch mixing the cached range with two new ones fetches only the two.
-        fetcher.read_ranges(&[(100, 50), (0, 10), (400, 20)]).unwrap();
+        fetcher
+            .read_ranges(&[(100, 50), (0, 10), (400, 20)])
+            .unwrap();
         let many = many_log.lock().unwrap();
         // Two read_many calls total: the prime, then the batch of the two misses.
         assert_eq!(many.len(), 2);

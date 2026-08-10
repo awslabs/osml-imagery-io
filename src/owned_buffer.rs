@@ -287,9 +287,10 @@ impl OwnedBuffer {
                 }
                 // Lock-free fetcher: one batched read_ranges → one cat_ranges,
                 // concurrent with any other thread's fetch on this backing.
-                backing.fetcher.read_ranges(&abs_ranges).map_err(|e| {
-                    CodecError::Remote(format!("failed to fetch ranges: {}", e))
-                })
+                backing
+                    .fetcher
+                    .read_ranges(&abs_ranges)
+                    .map_err(|e| CodecError::Remote(format!("failed to fetch ranges: {}", e)))
             }
             // Resident backing: N cheap copies of the mapped/heap slices.
             _ => ranges
@@ -767,7 +768,14 @@ mod tests {
         let fetcher =
             StreamFetcher::with_policy(Box::new(reader), Box::new(HeaderAwarePolicy::new(0)));
         let buf = OwnedBuffer::from_remote(fetcher);
-        let ranges = [(13usize, 40usize), (500, 100), (900, 20), (1200, 64), (1600, 8), (1900, 50)];
+        let ranges = [
+            (13usize, 40usize),
+            (500, 100),
+            (900, 20),
+            (1200, 64),
+            (1600, 8),
+            (1900, 50),
+        ];
         buf.read_ranges(&ranges).unwrap();
         let many = many_log.lock().unwrap();
         assert_eq!(many.len(), 1, "expected exactly one batched read_many call");
@@ -831,10 +839,19 @@ mod tests {
         // small fraction of the file, so even if every thread races and fetches
         // all six (the benign duplicate-fetch race), total fetched bytes stay far
         // below FILE_LEN — the whole-file-never-fetched guarantee.
-        let ranges: [(usize, usize); 6] =
-            [(37, 40), (2_048, 100), (5_000, 64), (8_192, 128), (12_000, 32), (15_900, 50)];
+        let ranges: [(usize, usize); 6] = [
+            (37, 40),
+            (2_048, 100),
+            (5_000, 64),
+            (8_192, 128),
+            (12_000, 32),
+            (15_900, 50),
+        ];
         let unique_bytes: usize = ranges.iter().map(|(_, l)| *l).sum();
-        assert!(unique_bytes * N_THREADS < FILE_LEN, "test ranges too large to prove the bound");
+        assert!(
+            unique_bytes * N_THREADS < FILE_LEN,
+            "test ranges too large to prove the bound"
+        );
 
         let reader = FakeReader::new(data.clone());
         let log = reader.log_handle();
@@ -875,7 +892,10 @@ mod tests {
         let log = log.lock().unwrap();
         assert!(!log.is_empty(), "expected at least one fetch");
         for &(_, len) in log.iter() {
-            assert!(len < FILE_LEN, "a single fetch of {len} bytes covered the whole file");
+            assert!(
+                len < FILE_LEN,
+                "a single fetch of {len} bytes covered the whole file"
+            );
         }
         let total_fetched: usize = log.iter().map(|(_, l)| *l).sum();
         assert!(

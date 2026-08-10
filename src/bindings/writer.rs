@@ -369,7 +369,9 @@ class RecordingHandle:
         Python::attach(|py| {
             let handle = recording_handle(py);
             let sink: Box<dyn Write + Send> = Box::new(PyWriteStream::new(handle.clone_ref(py)));
-            let inner: Box<dyn DatasetWriter> = Box::new(StubWriter { output: std::sync::Mutex::new(Some(sink)) });
+            let inner: Box<dyn DatasetWriter> = Box::new(StubWriter {
+                output: std::sync::Mutex::new(Some(sink)),
+            });
 
             let mut writer = PyDatasetWriter::new_owning(inner, handle.clone_ref(py));
             writer.close(py).unwrap();
@@ -427,13 +429,12 @@ class RaisingCloseHandle:
             // owned for commit but not written by this stub (mirrors the composite
             // finalizing each sub-writer's own sink in the real path).
             let sink: Box<dyn Write + Send> = Box::new(PyWriteStream::new(h0.clone_ref(py)));
-            let inner: Box<dyn DatasetWriter> =
-                Box::new(StubWriter { output: std::sync::Mutex::new(Some(sink)) });
+            let inner: Box<dyn DatasetWriter> = Box::new(StubWriter {
+                output: std::sync::Mutex::new(Some(sink)),
+            });
 
-            let mut writer = PyDatasetWriter::new_owning_many(
-                inner,
-                vec![h0.clone_ref(py), h1.clone_ref(py)],
-            );
+            let mut writer =
+                PyDatasetWriter::new_owning_many(inner, vec![h0.clone_ref(py), h1.clone_ref(py)]);
             writer.close(py).unwrap();
 
             for h in [&h0, &h1] {
@@ -452,8 +453,9 @@ class RaisingCloseHandle:
             let h0 = raising_close_handle(py, "h0", &log);
             let h1 = raising_close_handle(py, "h1", &log);
             let sink: Box<dyn Write + Send> = Box::new(PyWriteStream::new(h0.clone_ref(py)));
-            let inner: Box<dyn DatasetWriter> =
-                Box::new(StubWriter { output: std::sync::Mutex::new(Some(sink)) });
+            let inner: Box<dyn DatasetWriter> = Box::new(StubWriter {
+                output: std::sync::Mutex::new(Some(sink)),
+            });
 
             let mut writer =
                 PyDatasetWriter::new_owning_many(inner, vec![h0.clone_ref(py), h1.clone_ref(py)]);
@@ -477,7 +479,9 @@ class RaisingCloseHandle:
         Python::attach(|py| {
             let handle = recording_handle(py);
             let sink: Box<dyn Write + Send> = Box::new(PyWriteStream::new(handle.clone_ref(py)));
-            let inner: Box<dyn DatasetWriter> = Box::new(StubWriter { output: std::sync::Mutex::new(Some(sink)) });
+            let inner: Box<dyn DatasetWriter> = Box::new(StubWriter {
+                output: std::sync::Mutex::new(Some(sink)),
+            });
 
             // `new` (not `new_owning`) — the writer owns no handle.
             let mut writer = PyDatasetWriter::new(inner);

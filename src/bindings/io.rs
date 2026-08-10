@@ -342,8 +342,7 @@ impl IO {
                         // whose scheme resolves to an fsspec filesystem — opens
                         // through the concurrent `Remote`/`cat_ranges` path.
                         // Local `file`/plain paths keep the mmap path below.
-                        if let Some(reader) =
-                            try_open_remote_reader(py, &path, filesystem, format)?
+                        if let Some(reader) = try_open_remote_reader(py, &path, filesystem, format)?
                         {
                             let reader = PyDatasetReader::new(reader);
                             return Ok(reader.into_pyobject(py)?.into_any().unbind());
@@ -419,8 +418,7 @@ impl IO {
                                 )
                             })?,
                         };
-                        let writer =
-                            create_multi_path_writer(py, &paths, &format_str, filesystem)?;
+                        let writer = create_multi_path_writer(py, &paths, &format_str, filesystem)?;
                         Ok(writer.into_pyobject(py)?.into_any().unbind())
                     }
                     _ => Err(PyValueError::new_err(format!(
@@ -1326,9 +1324,11 @@ fn try_open_remote_reader(
 
     // Open a seekable handle and route it through the stream reader, which
     // builds the Remote/cat_ranges buffer (recovering .fs/.path from the handle).
-    let handle = fs.call_method1("open", (open_path.as_str(), "rb")).map_err(|e| {
-        PyIOError::new_err(format!("failed to open remote source '{}': {}", path, e))
-    })?;
+    let handle = fs
+        .call_method1("open", (open_path.as_str(), "rb"))
+        .map_err(|e| {
+            PyIOError::new_err(format!("failed to open remote source '{}': {}", path, e))
+        })?;
     let handle_obj: Py<PyAny> = handle.unbind();
     let reader = create_reader_from_stream_boxed(py, &handle_obj, &fmt)?;
     Ok(Some(reader))
@@ -1572,9 +1572,14 @@ fn try_open_writer_remote(
     // Open a writable handle. `fs.open(path, "wb")` returns a file-like object
     // with `.write()`/`.flush()`; validate that shape before wrapping it, and
     // retain a clone so the caller can close it after finalize (commit-on-close).
-    let handle = fs.call_method1("open", (open_path.as_str(), "wb")).map_err(|e| {
-        PyIOError::new_err(format!("failed to open remote destination '{}': {}", path, e))
-    })?;
+    let handle = fs
+        .call_method1("open", (open_path.as_str(), "wb"))
+        .map_err(|e| {
+            PyIOError::new_err(format!(
+                "failed to open remote destination '{}': {}",
+                path, e
+            ))
+        })?;
     let handle_obj: Py<PyAny> = handle.unbind();
     validate_writable_stream(py, &handle_obj)?;
     let output = stream_to_boxed_output(handle_obj.clone_ref(py));
@@ -2025,9 +2030,8 @@ mod tests {
                 .unwrap()
                 .call_method1("filesystem", ("memory",))
                 .unwrap();
-            let (_writer, handle) =
-                open_source_writer(py, "src-writer-fs.png", Some(&fs), "png")
-                    .expect("explicit filesystem opens a remote writer");
+            let (_writer, handle) = open_source_writer(py, "src-writer-fs.png", Some(&fs), "png")
+                .expect("explicit filesystem opens a remote writer");
             assert!(
                 handle.is_some(),
                 "an explicit filesystem= must yield an owned handle"
@@ -2899,7 +2903,10 @@ class LoggingStream:
 
     #[test]
     fn test_detect_read_format() {
-        assert_eq!(detect_read_format("s3://b/k/image.ntf").as_deref(), Some("nitf"));
+        assert_eq!(
+            detect_read_format("s3://b/k/image.ntf").as_deref(),
+            Some("nitf")
+        );
         assert_eq!(detect_read_format("image.tif").as_deref(), Some("tiff"));
         assert_eq!(detect_read_format("image.jp2").as_deref(), Some("j2k"));
         assert_eq!(detect_read_format("image.dt1").as_deref(), Some("dted"));
