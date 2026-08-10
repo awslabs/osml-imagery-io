@@ -435,11 +435,25 @@ class TestRemoteSourceInterface:
         with pytest.raises(ValueError):
             IO.open(io.BytesIO(b"not an image"), "r", format="tiff", filesystem=fs)
 
-    def test_filesystem_in_write_mode_raises_value_error(self):
-        """``filesystem=`` is read-only; write mode is rejected."""
+    def test_filesystem_single_path_write_mode_accepted(self):
+        """``filesystem=`` with a single path is accepted in write mode."""
         fs = pytest.importorskip("fsspec").filesystem("memory")
-        with pytest.raises(ValueError):
-            IO.open("/out.tif", "w", format="tiff", filesystem=fs)
+        # Single-path write routes through the remote writer; the returned
+        # object is a DatasetWriter (no exception up front).
+        writer = IO.open("out.tif", "w", format="tiff", filesystem=fs)
+        writer.close()
+
+    def test_filesystem_multipath_write_mode_accepted(self):
+        """``filesystem=`` with a multi-path R-set list is accepted in write mode.
+
+        Multi-path remote write (an R-set pyramid to multiple remote keys) is the
+        symmetric twin of multi-path remote read; the returned object is a
+        DatasetWriter (no exception up front). Full commit/round-trip behavior is
+        covered in ``test_remote_write.py``.
+        """
+        fs = pytest.importorskip("fsspec").filesystem("memory")
+        writer = IO.open(["out.tif", "out.tif.r1"], "w", format="tiff", filesystem=fs)
+        writer.close()
 
     def test_plain_local_path_unaffected(self):
         """A plain local path still opens (memory-mapped) with no filesystem=."""

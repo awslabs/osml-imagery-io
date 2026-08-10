@@ -423,12 +423,119 @@ class TestMultiPathRemotePyramid:
         np.testing.assert_array_equal(remote_base, local_base)
         np.testing.assert_array_equal(remote_ovr, local_ovr)
 
-    def test_filesystem_with_list_write_mode_raises(self, pyramid):
-        """``filesystem=`` with a list in write mode is rejected (remote write
-        is out of scope)."""
-        fs, _base_local, _r1_local, base_key, r1_key = pyramid
-        with pytest.raises(ValueError):
-            IO.open([base_key, r1_key], "w", "nitf", filesystem=fs)
+    # -- Multi-path remote *write* (R-set pyramid to multiple remote keys) --------
+    #
+    # The write twin of the remote-read cases above. A base + overview are written
+    # over ``memory://`` (URL list, shared ``filesystem=``, or mixed local/remote),
+    # then read back and compared to an equivalent local write — proving remoteness
+    # is transparent to the multi-path *write* path and every remote key commits.
+
+    # Distinct, non-flat pixel data so a mis-routed write shows up as a pixel diff.
+    @staticmethod
+    def _base_ovr_arrays():
+        base = np.arange(3 * 64 * 64, dtype=np.uint8).reshape(3, 64, 64)
+        ovr = (np.arange(3 * 16 * 16, dtype=np.uint8) + 7).reshape(3, 16, 16)
+        return base, ovr
+
+    @classmethod
+    def _write_rset(cls, paths, base, ovr, *, filesystem=None):
+        """Write ``base`` (image:0) + ``ovr`` (image:0:overview:1) as a two-path
+        NITF R-set through ``IO.open(paths, "w", ...)``.
+
+        ``paths`` is a two-element list (base, .r1); ``filesystem`` is forwarded
+        when given. The composite writer routes the overview key to the .r1 sink.
+        """
+
+        def _provider(key, arr):
+            b, r, c = arr.shape
+            p = BufferedImageAssetProvider.create(
+                key=key,
+                num_columns=c,
+                num_rows=r,
+                num_bands=b,
+                block_width=min(c, 256),
+                block_height=min(r, 256),
+            )
+            p.set_full_image(np.ascontiguousarray(arr))
+            return p
+
+        kwargs = {"filesystem": filesystem} if filesystem is not None else {}
+        with IO.open(paths, "w", "nitf", **kwargs) as writer:
+            writer.add_asset("image:0", _provider("image:0", base), "Base", "b", ["data"])
+            writer.add_asset(
+                "image:0:overview:1",
+                _provider("image:0:overview:1", ovr),
+                "Overview",
+                "o",
+                ["overview:1"],
+            )
+
+    def test_write_url_list_roundtrip(self, tmp_dir):
+        """Writing a base + .r1 R-set to a list of ``memory://`` URLs commits both
+        keys; reading them back is pixel-identical to a local R-set write."""
+        fsspec = pytest.importorskip("fsspec")
+        fs = fsspec.filesystem("memory")
+        base, ovr = self._base_ovr_arrays()
+
+        base_key = "/mp-write-url/image.ntf"
+        r1_key = "/mp-write-url/image.ntf.r1"
+        self._write_rset([f"memory://{base_key}", f"memory://{r1_key}"], base, ovr)
+
+        # Both remote keys committed (present in the memory store after close).
+        assert fs.exists(base_key) and fs.exists(r1_key)
+
+        # Reading the remote R-set back matches a local R-set write of the same data.
+        with IO.open([f"memory://{base_key}", f"memory://{r1_key}"], "r") as reader:
+            remote_base, remote_ovr = self._base_and_overview_blocks(reader)
+
+        base_local = tmp_dir / "ref.ntf"
+        r1_local = tmp_dir / "ref.ntf.r1"
+        self._write_rset([str(base_local), str(r1_local)], base, ovr)
+        with IO.open([str(base_local), str(r1_local)], "r") as reader:
+            local_base, local_ovr = self._base_and_overview_blocks(reader)
+
+        np.testing.assert_array_equal(remote_base, local_base)
+        np.testing.assert_array_equal(remote_ovr, local_ovr)
+
+    def test_write_shared_filesystem_roundtrip(self):
+        """Writing with ``filesystem=fs`` and scheme-less keys commits every key
+        and reads back pixel-identically through the same filesystem."""
+        fsspec = pytest.importorskip("fsspec")
+        fs = fsspec.filesystem("memory")
+        base, ovr = self._base_ovr_arrays()
+
+        base_key = "/mp-write-fs/image.ntf"
+        r1_key = "/mp-write-fs/image.ntf.r1"
+        self._write_rset([base_key, r1_key], base, ovr, filesystem=fs)
+
+        assert fs.exists(base_key) and fs.exists(r1_key)
+
+        with IO.open([base_key, r1_key], "r", filesystem=fs) as reader:
+            keys = reader.get_asset_keys(asset_type=AssetType.Image)
+            assert "image:0" in keys and "image:0:overview:1" in keys
+            rb, ro = self._base_and_overview_blocks(reader)
+
+        np.testing.assert_array_equal(rb, np.array(base)[:, :rb.shape[-2], :rb.shape[-1]])
+        np.testing.assert_array_equal(ro, np.array(ovr)[:, :ro.shape[-2], :ro.shape[-1]])
+
+    def test_write_mixed_local_base_remote_overview(self, tmp_dir):
+        """A mixed list (local base + ``memory://`` overview) commits each sink by
+        its own kind (per-source routing) and reads back correctly."""
+        fsspec = pytest.importorskip("fsspec")
+        fs = fsspec.filesystem("memory")
+        base, ovr = self._base_ovr_arrays()
+
+        base_local = tmp_dir / "mixed.ntf"
+        r1_key = "/mp-write-mixed/mixed.ntf.r1"
+        self._write_rset([str(base_local), f"memory://{r1_key}"], base, ovr)
+
+        # Local base written to disk; remote overview committed to the memory store.
+        assert base_local.exists()
+        assert fs.exists(r1_key)
+
+        with IO.open([str(base_local), f"memory://{r1_key}"], "r") as reader:
+            keys = reader.get_asset_keys(asset_type=AssetType.Image)
+            assert "image:0" in keys and "image:0:overview:1" in keys
 
     def test_filesystem_with_stream_list_raises(self):
         """``filesystem=`` combined with a StreamList (list of file-like objects)

@@ -135,6 +135,40 @@ ranges (plus a small header prefetch), not the file size.
 The `format` argument is required for streams (there is no filename to infer from);
 see [The `format` parameter](#the-format-parameter) below.
 
+### Remote writing
+
+Writing to a remote destination is symmetric with reading: a bare `s3://` output
+URL and an explicit `filesystem=` + path both work in write mode, the same surface
+the read path offers.
+
+```python
+from aws.osml.io import IO, imsave
+import fsspec
+
+# 1. A bare remote URL string — resolved to an fsspec filesystem internally.
+imsave("s3://bucket/output.tif", pixels)
+
+# 2. An explicit fsspec filesystem instance + path via filesystem=.
+fs = fsspec.filesystem("s3")
+with IO.open("s3://bucket/output.tif", "w", "geotiff", filesystem=fs) as writer:
+    writer.add_asset("image:0", provider, "Image", "scene", ["data"])
+```
+
+`imsave` also accepts `filesystem=`. As with reading, passing `filesystem=`
+together with a file-like or in-memory (`io.BytesIO`) destination raises
+`ValueError` — a stream already carries its own transport.
+
+:::{important}
+The object is committed when the writer is closed — i.e. when the `with` block
+exits. Object-store uploads finalize on the handle's `.close()`, and the library
+closes the handle it opened for you. If you pass your **own** file-like handle
+instead (e.g. from `fsspec.open(...)`), the library does not close it — you own
+that handle and must close it yourself to commit the upload.
+:::
+
+Multi-file pyramids can also be written to remote keys — see [Remote multi-file
+pyramids](#remote-multi-file-pyramids).
+
 #### Tuning concurrency: the connection pool
 
 Concurrent range fetches share the underlying s3fs/botocore connection pool,
@@ -441,11 +475,26 @@ applied to every entry — the natural case when the base and its overviews live
 under one bucket. Entries are decided per source, so a list mixing a local base
 with remote overviews (or vice-versa) opens correctly.
 
-Remote multi-file pyramids are **read mode only**. Passing `filesystem=` with a
-list of paths in write mode raises `ValueError`, as does passing it with a list
-of streams (a stream has no `(filesystem, path)` to resolve). Remote pyramids
-are opened through `IO.open` directly — `imread`, `iminfo`, and `tiles` remain
-single-image convenience wrappers.
+Multi-file pyramids can also be **written** to remote keys, symmetric with
+reading. A list of remote URLs, or `filesystem=` + scheme-less keys, is accepted
+in write mode; each entry is opened per source (a local base with remote
+overviews, or vice-versa, works), and each remote key is committed when the writer
+is closed:
+
+```python
+# Write a base + two overviews to remote keys.
+urls = ["s3://bucket/image.tif", "s3://bucket/image.tif.r1", "s3://bucket/image.tif.r2"]
+with IO.open(urls, "w", "geotiff") as writer:
+    writer.add_asset("image:0", base_provider, "Base", "scene", ["data"])
+    writer.add_asset("image:0:overview:1", r1_provider, "Overview", "r1", ["overview:1"])
+    writer.add_asset("image:0:overview:2", r2_provider, "Overview", "r2", ["overview:2"])
+# All three objects are committed when the block exits.
+```
+
+Passing `filesystem=` with a list of streams still raises `ValueError` (a stream
+has no `(filesystem, path)` to resolve and carries its own transport). Remote
+pyramids are opened through `IO.open` directly — `imread`, `iminfo`, and `tiles`
+remain single-image convenience wrappers.
 
 Some things to keep in mind with multi-file pyramids:
 

@@ -754,3 +754,67 @@ class TestIOOpenEmptyString:
         """IO.open raises ValueError for an empty string path."""
         with pytest.raises(ValueError, match="paths list cannot be empty"):
             IO.open("", "r")
+
+
+# ============================================================================
+# imsave filesystem= support
+# ============================================================================
+
+
+class TestImsaveFilesystem:
+    """Verify imsave's ``filesystem=`` forwarding and guard.
+
+    The full remote-write round-trip suite lives in the remote-write tests;
+    these cover the convenience-layer contract: forward ``filesystem=`` to
+    ``IO.open`` when given, leave extension-based behavior untouched when
+    omitted, and reject ``filesystem=`` combined with a file-like path in
+    Python (close to the caller).
+    """
+
+    def test_imsave_forwards_filesystem(self, tmp_path):
+        """imsave(path, data, filesystem=fs) writes through the shared filesystem."""
+        fsspec = pytest.importorskip("fsspec")
+        fs = fsspec.filesystem("memory")
+        data = np.random.randint(0, 255, (3, 16, 16), dtype=np.uint8)
+
+        imsave("imsave-fs-out.png", data, filesystem=fs)
+
+        # The object was committed to the memory filesystem and reads back.
+        raw = fs.cat("imsave-fs-out.png")
+        assert raw[:4] == b"\x89PNG"
+        result = imread("imsave-fs-out.png", filesystem=fs)
+        np.testing.assert_array_equal(result, data)
+
+    def test_imsave_bare_url_no_filesystem(self):
+        """A bare memory:// string works with no filesystem= (URL resolution)."""
+        fsspec = pytest.importorskip("fsspec")
+        data = np.random.randint(0, 255, (3, 16, 16), dtype=np.uint8)
+
+        imsave("memory://imsave-bare-url.png", data)
+
+        fs = fsspec.filesystem("memory")
+        raw = fs.cat("imsave-bare-url.png")
+        assert raw[:4] == b"\x89PNG"
+
+    def test_imsave_filesystem_with_stream_raises(self):
+        """imsave(file_like, data, format=..., filesystem=fs) raises ValueError."""
+        fsspec = pytest.importorskip("fsspec")
+        import io
+
+        fs = fsspec.filesystem("memory")
+        data = np.random.randint(0, 255, (3, 16, 16), dtype=np.uint8)
+
+        with pytest.raises(
+            ValueError, match="filesystem= cannot be combined with a file-like path"
+        ):
+            imsave(io.BytesIO(), data, format="png", filesystem=fs)
+
+    def test_imsave_omitting_filesystem_preserves_local(self, tmp_path):
+        """Omitting filesystem= keeps the extension-based local write behavior."""
+        data = np.random.randint(0, 255, (3, 16, 16), dtype=np.uint8)
+        path = tmp_path / "local.png"
+
+        imsave(str(path), data)
+
+        assert path.exists()
+        np.testing.assert_array_equal(imread(str(path)), data)

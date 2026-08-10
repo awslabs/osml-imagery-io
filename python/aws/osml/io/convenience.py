@@ -164,6 +164,21 @@ def _open_for_read(IO, path, format: str | None, filesystem: object | None):
     return IO.open(path, "r", **kwargs)
 
 
+def _open_for_write(IO, path, format: str, filesystem: object | None):
+    """Open *path* for writing, forwarding *format* and *filesystem* to ``IO.open``.
+
+    Parallel to :func:`_open_for_read`. ``format`` is always resolved by the
+    caller before this point (extension-derived or explicit), so it is passed
+    positionally. ``filesystem`` is forwarded only when non-``None``, so a bare
+    ``s3://``/``memory://`` string still flows through ``IO.open``'s own URL
+    resolution and local paths keep the local ``File`` path.
+    """
+    kwargs = {}
+    if filesystem is not None:
+        kwargs["filesystem"] = filesystem
+    return IO.open(path, "w", format, **kwargs)
+
+
 def _resolve_asset_key(dataset, asset: str | None) -> str:
     """Resolve the image asset key to use for reading.
 
@@ -1022,6 +1037,7 @@ def imsave(
     crs: str | None = None,
     quality: float | None = None,
     format: str | None = None,
+    filesystem: object | None = None,
 ) -> None:
     """Save a NumPy array to an image file.
 
@@ -1066,20 +1082,33 @@ def imsave(
         Explicit format string (e.g. ``"png"``, ``"nitf"``). Required
         when writing to a stream. If ``None`` and *path* is a string,
         the format is inferred from the file extension.
+    filesystem : fsspec.AbstractFileSystem or None
+        Optional fsspec filesystem instance to open *path* through, so the
+        output is written to a remote object store. When ``None``, a remote
+        URL string (e.g. ``s3://bucket/key.tif``) is resolved to a filesystem
+        internally; local paths and streams are unaffected. The object is
+        committed when the write completes (the library closes the handle it
+        opened). Cannot be combined with a file-like *path*.
 
     Raises
     ------
     ValueError
         If the file extension is not recognized, the array dtype is
         unsupported for the target format, the array has invalid
-        dimensions (0-D, 1-D, or >3-D), the array is empty, or
-        *path* is a stream and *format* is not provided.
+        dimensions (0-D, 1-D, or >3-D), the array is empty, *path* is a
+        stream and *format* is not provided, or ``filesystem`` is combined
+        with a file-like *path*.
     """
     from aws.osml.io import IO, BufferedImageAssetProvider, BufferedMetadataProvider, PixelType
 
     # 1. Determine format
     is_stream = _is_file_like(path)
     if is_stream:
+        if filesystem is not None:
+            raise ValueError(
+                "filesystem= cannot be combined with a file-like path; "
+                "pass a path string (e.g. 's3://bucket/key.tif') instead"
+            )
         if format is None:
             raise ValueError(
                 "format is required when writing to a stream "
@@ -1140,7 +1169,7 @@ def imsave(
     image_provider.set_full_image(data)
 
     # 7. Write via IO.open
-    with IO.open(path, "w", io_format) as writer:
+    with _open_for_write(IO, path, io_format, filesystem) as writer:
         # Set dataset-level metadata for formats that need it.
         # TIFF sources all IFD tags from the asset provider's metadata,
         # so it does not need dataset-level metadata.

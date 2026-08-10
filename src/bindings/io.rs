@@ -224,16 +224,17 @@ impl IO {
     ///     extension. Optional otherwise.
     /// :type format: str or None
     /// :param filesystem: An optional fsspec filesystem instance. When given,
-    ///     ``paths`` is opened through it, so range reads run concurrently over
-    ///     the filesystem's ``cat_ranges``. Accepts both a single path string
-    ///     and a list of paths (an R-set pyramid); the shared filesystem is
-    ///     applied to every entry in the list. When omitted, a remote URL
-    ///     string (e.g. ``s3://bucket/key.tif``) is resolved to a filesystem
-    ///     internally via ``fsspec.core.url_to_fs``. Local paths, ``file://``
-    ///     URIs, and in-memory streams are unaffected and do not require it.
-    ///     Passing ``filesystem`` together with an in-memory/file-like stream,
-    ///     a list of streams, or in write mode is a ``ValueError``. Read mode
-    ///     only.
+    ///     ``paths`` is opened through it. In read mode, range reads run
+    ///     concurrently over the filesystem's ``cat_ranges``; in write mode, the
+    ///     library opens a write handle per key and commits it (closes it) when
+    ///     the writer is closed. Accepts both a single path string and a list of
+    ///     paths (an R-set pyramid) in either mode; the shared filesystem is
+    ///     applied to every entry in the list. When omitted, a remote URL string
+    ///     (e.g. ``s3://bucket/key.tif``) is resolved to a filesystem internally
+    ///     via ``fsspec.core.url_to_fs``. Local paths, ``file://`` URIs, and
+    ///     in-memory streams are unaffected and do not require it. Passing
+    ///     ``filesystem`` together with an in-memory/file-like stream or a list
+    ///     of streams is a ``ValueError`` (a stream carries its own transport).
     /// :type filesystem: fsspec.AbstractFileSystem or None
     /// :param roles: Explicit role strings for each source. ``list[str]``
     ///     when ``paths`` is a single source, ``list[list[str]]`` when
@@ -300,24 +301,27 @@ impl IO {
         roles: Option<&Bound<'_, PyAny>>,
         filesystem: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        // `filesystem=` is meaningful with a single path string or a list of
-        // paths (an R-set pyramid), in read mode only; the shared filesystem is
-        // applied to every entry. Reject the contradictory combinations up front
-        // so the error is clear rather than silently ignored.
+        // `filesystem=` opens `paths` through a shared fsspec filesystem. It is
+        // meaningful with a single path string (read or write) and a list of paths
+        // (an R-set pyramid, read or write — each entry decided per source). The one
+        // contradictory combination is a stream / stream-list: a stream carries its
+        // own transport, so a filesystem is meaningless. Reject that up front so the
+        // error is clear rather than silently ignored.
         if filesystem.is_some() {
-            match &paths {
-                PathsArg::Single(_) | PathsArg::Multiple(_) => {}
-                PathsArg::Stream(_) | PathsArg::StreamList(_) => {
+            match (&paths, mode) {
+                // A single path or an R-set list route through the shared fs in both
+                // read and write mode (write collects the per-source remote handles
+                // and commits them on close).
+                (PathsArg::Single(_) | PathsArg::Multiple(_), "r" | "w") => {}
+                (PathsArg::Stream(_) | PathsArg::StreamList(_), _) => {
                     return Err(PyValueError::new_err(
                         "filesystem= cannot be combined with an in-memory or file-like \
                          stream; pass a path string (e.g. 's3://bucket/key.tif') instead",
                     ));
                 }
-            }
-            if mode != "r" {
-                return Err(PyValueError::new_err(
-                    "filesystem= is only supported in read mode ('r')",
-                ));
+                // Any other mode string falls through to the per-arm mode
+                // validation below, which raises the canonical "Invalid mode".
+                _ => {}
             }
         }
 
@@ -357,6 +361,17 @@ impl IO {
                                 )
                             })?,
                         };
+                        // A remote destination — an explicit `filesystem=` or a
+                        // URL whose scheme resolves to an fsspec filesystem —
+                        // opens through fsspec; the library owns and closes the
+                        // handle so the upload commits. Local `file`/plain paths
+                        // fall through to the local `File` path below.
+                        if let Some((writer, handle)) =
+                            try_open_writer_remote(py, &path, filesystem, &format_str)?
+                        {
+                            let writer = PyDatasetWriter::new_owning(writer, handle);
+                            return Ok(writer.into_pyobject(py)?.into_any().unbind());
+                        }
                         let writer = create_writer(&parsed, &format_str)?;
                         Ok(writer.into_pyobject(py)?.into_any().unbind())
                     }
@@ -404,7 +419,8 @@ impl IO {
                                 )
                             })?,
                         };
-                        let writer = create_multi_path_writer(&paths, &format_str)?;
+                        let writer =
+                            create_multi_path_writer(py, &paths, &format_str, filesystem)?;
                         Ok(writer.into_pyobject(py)?.into_any().unbind())
                     }
                     _ => Err(PyValueError::new_err(format!(
@@ -638,9 +654,20 @@ fn detect_write_format(parsed: &ParsedUri) -> Option<String> {
 /// its overview level. The resulting `CompositeDatasetWriter` routes assets
 /// by key: overview assets go to the matching R-set writer, non-overview
 /// assets go to the base writer.
-fn create_multi_path_writer(paths: &[String], format: &str) -> PyResult<PyDatasetWriter> {
-    let base_parsed = ParsedUri::parse(&paths[0]);
-    let base_writer = create_writer_boxed(&base_parsed, format)?;
+///
+/// Each path opens through [`open_source_writer`], so remoteness is decided per
+/// source — a remote URL or a shared `filesystem` opens through fsspec and yields
+/// a handle the library must close; a local path stays a local `File`. The
+/// retained remote handles are collected and handed to
+/// [`PyDatasetWriter::new_owning_many`] so every remote key commits on close.
+fn create_multi_path_writer(
+    py: Python<'_>,
+    paths: &[String],
+    format: &str,
+    filesystem: Option<&Bound<'_, PyAny>>,
+) -> PyResult<PyDatasetWriter> {
+    let (base_writer, base_handle) = open_source_writer(py, &paths[0], filesystem, format)?;
+    let mut owned_handles: Vec<Py<PyAny>> = base_handle.into_iter().collect();
 
     let mut rset_writers = Vec::new();
     for path in &paths[1..] {
@@ -650,8 +677,8 @@ fn create_multi_path_writer(paths: &[String], format: &str) -> PyResult<PyDatase
                 path
             ))
         })?;
-        let parsed = ParsedUri::parse(path);
-        let writer = create_writer_boxed(&parsed, format)?;
+        let (writer, handle) = open_source_writer(py, path, filesystem, format)?;
+        owned_handles.extend(handle);
         rset_writers.push((level, writer));
     }
 
@@ -659,11 +686,14 @@ fn create_multi_path_writer(paths: &[String], format: &str) -> PyResult<PyDatase
     // writers (e.g. TIFFDatasetWriter) can handle overview assets natively
     // within a single file (COG multi-IFD layout).
     if rset_writers.is_empty() {
-        return Ok(PyDatasetWriter::new(base_writer));
+        return Ok(PyDatasetWriter::new_owning_many(base_writer, owned_handles));
     }
 
     let composite = CompositeDatasetWriter::new(base_writer, rset_writers);
-    Ok(PyDatasetWriter::new(Box::new(composite)))
+    Ok(PyDatasetWriter::new_owning_many(
+        Box::new(composite),
+        owned_handles,
+    ))
 }
 
 /// Creates a DatasetReader for the given URI.
@@ -857,18 +887,21 @@ fn create_writer(parsed: &ParsedUri, format: &str) -> PyResult<PyDatasetWriter> 
 /// wraps it in a `BufWriter`, then delegates to
 /// [`create_writer_boxed_from_output`] for the format-specific dispatch.
 fn create_writer_boxed(parsed: &ParsedUri, format: &str) -> PyResult<Box<dyn DatasetWriter>> {
-    // Validate scheme is supported
+    // Validate scheme is supported. Every remote destination — a single path or
+    // each entry of a multi-path R-set list — is intercepted upstream by
+    // `open_source_writer`/`try_open_writer_remote` and opened through fsspec, so it
+    // never reaches here. This guard remains as pure defense-in-depth: it fires only
+    // for a non-local scheme that slipped past that routing (an unroutable scheme),
+    // never for a legitimate remote write.
     match parsed.scheme.as_str() {
         "file" => {}
-        "s3" => {
-            return Err(
-                CodecError::Unsupported("S3 URIs are not yet supported".to_string()).into(),
-            );
-        }
         scheme => {
-            return Err(
-                CodecError::Unsupported(format!("Unsupported URI scheme: {}", scheme)).into(),
-            );
+            return Err(CodecError::Unsupported(format!(
+                "'{}://' URIs must be opened through fsspec (a remote URL or an \
+                 explicit filesystem=), not the local file path",
+                scheme
+            ))
+            .into());
         }
     }
 
@@ -1469,6 +1502,111 @@ fn create_writer_for_stream(
     Ok(PyDatasetWriter::new(writer))
 }
 
+/// The remote format writer paired with the retained Python handle the library
+/// opened for it (and must close after finalize). Returned by
+/// [`try_open_writer_remote`] and consumed by [`PyDatasetWriter::new_owning`].
+type RemoteWriter = (Box<dyn DatasetWriter>, Py<PyAny>);
+
+/// A format writer paired with an optional retained Python handle: `Some` when the
+/// source was remote (the library must close it on commit), `None` when it was a
+/// local `File`. Returned by [`open_source_writer`], the per-source write seam.
+type SourceWriter = (Box<dyn DatasetWriter>, Option<Py<PyAny>>);
+
+/// Attempts to open a *remote* single-path write destination through fsspec,
+/// returning `Ok(Some((writer, handle)))` when the destination is remote and
+/// `Ok(None)` when it is local (so the caller falls back to the local `File`
+/// path).
+///
+/// This is the write-side twin of [`try_open_remote_reader`]. A destination is
+/// remote when either an explicit `filesystem` is supplied, or `path` is a URL
+/// with a non-local scheme (`s3://`, …) resolved via `fsspec.core.url_to_fs`.
+/// The resolved `(filesystem, path)` is opened with `fs.open(path, "wb")` and the
+/// handle is wrapped in the existing `PyWriteStream` → `BufWriter` sink, then
+/// dispatched through [`create_writer_boxed_from_output`] — the same seam the
+/// caller-supplied-stream writer uses.
+///
+/// The only structural difference from the read twin is that it **returns the
+/// Python handle** alongside the writer. Object-store uploads commit on the
+/// handle's `.close()` (not `.flush()`), and `PyWriteStream` never closes the
+/// handle, so the library — which opened this handle — must close it after the
+/// format writer finalizes. The caller stores the handle on
+/// [`PyDatasetWriter::new_owning`], whose `close()` performs that ordered close.
+///
+/// `format` is the already-resolved format string (explicit or extension-derived
+/// by the caller), mirroring [`create_writer_boxed_from_output`]'s contract.
+fn try_open_writer_remote(
+    py: Python<'_>,
+    path: &str,
+    filesystem: Option<&Bound<'_, PyAny>>,
+    format: &str,
+) -> PyResult<Option<RemoteWriter>> {
+    // Resolve the (filesystem, path-to-open) pair. An explicit filesystem opens
+    // the path verbatim (the fsspec filesystem strips any scheme itself); a bare
+    // remote URL resolves through fsspec.core.url_to_fs. Mirrors the read twin.
+    let (fs, open_path): (Bound<'_, PyAny>, String) = match filesystem {
+        Some(fs) => (fs.clone(), path.to_string()),
+        None => {
+            if !is_remote_url(path) {
+                // Local path — the caller's local `File` path handles it.
+                return Ok(None);
+            }
+            let url_to_fs = py
+                .import("fsspec")
+                .map_err(|e| {
+                    PyValueError::new_err(format!(
+                        "fsspec is required to open remote URL '{}': {}",
+                        path, e
+                    ))
+                })?
+                .getattr("core")?
+                .getattr("url_to_fs")?;
+            let resolved = url_to_fs.call1((path,)).map_err(|e| {
+                PyIOError::new_err(format!("failed to resolve remote URL '{}': {}", path, e))
+            })?;
+            let fs = resolved.get_item(0)?;
+            let resolved_path: String = resolved.get_item(1)?.extract()?;
+            (fs, resolved_path)
+        }
+    };
+
+    // Open a writable handle. `fs.open(path, "wb")` returns a file-like object
+    // with `.write()`/`.flush()`; validate that shape before wrapping it, and
+    // retain a clone so the caller can close it after finalize (commit-on-close).
+    let handle = fs.call_method1("open", (open_path.as_str(), "wb")).map_err(|e| {
+        PyIOError::new_err(format!("failed to open remote destination '{}': {}", path, e))
+    })?;
+    let handle_obj: Py<PyAny> = handle.unbind();
+    validate_writable_stream(py, &handle_obj)?;
+    let output = stream_to_boxed_output(handle_obj.clone_ref(py));
+    let writer = create_writer_boxed_from_output(output, format)?;
+    Ok(Some((writer, handle_obj)))
+}
+
+/// Opens one path entry into a `Box<dyn DatasetWriter>` paired with the retained
+/// Python handle the library must close (`Some`) when the destination is remote,
+/// or `None` when it is a local `File`.
+///
+/// This is the write-side twin of [`open_source_reader`]: it decides remoteness
+/// per source (an explicit `filesystem`, or a remote URL scheme) so the multi-path
+/// write routines can route a base and each `.rN` overview through one seam,
+/// exactly as the multi-path read routines do. A remote entry opens through
+/// [`try_open_writer_remote`] and yields its handle; a local entry falls back to
+/// [`create_writer_boxed`] and yields no handle (the caller owns nothing to close).
+/// `format` is the already-resolved format string, matching
+/// [`try_open_writer_remote`]'s contract.
+fn open_source_writer(
+    py: Python<'_>,
+    path: &str,
+    filesystem: Option<&Bound<'_, PyAny>>,
+    format: &str,
+) -> PyResult<SourceWriter> {
+    if let Some((writer, handle)) = try_open_writer_remote(py, path, filesystem, format)? {
+        return Ok((writer, Some(handle)));
+    }
+    let parsed = ParsedUri::parse(path);
+    Ok((create_writer_boxed(&parsed, format)?, None))
+}
+
 // =========================================================================
 // Multi-source dispatch with explicit roles
 // =========================================================================
@@ -1651,24 +1789,31 @@ fn open_multi_path_with_roles(
                 })?,
             };
 
-            let base_writer = create_writer_boxed(&base_parsed, &format_str)?;
+            // Each source opens through `open_source_writer`, so a remote entry
+            // (remote URL or shared `filesystem`) opens through fsspec and yields a
+            // handle the library commits on close, while a local entry stays a local
+            // `File` — decided per source, symmetric with the read arm above.
+            let (base_writer, base_handle) =
+                open_source_writer(py, &paths[base_idx], filesystem, &format_str)?;
+            let mut owned_handles: Vec<Py<PyAny>> = base_handle.into_iter().collect();
 
             let mut rset_writers: Vec<(u32, Box<dyn DatasetWriter>)> = Vec::new();
             for (level, src_idx) in overview_entries {
-                let parsed = ParsedUri::parse(&paths[src_idx]);
-                let writer = create_writer_boxed(&parsed, &format_str)?;
+                let (writer, handle) =
+                    open_source_writer(py, &paths[src_idx], filesystem, &format_str)?;
+                owned_handles.extend(handle);
                 rset_writers.push((level, writer));
             }
 
             // Single-path case: return the base writer directly so format-specific
             // writers (e.g. TIFFDatasetWriter) can handle overview assets natively.
             if rset_writers.is_empty() {
-                let writer = PyDatasetWriter::new(base_writer);
+                let writer = PyDatasetWriter::new_owning_many(base_writer, owned_handles);
                 return Ok(writer.into_pyobject(py)?.into_any().unbind());
             }
 
             let composite = CompositeDatasetWriter::new(base_writer, rset_writers);
-            let writer = PyDatasetWriter::new(Box::new(composite));
+            let writer = PyDatasetWriter::new_owning_many(Box::new(composite), owned_handles);
             Ok(writer.into_pyobject(py)?.into_any().unbind())
         }
         _ => Err(PyValueError::new_err(format!(
@@ -1786,6 +1931,111 @@ mod tests {
         });
     }
 
+    // =========================================================================
+    // try_open_writer_remote — local-vs-remote branch selection
+    // =========================================================================
+
+    /// A plain local path takes the local branch: `try_open_writer_remote`
+    /// returns `Ok(None)` (no fsspec handle opened) so the caller uses the local
+    /// `File` path.
+    #[test]
+    fn test_try_open_writer_remote_local_returns_none() {
+        Python::attach(|py| {
+            let result = try_open_writer_remote(py, "/tmp/out.png", None, "png").unwrap();
+            assert!(
+                result.is_none(),
+                "a local path must take the local branch (Ok(None))"
+            );
+        });
+    }
+
+    /// A `memory://` URL takes the remote branch: it resolves through fsspec,
+    /// opens a writable handle, and returns both the writer and the retained
+    /// handle. The retained handle must be the live fsspec write handle (usable
+    /// for the commit-on-close step); the full write→read round-trip is covered
+    /// end-to-end by the Python tests.
+    #[test]
+    fn test_try_open_writer_remote_memory_url() {
+        Python::attach(|py| {
+            let opened =
+                try_open_writer_remote(py, "memory://writer-branch/out.png", None, "png").unwrap();
+            let (_writer, handle) = opened.expect("memory:// must take the remote branch");
+            // The retained handle is a writable file-like object we can close.
+            assert!(handle.bind(py).hasattr("write").unwrap());
+            handle.bind(py).call_method0("close").unwrap();
+        });
+    }
+
+    /// An explicit `filesystem=` takes the remote branch even for a scheme-less
+    /// key: the shared filesystem opens the path verbatim.
+    #[test]
+    fn test_try_open_writer_remote_explicit_filesystem() {
+        Python::attach(|py| {
+            let fs = py
+                .import("fsspec")
+                .unwrap()
+                .call_method1("filesystem", ("memory",))
+                .unwrap();
+            let opened =
+                try_open_writer_remote(py, "explicit-fs-out.png", Some(&fs), "png").unwrap();
+            assert!(
+                opened.is_some(),
+                "an explicit filesystem= must take the remote branch"
+            );
+        });
+    }
+
+    // =========================================================================
+    // open_source_writer — per-source local-vs-remote seam (multi-path twin of
+    // open_source_reader)
+    // =========================================================================
+
+    /// A local path yields no retained handle: the caller owns nothing to close.
+    #[test]
+    fn test_open_source_writer_local_no_handle() {
+        Python::attach(|py| {
+            let (_writer, handle) = open_source_writer(py, "/tmp/src-writer.png", None, "png")
+                .expect("local path opens a File writer");
+            assert!(
+                handle.is_none(),
+                "a local path must yield no owned handle (nothing to close)"
+            );
+        });
+    }
+
+    /// A `memory://` URL yields a retained handle the library must close on commit.
+    #[test]
+    fn test_open_source_writer_remote_url_has_handle() {
+        Python::attach(|py| {
+            let (_writer, handle) =
+                open_source_writer(py, "memory://src-writer/out.png", None, "png")
+                    .expect("memory:// opens a remote writer");
+            let handle = handle.expect("a remote URL must yield an owned handle");
+            assert!(handle.bind(py).hasattr("write").unwrap());
+            handle.bind(py).call_method0("close").unwrap();
+        });
+    }
+
+    /// An explicit `filesystem=` yields a retained handle even for a scheme-less key.
+    #[test]
+    fn test_open_source_writer_explicit_filesystem_has_handle() {
+        Python::attach(|py| {
+            let fs = py
+                .import("fsspec")
+                .unwrap()
+                .call_method1("filesystem", ("memory",))
+                .unwrap();
+            let (_writer, handle) =
+                open_source_writer(py, "src-writer-fs.png", Some(&fs), "png")
+                    .expect("explicit filesystem opens a remote writer");
+            assert!(
+                handle.is_some(),
+                "an explicit filesystem= must yield an owned handle"
+            );
+            handle.unwrap().bind(py).call_method0("close").unwrap();
+        });
+    }
+
     #[test]
     fn test_create_reader_nitf_extension() {
         // This will fail because the file doesn't exist, but it should
@@ -1856,12 +2106,26 @@ mod tests {
     }
 
     #[test]
-    fn test_create_writer_s3_not_supported() {
+    fn test_create_writer_s3_defense_in_depth_message() {
+        // Every remote destination — single path or each multi-path R-set entry —
+        // is intercepted upstream by `open_source_writer`/`try_open_writer_remote`
+        // and opened through fsspec, so it never reaches `create_writer_boxed`. This
+        // defense-in-depth arm now fires only for a non-local scheme that slipped
+        // past that routing, so its message is scheme-generic (names the scheme +
+        // fsspec), not "not yet supported" and not multi-path-specific.
         let parsed = ParsedUri::parse("s3://bucket/key/output.ntf");
         let result = create_writer(&parsed, "nitf");
         assert!(result.is_err());
         let err_str = format!("{:?}", result.err());
-        assert!(err_str.contains("S3"));
+        assert!(
+            err_str.contains("fsspec") && err_str.contains("s3://"),
+            "expected scheme-generic fsspec routing hint, got: {err_str}"
+        );
+        assert!(
+            !err_str.contains("not yet supported"),
+            "corrected message must not say 'not yet supported', got: {}",
+            err_str
+        );
     }
 
     #[test]
