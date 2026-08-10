@@ -10,8 +10,9 @@ GeoTIFF.
 The parser conforms to the VirtualiZarr parser callable protocol
 `(url, registry) -> ManifestStore`. It reads bytes by opening `url` with fsspec
 and handing the seekable handle to `IO.open()`, which issues on-demand byte-range
-reads for the block-capable formats — so a local path and an `s3://` URL follow
-the same code path and neither downloads the whole file to build the index.
+reads for the tiled formats (NITF, TIFF/GeoTIFF, JPEG 2000) — so a local path and an
+`s3://` URL follow the same code path and neither downloads the whole file to build
+the index.
 
 - **Single file** — pass one URL. If the file contains overview assets (e.g. COG
   overview IFDs), the parser builds a hierarchical store automatically.

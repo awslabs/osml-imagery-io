@@ -261,9 +261,11 @@ below sees the ordinary abstractions.
 `create_reader_from_stream` (and `open_multi_stream_with_roles`, per source) probes
 the stream and either builds a `Remote` buffer or falls back to the full-read path:
 
-1. **`remote_header_hint(format)`** — returns a header-prefetch size for the
-   block-capable formats whose readers are proven remote-safe (TIFF, J2K, NITF/JBP,
-   DTED) and `None` otherwise. This is the single gate. PNG and standalone JPEG stay
+1. **`remote_header_hint(format)`** — returns a header-prefetch size for the formats
+   whose readers are proven remote-safe (TIFF, J2K, NITF/JBP, DTED) and `None`
+   otherwise. This is the single gate. Of these, TIFF/J2K/NITF are block-capable and
+   fetch per block; DTED is remote-safe for headers but reads its single full-grid
+   block in one bounded fetch. PNG and standalone JPEG stay
    on the full-read fallback by routing choice, not necessity: their readers *are*
    remote-safe via `materialize()`, but chunking a mandatory whole-file read through
    range GETs has no benefit.

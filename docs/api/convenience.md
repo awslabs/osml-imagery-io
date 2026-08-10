@@ -33,14 +33,10 @@ and {class}`~aws.osml.io.ImageAssetProvider` for full control.
 
 ```{eval-rst}
 .. autoclass:: aws.osml.io.ImageInfo
-   :members:
-   :undoc-members:
 ```
 
 ## Tile
 
 ```{eval-rst}
 .. autoclass:: aws.osml.io.Tile
-   :members:
-   :undoc-members:
 ```

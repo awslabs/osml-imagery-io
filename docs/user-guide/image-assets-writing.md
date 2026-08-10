@@ -69,6 +69,7 @@ Accepted format strings and auto-detected extensions:
 | `"png"` | PNG | `.png` |
 | `"j2k"`, `"jp2"` | JPEG 2000 | `.j2k`, `.jp2` |
 | `"jpeg"`, `"jpg"` | JPEG | `.jpg`, `.jpeg` |
+| `"dted"`, `"dt0"`–`"dt5"` | DTED | `.dt0`–`.dt5`, `.avg`, `.min`, `.max` |
 
 For reading, `IO.open` auto-detects the format from the file extension or from magic
 bytes in the file header. You can also override detection with the `format` parameter.

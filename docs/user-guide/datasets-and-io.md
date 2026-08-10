@@ -2,8 +2,10 @@
 
 ## The Simple Path
 
-For most tasks you don't need to think about datasets or assets at all. The
-convenience functions handle file opening, asset selection, and cleanup for you:
+For quick, one-off tasks — a fast inspection, a single full-image read, or working
+with small test or artificial datasets — the convenience functions handle file
+opening, asset selection, and cleanup for you, without touching datasets or assets
+directly:
 
 ```python
 from aws.osml.io import imread, imsave, iminfo
@@ -19,10 +21,10 @@ print(f"{info.width}x{info.height}, {info.bands} bands, {info.dtype}")
 imsave("output.tif", pixels)
 ```
 
-When you need more control — multi-segment files, per-asset metadata, specific
-compression parameters, or write workflows that involve multiple assets — the
-full dataset API described below gives you direct access to everything in the
-file.
+These conveniences only cover the basic cases. Real-world imagery work — multi-segment
+files, per-asset metadata, specific compression parameters, block-level access, or write
+workflows that involve multiple assets — goes through the `IO` interface and the full
+dataset API described below, which gives you direct access to everything in the file.
 
 ## Opening a Dataset
 
@@ -43,25 +45,25 @@ with IO.open(["output.tif"], "w", "geotiff") as writer:
 
 Use the context manager (`with`) to ensure file handles are released when you're done.
 
-## Input Sources
-
 `IO.open()` and the convenience functions (`imread`, `imsave`, `iminfo`, `tiles`)
-accept two kinds of input:
+accept several kinds of input, each described below.
 
-### File paths (recommended for large files)
-
-Pass a string path (or list of paths for multi-file pyramids). The library
-memory-maps the file, so only the pages you access are loaded into RAM. This is
-the most performant option — the operating system efficiently manages loading
-imagery from disk into memory without requiring the entire file to be resident.
+### Local file paths 
+Pass a string path (or list of paths for multi-file pyramids). This is the
+recommended path for large imagery on the local filesystem: the library maps the 
+file directly into memory, so the image-processing core accesses pixels straight 
+from the filesystem and only the pages you actually touch are loaded into RAM. This 
+gives the most efficient I/O and memory use available — the whole file never needs 
+to be resident.
 
 ```python
-from aws.osml.io import imread
+from aws.osml.io import IO
 
-pixels = imread("large_image.ntf")
+with IO.open(["large_image.ntf"], "r") as dataset:
+    block = dataset.get_asset("image:0").get_block(0, 0)
 ```
 
-### Python file-like objects
+### Python "file-like" objects
 
 Any object with a standard `.read()` / `.write()` interface works — `io.BytesIO`,
 fsspec handles, HTTP response bodies, or any duck-typed object with the required
@@ -84,7 +86,51 @@ buffer = io.BytesIO()
 imsave(buffer, data, format="jpeg")
 ```
 
-### Remote reading without a full download
+### The `format` parameter
+
+When working with streams, the library cannot infer the image format from a file
+extension. The `format` parameter is **required** for all stream operations:
+
+```python
+# Raises ValueError — no format specified
+imread(io.BytesIO(data))
+
+# Works
+imread(io.BytesIO(data), format="png")
+```
+
+For the full list of accepted format strings, see [Choosing the Output
+Format](image-assets-writing.md#choosing-the-output-format) — the same strings are
+accepted on read and write.
+
+When using file paths, `format` remains optional — the library infers it from the
+file extension. Recognized NITF extensions include `.ntf`, `.nitf`, `.nsif`, `.nsf`,
+and `.hr1` through `.hr8` (High Resolution Elevation products).
+
+### Working with cloud object storage
+
+Imagery increasingly lives in cloud object stores rather than on a local disk, and
+this library is designed to read and write it there directly. It takes a deliberate
+approach to that problem: rather than baking a bespoke set of remote-access protocols
+into the imagery layer — a separate URL scheme per storage backend, each carrying its
+own credential handling and connection logic to build and maintain — it builds on
+[fsspec](https://filesystem-spec.readthedocs.io/), the filesystem abstraction the
+Python community has standardized on.
+
+The practical consequences are worth stating plainly:
+
+- **Every fsspec-backed store works, unchanged.** S3, Google Cloud Storage, Azure Blob,
+  HTTP(S), and any backend the community adds in the future are usable here the moment
+  they have an fsspec implementation — the imagery library needs no per-backend code.
+- **Authentication and configuration are not reinvented.** Credential resolution,
+  retries, endpoint and region settings, and connection pooling are all handled by the
+  backend's own fsspec implementation, using the same configuration your other Python
+  tools already rely on. There is no imagery-specific credential path to learn or keep
+  in sync.
+- **Reads and writes are symmetric.** The same three ways of naming a remote source
+  work in both directions.
+
+#### Reading without a full download
 
 The library reads remote objects with on-demand byte-range requests instead of
 downloading the whole file. Opening the dataset and reading metadata or specific
@@ -106,7 +152,7 @@ fs = fsspec.filesystem("s3")
 with IO.open("s3://bucket/large_image.ntf", "r", format="nitf", filesystem=fs) as dataset:
     block = dataset.get_asset("image:0").get_block(0, 0)
 
-# 3. A raw fsspec/s3fs file-like handle (also works — see note below).
+# 3. A raw fsspec file-like handle (also works — see note below).
 with fsspec.open("s3://bucket/large_image.ntf", "rb") as handle:
     with IO.open(handle, "r", format="nitf") as dataset:
         block = dataset.get_asset("image:0").get_block(0, 0)  # fetches only this tile's ranges
@@ -114,32 +160,57 @@ with fsspec.open("s3://bucket/large_image.ntf", "rb") as handle:
 
 The `filesystem=` parameter is accepted by `IO.open`, `imread`, `iminfo`, and
 `tiles`. When it is omitted, a remote URL string is resolved to a filesystem
-internally via `fsspec.core.url_to_fs`.
+internally via `fsspec.core.url_to_fs` — so form 1 and form 2 are the same code
+path, just with the resolution done for you. **Prefer form 1 or form 2 when you can
+name the object.** Passing the `(filesystem, path)` pair lets the library fetch a
+tile's scattered byte ranges **concurrently** (via fsspec's `cat_ranges`), which is
+markedly faster over a high-latency object store.
+
+Incremental range reading applies to the **tiled** formats — NITF, TIFF/GeoTIFF,
+and JPEG 2000. For these, `IO.open`, `iminfo`, `tiles`, and
+`DatasetReader.get_block` fetch one tile's byte ranges at a time: peak memory tracks
+the fetched ranges (plus a small header prefetch), not the file size. DTED is a
+special case — it is a single-band elevation grid stored as one full-image block, so
+opening and inspecting it uses ranged fetches for the headers, but reading its pixels
+pulls the whole elevation grid in one bounded fetch rather than tile by tile.
 
 :::{note}
-Prefer a URL string or `filesystem=` over a raw handle. When the library has the
-`(filesystem, path)` pair it fetches a tile's scattered byte ranges
-**concurrently** (via fsspec's `cat_ranges`), which is markedly faster over a
-high-latency object store. A raw handle still works — the library recovers the
-filesystem from the handle's `.fs`/`.path` where it can — but this is a
-best-effort fallback. Passing `filesystem=` together with a file-like or
+Form 3 (a raw handle) still works, but is a best-effort fallback — the library
+recovers the underlying filesystem from the handle's `.fs`/`.path` where it can, and
+otherwise reads sequentially. Passing `filesystem=` together with a file-like or
 in-memory (`io.BytesIO`) source raises `ValueError`, because the two are
-contradictory.
+contradictory: a handle already carries its own transport.
 :::
 
-Range reading applies to the **block-capable** formats — NITF, TIFF/GeoTIFF, JPEG
-2000, and DTED. For these, `IO.open`, `iminfo`, `tiles`, and
-`DatasetReader.get_block` all read incrementally. Peak memory tracks the fetched
-ranges (plus a small header prefetch), not the file size.
+#### Tuning concurrency: the connection pool
 
-The `format` argument is required for streams (there is no filename to infer from);
-see [The `format` parameter](#the-format-parameter) below.
+Concurrent range fetches share the underlying fsspec backend's connection pool,
+which for S3 defaults to **10** connections (`MAX_POOL_CONNECTIONS`). For workloads
+that fan many blocks out across threads, raising the pool can improve throughput —
+construct the filesystem with a larger `max_pool_connections` and pass it via
+`filesystem=`:
 
-### Remote writing
+```python
+import fsspec
+from aws.osml.io import IO
 
-Writing to a remote destination is symmetric with reading: a bare `s3://` output
-URL and an explicit `filesystem=` + path both work in write mode, the same surface
-the read path offers.
+fs = fsspec.filesystem("s3", config_kwargs={"max_pool_connections": 32})
+with IO.open("s3://bucket/large_image.ntf", "r", format="nitf", filesystem=fs) as dataset:
+    ...
+```
+
+This is **optional and environment-dependent** — measure before adopting it. The
+default pool of 10 is already enough to fetch a single tile's parts concurrently;
+the larger pool only pays off once many blocks are read in parallel (e.g. a
+threaded region-of-interest read), and the actual benefit scales with per-request
+latency (larger cross-region, smaller in-region). Because the pool is a property of
+the fsspec filesystem, this and any other backend tuning is configured the same way
+you would for any other fsspec-based tool.
+
+#### Writing to a remote destination
+
+Writing is symmetric with reading: a bare `s3://` output URL and an explicit
+`filesystem=` + path both work in write mode, the same surface the read path offers.
 
 ```python
 from aws.osml.io import IO, imsave
@@ -169,42 +240,22 @@ that handle and must close it yourself to commit the upload.
 Multi-file pyramids can also be written to remote keys — see [Remote multi-file
 pyramids](#remote-multi-file-pyramids).
 
-#### Tuning concurrency: the connection pool
+#### When the whole file is read instead
 
-Concurrent range fetches share the underlying s3fs/botocore connection pool,
-which defaults to **10** connections (`MAX_POOL_CONNECTIONS`). For workloads that
-fan many blocks out across threads, raising the pool can improve throughput —
-construct the filesystem with a larger `max_pool_connections` and pass it via
-`filesystem=`:
-
-```python
-import fsspec
-from aws.osml.io import IO
-
-fs = fsspec.filesystem("s3", config_kwargs={"max_pool_connections": 32})
-with IO.open("s3://bucket/large_image.ntf", "r", format="nitf", filesystem=fs) as dataset:
-    ...
-```
-
-This is **optional and environment-dependent** — measure before adopting it. The
-default pool of 10 is already enough to fetch a single tile's parts concurrently;
-the larger pool only pays off once many blocks are read in parallel (e.g. a
-threaded region-of-interest read), and the actual benefit scales with per-request
-latency (larger cross-region, smaller in-region).
-
-### When the full file is read
-
-Two cases fall back to reading the entire stream into memory via a single `.read()`:
+Range reads need two things: a format the library can index into, and a source it can
+seek within. When either is missing, it falls back to a single `.read()` of the entire
+object into memory:
 
 - **Monolithic formats (PNG, standalone JPEG).** These have no sub-file structure to
   exploit — a whole-file read is the only decode strategy — so they are read in full
-  even from a seekable handle.
-- **Non-seekable or unknown-size streams** (e.g. a plain `io.BytesIO`, a pipe, or an
-  HTTP body with no length). With no way to issue range reads, the library reads the
-  stream fully, exactly as earlier versions did.
+  even from a seekable remote object.
+- **Non-seekable or unknown-size sources** (a plain `io.BytesIO`, a pipe, or an HTTP
+  body with no length). With no way to issue range reads, the library reads the source
+  fully.
 
-For these cases, the same trade-offs as before apply — the full file must fit in RAM,
-and a remote source is downloaded before decoding begins.
+In both cases the whole file must fit in RAM, and a remote source is downloaded before
+decoding begins — so for large remote imagery, prefer a tiled format (NITF,
+TIFF/GeoTIFF, JPEG 2000) named by URL or `filesystem=`.
 
 ### Bulk tile access via VirtualiZarr
 
@@ -249,36 +300,6 @@ with tempfile.NamedTemporaryFile(suffix=".ntf") as tmp:
     tmp.flush()
     pixels = imread(tmp.name)
 ```
-
-### The `format` parameter
-
-When working with streams, the library cannot infer the image format from a file
-extension. The `format` parameter is **required** for all stream operations:
-
-```python
-# Raises ValueError — no format specified
-imread(io.BytesIO(data))
-
-# Works
-imread(io.BytesIO(data), format="png")
-```
-
-Supported format strings: `"nitf"`, `"tiff"`, `"png"`, `"j2k"`, `"jpeg"`.
-
-When using file paths, `format` remains optional — the library infers it from the
-file extension. Recognized NITF extensions include `.ntf`, `.nitf`, `.nsif`, `.nsf`,
-and `.hr1` through `.hr8` (High Resolution Elevation products).
-
-### When streams are a good fit
-
-- You are reading a block-capable format (NITF, TIFF/GeoTIFF, JPEG 2000, DTED) from
-  a seekable, sized handle (fsspec/s3fs) and want range reads instead of a full
-  download — including large remote files
-- The file is small enough to fit in memory (PNG thumbnails, JPEG tiles, small
-  NITF chips)
-- You already have the bytes in memory (HTTP response bodies, message payloads)
-- You want to encode output directly to a buffer without a temporary file (tile
-  server responses)
 
 ## Dataset Structure
 
@@ -339,6 +360,67 @@ walk the pyramid for rendering should exclude assets that also carry `mask`.
 Roles are the primary way to distinguish between different kinds of assets without
 parsing key strings. See [Image Pyramids](#image-pyramids) below for how roles are
 used to separate full-resolution images from reduced-resolution overviews.
+
+## Discovering Assets
+
+Use `get_asset_keys()` to list available assets, then `get_asset()` to retrieve
+a specific one. You can filter by asset type, by role, or both:
+
+```python
+from aws.osml.io import IO, AssetType
+
+with IO.open(["complex_dataset.ntf"], "r") as dataset:
+    # List keys by asset type
+    image_keys = dataset.get_asset_keys(asset_type=AssetType.Image)
+    text_keys = dataset.get_asset_keys(asset_type=AssetType.Text)
+    data_keys = dataset.get_asset_keys(asset_type=AssetType.Data)
+    graphics_keys = dataset.get_asset_keys(asset_type=AssetType.Graphics)
+
+    print(f"Images: {len(image_keys)}, Text: {len(text_keys)}, "
+          f"Data: {len(data_keys)}, Graphics: {len(graphics_keys)}")
+
+    # Retrieve a specific asset
+    image = dataset.get_asset("image:0")
+```
+
+### Filtering by Role
+
+The `roles` parameter on `get_asset_keys()` lets you filter assets by their semantic
+purpose. This is useful when a dataset contains both full-resolution images and
+overviews:
+
+```python
+with IO.open(["cog.tif"], "r") as dataset:
+    # Only full-resolution images
+    data_keys = dataset.get_asset_keys(asset_type=AssetType.Image, roles=["data"])
+
+    # Only overview images
+    overview_keys = dataset.get_asset_keys(asset_type=AssetType.Image, roles=["overview"])
+
+    # All image assets (no role filter)
+    all_keys = dataset.get_asset_keys(asset_type=AssetType.Image)
+```
+
+When `roles` is omitted or `None`, all assets matching the `asset_type` filter are
+returned. When both `asset_type` and `roles` are provided, both filters apply — only
+assets that match the type and have at least one of the requested roles are returned.
+
+NITF files can contain all four asset types. TIFF files contain only image assets —
+each IFD (Image File Directory) in the file becomes a separate image asset keyed as
+`"image:0"`, `"image:1"`, etc. Cloud Optimized GeoTIFFs additionally expose overview
+IFDs as `"image:0:overview:1"`, `"image:0:overview:2"`, etc. PNG files contain a
+single image keyed as `"image:0"`. Text, data, and graphics asset queries will return
+empty lists for TIFF and PNG datasets.
+
+## Dataset-Level Metadata
+
+Every dataset exposes a `metadata` property with file-level fields. See the
+[Metadata](metadata.md) section for details:
+
+```python
+with IO.open(["image.ntf"], "r") as dataset:
+    file_metadata = dataset.metadata.entries()
+```
 
 ## Image Pyramids
 
@@ -442,8 +524,8 @@ by filename convention.
 #### Remote multi-file pyramids
 
 Multi-file pyramids may live on a remote object store. When reading, each entry
-in the list is resolved the same way a single remote path is (see [Remote
-reading without a full download](#remote-reading-without-a-full-download)) —
+in the list is resolved the same way a single remote path is (see [Reading
+without a full download](#reading-without-a-full-download)) —
 remote entries open through fsspec with on-demand byte-range requests, local
 entries stay memory-mapped. There are two ways to point `IO.open` at a remote
 pyramid, mirroring the single-path forms:
@@ -643,64 +725,3 @@ Sample bit depths are handled as follows:
   {1, 2, 4, 8, 16, 32, 64}) and round-trips losslessly as `uint16`. There is no
   significant-bits/ABPP surfacing — that is an NITF concept with no TIFF-tag
   equivalent, and the 16-bit container preserves every stored value.
-
-## Discovering Assets
-
-Use `get_asset_keys()` to list available assets, then `get_asset()` to retrieve
-a specific one. You can filter by asset type, by role, or both:
-
-```python
-from aws.osml.io import IO, AssetType
-
-with IO.open(["complex_dataset.ntf"], "r") as dataset:
-    # List keys by asset type
-    image_keys = dataset.get_asset_keys(asset_type=AssetType.Image)
-    text_keys = dataset.get_asset_keys(asset_type=AssetType.Text)
-    data_keys = dataset.get_asset_keys(asset_type=AssetType.Data)
-    graphics_keys = dataset.get_asset_keys(asset_type=AssetType.Graphics)
-
-    print(f"Images: {len(image_keys)}, Text: {len(text_keys)}, "
-          f"Data: {len(data_keys)}, Graphics: {len(graphics_keys)}")
-
-    # Retrieve a specific asset
-    image = dataset.get_asset("image:0")
-```
-
-### Filtering by Role
-
-The `roles` parameter on `get_asset_keys()` lets you filter assets by their semantic
-purpose. This is useful when a dataset contains both full-resolution images and
-overviews:
-
-```python
-with IO.open(["cog.tif"], "r") as dataset:
-    # Only full-resolution images
-    data_keys = dataset.get_asset_keys(asset_type=AssetType.Image, roles=["data"])
-
-    # Only overview images
-    overview_keys = dataset.get_asset_keys(asset_type=AssetType.Image, roles=["overview"])
-
-    # All image assets (no role filter)
-    all_keys = dataset.get_asset_keys(asset_type=AssetType.Image)
-```
-
-When `roles` is omitted or `None`, all assets matching the `asset_type` filter are
-returned. When both `asset_type` and `roles` are provided, both filters apply — only
-assets that match the type and have at least one of the requested roles are returned.
-
-NITF files can contain all four asset types. TIFF files contain only image assets —
-each IFD (Image File Directory) in the file becomes a separate image asset keyed as
-`"image:0"`, `"image:1"`, etc. Cloud Optimized GeoTIFFs additionally expose overview
-IFDs as `"image:0:overview:1"`, `"image:0:overview:2"`, etc. PNG files contain a
-single image keyed as `"image:0"`. Text, data, and graphics asset queries will return
-empty lists for TIFF and PNG datasets.
-
-## Dataset-Level Metadata
-
-Every dataset exposes a `metadata` property with file-level fields. See the
-[Metadata](metadata.md) section for details:
-
-```python
-with IO.open(["image.ntf"], "r") as dataset:
-    file_metadata = dataset.metadata.entries()
-```
