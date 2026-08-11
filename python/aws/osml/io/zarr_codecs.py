@@ -56,6 +56,23 @@ def _import_zarr_bytescodec():
     return BytesBytesCodec
 
 
+def _is_numcodecs_buffer(buf) -> bool:
+    """True when ``decode`` is called with a single buffer (numcodecs filter protocol),
+    as opposed to the iterable of ``(buffer, array_spec)`` pairs ``BytesBytesCodec.decode``
+    receives. Checks for a buffer rather than the batch: the batch is whatever iterable
+    zarr builds, while "a single buffer" is a stable property.
+    """
+    if isinstance(buf, (bytes, bytearray, memoryview)):
+        return True
+    if hasattr(buf, "__array__"):
+        return True
+    try:
+        memoryview(buf)
+    except TypeError:
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class Jpeg2000Codec(_import_zarr_bytescodec()):
     """Zarr v3 bytes-to-bytes codec for JPEG 2000 codestreams.
@@ -186,6 +203,10 @@ class Jpeg2000Codec(_import_zarr_bytescodec()):
         For edge tiles, the decoded array may be smaller than the nominal tile
         dimensions. Pad to the nominal tile size so zarr v2's reshape succeeds.
         """
+        # Defining decode() shadows BytesBytesCodec.decode; hand v3 pipeline calls back to it.
+        if not _is_numcodecs_buffer(buf):
+            return super().decode(buf)
+
         import struct
 
         import numpy as np
@@ -368,6 +389,10 @@ class JpegCodec(_import_zarr_bytescodec()):
 
     def decode(self, buf, out=None):
         """Synchronous decode for numcodecs filter protocol."""
+        # Defining decode() shadows BytesBytesCodec.decode; hand v3 pipeline calls back to it.
+        if not _is_numcodecs_buffer(buf):
+            return super().decode(buf)
+
         data = bytes(buf) if not isinstance(buf, bytes) else buf
         return decode_jpeg(
             data,
@@ -540,6 +565,10 @@ class JbpBlockCodec(_import_zarr_bytescodec()):
 
     def decode(self, buf, out=None):
         """Synchronous decode for numcodecs filter protocol."""
+        # Defining decode() shadows BytesBytesCodec.decode; hand v3 pipeline calls back to it.
+        if not _is_numcodecs_buffer(buf):
+            return super().decode(buf)
+
         data = bytes(buf) if not isinstance(buf, bytes) else buf
         return decode_jbp_block(
             data,
@@ -767,6 +796,10 @@ class TiffTileCodec(_import_zarr_bytescodec()):
 
     def decode(self, buf, out=None):
         """Synchronous decode for numcodecs filter protocol."""
+        # Defining decode() shadows BytesBytesCodec.decode; hand v3 pipeline calls back to it.
+        if not _is_numcodecs_buffer(buf):
+            return super().decode(buf)
+
         data = bytes(buf) if not isinstance(buf, bytes) else buf
         return decode_tiff_tile(
             data,
@@ -964,6 +997,10 @@ class DtedTileCodec(_import_zarr_bytescodec()):
 
     def decode(self, buf, out=None):
         """Synchronous decode for numcodecs filter protocol."""
+        # Defining decode() shadows BytesBytesCodec.decode; hand v3 pipeline calls back to it.
+        if not _is_numcodecs_buffer(buf):
+            return super().decode(buf)
+
         data = bytes(buf) if not isinstance(buf, bytes) else buf
         return decode_dted_tile(
             data,
