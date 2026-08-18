@@ -186,6 +186,151 @@ class TestBuildManifestArrayBehaviorPreserving:
         )
 
 
+def _write_tiff(path: Path, num_cols: int, num_rows: int, num_bands: int,
+                planar_config: int, compression: int = 1,
+                tile_size: int = 64) -> None:
+    """Write a TIFF with the given band interleaving and compression."""
+    metadata = BufferedMetadataProvider()
+    metadata["322"] = str(tile_size)   # TileWidth
+    metadata["323"] = str(tile_size)   # TileLength
+    metadata["259"] = compression      # Compression
+    metadata["317"] = 1                # Predictor
+    metadata["284"] = planar_config    # PlanarConfiguration
+
+    provider = BufferedImageAssetProvider.create(
+        key="image:0",
+        num_columns=num_cols,
+        num_rows=num_rows,
+        num_bands=num_bands,
+        block_width=min(num_cols, tile_size),
+        block_height=min(num_rows, tile_size),
+        metadata=metadata,
+    )
+    provider.set_full_image(
+        np.zeros((num_bands, num_rows, num_cols), dtype=np.uint8)
+    )
+
+    writer = IO.open([str(path)], "w", "tiff")
+    writer.metadata = metadata
+    writer.add_asset("image:0", provider, "Image", "test", ["data"])
+    writer.close()
+
+
+class TestPlanarTiffChunkGeometry:
+    """Planar TIFF (``PlanarConfiguration=2``) is chunked one band per chunk.
+
+    Each band of a planar image is a separate tile in the file (TIFF 6.0 tag 284,
+    p. 38), and for compressed data each plane has its own length, so the plane
+    boundaries cannot be recovered from a single concatenated buffer.  Giving
+    each plane its own chunk sidesteps that entirely: every chunk is one
+    self-contained single-plane tile and zarr stacks the bands.
+    """
+
+    def test_planar_chunk_shape_is_one_band(self, tmp_dir):
+        path = tmp_dir / "planar.tif"
+        _write_tiff(path, num_cols=128, num_rows=128, num_bands=3, planar_config=2)
+
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+        array = OversightMLParser()(str(path))._group.groups["0"].arrays["data"]
+
+        # The array still presents all three bands…
+        assert array.shape == (3, 128, 128)
+        # …but a chunk holds only one of them.
+        assert array.metadata.chunks == (1, 64, 64)
+
+    def test_planar_chunk_keys_are_band_granular(self, tmp_dir):
+        path = tmp_dir / "planar.tif"
+        _write_tiff(path, num_cols=128, num_rows=128, num_bands=3, planar_config=2)
+
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+        array = OversightMLParser()(str(path))._group.groups["0"].arrays["data"]
+        keys = set(array.manifest.dict().keys())
+
+        # 3 bands × 2×2 tile grid = 12 chunks, keyed {band}.{row}.{col}.
+        assert len(keys) == 12
+        assert keys == {
+            f"{band}.{row}.{col}"
+            for band in range(3)
+            for row in range(2)
+            for col in range(2)
+        }
+
+    def test_planar_codec_presents_chunks_as_single_band(self, tmp_dir):
+        path = tmp_dir / "planar.tif"
+        _write_tiff(path, num_cols=128, num_rows=128, num_bands=3, planar_config=2)
+
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+        array = OversightMLParser()(str(path))._group.groups["0"].arrays["data"]
+        tiff_codec = [
+            c for c in array.metadata.codecs
+            if getattr(c, "codec_name", "").endswith("/tiff-tile")
+        ]
+        assert len(tiff_codec) == 1, "planar TIFF must carry a TiffTileCodec"
+        # Each chunk is one plane's tile: one band, nothing interleaved.
+        assert tiff_codec[0].samples_per_pixel == 1
+        assert tiff_codec[0].planar_config == 1
+
+    def test_planar_chunks_have_distinct_byte_ranges(self, tmp_dir):
+        """Every plane gets its own range — the bug was referencing band 0 only."""
+        path = tmp_dir / "planar.tif"
+        _write_tiff(path, num_cols=128, num_rows=128, num_bands=3, planar_config=2)
+
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+        array = OversightMLParser()(str(path))._group.groups["0"].arrays["data"]
+        offsets = [entry["offset"] for _key, entry in array.manifest.items()]
+        assert len(set(offsets)) == 12, "each plane chunk must reference distinct bytes"
+
+    def test_chunky_multiband_tiff_geometry_unchanged(self, tmp_dir):
+        """Chunky arrays keep the all-bands-in-one-chunk grid and 0.{row}.{col} keys."""
+        path = tmp_dir / "chunky.tif"
+        _write_tiff(path, num_cols=128, num_rows=128, num_bands=3, planar_config=1)
+
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+        array = OversightMLParser()(str(path))._group.groups["0"].arrays["data"]
+
+        assert array.shape == (3, 128, 128)
+        assert array.metadata.chunks == (3, 64, 64)
+        keys = set(array.manifest.dict().keys())
+        assert keys == {f"0.{row}.{col}" for row in range(2) for col in range(2)}
+
+    def test_single_band_planar_tiff_geometry_unchanged(self, tmp_dir):
+        """PlanarConfiguration is irrelevant at SamplesPerPixel=1 (TIFF 6.0 p. 38)."""
+        path = tmp_dir / "planar1.tif"
+        _write_tiff(path, num_cols=128, num_rows=128, num_bands=1, planar_config=2)
+
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+        array = OversightMLParser()(str(path))._group.groups["0"].arrays["data"]
+
+        assert array.metadata.chunks == (1, 64, 64)
+        keys = set(array.manifest.dict().keys())
+        assert keys == {f"0.{row}.{col}" for row in range(2) for col in range(2)}
+
+    @pytest.mark.parametrize("compression", [1, 5, 8], ids=["none", "lzw", "deflate"])
+    def test_planar_geometry_holds_for_every_compression(self, tmp_dir, compression):
+        """Per-plane chunking is uniform — compressed and uncompressed alike.
+
+        This is what collapses the two planar sub-cases into one fix: the plane
+        boundaries come from the tag, never from geometry, so varying compressed
+        lengths stop mattering.
+        """
+        path = tmp_dir / f"planar-{compression}.tif"
+        _write_tiff(path, num_cols=128, num_rows=128, num_bands=3,
+                    planar_config=2, compression=compression)
+
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser
+
+        array = OversightMLParser()(str(path))._group.groups["0"].arrays["data"]
+
+        assert array.metadata.chunks == (1, 64, 64)
+        assert len(array.manifest.dict()) == 12
+
+
 class TestParserProtocolSignature:
     """Verify OversightMLParser conforms to the VirtualiZarr (url, registry)
     callable protocol.

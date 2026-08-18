@@ -390,47 +390,114 @@ class TestEndToEndNitfJpeg:
 
 
 # ---------------------------------------------------------------------------
-# TIFF — tile index generation and tile coverage via VirtualiZarr parser
+# TIFF — TiffTileCodec, lossless
 # ---------------------------------------------------------------------------
+
+
+def _assert_tiff_index_geometry(index_path: Path, src_path: Path, num_tiles: int,
+                                num_bands: int, planar_config: int) -> None:
+    """Assert the Kerchunk index's chunk count and byte ranges are well-formed.
+
+    Planar TIFF (PlanarConfiguration=2) stores each band as its own tile, so the
+    index chunks per plane — one ref per band per spatial tile, keyed
+    ``{band}.{row}.{col}``.  Every other configuration puts all bands in one chunk.
+    """
+    import json
+
+    with open(index_path) as f:
+        refs = json.load(f)
+    tile_refs = [k for k, v in refs["refs"].items()
+                 if isinstance(v, list) and len(v) == 3]
+    chunks_per_tile = num_bands if planar_config == 2 else 1
+    assert len(tile_refs) == num_tiles * chunks_per_tile
+
+    file_size = src_path.stat().st_size
+    for key in tile_refs:
+        _, offset, length = refs["refs"][key]
+        assert offset >= 0
+        assert length > 0
+        assert offset + length <= file_size
 
 
 @pytest.mark.property
 class TestEndToEndTiff:
-    """End-to-end: TIFF tile index generation and coverage via VirtualiZarr parser."""
+    """End-to-end: TIFF multi-tile via Zarr — pixel parity plus index geometry.
+
+    The v2 (Kerchunk / numcodecs) path is the shipping user-facing interface, so
+    it asserts pixels, not just tile counts: index geometry that looks right while
+    referencing the wrong bytes reads back as a plausible array of wrong pixels.
+    """
 
     @given(tiff_writable_image(min_size=48, max_size=128, min_bands=1, max_bands=3))
     @pbt_settings
-    def test_tiff_tile_index_coverage(self, image_tuple):
-        """TiffParser covers all tiles for a TIFF image."""
+    def test_tiff_io_vs_zarr(self, image_tuple):
+        """IO path and zarr path produce identical tiles for TIFF.
+
+        Covers the full lossless matrix — ``{1..3} bands × {uncompressed, LZW,
+        Deflate} × {chunky, planar}`` — over every writer pixel type.  Only lossy
+        JPEG-in-TIFF is excluded; the JPEG codec's parity is covered by the
+        NITF-C3 suite, which compares with PSNR/SSIM rather than exact equality.
+        """
         array, pixel_type, num_bands, num_rows, num_cols, hints = image_tuple
-        assume(hints["259"] != 7)  # Skip JPEG TIFF
+        assume(hints["259"] != 7)  # JPEG TIFF is lossy; NITF-C3 covers the JPEG codec.
 
         path = _write_tiff(array, pixel_type, num_bands, num_rows, num_cols, hints)
         try:
             tiles_io = _read_all_tiles_via_io(path)
             assert len(tiles_io) > 0
 
+            # No ``except ValueError: skip`` here: index construction failing (a
+            # reshape error, a rejected geometry) is a defect, not an unsupported
+            # config, and must fail the test rather than vanish as a skip.
+            index_path = _generate_and_save_index(path)
             try:
-                index_path = _generate_and_save_index(path)
-            except ValueError:
-                pytest.skip("tile_byte_ranges not available for this TIFF config")
+                _assert_tiff_index_geometry(
+                    index_path, path, len(tiles_io), num_bands, hints["284"]
+                )
+                tiles_zarr = _read_all_tiles_via_zarr(index_path)
+                _assert_tiles_match_lossless(tiles_io, tiles_zarr)
+            finally:
+                index_path.unlink(missing_ok=True)
+        finally:
+            path.unlink(missing_ok=True)
 
+    @pytest.mark.parametrize("num_bands", [1, 3])
+    @pytest.mark.parametrize("compression", [1, 5, 8])
+    @pytest.mark.parametrize("planar_config", [1, 2])
+    @pytest.mark.parametrize("pixel_type", [PixelType.UInt8, PixelType.UInt16])
+    def test_tiff_edge_tile_parity(self, num_bands, compression, planar_config, pixel_type):
+        """100×100 image on a 64×64 tile grid: partial edge tiles, every config.
+
+        The Hypothesis case above draws dimensions freely and will reach partial
+        edge tiles, but not deterministically for a *specific* config.  This pins
+        the whole matrix at a geometry where the right and bottom tiles are
+        partial, which is where per-plane padding needs separate verification — a
+        planar chunk is one plane's tile, so each plane pads independently.
+        """
+        num_rows = num_cols = 100
+        hints = {
+            "322": "64",           # TileWidth
+            "323": "64",           # TileLength
+            "259": compression,    # Compression
+            "317": 1,              # Predictor: None
+            "284": planar_config,  # PlanarConfiguration
+        }
+        dtype = np.dtype(pixel_type.to_numpy_dtype())
+        rng = np.random.default_rng(0)
+        array = rng.integers(
+            0, np.iinfo(dtype).max, size=(num_bands, num_rows, num_cols), dtype=dtype
+        )
+
+        path = _write_tiff(array, pixel_type, num_bands, num_rows, num_cols, hints)
+        try:
+            tiles_io = _read_all_tiles_via_io(path)
+            index_path = _generate_and_save_index(path)
             try:
-                # Verify tile count by reading the kerchunk JSON
-                import json
-                with open(index_path) as f:
-                    refs = json.load(f)
-                tile_refs = [k for k, v in refs["refs"].items()
-                             if isinstance(v, list) and len(v) == 3]
-                assert len(tile_refs) == len(tiles_io)
-
-                # Verify byte ranges are valid
-                file_size = path.stat().st_size
-                for key in tile_refs:
-                    _, offset, length = refs["refs"][key]
-                    assert offset >= 0
-                    assert length > 0
-                    assert offset + length <= file_size
+                _assert_tiff_index_geometry(
+                    index_path, path, len(tiles_io), num_bands, planar_config
+                )
+                tiles_zarr = _read_all_tiles_via_zarr(index_path)
+                _assert_tiles_match_lossless(tiles_io, tiles_zarr)
             finally:
                 index_path.unlink(missing_ok=True)
         finally:

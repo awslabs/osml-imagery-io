@@ -35,7 +35,10 @@ in the file:
 
 - **TIFF uncompressed**: Even raw bytes require the file's byte order
   (big-endian vs little-endian) and `PlanarConfiguration` (chunky vs planar)
-  to be interpreted correctly.
+  to be interpreted correctly. A multiband chunky tile is pixel-interleaved on
+  disk (`RGBRGBRGB…`), so it must be de-interleaved before it is a
+  `(bands, rows, columns)` array — compression is not the only reason a TIFF
+  tile needs a codec, and "uncompressed" does not imply "ready to reshape".
 
 The third-party decoder libraries (OpenJPEG, libtiff, libjpeg-turbo) are
 designed to operate on complete, valid inputs — a full J2K codestream, a
@@ -175,6 +178,14 @@ only the dimensional and pixel format tags. JPEG tiles additionally need
 `JPEGTables` and `PhotometricInterpretation`. LZW/Deflate tiles additionally
 need `Predictor`.
 
+Single-band uncompressed tiles are the one case that needs no configuration at
+all: the raw tile bytes already are the pixel data, and per TIFF 6.0
+`PlanarConfiguration` is irrelevant when `SamplesPerPixel` is 1. For those,
+`codec_configuration()` returns `None` and Zarr reads the bytes directly,
+preserving a zero-copy path. Multiband uncompressed tiles do get a
+configuration, because they still need sample reordering (see
+[Chunking planar TIFF per plane](#chunking-planar-tiff-per-plane)).
+
 #### Reconstruction
 
 A minimal valid TIFF byte buffer is constructed in memory:
@@ -239,6 +250,107 @@ color space conversion — all within libtiff.
 - `python/aws/osml/io/virtualizarr_parsers.py` — `_build_codec_instance()`
   extended with a TIFF branch that detects configurations containing a
   `compression` key and constructs a `TiffTileCodec` instance.
+
+#### Chunking planar TIFF per plane
+
+A TIFF with `PlanarConfiguration = 2` stores each band in its own tile: per TIFF
+6.0 (tags 324/325, p. 68) `TileOffsets` and `TileByteCounts` carry
+`SamplesPerPixel × TilesPerImage` entries, laid out band-major — all of plane
+0's tiles, then all of plane 1's, and so on. Nothing about that layout fits a
+chunk grid whose chunks each span every band.
+
+**Decision.** For planar multiband TIFF, the chunk grid is **band-granular**:
+`chunk_shape = (1, block_height, block_width)`, chunk keys `{band}.{row}.{col}`,
+one chunk per plane per tile position, with the array's codec instance
+overridden to `samples_per_pixel = 1, planar_config = 1`. Each chunk is exactly
+one single-plane TIFF tile, decoded independently; Zarr stacks the planes along
+the band axis. Chunky arrays are untouched — they keep
+`chunk_shape = (bands, block_height, block_width)` and `0.{row}.{col}` keys.
+
+**The alternative, and why it lost.** The obvious way to keep the chunk grid
+spatial-only is to have one chunk reference all N planes and concatenate them:
+the multi-range mechanism the filesystem layer already provides for interleaved
+J2K tile-parts. That works for uncompressed planar data, where each plane's
+length is fixed by geometry. It breaks down for compressed planar data, because
+each plane compresses to a different length, and those lengths vary per tile.
+The decoder would have to be told where each plane ends inside the concatenated
+buffer — per-tile information that cannot live in a per-array codec
+configuration. Rescuing the approach means extending the configuration to carry
+per-chunk plane boundaries, which is per-chunk state in a per-array field.
+
+Per-plane chunking dissolves that problem rather than solving it. Each plane is
+its own chunk with its own byte range, so plane boundaries are expressed by the
+manifest — the structure that exists to express byte ranges — and never need to
+be packed into a buffer or a config. Three further consequences all point the
+same way:
+
+- **No decoder change.** With `samples_per_pixel = 1` the decoder's existing
+  single-band path already handles these chunks, edge-tile zero-padding
+  included. Uncompressed and compressed planar stop being distinct cases.
+- **Predictor semantics are correct by construction.** Per TIFF 6.0 Section 13,
+  horizontal differencing on planar data works per plane exactly as it does on
+  grayscale data, so presenting a plane as a standalone single-band tile needs
+  no stride adjustment. (The chunky path is the one with a stride of
+  `SamplesPerPixel`, which is why `samples_per_pixel` must stay truthful there.)
+- **No trait change.** `tile_byte_ranges()` already returns
+  `Vec<(u64, u64)>` per `(row, col)` key, so planar TIFF returns its N plane
+  ranges under the existing key in band order. The signature
+  (`src/traits/image.rs`) and the ten other implementors are untouched.
+
+**No consumer-visible change.** The decision is confined to the chunk grid.
+`shape` stays `(bands, rows, columns)` and `dimension_names` stays
+`("bands", "y", "x")` for both layouts, so indexing semantics are identical and
+any selection returns a band-first array — including windows crossing tile and
+band boundaries, which Zarr's indexing layer already assembles from multiple
+intersecting chunks. `IO.open()` never consults the chunk grid and is unaffected.
+
+The consequence that *is* real is request count, and it is directionally mixed.
+An all-bands read of one tile becomes N byte ranges instead of one — read
+amplification on high-latency stores, mitigated by the ranges being disjoint (no
+wasted bytes) and fetched concurrently. A single-band read becomes cheaper than
+under a chunky grid, where a band's samples are interleaved with the others and
+cannot be fetched separately. Both follow from the file itself: a planar TIFF
+stores each band in its own tile, so a multiband read always had to touch
+multiple disjoint regions. The prior behavior only looked cheaper because it
+fetched one plane and silently dropped the rest.
+
+**The one sharp edge.** That `Vec` now carries two meanings, and they are
+indistinguishable by length: N entries means "N fragments of one chunk to
+concatenate" for J2K, and "N independent per-band chunks" for planar TIFF. A
+three-tile-part J2K chunk and a three-band planar tile look identical. The
+parser therefore branches on the provider's declared `planar_config`, never on
+`len(range_list)` — `_is_planar_multiband_tiff()` in
+`virtualizarr_parsers.py`, with a comment at the branch.
+
+Both Zarr consumer paths (numcodecs/Kerchunk-v2 via `ReferenceFileSystem`, and
+native zarr v3) build their arrays through the same `_build_manifest_array()`, so
+the geometry is defined once and applies to both.
+
+#### Refusing invalid geometry
+
+The failure mode this chunking scheme replaced was the dangerous kind: an array
+whose chunks referenced only plane 0 read back as *plausible* pixels with no
+error at all. Wrong output that raises nothing is worse than wrong output that
+crashes, so `_build_manifest_array()` validates geometry before returning an
+array and raises `ValueError` naming the offending configuration (bands,
+compression, `planar_config`) rather than emitting a store. Four invariants:
+
+1. A multiband asset must have a codec configuration — the direct signature of
+   the "uncompressed multiband needs no codec" mistake.
+2. The chunk grid must cover the declared shape (`ceil(shape / chunk_shape)`
+   per axis).
+3. No grid position may be unreferenced — a hole reads back as `fill_value`,
+   silently.
+4. Each chunk's referenced byte length must be consistent with its geometry.
+
+The check is pure geometry, run once per array at index-build time; it fetches
+and decodes nothing. Two details it has to get right, both found by sweeping
+real files rather than by reasoning about them: trailing blocks may be *clipped*
+rather than padded (a tiled TIFF pads edge tiles to the nominal tile, but a
+stripped TIFF's last strip carries only the rows it covers, and both are
+readable), and a non-contiguous chunk's effective length is the sum of its
+fragments, not the length of the placeholder manifest entry that spans only the
+first one.
 
 ### NITF Uncompressed (JbpBlockCodec)
 

@@ -32,6 +32,12 @@ When `compression` is `7` (JPEG), the tile data MAY omit shared quantization and
 Huffman tables, which MUST then be provided via the `jpeg_tables` configuration
 parameter.
 
+When the source image has `PlanarConfiguration = 2` (planar), each tile in the
+file's data area holds the samples of a **single band**. The encoded
+representation is therefore one such single-plane tile, and the configuration
+MUST describe it as a single-band chunky tile — see
+[Planar source images](#planar-source-images).
+
 ## Rationale: Why Compressed TIFF Tiles Need Metadata
 
 Individual compressed tiles extracted from a TIFF file cannot be decoded in
@@ -77,7 +83,7 @@ document for further details.
 
 | Value | Name | Notes |
 |-------|------|-------|
-| `1` | None (uncompressed) | Raw tile bytes; still needs byte-order and planar conversion. |
+| `1` | None (uncompressed) | Raw tile bytes; still needs byte-order conversion, and chunky-to-BSQ de-interleaving when `samples_per_pixel > 1`. |
 | `3` | CCITT Group 3 fax | Bilevel (1-bit) encoding; decodes to sub-byte data unpacked to `uint8`. |
 | `4` | CCITT Group 4 fax | Bilevel (1-bit) encoding; decodes to sub-byte data unpacked to `uint8`. |
 | `5` | LZW | Supports horizontal differencing predictor (`predictor=2`). |
@@ -100,6 +106,33 @@ document for further details.
 | `3` (float) | 32 | `float32` |
 | `3` (float) | 64 | `float64` |
 
+### Planar Source Images
+
+`planar_config` describes the layout of the *chunk the codec is handed*, not
+necessarily the layout of the source file. For a multiband source image with
+`PlanarConfiguration = 2`, each tile on disk carries one band's samples, so the
+Zarr view of that image uses a **band-granular chunk grid**: `chunk_shape` is
+`(1, tile_height, tile_width)` and chunk keys are `{band}.{row}.{col}`, one chunk
+per plane per tile position. Zarr stacks the resulting planes along the band
+axis.
+
+Every chunk in such an array is a complete, independently decodable single-plane
+tile, so its codec configuration MUST carry `samples_per_pixel = 1` and
+`planar_config = 1` — the chunk is presented to the decoder as a standalone
+single-band chunky tile. Predictor semantics are preserved by construction: per
+TIFF 6.0 Section 13, horizontal differencing on planar data operates per plane
+exactly as it does on grayscale data, so no stride adjustment is needed.
+
+Chunky source images (`PlanarConfiguration = 1`) are unaffected: one chunk holds
+every band, `chunk_shape` is `(samples_per_pixel, tile_height, tile_width)`, and
+chunk keys are `0.{row}.{col}`.
+
+Band-granular chunking affects only the chunk grid, never the array's logical
+view. Both layouts declare the same `shape` of `(bands, rows, columns)`, so array
+indexing is unchanged and any selection yields a band-first array; Zarr stacks
+the per-band chunks the same way it assembles a window spanning several spatial
+chunks.
+
 ## Algorithm
 
 ### Decoding
@@ -110,7 +143,7 @@ document for further details.
 4. Call `TIFFReadEncodedTile(handle, 0, ...)` to decompress the tile. libtiff handles predictor reversal, byte-order conversion, and color space conversion internally.
 5. If `bits_per_sample` is sub-byte (`1`, `2`, or `4`), unpack the packed samples to one `uint8` per sample. Unpacking is MSB-first and uses the tile's per-row byte-boundary stride — not the image width — so partial edge tiles unpack correctly. Predictors are not defined for (nor emitted with) sub-byte data.
 6. If the decoded tile is smaller than the nominal tile dimensions (edge tile), pad with zeros to the full tile shape.
-7. Convert from chunky (pixel-interleaved) to band-sequential (BSQ) format if `planar_config=1` and `samples_per_pixel > 1`.
+7. Convert from chunky (pixel-interleaved) to band-sequential (BSQ) format if `planar_config=1` and `samples_per_pixel > 1`. This step applies to uncompressed tiles (`compression=1`) as well as compressed ones — libtiff decompresses but does not reorder samples, so a multiband chunky tile arrives interleaved regardless of compression. Chunks from a planar source image reach this step with `samples_per_pixel = 1` and are already band-sequential.
 8. Return an array with shape `(samples_per_pixel, tile_height, tile_width)` and the dtype corresponding to the `sample_format`/`bits_per_sample` combination.
 
 ### Encoding
@@ -154,6 +187,29 @@ Encoding is not currently specified. See [Implementation Notes](#implementation-
         "tile_height": 256,
         "sample_format": 1,
         "jpeg_tables": "base64:...encoded JPEGTables tag bytes..."
+    }
+}
+```
+
+### One plane of a 3-band planar image
+
+Each chunk of a band-granular array is a single-plane tile, so
+`samples_per_pixel` is `1` and `planar_config` is `1` even though the source
+image is 3-band planar. See [Planar source images](#planar-source-images).
+
+```json
+{
+    "name": "https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile",
+    "configuration": {
+        "compression": 5,
+        "bits_per_sample": 8,
+        "samples_per_pixel": 1,
+        "photometric": 2,
+        "planar_config": 1,
+        "predictor": 2,
+        "tile_width": 256,
+        "tile_height": 256,
+        "sample_format": 1
     }
 }
 ```

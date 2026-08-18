@@ -155,22 +155,14 @@ def _pixel_type_to_zdtype(pixel_type):
 # ---------------------------------------------------------------------------
 
 
-def _build_codec_instance(asset):
-    """Map an ImageAssetProvider's codec_configuration() to a codec instance.
+def _normalize_codec_config(codec_config: dict) -> dict:
+    """Decode a Rust ``codec_configuration()`` map into Python scalars.
 
-    Returns ``None`` when the asset has no codec configuration (e.g. TIFF
-    segments where ``codec_configuration()`` returns ``None``).
-
-    The mapping logic mirrors ``tile_index.py:_build_zarray()`` but produces
-    zarr v3 codec class instances instead of zarr v2 filter dicts.
+    The Rust side sends every value as little-endian bytes: 1-, 2- and 4-byte
+    values are integers, longer opaque blobs (``main_header``, ``jpeg_tables``)
+    are base64-encoded, and anything else that is ASCII-decodable becomes a
+    string.
     """
-    from aws.osml.io.zarr_codecs import DtedTileCodec, JbpBlockCodec, Jpeg2000Codec, JpegCodec, TiffTileCodec
-
-    codec_config = asset.codec_configuration()
-    if codec_config is None:
-        return None
-
-    # Normalize raw values from the Rust side
     raw: dict = {}
     for key, value in codec_config.items():
         if key == "main_header":
@@ -188,6 +180,54 @@ def _build_codec_instance(asset):
                 raw[key] = base64.b64encode(value).decode("ascii")
         else:
             raw[key] = value
+    return raw
+
+
+def _is_planar_multiband_tiff(asset) -> bool:
+    """Whether *asset* is a TIFF with ``PlanarConfiguration = 2`` and >1 band.
+
+    Such an asset stores each band as its own tile/strip (TIFF 6.0 tag 284,
+    p. 38), so the Zarr view gives each plane its own chunk — see
+    :func:`_build_manifest_array`.  Assets from other formats, and single-band
+    TIFFs (where PlanarConfiguration is irrelevant per the same page), return
+    ``False``.
+    """
+    if asset.num_bands <= 1:
+        return False
+    codec_config = asset.codec_configuration()
+    if codec_config is None:
+        return False
+    raw = _normalize_codec_config(codec_config)
+    # ``planar_config`` is TIFF-only, so its presence also identifies the format.
+    return raw.get("planar_config") == 2
+
+
+def _build_codec_instance(asset, *, single_plane: bool = False):
+    """Map an ImageAssetProvider's codec_configuration() to a codec instance.
+
+    Returns ``None`` when the asset has no codec configuration (e.g. TIFF
+    segments where ``codec_configuration()`` returns ``None``).
+
+    The mapping logic mirrors ``tile_index.py:_build_zarray()`` but produces
+    zarr v3 codec class instances instead of zarr v2 filter dicts.
+
+    Parameters
+    ----------
+    asset : ImageAssetProvider
+        The asset whose codec configuration to translate.
+    single_plane : bool
+        TIFF only.  When set, the returned :class:`TiffTileCodec` is overridden
+        to ``samples_per_pixel=1, planar_config=1`` because each chunk it will
+        be handed is one plane of a planar image — i.e. a standalone
+        single-band chunky tile.  Ignored by the other codecs.
+    """
+    from aws.osml.io.zarr_codecs import DtedTileCodec, JbpBlockCodec, Jpeg2000Codec, JpegCodec, TiffTileCodec
+
+    codec_config = asset.codec_configuration()
+    if codec_config is None:
+        return None
+
+    raw = _normalize_codec_config(codec_config)
 
     num_bands = asset.num_bands
     block_h = asset.num_pixels_per_block_vertical
@@ -250,12 +290,20 @@ def _build_codec_instance(asset):
             else:
                 jpeg_tables = str(jpeg_tables_raw)
 
+        # A per-plane chunk is a standalone single-band chunky tile: it holds one
+        # plane's samples with nothing interleaved, which is exactly what
+        # ``samples_per_pixel=1, planar_config=1`` describes.  Reporting the true
+        # band count here would make the decoder expect N planes' worth of bytes
+        # in a buffer that carries one.
+        samples_per_pixel = 1 if single_plane else raw.get("samples_per_pixel", num_bands)
+        planar_config = 1 if single_plane else raw.get("planar_config", 1)
+
         return TiffTileCodec(
             compression=raw["compression"],
             bits_per_sample=raw.get("bits_per_sample", asset.num_bits_per_pixel),
-            samples_per_pixel=raw.get("samples_per_pixel", num_bands),
+            samples_per_pixel=samples_per_pixel,
             photometric=raw.get("photometric", 1),
-            planar_config=raw.get("planar_config", 1),
+            planar_config=planar_config,
             predictor=raw.get("predictor", 1),
             tile_width=raw.get("tile_width", block_w),
             tile_height=raw.get("tile_height", block_h),
@@ -284,6 +332,205 @@ def _are_contiguous(ranges: list[tuple[int, int]]) -> bool:
         if ranges[i][0] + ranges[i][1] != ranges[i + 1][0]:
             return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Chunk-geometry fail-safe
+# ---------------------------------------------------------------------------
+#
+# A Zarr store whose chunk geometry does not match its declared shape does not
+# fail loudly — it reads.  Missing chunks come back as ``fill_value``, and a
+# chunk holding fewer bytes than the codec expects comes back zero-padded.  The
+# result is a plausible-looking array of wrong pixels, which is the worst
+# possible failure mode for an imagery index: nothing downstream can tell it
+# from real data.
+#
+# The checks below run once per array at index-build time, not per chunk read.
+# They are pure geometry — no bytes are fetched and no chunk is decoded.
+
+
+def _pixel_itemsize(asset) -> int:
+    """Bytes per decoded sample for *asset*'s pixel type."""
+    import numpy as np
+
+    return np.dtype(asset.pixel_value_type.to_numpy_dtype()).itemsize
+
+
+def _uncompressed_bytes_fn(raw, asset, bands_per_chunk):
+    """Return ``f(rows, cols) -> bytes`` for a fixed-geometry chunk, else ``None``.
+
+    ``None`` means "cannot be predicted from geometry", and the caller falls back
+    to requiring only a non-empty range.  That is the honest answer for every
+    entropy-coded layout — LZW / Deflate / PackBits TIFF, TIFF-in-JPEG, JPEG
+    2000, NITF C3/C8 — where the encoded length depends on pixel content, not on
+    the block's dimensions.
+
+    For the uncompressed layouts the length *is* determined by geometry, so a
+    sizing function is returned and the caller checks lengths against it.  It
+    takes a row/column extent rather than returning a single number because a
+    trailing block may legitimately hold only its clipped extent instead of a
+    full padded block — see :func:`_validate_chunk_geometry`.
+    """
+    if raw is None:
+        # No codec in the chain: Zarr reshapes the raw bytes into the chunk.
+        itemsize = _pixel_itemsize(asset)
+        return lambda rows, cols: rows * cols * bands_per_chunk * itemsize
+
+    if "main_header" in raw or "color_space" in raw:
+        # JPEG 2000 codestream / JPEG scan.
+        return None
+
+    if "dted_codec" in raw:
+        # One DTED chunk is a run of whole data records, each carrying its own
+        # sentinel, header and checksum alongside the elevation posts.
+        record_size = int(raw.get("record_size", 0))
+        if record_size <= 0:
+            return None
+        return lambda rows, cols: cols * record_size
+
+    if "pvtype" in raw:
+        # Uncompressed NITF block: samples are bit-packed at NBPP bits and each
+        # band's plane is padded out to a byte boundary.
+        nbpp = int(raw.get("nbpp") or asset.num_bits_per_pixel)
+        return lambda rows, cols: (-(-(rows * cols * nbpp) // 8)) * bands_per_chunk
+
+    if "compression" in raw:
+        if int(raw["compression"]) != 1:
+            return None
+        bits = int(raw.get("bits_per_sample", asset.num_bits_per_pixel))
+        if bits < 8:
+            # Sub-byte samples are packed MSB-first with every row padded out to
+            # a byte boundary (TIFF 6.0, BitsPerSample, p. 29).
+            return lambda rows, cols: (
+                -(-(cols * bands_per_chunk * bits) // 8) * rows
+            )
+        return lambda rows, cols: rows * cols * bands_per_chunk * (bits // 8)
+
+    return None
+
+
+def _describe_geometry(asset, raw, shape, chunk_shape) -> str:
+    """A one-line config summary for fail-safe error messages.
+
+    Names the axes of the configuration matrix that actually determine chunk
+    layout, so the message identifies *which* image config was rejected rather
+    than only that something was wrong.
+    """
+    parts = [f"bands={asset.num_bands}"]
+    if raw is not None and "compression" in raw:
+        parts.append(f"compression={int(raw['compression'])}")
+        parts.append(f"planar_config={int(raw.get('planar_config', 1))}")
+        parts.append(
+            f"bits_per_sample={int(raw.get('bits_per_sample', asset.num_bits_per_pixel))}"
+        )
+    elif raw is None:
+        parts.append("codec=none")
+    parts.append(f"shape={tuple(shape)}")
+    parts.append(f"chunk_shape={tuple(chunk_shape)}")
+    return ", ".join(parts)
+
+
+def _validate_chunk_geometry(
+    asset, raw, chunk_lengths, *, shape, chunk_shape, grid_shape, bands_per_chunk
+):
+    """Refuse to emit an array whose chunk geometry cannot be satisfied.
+
+    Four invariants, cheapest first:
+
+    1. **A multiband chunk must have a codec.**  With no codec in the chain
+       ``BytesCodec`` reshapes the chunk's bytes straight into
+       ``(bands, h, w)``.  That is only meaningful for a single band — any
+       multiband layout is either pixel-interleaved or per-plane, and both need
+       a codec to reorder samples.  This is the shape of the original
+       uncompressed-chunky-TIFF defect: bands silently scrambled, no error.
+    2. **The chunk grid covers the declared shape.**  Every grid position the
+       shape requires must carry an entry; a hole reads back as ``fill_value``.
+    3. **No chunk references zero bytes.**
+    4. **Each chunk's byte length matches the codec's expected input.**
+       Enforced only where geometry determines the length (see
+       :func:`_uncompressed_bytes_fn`); compressed chunks, whose lengths
+       legitimately vary per tile, stop at invariant 3.
+
+    Raises
+    ------
+    ValueError
+        Naming the offending configuration.  Hard-failing is deliberate: a
+        rejected store is recoverable, a silently-wrong one is not.
+    """
+    detail = _describe_geometry(asset, raw, shape, chunk_shape)
+
+    if raw is None and asset.num_bands > 1:
+        raise ValueError(
+            "Refusing to build a Zarr array for a multiband asset with no codec "
+            f"configuration ({detail}): the raw chunk bytes would be reshaped into "
+            "(bands, y, x) with no de-interleaving, silently scrambling the bands."
+        )
+
+    required = tuple(-(-s // c) for s, c in zip(shape, chunk_shape))
+    for axis, (need, have) in enumerate(zip(required, grid_shape)):
+        if have < need:
+            raise ValueError(
+                f"Refusing to build a Zarr array whose chunk grid does not cover its "
+                f"shape ({detail}): axis {axis} needs {need} chunks of "
+                f"{chunk_shape[axis]} to span {shape[axis]}, but the manifest grid "
+                f"has {have}."
+            )
+
+    missing = [
+        f"{band}.{row}.{col}"
+        for band in range(required[0])
+        for row in range(required[1])
+        for col in range(required[2])
+        if f"{band}.{row}.{col}" not in chunk_lengths
+    ]
+    if missing:
+        shown = ", ".join(missing[:5])
+        suffix = f" (and {len(missing) - 5} more)" if len(missing) > 5 else ""
+        raise ValueError(
+            f"Refusing to build a Zarr array with unreferenced chunks ({detail}): "
+            f"{len(missing)} of {required[0] * required[1] * required[2]} grid "
+            f"positions have no byte range and would read back as fill_value. "
+            f"Missing: {shown}{suffix}"
+        )
+
+    empty = [key for key, length in chunk_lengths.items() if length <= 0]
+    if empty:
+        raise ValueError(
+            f"Refusing to build a Zarr array with empty chunk references "
+            f"({detail}): {len(empty)} chunk(s) reference zero bytes, e.g. "
+            f"{empty[0]}."
+        )
+
+    size_of = _uncompressed_bytes_fn(raw, asset, bands_per_chunk)
+    if size_of is None:
+        # Entropy-coded: length varies with pixel content, so non-empty is all
+        # that can be asserted without decoding.
+        return
+
+    _, block_h, block_w = chunk_shape
+    _, rows, cols = shape
+    for key, length in sorted(chunk_lengths.items()):
+        _, row, col = (int(part) for part in key.split("."))
+        # A trailing block may be stored either padded out to the full block —
+        # what tiled TIFF does — or clipped to the extent it actually covers,
+        # which is what a stripped TIFF's last strip does.  Both are readable:
+        # the decoder zero-pads a short block up to nominal size.  Accept either
+        # and reject anything else.
+        clipped = size_of(
+            min(block_h, max(0, rows - row * block_h)),
+            min(block_w, max(0, cols - col * block_w)),
+        )
+        padded = size_of(block_h, block_w)
+        if length in (clipped, padded):
+            continue
+        raise ValueError(
+            f"Refusing to build a Zarr array whose chunk byte lengths are "
+            f"inconsistent with its geometry ({detail}): chunk {key} references "
+            f"{length} bytes, but this uncompressed geometry requires "
+            f"{padded}"
+            + (f" (or {clipped} if clipped to the image edge)" if clipped != padded else "")
+            + "."
+        )
 
 
 OVERVIEW_PATTERN = re.compile(r"^(image:\d+):overview:(\d+)$")
@@ -358,10 +605,27 @@ def _build_manifest_array(asset, url, multi_range_refs, key_prefix=""):
         Prefix for ``multi_range_refs`` keys.  Use ``""`` for the flat
         (current) path and ``"0/data/"`` for hierarchical subgroups.
 
+    Chunk granularity depends on how the source interleaves bands.  Normally one
+    chunk spans every band — chunk shape ``(num_bands, block_h, block_w)``, keys
+    ``0.{row}.{col}``.  For planar TIFF (``PlanarConfiguration = 2``) each band
+    is a separate tile in the file, so each band gets its own chunk instead —
+    chunk shape ``(1, block_h, block_w)``, keys ``{band}.{row}.{col}`` — and
+    zarr stacks the bands.
+
+    Before returning, the resulting geometry is checked by
+    :func:`_validate_chunk_geometry`, which raises rather than hand back a store
+    that would read as plausible wrong pixels.
+
     Returns
     -------
     ManifestArray or None
         ``None`` when ``asset.tile_byte_ranges()`` returns ``None``.
+
+    Raises
+    ------
+    ValueError
+        If the chunk geometry cannot be satisfied — see
+        :func:`_validate_chunk_geometry`.
     """
     from virtualizarr.manifests import ChunkEntry, ChunkManifest, ManifestArray
     from zarr.codecs import BytesCodec
@@ -372,9 +636,39 @@ def _build_manifest_array(asset, url, multi_range_refs, key_prefix=""):
     if byte_ranges is None:
         return None
 
-    # Build chunk manifest entries
+    num_bands = asset.num_bands
+    block_h = asset.num_pixels_per_block_vertical
+    block_w = asset.num_pixels_per_block_horizontal
+
+    # A range list of length N carries two different meanings, and they are
+    # indistinguishable by length alone — a 3-tile-part J2K chunk and a 3-band
+    # planar TIFF tile both arrive as three ranges.  Disambiguate on the
+    # provider's declared planar configuration, never on ``len(range_list)``:
+    #
+    #   planar TIFF  → N independently-decodable per-band chunks
+    #   otherwise    → N fragments of one chunk, concatenated in order
+    per_plane_chunks = _is_planar_multiband_tiff(asset)
+
+    # Build chunk manifest entries.  ``chunk_lengths`` records the number of
+    # bytes each chunk *effectively* carries, which is not always the manifest
+    # entry's own length: a non-contiguous chunk stores a placeholder entry
+    # covering only its first fragment, while the bytes the decoder receives are
+    # every fragment concatenated.  The geometry check below needs the effective
+    # figure, so it is tracked separately rather than read back off ``entries``.
     entries: dict[str, ChunkEntry] = {}
+    chunk_lengths: dict[str, int] = {}
     for (row, col), range_list in byte_ranges.items():
+        if per_plane_chunks:
+            # One chunk per plane.  Each range is a complete single-plane tile,
+            # decoded on its own, so no concatenation or multi-range ref is ever
+            # needed here.
+            for band, (offset, length) in enumerate(range_list):
+                entries[f"{band}.{row}.{col}"] = ChunkEntry(
+                    path=url, offset=offset, length=length
+                )
+                chunk_lengths[f"{band}.{row}.{col}"] = length
+            continue
+
         chunk_key = f"0.{row}.{col}"
         if len(range_list) == 1:
             offset, length = range_list[0]
@@ -396,36 +690,51 @@ def _build_manifest_array(asset, url, multi_range_refs, key_prefix=""):
             multi_range_refs[f"{key_prefix}{chunk_key}"] = [
                 url, [[o, ln] for o, ln in range_list]
             ]
+        chunk_lengths[chunk_key] = sum(ln for _, ln in range_list)
 
     if not entries:
         return None
 
-    # Compute grid shape
+    # Compute grid shape.  The band axis of the chunk grid is one entry per band
+    # for per-plane chunking and a single entry otherwise.
     max_row = max(r for (r, _) in byte_ranges.keys()) + 1
     max_col = max(c for (_, c) in byte_ranges.keys()) + 1
-    grid_shape = (1, max_row, max_col)
+    bands_per_chunk = 1 if per_plane_chunks else num_bands
+    grid_shape = (num_bands if per_plane_chunks else 1, max_row, max_col)
+
+    shape = (num_bands, asset.num_rows, asset.num_columns)
+    chunk_shape = (bands_per_chunk, block_h, block_w)
+
+    codec_config = asset.codec_configuration()
+    raw_config = _normalize_codec_config(codec_config) if codec_config else None
+
+    # Fail-safe: refuse a geometry that would read back as plausible wrong
+    # pixels rather than raise.  Pure geometry — no chunk is fetched or decoded.
+    _validate_chunk_geometry(
+        asset,
+        raw_config,
+        chunk_lengths,
+        shape=shape,
+        chunk_shape=chunk_shape,
+        grid_shape=grid_shape,
+        bands_per_chunk=bands_per_chunk,
+    )
 
     chunk_manifest = ChunkManifest(entries=entries, shape=grid_shape)
 
     # Build metadata
     zdtype = _pixel_type_to_zdtype(asset.pixel_value_type)
 
-    num_bands = asset.num_bands
-    block_h = asset.num_pixels_per_block_vertical
-    block_w = asset.num_pixels_per_block_horizontal
-
     # Build codecs list — BytesCodec is required as ArrayBytesCodec
     codecs = [BytesCodec()]
-    custom_codec = _build_codec_instance(asset)
+    custom_codec = _build_codec_instance(asset, single_plane=per_plane_chunks)
     if custom_codec is not None:
         codecs.append(custom_codec)
 
     metadata = ArrayV3Metadata(
-        shape=(num_bands, asset.num_rows, asset.num_columns),
+        shape=shape,
         data_type=zdtype,
-        chunk_grid=RegularChunkGrid(
-            chunk_shape=(num_bands, block_h, block_w)
-        ),
+        chunk_grid=RegularChunkGrid(chunk_shape=chunk_shape),
         chunk_key_encoding={"name": "default", "separator": "."},
         fill_value=0,
         codecs=codecs,

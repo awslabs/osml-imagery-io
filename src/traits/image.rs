@@ -149,6 +149,14 @@ pub trait ImageAssetProvider: AssetMetadata {
     /// providers this will be a single-element Vec. For J2K providers with interleaved
     /// tile-parts, the Vec contains one entry per tile-part in codestream order.
     ///
+    /// A multi-element Vec is *not* self-describing: it means "fragments of one
+    /// chunk, to be concatenated in order" for J2K tile-parts, but "one
+    /// independently-decodable range per band, in band order" for planar TIFF
+    /// (`PlanarConfiguration = 2`). The two are indistinguishable by length
+    /// alone, so consumers must disambiguate from the provider's
+    /// [`Self::codec_configuration`] (TIFF's `planar_config` key), never from
+    /// `Vec::len`.
+    ///
     /// Returns `None` for providers without a backing file (e.g., BufferedImageAssetProvider).
     #[allow(clippy::type_complexity)] // (block_row, block_col) -> [(offset, length)]; self-documenting inline.
     fn tile_byte_ranges(&self) -> Option<std::collections::HashMap<(u32, u32), Vec<(u64, u64)>>> {

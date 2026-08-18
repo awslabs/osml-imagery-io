@@ -333,22 +333,53 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
             return None;
         }
 
-        // For contig planar config, tiles are indexed linearly across the grid.
-        // For separate planar config, there are bands × grid_tiles entries;
-        // we expose only the first band's tiles (band 0) since the tile index
-        // maps to a single BSQ array where all bands share the same spatial grid.
+        // For contig planar config, tiles/strips are indexed linearly across the
+        // grid and one entry holds every band, so each spatial key gets exactly
+        // one range.
+        //
+        // For separate planar config the tag holds `SamplesPerPixel ×
+        // TilesPerImage` entries laid out band-major — "the offsets for the
+        // first component plane are stored first, followed by all the offsets
+        // for the second component plane, and so on" (TIFF 6.0, tags 324/325,
+        // p. 68) — so the source index for plane `band` of spatial tile
+        // `spatial_idx` is `band * tiles_per_band + spatial_idx`. All N plane
+        // ranges are pushed under the spatial key in band order; the consumer
+        // gives each plane its own chunk. Truncating to the first
+        // `tiles_per_band` here would discard planes 1..N, which are real data
+        // present in the file.
+        //
+        // The same band-major layout governs STRIP_OFFSETS / STRIP_BYTE_COUNTS,
+        // and `block_grid_size()` reports `(strips, 1)` for a stripped IFD, so
+        // the arithmetic below covers both layouts unchanged.
         let (grid_rows, grid_cols) = self.block_grid_size();
         let tiles_per_band = (grid_rows * grid_cols) as usize;
+        let is_planar = self.planar_config == tags::PLANAR_CONFIG_SEPARATE;
+        let planes = if is_planar { self.bands as usize } else { 1 };
 
         let mut ranges = std::collections::HashMap::with_capacity(tiles_per_band);
-        for idx in 0..tiles_per_band {
-            if idx >= offsets.len() {
-                break;
+        for spatial_idx in 0..tiles_per_band {
+            let row = spatial_idx as u32 / grid_cols;
+            let col = spatial_idx as u32 % grid_cols;
+            let mut plane_ranges = Vec::with_capacity(planes);
+            for band in 0..planes {
+                let idx = band * tiles_per_band + spatial_idx;
+                if idx >= offsets.len() {
+                    break;
+                }
+                // TIFF offsets are already file-relative (no translation needed)
+                plane_ranges.push((offsets[idx], counts[idx]));
             }
-            let row = idx as u32 / grid_cols;
-            let col = idx as u32 % grid_cols;
-            // TIFF offsets are already file-relative (no translation needed)
-            ranges.insert((row, col), vec![(offsets[idx], counts[idx])]);
+            // A short tag (fewer entries than the geometry implies) is a
+            // malformed IFD; drop the incomplete key rather than advertise a
+            // chunk whose planes cannot all be resolved.
+            if plane_ranges.len() != planes {
+                continue;
+            }
+            ranges.insert((row, col), plane_ranges);
+        }
+
+        if ranges.is_empty() {
+            return None;
         }
 
         Some(ranges)
@@ -356,164 +387,121 @@ impl ImageAssetProvider for TIFFImageAssetProvider {
 
     fn codec_configuration(&self) -> Option<std::collections::HashMap<String, Vec<u8>>> {
         match self.compression {
-            // Compression=1 (None): raw bytes, Zarr reads directly
+            // Compression=1 (None): the tile bytes already *are* pixel data, so
+            // a codec is needed only to reorder samples.
+            //
+            // Single-band tiles need no reordering — per TIFF 6.0 (tag 284,
+            // p. 38) PlanarConfiguration is irrelevant when SamplesPerPixel=1 —
+            // so they return None and Zarr reads the raw bytes directly, which
+            // keeps that read zero-copy.
+            //
+            // Multiband tiles do need the codec. A chunky tile is pixel-
+            // interleaved on disk ("the data is stored as RGBRGBRGB…", ibid.),
+            // so reshaping its bytes straight into (bands, h, w) scrambles the
+            // bands; a planar tile holds a single plane and its bands must be
+            // stacked. Both are the decoder's job, and it never runs unless a
+            // config is attached here.
+            tags::COMPRESSION_NONE if self.bands > 1 => {
+                // No predictor key: TIFF 6.0 Section 13 defines Predictor for
+                // LZW/Deflate only.
+                self.base_codec_config(false)
+            }
             tags::COMPRESSION_NONE => None,
 
             // Compression=7 (JPEG): needs JPEGTables for decoding
             tags::COMPRESSION_JPEG => {
-                let guard = self.handle.lock().ok()?;
-                guard.set_directory(self.ifd_index).ok()?;
-
                 // JPEGTables is required — if absent, tiles can't be decoded
-                let jpeg_tables = match guard.get_field_u8_array(tags::JPEG_TABLES) {
-                    Ok(tables) => tables,
-                    Err(_) => return None,
+                let jpeg_tables = {
+                    let guard = self.handle.lock().ok()?;
+                    guard.set_directory(self.ifd_index).ok()?;
+                    guard.get_field_u8_array(tags::JPEG_TABLES).ok()?
                 };
 
-                let predictor = guard.get_field_u16(tags::PREDICTOR).unwrap_or(1);
-                let sample_format = guard
-                    .get_field_u16(tags::SAMPLE_FORMAT)
-                    .unwrap_or(tags::SAMPLE_FORMAT_UINT);
-
-                drop(guard);
-
-                let mut config = std::collections::HashMap::new();
-                config.insert(
-                    "compression".to_string(),
-                    self.compression.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "bits_per_sample".to_string(),
-                    (self.bits_per_sample as u16).to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "samples_per_pixel".to_string(),
-                    (self.bands as u16).to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "photometric".to_string(),
-                    self.photometric.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "planar_config".to_string(),
-                    self.planar_config.to_le_bytes().to_vec(),
-                );
-                config.insert("predictor".to_string(), predictor.to_le_bytes().to_vec());
-                config.insert(
-                    "tile_width".to_string(),
-                    self.block_width.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "tile_height".to_string(),
-                    self.block_height.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "sample_format".to_string(),
-                    sample_format.to_le_bytes().to_vec(),
-                );
+                let mut config = self.base_codec_config(true)?;
                 config.insert("jpeg_tables".to_string(), jpeg_tables);
                 Some(config)
             }
 
             // Compression=5 (LZW), 8 (Deflate), 32946 (Adobe Deflate): include predictor
             tags::COMPRESSION_LZW | tags::COMPRESSION_DEFLATE | 32946 => {
-                let guard = self.handle.lock().ok()?;
-                guard.set_directory(self.ifd_index).ok()?;
-
-                let predictor = guard.get_field_u16(tags::PREDICTOR).unwrap_or(1);
-                let sample_format = guard
-                    .get_field_u16(tags::SAMPLE_FORMAT)
-                    .unwrap_or(tags::SAMPLE_FORMAT_UINT);
-
-                drop(guard);
-
-                let mut config = std::collections::HashMap::new();
-                config.insert(
-                    "compression".to_string(),
-                    self.compression.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "bits_per_sample".to_string(),
-                    (self.bits_per_sample as u16).to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "samples_per_pixel".to_string(),
-                    (self.bands as u16).to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "photometric".to_string(),
-                    self.photometric.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "planar_config".to_string(),
-                    self.planar_config.to_le_bytes().to_vec(),
-                );
-                config.insert("predictor".to_string(), predictor.to_le_bytes().to_vec());
-                config.insert(
-                    "tile_width".to_string(),
-                    self.block_width.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "tile_height".to_string(),
-                    self.block_height.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "sample_format".to_string(),
-                    sample_format.to_le_bytes().to_vec(),
-                );
-                Some(config)
+                self.base_codec_config(true)
             }
 
             // Compression=32773 (PackBits): no predictor or jpeg_tables
-            tags::COMPRESSION_PACKBITS => {
-                let guard = self.handle.lock().ok()?;
-                guard.set_directory(self.ifd_index).ok()?;
-
-                let sample_format = guard
-                    .get_field_u16(tags::SAMPLE_FORMAT)
-                    .unwrap_or(tags::SAMPLE_FORMAT_UINT);
-
-                drop(guard);
-
-                let mut config = std::collections::HashMap::new();
-                config.insert(
-                    "compression".to_string(),
-                    self.compression.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "bits_per_sample".to_string(),
-                    (self.bits_per_sample as u16).to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "samples_per_pixel".to_string(),
-                    (self.bands as u16).to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "photometric".to_string(),
-                    self.photometric.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "planar_config".to_string(),
-                    self.planar_config.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "tile_width".to_string(),
-                    self.block_width.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "tile_height".to_string(),
-                    self.block_height.to_le_bytes().to_vec(),
-                );
-                config.insert(
-                    "sample_format".to_string(),
-                    sample_format.to_le_bytes().to_vec(),
-                );
-                Some(config)
-            }
+            tags::COMPRESSION_PACKBITS => self.base_codec_config(false),
 
             // Unknown compression types: return None
             _ => None,
         }
+    }
+}
+
+impl TIFFImageAssetProvider {
+    /// Build the parameter map every `TiffTileCodec` configuration shares.
+    ///
+    /// Reads `SampleFormat` (tag 339) and, when `include_predictor` is set,
+    /// `Predictor` (tag 317) from this IFD, and packs them with the cached
+    /// geometry and photometric tags as little-endian bytes — the wire format
+    /// the Python side decodes into a `TiffTileCodec`.
+    ///
+    /// `samples_per_pixel` is reported truthfully because the horizontal
+    /// predictor's stride for chunky data is `SamplesPerPixel` (TIFF 6.0
+    /// Section 13, p. 64); understating it would corrupt predictor-enabled
+    /// chunky tiles.
+    ///
+    /// Pass `include_predictor = false` for compressions that define no
+    /// predictor (None, PackBits). The JPEG arm appends `jpeg_tables` itself.
+    fn base_codec_config(
+        &self,
+        include_predictor: bool,
+    ) -> Option<std::collections::HashMap<String, Vec<u8>>> {
+        let guard = self.handle.lock().ok()?;
+        guard.set_directory(self.ifd_index).ok()?;
+
+        let predictor = guard.get_field_u16(tags::PREDICTOR).unwrap_or(1);
+        let sample_format = guard
+            .get_field_u16(tags::SAMPLE_FORMAT)
+            .unwrap_or(tags::SAMPLE_FORMAT_UINT);
+
+        drop(guard);
+
+        let mut config = std::collections::HashMap::new();
+        config.insert(
+            "compression".to_string(),
+            self.compression.to_le_bytes().to_vec(),
+        );
+        config.insert(
+            "bits_per_sample".to_string(),
+            (self.bits_per_sample as u16).to_le_bytes().to_vec(),
+        );
+        config.insert(
+            "samples_per_pixel".to_string(),
+            (self.bands as u16).to_le_bytes().to_vec(),
+        );
+        config.insert(
+            "photometric".to_string(),
+            self.photometric.to_le_bytes().to_vec(),
+        );
+        config.insert(
+            "planar_config".to_string(),
+            self.planar_config.to_le_bytes().to_vec(),
+        );
+        if include_predictor {
+            config.insert("predictor".to_string(), predictor.to_le_bytes().to_vec());
+        }
+        config.insert(
+            "tile_width".to_string(),
+            self.block_width.to_le_bytes().to_vec(),
+        );
+        config.insert(
+            "tile_height".to_string(),
+            self.block_height.to_le_bytes().to_vec(),
+        );
+        config.insert(
+            "sample_format".to_string(),
+            sample_format.to_le_bytes().to_vec(),
+        );
+        Some(config)
     }
 }
 
@@ -1370,7 +1358,170 @@ mod tests {
     }
 
     #[test]
-    fn test_tiled_codec_configuration_uncompressed() {
+    fn test_planar_tile_byte_ranges_exposes_every_plane() {
+        // 32×32 image, 16×16 tiles → 2×2 grid; 3 bands planar → the IFD carries
+        // 3 × 4 = 12 TileOffsets entries laid out band-major (TIFF 6.0 tags
+        // 324/325, p. 68). Every one must be surfaced: exposing only the first
+        // `tiles_per_band` discarded planes 1 and 2, which is what left those
+        // bands zero-filled (compressed) or short a chunk (uncompressed) on the
+        // Zarr path.
+        let data = make_multiband_tiled_tiff(
+            3,
+            tags::COMPRESSION_NONE,
+            tags::PLANAR_CONFIG_SEPARATE,
+            8,
+            32,
+            32,
+            16,
+            16,
+        );
+        let provider = provider_from_bytes(&data);
+        assert_eq!(provider.num_bands(), 3);
+        assert_eq!(provider.block_grid_size(), (2, 2));
+
+        let ranges = provider.tile_byte_ranges().unwrap();
+        assert_eq!(ranges.len(), 4, "one key per spatial tile, not per plane");
+
+        for (coord, range_list) in &ranges {
+            assert_eq!(
+                range_list.len(),
+                3,
+                "spatial key {:?} must carry one range per band",
+                coord
+            );
+            // Each plane of an uncompressed 16×16 8-bit tile is 256 bytes.
+            for (_, length) in range_list {
+                assert_eq!(*length, 256);
+            }
+        }
+
+        // The ranges must be in *band* order, which is what the consumer relies
+        // on when it assigns range element `k` to chunk `{k}.{row}.{col}`.
+        // Physical file offsets prove nothing here — TIFF constrains the tag
+        // index to be band-major, not the byte layout, and libtiff writes tile
+        // data in whatever order the writer emitted it. So check the pixels:
+        // slice each advertised range out of the file and compare it to the
+        // corresponding band of the eager path's BSQ block, which reads plane
+        // `band` from tile `band * tiles_per_band + spatial_idx` directly
+        // (`get_block_tiled`).
+        for (&(row, col), range_list) in &ranges {
+            let (block, shape) = provider.get_block(row, col, 0, None).unwrap();
+            let band_len = (shape[1] * shape[2]) as usize;
+            for (band, &(offset, length)) in range_list.iter().enumerate() {
+                let plane = &data[offset as usize..(offset + length) as usize];
+                let expected = &block[band * band_len..(band + 1) * band_len];
+                // 16×16 tiles on a 32×32 image: no edge padding, so the raw
+                // uncompressed plane is exactly the band's pixels.
+                assert_eq!(
+                    plane, expected,
+                    "range {} of tile ({}, {}) is not band {}",
+                    band, row, col, band
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_chunky_multiband_tile_byte_ranges_is_single_range() {
+        // The chunky counterpart: one tile holds all bands interleaved, so each
+        // spatial key keeps exactly one range. This is the invariant the planar
+        // change must not disturb.
+        let data = make_multiband_tiled_tiff(
+            3,
+            tags::COMPRESSION_NONE,
+            tags::PLANAR_CONFIG_CONTIG,
+            8,
+            32,
+            32,
+            16,
+            16,
+        );
+        let provider = provider_from_bytes(&data);
+        let ranges = provider.tile_byte_ranges().unwrap();
+
+        assert_eq!(ranges.len(), 4);
+        for range_list in ranges.values() {
+            assert_eq!(range_list.len(), 1);
+            // 16×16 pixels × 3 interleaved bands × 1 byte.
+            assert_eq!(range_list[0].1, 768);
+        }
+    }
+
+    #[test]
+    fn test_planar_compressed_tile_byte_ranges_lengths_vary_per_plane() {
+        // Compressed planar is the case that motivated per-plane chunking: each
+        // plane compresses to its own length, so the per-plane boundaries cannot
+        // be derived from geometry and must come from the tag itself.
+        let data = make_multiband_tiled_tiff(
+            3,
+            tags::COMPRESSION_LZW,
+            tags::PLANAR_CONFIG_SEPARATE,
+            8,
+            32,
+            32,
+            16,
+            16,
+        );
+        let provider = provider_from_bytes(&data);
+        let ranges = provider.tile_byte_ranges().unwrap();
+
+        assert_eq!(ranges.len(), 4);
+        for range_list in ranges.values() {
+            assert_eq!(range_list.len(), 3);
+            for (_, length) in range_list {
+                assert!(*length > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_planar_stripped_tile_byte_ranges_exposes_every_plane() {
+        // Open Question 2 in the bug report: stripped planar shares the
+        // band-major layout of tags 273/279 with the tiled 324/325 pair, so the
+        // same arithmetic should apply. Verified here rather than assumed.
+        let data = make_multiband_stripped_tiff(3, tags::PLANAR_CONFIG_SEPARATE, 8, 8, 4, 2);
+        let provider = provider_from_bytes(&data);
+        assert!(!provider.is_tiled);
+        assert_eq!(provider.num_bands(), 3);
+        // 4 rows of 8 columns, 2 rows per strip → 2 strips per band.
+        assert_eq!(provider.block_grid_size(), (2, 1));
+
+        let ranges = provider.tile_byte_ranges().unwrap();
+        assert_eq!(ranges.len(), 2);
+        for (coord, range_list) in &ranges {
+            assert_eq!(
+                range_list.len(),
+                3,
+                "strip key {:?} must carry one range per band",
+                coord
+            );
+            // Each planar strip is 8 columns × 2 rows × 1 byte.
+            for (_, length) in range_list {
+                assert_eq!(*length, 16);
+            }
+        }
+
+        // Band order verified against the eager path's per-band strips, for the
+        // same reason as the tiled case above: the tag index is band-major but
+        // the byte layout need not be.
+        for (&(row, col), range_list) in &ranges {
+            let (block, shape) = provider.get_block(row, col, 0, None).unwrap();
+            let band_len = (shape[1] * shape[2]) as usize;
+            for (band, &(offset, length)) in range_list.iter().enumerate() {
+                let plane = &data[offset as usize..(offset + length) as usize];
+                let expected = &block[band * band_len..(band + 1) * band_len];
+                assert_eq!(
+                    plane, expected,
+                    "range {} of strip ({}, {}) is not band {}",
+                    band, row, col, band
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_tiled_codec_configuration_single_band_uncompressed() {
+        // `make_tiled_tiff` is SamplesPerPixel=1, PlanarConfiguration=1.
         let data = make_tiled_tiff();
         let handle = Arc::new(Mutex::new(TiffHandle::from_bytes(&data).unwrap()));
         let metadata =
@@ -1385,7 +1536,12 @@ mod tests {
         )
         .unwrap();
 
-        // Uncompressed TIFF should return None for codec_configuration
+        // Single-band uncompressed needs no codec: the raw tile bytes already
+        // are the pixel data, and per TIFF 6.0 (tag 284, p. 38)
+        // PlanarConfiguration is irrelevant at SamplesPerPixel=1, so there is
+        // nothing to reorder. Multiband is the opposite case — see
+        // `test_codec_config_multiband_uncompressed_returns_some`.
+        assert_eq!(provider.num_bands(), 1);
         assert!(provider.codec_configuration().is_none());
     }
 
@@ -1473,11 +1629,303 @@ mod tests {
     }
 
     #[test]
-    fn test_codec_config_compression_none_returns_none() {
-        // Compression=1 (None) should return None
+    fn test_codec_config_single_band_compression_none_returns_none() {
+        // `make_tiled_tiff_with_compression` is SamplesPerPixel=1: raw tile
+        // bytes are the pixel data, so no codec is required. Multiband
+        // uncompressed does require one — see
+        // `test_codec_config_multiband_uncompressed_returns_some`.
         let data = make_tiled_tiff_with_compression(tags::COMPRESSION_NONE, None);
         let provider = provider_from_bytes(&data);
+        assert_eq!(provider.num_bands(), 1);
         assert!(provider.codec_configuration().is_none());
+    }
+
+    /// Helper: build a multiband tiled TIFF via the write path.
+    ///
+    /// Every other fixture in this module is `SamplesPerPixel = 1`, which is the
+    /// untested axis that let the "uncompressed needs no codec" overreach ship:
+    /// the claim is true for single-band data and false for multiband. Pixel
+    /// values are `band * 50 + (row + col) % 50`, so a band mix-up is visible.
+    fn make_multiband_tiled_tiff(
+        bands: u16,
+        compression: u16,
+        planar_config: u16,
+        bits_per_sample: u16,
+        width: u32,
+        height: u32,
+        tile_w: u32,
+        tile_h: u32,
+    ) -> Vec<u8> {
+        let handle = TiffHandle::from_write(false).unwrap();
+        handle.set_field_u32(tags::IMAGE_WIDTH, width).unwrap();
+        handle.set_field_u32(tags::IMAGE_LENGTH, height).unwrap();
+        handle
+            .set_field_u16(tags::BITS_PER_SAMPLE, bits_per_sample)
+            .unwrap();
+        handle
+            .set_field_u16(tags::SAMPLES_PER_PIXEL, bands)
+            .unwrap();
+        handle
+            .set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT)
+            .unwrap();
+        handle
+            .set_field_u16(
+                tags::PHOTOMETRIC_INTERPRETATION,
+                if bands >= 3 {
+                    tags::PHOTOMETRIC_RGB
+                } else {
+                    tags::PHOTOMETRIC_MINISBLACK
+                },
+            )
+            .unwrap();
+        handle.set_field_u32(tags::TILE_WIDTH, tile_w).unwrap();
+        handle.set_field_u32(tags::TILE_LENGTH, tile_h).unwrap();
+        handle
+            .set_field_u16(tags::COMPRESSION, compression)
+            .unwrap();
+        handle
+            .set_field_u16(tags::PLANAR_CONFIGURATION, planar_config)
+            .unwrap();
+
+        let bps = (bits_per_sample as usize).div_ceil(8);
+        let tiles_across = width.div_ceil(tile_w);
+        let tiles_down = height.div_ceil(tile_h);
+        let tiles_per_band = tiles_across * tiles_down;
+        let sample = |band: u32, gr: u32, gc: u32| -> u32 { band * 50 + (gr + gc) % 50 };
+        let push = |buf: &mut Vec<u8>, v: u32| {
+            // Native-endian to match the little-endian file libtiff writes here.
+            buf.extend_from_slice(&v.to_le_bytes()[..bps]);
+        };
+
+        // TIFF 6.0 (tags 324/325, p. 68): for PlanarConfiguration=2 the tile
+        // index is band-major — all of plane 0's tiles, then plane 1's, and so
+        // on — hence `band * tiles_per_band + spatial_idx`.
+        for tr in 0..tiles_down {
+            for tc in 0..tiles_across {
+                let spatial_idx = tr * tiles_across + tc;
+                if planar_config == tags::PLANAR_CONFIG_SEPARATE {
+                    for band in 0..bands as u32 {
+                        let mut tile = Vec::with_capacity(tile_w as usize * tile_h as usize * bps);
+                        for r in 0..tile_h {
+                            for c in 0..tile_w {
+                                let gr = tr * tile_h + r;
+                                let gc = tc * tile_w + c;
+                                let v = if gr < height && gc < width {
+                                    sample(band, gr, gc)
+                                } else {
+                                    0
+                                };
+                                push(&mut tile, v);
+                            }
+                        }
+                        handle
+                            .write_encoded_tile(band * tiles_per_band + spatial_idx, &tile)
+                            .unwrap();
+                    }
+                } else {
+                    let mut tile = Vec::with_capacity(
+                        tile_w as usize * tile_h as usize * bands as usize * bps,
+                    );
+                    for r in 0..tile_h {
+                        for c in 0..tile_w {
+                            for band in 0..bands as u32 {
+                                let gr = tr * tile_h + r;
+                                let gc = tc * tile_w + c;
+                                let v = if gr < height && gc < width {
+                                    sample(band, gr, gc)
+                                } else {
+                                    0
+                                };
+                                push(&mut tile, v);
+                            }
+                        }
+                    }
+                    handle.write_encoded_tile(spatial_idx, &tile).unwrap();
+                }
+            }
+        }
+
+        handle.write_directory().unwrap();
+        handle.into_bytes().unwrap()
+    }
+
+    /// Helper: build a multiband *stripped* (untiled) TIFF via the write path.
+    ///
+    /// The tiled fixture above cannot answer whether stripped planar shares the
+    /// band-major tag layout, because libtiff writes tiles whenever TileWidth is
+    /// set. This one omits the tile tags so libtiff emits StripOffsets (273) /
+    /// StripByteCounts (279) instead. Uncompressed only — the layout question is
+    /// about tag ordering, not codec behavior.
+    fn make_multiband_stripped_tiff(
+        bands: u16,
+        planar_config: u16,
+        bits_per_sample: u16,
+        width: u32,
+        height: u32,
+        rows_per_strip: u32,
+    ) -> Vec<u8> {
+        let handle = TiffHandle::from_write(false).unwrap();
+        handle.set_field_u32(tags::IMAGE_WIDTH, width).unwrap();
+        handle.set_field_u32(tags::IMAGE_LENGTH, height).unwrap();
+        handle
+            .set_field_u16(tags::BITS_PER_SAMPLE, bits_per_sample)
+            .unwrap();
+        handle
+            .set_field_u16(tags::SAMPLES_PER_PIXEL, bands)
+            .unwrap();
+        handle
+            .set_field_u16(tags::SAMPLE_FORMAT, tags::SAMPLE_FORMAT_UINT)
+            .unwrap();
+        handle
+            .set_field_u16(
+                tags::PHOTOMETRIC_INTERPRETATION,
+                if bands >= 3 {
+                    tags::PHOTOMETRIC_RGB
+                } else {
+                    tags::PHOTOMETRIC_MINISBLACK
+                },
+            )
+            .unwrap();
+        handle
+            .set_field_u32(tags::ROWS_PER_STRIP, rows_per_strip)
+            .unwrap();
+        handle
+            .set_field_u16(tags::COMPRESSION, tags::COMPRESSION_NONE)
+            .unwrap();
+        handle
+            .set_field_u16(tags::PLANAR_CONFIGURATION, planar_config)
+            .unwrap();
+
+        let bps = (bits_per_sample as usize).div_ceil(8);
+        let strips_per_band = height.div_ceil(rows_per_strip);
+        let sample = |band: u32, gr: u32, gc: u32| -> u32 { band * 50 + (gr + gc) % 50 };
+        let push = |buf: &mut Vec<u8>, v: u32| {
+            buf.extend_from_slice(&v.to_le_bytes()[..bps]);
+        };
+
+        // TIFF 6.0 (tags 273/279): the same band-major ordering the tiled tags
+        // use — all of plane 0's strips, then plane 1's, and so on.
+        for strip in 0..strips_per_band {
+            let strip_rows = std::cmp::min(rows_per_strip, height - strip * rows_per_strip);
+            if planar_config == tags::PLANAR_CONFIG_SEPARATE {
+                for band in 0..bands as u32 {
+                    let mut buf = Vec::with_capacity(width as usize * strip_rows as usize * bps);
+                    for r in 0..strip_rows {
+                        for c in 0..width {
+                            push(&mut buf, sample(band, strip * rows_per_strip + r, c));
+                        }
+                    }
+                    handle
+                        .write_encoded_strip(band * strips_per_band + strip, &buf)
+                        .unwrap();
+                }
+            } else {
+                let mut buf =
+                    Vec::with_capacity(width as usize * strip_rows as usize * bands as usize * bps);
+                for r in 0..strip_rows {
+                    for c in 0..width {
+                        for band in 0..bands as u32 {
+                            push(&mut buf, sample(band, strip * rows_per_strip + r, c));
+                        }
+                    }
+                }
+                handle.write_encoded_strip(strip, &buf).unwrap();
+            }
+        }
+
+        handle.write_directory().unwrap();
+        handle.into_bytes().unwrap()
+    }
+
+    #[test]
+    fn test_codec_config_multiband_uncompressed_returns_some() {
+        // A multiband chunky uncompressed tile is pixel-interleaved on disk
+        // (TIFF 6.0 tag 284, p. 38: "RGBRGBRGB…"), so the Zarr path must attach
+        // a codec to de-interleave it into band-sequential order. Emitting no
+        // config here is what let those bytes be reshaped raw into
+        // (bands, h, w), scrambling the bands.
+        let data = make_multiband_tiled_tiff(
+            3,
+            tags::COMPRESSION_NONE,
+            tags::PLANAR_CONFIG_CONTIG,
+            8,
+            32,
+            32,
+            16,
+            16,
+        );
+        let provider = provider_from_bytes(&data);
+        assert_eq!(provider.num_bands(), 3);
+
+        let config = provider
+            .codec_configuration()
+            .expect("multiband uncompressed TIFF must carry a codec config");
+
+        assert_eq!(config["compression"], 1u16.to_le_bytes().to_vec());
+        assert_eq!(config["samples_per_pixel"], 3u16.to_le_bytes().to_vec());
+        assert_eq!(config["bits_per_sample"], 8u16.to_le_bytes().to_vec());
+        assert_eq!(config["planar_config"], 1u16.to_le_bytes().to_vec());
+        assert_eq!(config["photometric"], 2u16.to_le_bytes().to_vec());
+        assert_eq!(config["tile_width"], 16u32.to_le_bytes().to_vec());
+        assert_eq!(config["tile_height"], 16u32.to_le_bytes().to_vec());
+        assert_eq!(config["sample_format"], 1u16.to_le_bytes().to_vec());
+
+        // Compression=None defines no predictor (TIFF 6.0 Section 13 scopes it
+        // to LZW/Deflate), and only JPEG carries tables.
+        assert!(!config.contains_key("predictor"));
+        assert!(!config.contains_key("jpeg_tables"));
+    }
+
+    #[test]
+    fn test_codec_config_multiband_uncompressed_planar_returns_some() {
+        // Planar multiband also needs the codec — each tile holds one plane, so
+        // the bands must be stacked rather than reshaped from a single buffer.
+        let data = make_multiband_tiled_tiff(
+            3,
+            tags::COMPRESSION_NONE,
+            tags::PLANAR_CONFIG_SEPARATE,
+            16,
+            32,
+            32,
+            16,
+            16,
+        );
+        let provider = provider_from_bytes(&data);
+        assert_eq!(provider.num_bands(), 3);
+
+        let config = provider
+            .codec_configuration()
+            .expect("multiband planar uncompressed TIFF must carry a codec config");
+
+        assert_eq!(config["compression"], 1u16.to_le_bytes().to_vec());
+        assert_eq!(config["samples_per_pixel"], 3u16.to_le_bytes().to_vec());
+        assert_eq!(config["bits_per_sample"], 16u16.to_le_bytes().to_vec());
+        assert_eq!(config["planar_config"], 2u16.to_le_bytes().to_vec());
+        assert!(!config.contains_key("predictor"));
+        assert!(!config.contains_key("jpeg_tables"));
+    }
+
+    #[test]
+    fn test_codec_config_multiband_lzw_reports_samples_per_pixel() {
+        // Regression guard for the predictor stride: TIFF 6.0 Section 13 (p. 64)
+        // makes the horizontal difference offset SamplesPerPixel for chunky
+        // data, so understating samples_per_pixel here would corrupt
+        // predictor-enabled chunky tiles.
+        let data = make_multiband_tiled_tiff(
+            3,
+            tags::COMPRESSION_LZW,
+            tags::PLANAR_CONFIG_CONTIG,
+            8,
+            32,
+            32,
+            16,
+            16,
+        );
+        let provider = provider_from_bytes(&data);
+
+        let config = provider.codec_configuration().unwrap();
+        assert_eq!(config["samples_per_pixel"], 3u16.to_le_bytes().to_vec());
+        assert!(config.contains_key("predictor"));
     }
 
     #[test]

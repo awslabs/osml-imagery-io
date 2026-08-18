@@ -276,7 +276,7 @@ the codec receives the complete concatenated bytes and reconstructs the
 codestream exactly the same way. The filesystem handles the scatter-gather 
 complexity so codecs remain simple bytes-to-bytes transforms.
 
-`TiffTileCodec` decodes compressed TIFF tiles. Individual compressed tiles
+`TiffTileCodec` decodes TIFF tiles. Individual compressed tiles
 extracted from a TIFF file cannot be decoded in isolation — the decoder needs
 IFD tag metadata (compression type, predictor, photometric interpretation,
 JPEG tables, etc.) that lives in the file header, not in the tile data itself.
@@ -285,9 +285,61 @@ time it constructs a minimal single-tile TIFF in memory from the configuration
 and the compressed tile bytes, then hands it to libtiff via `TIFFClientOpen` +
 `TIFFReadEncodedTile`. This approach supports LZW, JPEG, Deflate, Adobe
 Deflate, and PackBits compression, including horizontal differencing predictors
-and YCbCr-to-RGB conversion for JPEG tiles. Uncompressed TIFF tiles
-(Compression=1) do not require a codec — Zarr reads the raw tile bytes
-directly.
+and YCbCr-to-RGB conversion for JPEG tiles.
+
+Uncompressed TIFF tiles (Compression=1) still need the codec whenever the image
+has more than one band, because compression is not the only thing standing
+between the stored bytes and a `(bands, rows, columns)` array — sample order is
+too. A chunky tile (`PlanarConfiguration=1`) is pixel-interleaved on disk
+(`RGBRGBRGB…`), so reshaping its bytes straight into `(bands, height, width)`
+would scramble the bands; the codec de-interleaves them. A planar tile
+(`PlanarConfiguration=2`) holds one band's samples per tile, and the index gives
+each plane its own chunk so Zarr stacks the bands (see below). Only single-band
+uncompressed tiles need no codec — per TIFF 6.0, `PlanarConfiguration` is
+irrelevant when `SamplesPerPixel` is 1, so the raw tile bytes already are the
+pixel data and Zarr reads them directly with no copy.
+
+Planar TIFF is where the chunk grid itself changes shape. Because each tile on
+disk carries a single band, the parser advertises a **band-granular chunk grid**:
+`chunk_shape` is `(1, block_height, block_width)` with chunk keys
+`{band}.{row}.{col}`, one chunk per plane, and the codec instance for that array
+is overridden to `samples_per_pixel=1, planar_config=1` — each chunk is
+presented as a standalone single-band chunky tile. Chunky TIFF keeps the
+`(bands, block_height, block_width)` chunk shape and `0.{row}.{col}` keys, where
+one chunk holds every band.
+
+**This is invisible to readers.** Chunk shape is a storage property in Zarr, not
+a shape property: both layouts advertise the same array `shape` of
+`(bands, rows, columns)` and the same `dimension_names` of `("bands", "y", "x")`,
+so indexing behaves identically. Any selection returns a band-first (CHW) array,
+including windows that cross tile *and* band boundaries — Zarr gathers whichever
+chunks intersect the selection, and three per-band chunks are no different to it
+than the four spatial chunks it already gathers for a window straddling tile
+edges. On a 3-band 100×100 planar image with 64×64 tiles:
+
+```python
+arr.shape                  # (3, 100, 100)  — same for planar and chunky
+arr.chunks                 # (1, 64, 64) planar vs (3, 64, 64) chunky
+
+arr[:]                     # (3, 100, 100)  full image, bands stacked in order
+arr[:, 30:90, 40:100]      # (3, 60, 60)    crosses 4 spatial chunks x 3 bands
+arr[1, 10:50, 10:50]       # (40, 40)       one band
+arr[:, 77, 88]             # (3,)           one pixel, all bands
+```
+
+Every one of those is pixel-identical to the same read through `IO.open()`, which
+does not consult the chunk grid at all and is unaffected either way.
+
+The difference is in **request count**, and it cuts both ways. Reading all bands
+of one tile from a planar image fetches three byte ranges instead of one, which
+is read amplification on a high-latency store such as S3 — though the ranges
+cover disjoint regions, so no bytes are wasted, and Zarr issues chunk fetches
+concurrently, making the cost latency-parallel rather than serial. Conversely, a
+single-band read fetches only that band's chunk, which is strictly *less* I/O
+than the chunky layout, where one band's samples are interleaved with the others
+and cannot be fetched apart from them. This asymmetry reflects the file, not the
+index: a planar TIFF genuinely stores each band in its own tile, so a multiband
+read was always going to touch multiple disjoint file regions.
 
 ```{image} /_static/images/reconstructed-single-tile-tiff.png
 :alt: Figure showing reconstruction of a single tile TIFF.
