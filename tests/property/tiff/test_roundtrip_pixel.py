@@ -11,8 +11,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from aws.osml.io import IO, PixelType
-from hypothesis import assume, given
+from aws.osml.io import IO
+from hypothesis import given
 
 from ..conftest import pbt_settings
 from ..helpers import (
@@ -160,7 +160,9 @@ class TestTiffBandSubsetting:
     def test_band_subset_matches_full_read(self, config):
         """Reading a band subset matches the same bands from a full read."""
         pixel_type = config["pixel_type"]
-        assume(pixel_type == PixelType.UInt8)
+        # min_bands=3 restricts tiff_image_config to uint8 (multi-band is uint8-only),
+        # so every draw is usable — no assume() filtering needed here.
+        assert config["bands"] == 3, f"expected a 3-band config, got {config['bands']}"
 
         width, height, bands = config["width"], config["height"], config["bands"]
         dtype = get_numpy_dtype(pixel_type)

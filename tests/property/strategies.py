@@ -1214,8 +1214,15 @@ def tiff_image_config(
     Constraints applied:
     - Always chunky (PlanarConfiguration=1)
     - Always stripped (no tile support)
-    - Bands: 1 or 3 (1-band for all types, 3-band for uint8 only)
+    - Bands: 1 or 3 (3-band for uint8 only)
     - Float32 and Int32 are single-band only
+
+    Because multi-band is uint8-only, ``min_bands > 1`` restricts the pixel type
+    to UInt8 rather than drawing freely and yielding single-band configs the
+    caller excluded.  Drawing freely would make ``min_bands`` advisory, pushing
+    the caller into ``assume()`` to discard the majority of examples — enough
+    filtering to trip Hypothesis's ``filter_too_much`` health check
+    intermittently, and to thin out coverage of every other dimension.
 
     Args:
         draw: Hypothesis draw function
@@ -1227,15 +1234,30 @@ def tiff_image_config(
     Returns:
         Dict with keys: pixel_type, width, height, bands, compression,
         rows_per_strip
+
+    Raises:
+        ValueError: If the band range is empty or cannot be satisfied.
     """
-    pixel_type = draw(tiff_config_pixel_types())
+    band_choices = [b for b in (1, 3) if min_bands <= b <= max_bands]
+    if not band_choices:
+        raise ValueError(
+            f"tiff_image_config supports 1- or 3-band images; "
+            f"min_bands={min_bands}, max_bands={max_bands} allows neither"
+        )
+
+    # Multi-band (RGB) is uint8-only, so a caller requiring >1 band constrains
+    # the pixel type; otherwise any supported type is fair game.
+    if min_bands > 1:
+        pixel_type = PixelType.UInt8
+    else:
+        pixel_type = draw(tiff_config_pixel_types())
+
     compression = draw(tiff_compression())
     height = draw(st.integers(min_value=min_size, max_value=max_size))
     width = draw(st.integers(min_value=min_size, max_value=max_size))
 
-    # Multi-band (RGB) only for uint8
     if pixel_type == PixelType.UInt8:
-        bands = draw(st.sampled_from([b for b in [1, 3] if min_bands <= b <= max_bands]))
+        bands = draw(st.sampled_from(band_choices))
     else:
         bands = 1
 
