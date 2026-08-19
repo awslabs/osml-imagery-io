@@ -1147,83 +1147,87 @@ def _build_url_rewrites(urls, template_base, url_overrides):
     return rewrites
 
 
-def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segments, template_base, url_overrides):
-    """Serialize a hierarchical ManifestStore with GeoZarr multiscales metadata.
+def _filter_subgroups(group, segments, multi_range_refs):
+    """Restrict *group* to the named *segments*, dropping their multi-range refs.
 
-    Walks the ManifestGroup tree and builds a flat refs dict with
-    path-prefixed keys.  The root ``.zattrs`` contains the GeoZarr
-    ``zarr_conventions`` array and ``multiscales`` object produced by
-    :func:`_build_multiscale_group`.  Each subgroup's arrays are serialized
-    individually via ``dataset_to_kerchunk_refs`` and their keys are prefixed
-    with the subgroup path (e.g. ``0/data/0.0.0``).
+    Returns the (possibly unchanged) group and multi-range mapping.  Filtering is
+    format-agnostic — it operates on the in-memory ``ManifestGroup`` tree before
+    either serializer runs — so the v2 and v3 writers share it.
 
-    URL relocation (``template_base`` for portable ``{{base}}`` indexes, or an
-    explicit ``url_overrides`` mapping) is applied here at serialization time.
+    Raises
+    ------
+    ValueError
+        If any requested segment is not a subgroup of *group*.
     """
-    import json
+    from virtualizarr.manifests import ManifestGroup
 
-    from virtualizarr.accessor import dataset_to_kerchunk_refs
-    from virtualizarr.manifests import ManifestGroup, ManifestStore
+    if not segments:
+        return group, multi_range_refs
 
-    use_templates = template_base is not None
-
-    group = store._group
-
-    # Filter subgroups if segments specified
-    if segments:
-        available = list(group.groups.keys())
-        missing = [s for s in segments if s not in group.groups]
-        if missing:
-            raise ValueError(
-                f"Subgroup(s) not found: {', '.join(missing)}. "
-                f"Available: {', '.join(available)}"
-            )
-        filtered_groups = {k: v for k, v in group.groups.items() if k in segments}
-        group = ManifestGroup(
-            arrays=group.arrays,
-            groups=filtered_groups,
-            attributes=group.metadata.attributes if group.metadata else None,
+    available = list(group.groups.keys())
+    missing = [s for s in segments if s not in group.groups]
+    if missing:
+        raise ValueError(
+            f"Subgroup(s) not found: {', '.join(missing)}. "
+            f"Available: {', '.join(available)}"
         )
-        multi_range_refs = {
-            k: v for k, v in multi_range_refs.items()
-            if any(k.startswith(seg + "/") for seg in segments)
-        }
+    filtered_groups = {k: v for k, v in group.groups.items() if k in segments}
+    group = ManifestGroup(
+        arrays=group.arrays,
+        groups=filtered_groups,
+        attributes=group.metadata.attributes if group.metadata else None,
+    )
+    multi_range_refs = {
+        k: v for k, v in multi_range_refs.items()
+        if any(k.startswith(seg + "/") for seg in segments)
+    }
+    return group, multi_range_refs
 
-    # Build refs dict by walking the tree
-    refs = {}
 
-    # Root group metadata
-    root_attrs = group.metadata.attributes if group.metadata else {}
-    refs[".zgroup"] = json.dumps({"zarr_format": 2})
+def _relocate_ref_urls(refs, root_attrs, template_base, url_overrides):
+    """Apply URL relocation to *refs* and the root ``source`` attribute.
 
-    # Each subgroup — serialize via dataset_to_kerchunk_refs and prefix keys
-    for sg_name, sg in group.groups.items():
-        temp_store = ManifestStore(group=sg)
-        temp_vds = temp_store.to_virtual_dataset()
-        temp_refs = dataset_to_kerchunk_refs(temp_vds)
-        if "refs" in temp_refs:
-            temp_refs = temp_refs["refs"]
+    ``template_base`` produces a portable ``{{base}}<filename>`` index;
+    ``url_overrides`` remaps concrete URLs.  Shared by both serializers: the
+    reference *values* have the same shape in a v2 and a v3 index, only the keys
+    differ.
 
-        # Prefix all keys with the subgroup path
-        for k, v in temp_refs.items():
-            refs[f"{sg_name}/{k}"] = v
-
-    # Patch multi-range refs into the flat refs dict.
-    refs = _patch_multi_range_refs(refs, multi_range_refs)
-
-    # Compute and apply URL relocation (portable template or explicit overrides)
-    # over every concrete URL that appears in the refs, plus the root source.
+    Returns the rewritten ``(refs, root_attrs)`` pair.
+    """
     source = root_attrs.get("source") if isinstance(root_attrs, dict) else None
     rewrites = _build_url_rewrites(
         _collect_ref_urls(refs, source), template_base, url_overrides
     )
-    if rewrites:
-        if source in rewrites:
-            root_attrs = dict(root_attrs)
-            root_attrs["source"] = rewrites[source]
-        refs = _rewrite_refs_urls(refs, rewrites)
+    if not rewrites:
+        return refs, root_attrs
+    if source in rewrites:
+        root_attrs = dict(root_attrs)
+        root_attrs["source"] = rewrites[source]
+    return _rewrite_refs_urls(refs, rewrites), root_attrs
 
-    refs[".zattrs"] = json.dumps(root_attrs)
+
+def _emit_refs(refs, output, ext, *, use_templates, zarr_format=2):
+    """Write a flat Kerchunk reference mapping to ``.json`` or ``.parquet``.
+
+    The Kerchunk **JSON** container is agnostic about the Zarr version of the keys
+    it carries, so it serves both the v2 (``.zgroup`` / ``.zarray``) and the v3
+    (``zarr.json`` / ``c.<coords>``) layouts.
+
+    The Kerchunk **Parquet** container is not: ``LazyReferenceMapper`` stores chunk
+    references positionally, deriving each chunk's record index from the array's
+    ``.zarray`` ``shape``/``chunks`` and parsing the key's last path segment as
+    dot-separated grid coordinates.  A v3 store has no ``.zarray``, and its
+    ``c.<band>.<row>.<col>`` key would parse the leading ``c`` as a coordinate.
+    Parquet output is therefore rejected for ``zarr_format=3`` rather than written
+    in a form nothing can read back.
+
+    Raises
+    ------
+    ValueError
+        If *ext* is neither ``.json`` nor ``.parquet``, or if Parquet output is
+        requested for a v3 index.
+    """
+    import json
 
     if ext == ".json":
         kerchunk = {"version": 1, "refs": refs}
@@ -1233,10 +1237,25 @@ def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segment
             json.dump(kerchunk, f)
 
     elif ext == ".parquet":
+        if zarr_format == 3:
+            # Raised before the pyarrow-backed imports so the reason surfaces even
+            # in an environment without that optional dependency installed.
+            raise ValueError(
+                "Parquet output is not supported for zarr_format=3: the Kerchunk "
+                "Parquet container (fsspec's LazyReferenceMapper) indexes chunk "
+                "references by position using the v2 '.zarray' shape/chunks, which "
+                "a native v3 store does not have. Use a .json output path for v3 "
+                "indexes, or zarr_format=2 for Parquet."
+            )
+
         import fsspec
         from fsspec.implementations.reference import LazyReferenceMapper
 
         fs, _ = fsspec.core.url_to_fs(output)
+        # ``engine="pyarrow"`` is required, not a preference: writing with
+        # fastparquet under pandas 3.x + numpy 2.x fails outright ("Error
+        # converting column 'path' to bytes using encoding UTF8 ... Unable to
+        # avoid copy while creating an array as requested").
         out = LazyReferenceMapper.create(
             record_size=100_000,
             root=output,
@@ -1253,6 +1272,162 @@ def _write_hierarchical_tile_index(store, output, ext, multi_range_refs, segment
         )
 
 
+def _build_v2_refs(group):
+    """Build the Zarr v2 / Kerchunk reference keys for *group*'s subtree.
+
+    Each subgroup's arrays are serialized via ``dataset_to_kerchunk_refs`` — the
+    path that down-converts the in-memory ``ArrayV3Metadata`` to a v2 ``.zarray``
+    — and their keys are prefixed with the subgroup path (e.g. ``0/data/0.0.0``).
+
+    The root ``.zattrs`` is *not* written here: it is added after URL relocation,
+    which may rewrite the ``source`` attribute it carries.
+    """
+    import json
+
+    from virtualizarr.accessor import dataset_to_kerchunk_refs
+    from virtualizarr.manifests import ManifestStore
+
+    refs = {".zgroup": json.dumps({"zarr_format": 2})}
+
+    for sg_name, sg in group.groups.items():
+        temp_store = ManifestStore(group=sg)
+        temp_vds = temp_store.to_virtual_dataset()
+        temp_refs = dataset_to_kerchunk_refs(temp_vds)
+        if "refs" in temp_refs:
+            temp_refs = temp_refs["refs"]
+
+        # Prefix all keys with the subgroup path
+        for k, v in temp_refs.items():
+            refs[f"{sg_name}/{k}"] = v
+
+    return refs
+
+
+def _v3_group_metadata(attributes) -> str:
+    """Serialize a Zarr v3 group node's ``zarr.json`` document."""
+    import json
+
+    return json.dumps(
+        {
+            "zarr_format": 3,
+            "node_type": "group",
+            "attributes": dict(attributes) if attributes else {},
+        }
+    )
+
+
+def _build_v3_refs(group, multi_range_refs):
+    """Build the native Zarr v3 reference keys for *group*'s subtree.
+
+    Unlike :func:`_build_v2_refs` this does **not** down-convert to a v2
+    ``.zarray``: each array's in-memory :class:`ArrayV3Metadata` — already built
+    with ``codecs=[BytesCodec(), <custom codec>]`` by
+    :func:`_build_manifest_array` — is serialized straight to a ``zarr.json``
+    document, and chunk keys use the array's own v3 chunk-key encoding
+    (``c.<band>.<row>.<col>`` for the ``default`` encoding this library emits).
+
+    Multi-range entries are written in place rather than patched in afterwards:
+    they are accumulated at parse time under the v2-flavored chunk key
+    (``0/data/0.0.0``), so the translation to the v3 key has to happen while both
+    forms are in hand.
+
+    The root ``zarr.json`` is *not* written here — it carries the ``source``
+    attribute that URL relocation may rewrite, so the caller adds it last.
+    """
+    import json
+
+    from zarr.core.buffer import default_buffer_prototype
+
+    prototype = default_buffer_prototype()
+    refs = {}
+
+    for sg_name, sg in group.groups.items():
+        refs[f"{sg_name}/zarr.json"] = _v3_group_metadata(
+            sg.metadata.attributes if sg.metadata else {}
+        )
+
+        for arr_name, arr in sg.arrays.items():
+            prefix = f"{sg_name}/{arr_name}/"
+            metadata = arr.metadata
+            # Let zarr serialize its own metadata rather than reconstructing the
+            # document by hand — that keeps the codec chain, chunk grid and dtype
+            # spelling exactly as zarr will expect to read them back.  The
+            # decode/re-encode round-trip only strips zarr's indentation, which
+            # would otherwise bloat every array's entry in the shipped index.
+            refs[f"{prefix}zarr.json"] = json.dumps(
+                json.loads(
+                    metadata.to_buffer_dict(prototype)["zarr.json"].to_bytes()
+                )
+            )
+
+            encode = metadata.chunk_key_encoding.encode_chunk_key
+            for coord_key, entry in arr.manifest.dict().items():
+                # ``ChunkManifest`` keys are dot-joined grid coordinates; the v3
+                # store key comes from the array's own encoding so the two can
+                # never drift.
+                coords = tuple(int(part) for part in coord_key.split("."))
+                v3_key = f"{prefix}{encode(coords)}"
+                multi_range = multi_range_refs.get(f"{prefix}{coord_key}")
+                if multi_range is not None:
+                    refs[v3_key] = multi_range
+                else:
+                    refs[v3_key] = [
+                        entry["path"], entry["offset"], entry["length"]
+                    ]
+
+    return refs
+
+
+def _write_hierarchical_tile_index(
+    store, output, ext, multi_range_refs, segments, template_base, url_overrides,
+    *, zarr_format=2,
+):
+    """Serialize a hierarchical ManifestStore with GeoZarr multiscales metadata.
+
+    Walks the ManifestGroup tree and builds a flat refs dict with path-prefixed
+    keys.  The root node's attributes carry the GeoZarr ``zarr_conventions``
+    array and ``multiscales`` object produced by
+    :func:`_build_multiscale_group` — in a v2 index those live in ``.zattrs``,
+    in a v3 index inside the root ``zarr.json``.
+
+    *zarr_format* selects the on-disk key layout (2 → Kerchunk/``.zarray``,
+    3 → native ``zarr.json``).  Everything either layout shares — segment
+    filtering, URL relocation, and the JSON/Parquet sink — is common code; only
+    the refs-building step differs.
+
+    URL relocation (``template_base`` for portable ``{{base}}`` indexes, or an
+    explicit ``url_overrides`` mapping) is applied here at serialization time.
+    """
+    import json
+
+    group = store._group
+    group, multi_range_refs = _filter_subgroups(group, segments, multi_range_refs)
+
+    root_attrs = group.metadata.attributes if group.metadata else {}
+
+    if zarr_format == 3:
+        refs = _build_v3_refs(group, multi_range_refs)
+    else:
+        refs = _patch_multi_range_refs(_build_v2_refs(group), multi_range_refs)
+
+    refs, root_attrs = _relocate_ref_urls(
+        refs, root_attrs, template_base, url_overrides
+    )
+
+    # The root node's metadata is written last because relocation may have
+    # rewritten the ``source`` attribute it carries.
+    if zarr_format == 3:
+        refs["zarr.json"] = _v3_group_metadata(root_attrs)
+    else:
+        refs[".zattrs"] = json.dumps(root_attrs)
+
+    _emit_refs(
+        refs, output, ext,
+        use_templates=template_base is not None,
+        zarr_format=zarr_format,
+    )
+
+
 def write_tile_index(
     store,
     output: str,
@@ -1260,12 +1435,24 @@ def write_tile_index(
     *,
     template_base: str | None = None,
     url_overrides: dict[str, str] | None = None,
+    zarr_format: int = 2,
 ) -> None:
     """Write a tile index to JSON or Parquet with multi-range support.
 
     This is the recommended way to serialize a ``ManifestStore`` produced by
     :class:`OversightMLParser`.  It handles the multi-range reference entries
     that VirtualiZarr's built-in serialization does not support.
+
+    ``zarr_format`` selects which Zarr version the index describes.  Both are
+    Kerchunk reference files served through fsspec — the difference is the store
+    keys inside, and therefore which consumer path reads them:
+
+    - ``2`` (default) — a ``.zgroup`` / ``.zarray`` / ``.zattrs`` layout.  Codecs
+      resolve through the **numcodecs** registry by ``id`` and are called
+      synchronously with a single buffer.
+    - ``3`` — a native ``zarr.json`` layout with ``c.<band>.<row>.<col>`` chunk
+      keys.  Codecs resolve by URI through the ``zarr.codecs`` entry points and
+      are called by zarr's asynchronous batched codec pipeline.
 
     By default chunk references point at the URL the store was parsed from.
     Relocating those references is a serialization-time concern controlled here:
@@ -1287,7 +1474,8 @@ def write_tile_index(
         The manifest store returned by ``OversightMLParser()``.
     output : str
         Output file path.  Extension determines format: ``.json`` for
-        Kerchunk JSON, ``.parquet`` for Kerchunk Parquet.
+        Kerchunk JSON, ``.parquet`` for Kerchunk Parquet.  Parquet requires
+        ``zarr_format=2`` — see :func:`_emit_refs`.
     segments : list[str], optional
         Subgroup keys to include (e.g. ``["0", "2"]``).  If ``None``, all
         subgroups are included.
@@ -1297,13 +1485,17 @@ def write_tile_index(
     url_overrides : dict[str, str], optional
         Explicit ``{concrete_url: replacement_url}`` rewrite applied to chunk
         references and the root ``source`` attribute.
+    zarr_format : int, default 2
+        ``2`` for the Kerchunk / Zarr v2 layout read through numcodecs, ``3``
+        for the native Zarr v3 layout read through the ``zarr.codecs``
+        entry-point pipeline.
 
     Raises
     ------
     ValueError
         If the output extension is not ``.json`` or ``.parquet``, if a
-        requested segment is not found, or if both ``template_base`` and
-        ``url_overrides`` are given.
+        requested segment is not found, if both ``template_base`` and
+        ``url_overrides`` are given, or if *zarr_format* is not 2 or 3.
 
     Examples
     --------
@@ -1312,6 +1504,12 @@ def write_tile_index(
         parser = OversightMLParser()
         store = parser("s3://my-bucket/imagery/image.ntf")
         write_tile_index(store, "image.tile_index.json")
+
+    Native Zarr v3 index (read with no Kerchunk-to-v2 translation)::
+
+        parser = OversightMLParser()
+        store = parser("s3://my-bucket/imagery/image.ntf")
+        write_tile_index(store, "image.v3.json", zarr_format=3)
 
     Portable index (resolve base URL at read time)::
 
@@ -1334,6 +1532,10 @@ def write_tile_index(
         raise ValueError(
             "template_base and url_overrides are mutually exclusive"
         )
+    if zarr_format not in (2, 3):
+        raise ValueError(
+            f"zarr_format must be 2 or 3, got {zarr_format!r}"
+        )
 
     ext = Path(output).suffix.lower()
     multi_range_refs = getattr(store, "multi_range_refs", {}) or {}
@@ -1341,4 +1543,5 @@ def write_tile_index(
     _write_hierarchical_tile_index(
         store, output, ext, multi_range_refs, segments,
         template_base, url_overrides,
+        zarr_format=zarr_format,
     )

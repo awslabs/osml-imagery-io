@@ -147,8 +147,42 @@ hierarchical and serializes accordingly. For hierarchical stores, the output
 Kerchunk JSON uses path-prefixed keys (e.g. `0/data/0.0.0`, `1/data/0.0.0`)
 and includes the root `multiscales` metadata in `.zattrs`.
 
+### Choosing a Zarr format
+
+`zarr_format` selects which Zarr version the index describes. Both outputs are
+Kerchunk reference files served through fsspec — no pixel data is copied either
+way. What differs is the store keys inside, and therefore which consumer path
+reads them:
+
+| | `zarr_format=2` (default) | `zarr_format=3` |
+|---|---|---|
+| Metadata keys | `.zgroup`, `.zarray`, `.zattrs` | `zarr.json` per node |
+| Chunk keys | `0/data/0.0.0` | `0/data/c.0.0.0` |
+| Codec resolution | numcodecs registry, by `id` | `zarr.codecs` entry points, by URI |
+| Codec call convention | synchronous, single buffer | async, batched pipeline |
+| Output formats | `.json`, `.parquet` | `.json` only |
+
+```python
+parser = OversightMLParser()
+store = parser("s3://bucket/image.ntf")
+
+# Kerchunk / Zarr v2 (read through numcodecs)
+write_tile_index(store, "image.tile_index.json")
+
+# Native Zarr v3 (read through the entry-point codec pipeline)
+write_tile_index(store, "image.v3.json", zarr_format=3)
+```
+
+Parquet output requires `zarr_format=2`. The Kerchunk Parquet container
+(fsspec's `LazyReferenceMapper`) indexes chunk references positionally, deriving
+each record from the v2 `.zarray` `shape`/`chunks`, which a native v3 store has
+no equivalent of. Requesting `.parquet` with `zarr_format=3` raises `ValueError`
+rather than writing an index nothing can read back.
+
+### Relocating chunk references
+
 Relocating chunk references is a serialization-time concern controlled by two
-mutually exclusive keyword arguments:
+mutually exclusive keyword arguments, and applies to both formats:
 
 - **`template_base`** — pass `"{{base}}"` to produce a portable index whose
   chunk-reference URLs are rewritten to `{{base}}<filename>` and emit a Kerchunk
