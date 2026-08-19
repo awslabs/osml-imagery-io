@@ -1,0 +1,1041 @@
+"""Property-based tests for the native zarr v3 codec pipeline.
+
+This module is the v3 analog of ``test_end_to_end.py``.  Where that suite reads
+a Kerchunk / Zarr v2 index (which resolves codecs through **numcodecs** and calls
+them single-buffer), this suite builds a **native zarr v3 store** by hand and
+reads it through ``zarr.open_array`` — exercising the v3 codec pipeline's
+asynchronous, batched ``BytesBytesCodec.decode`` entry point.
+
+Coverage strategy:
+1. Write a synthetic image (NITF with various compressions, TIFF) via ``IO.open``.
+2. Materialize a native v3 store: a ``zarr.json`` with ``ArrayV3Metadata``-equivalent
+   metadata whose codec chain is ``[BytesCodec(), <custom codec>.to_dict()]``, plus
+   raw chunk files under ``c/0/<row>/<col>`` extracted from the written file's
+   per-tile byte ranges (the same source the v2 index uses).
+3. Read tiles through the standard ``IO.open()`` path.
+4. Read the same tiles via ``zarr.open_array`` over the v3 store.
+5. Compare pixels: exact match for lossless (NITF-NC / TIFF / DTED), PSNR/SSIM for
+   lossy (NITF-C8 / NITF-C3).
+
+On top of that store-level parity, the suite asserts **cross-protocol
+equivalence**: the same chunk bytes handed to the same codec instance must decode
+identically whether they arrive through the numcodecs single-buffer ``decode(buf)``
+or through the v3 pipeline's batched ``await decode([(buf, spec)])``.  That is the
+invariant justifying one class carrying two ``decode`` semantics, and the two
+routes reach *independent* padding code for partial edge tiles — the numcodecs
+route re-derives nominal tile size from the J2K main header with ``struct.unpack``
+while the v3 route pads to ``chunk_spec.shape`` — so the edge-tile cases below use
+deliberately non-block-aligned dimensions.
+
+The v3 pipeline path was uncovered end-to-end before commit ``daa4a0f`` — the only
+v3 store read was a single hand-built ``JbpBlockCodec`` unit test.  This suite
+extends that store-building approach across all five codecs and drives it with the
+existing image strategies.
+
+Feature: virtualizarr-migration
+"""
+
+import asyncio
+import json
+import math
+import struct
+import sys
+import tempfile
+from pathlib import Path
+from typing import NamedTuple, Optional
+
+import numpy as np
+import pytest
+from aws.osml.io import (
+    IO,
+    AssetType,
+    BufferedImageAssetProvider,
+    BufferedMetadataProvider,
+    PixelType,
+)
+from hypothesis import assume, given
+
+from ..conftest import pbt_settings
+from ..quality import MIN_PSNR_DB, MIN_SSIM, calculate_psnr, calculate_ssim
+from ..strategies import (
+    jpeg_image_for_compression,
+    realistic_image_for_compression,
+    tiff_writable_image,
+)
+
+# Require zarr + fsspec for all tests in this module.
+zarr = pytest.importorskip("zarr", minversion="3.0")
+
+# Ensure our codecs are importable/registered before zarr resolves any store.
+import aws.osml.io.zarr_codecs  # noqa: E402, F401
+from aws.osml.io._io import decode_jpeg2000, decode_tiff_tile  # noqa: E402
+from aws.osml.io.virtualizarr_parsers import (  # noqa: E402
+    _build_codec_instance,
+    _is_planar_multiband_tiff,
+)
+from zarr.core.array_spec import ArrayConfig, ArraySpec  # noqa: E402
+from zarr.core.buffer import default_buffer_prototype  # noqa: E402
+from zarr.core.dtype import parse_dtype  # noqa: E402
+
+# DTED is not writable via IO.open, so DTED coverage uses a checked-in fixture
+# (per the design's "DTED writability" open question).
+DATA_DIR = Path("data/unit")
+DTED_FIXTURE = DATA_DIR / "dted-16x16-1band-int16.dt1"
+
+# ---------------------------------------------------------------------------
+# Writers (mirrors test_end_to_end.py so the two suites stay comparable)
+# ---------------------------------------------------------------------------
+
+
+def _write_nitf(
+    array: np.ndarray,
+    pixel_type: PixelType,
+    num_bands: int,
+    num_rows: int,
+    num_cols: int,
+    metadata_hints: dict,
+    block_width: int = 64,
+    block_height: int = 64,
+) -> Path:
+    """Write a NITF file and return the path. Caller must clean up."""
+    with tempfile.NamedTemporaryFile(suffix=".ntf", delete=False) as f:
+        path = Path(f.name)
+
+    metadata = BufferedMetadataProvider()
+    for k, v in metadata_hints.items():
+        metadata[k] = v
+
+    provider = BufferedImageAssetProvider.create(
+        key="image:0",
+        num_columns=num_cols,
+        num_rows=num_rows,
+        num_bands=num_bands,
+        block_width=min(num_cols, block_width),
+        block_height=min(num_rows, block_height),
+        pixel_type=pixel_type,
+        metadata=metadata,
+    )
+    provider.set_full_image(array)
+
+    writer = IO.open([str(path)], "w", "nitf")
+    writer.add_asset(
+        key="image:0",
+        provider=provider,
+        title="Test Image",
+        description="Zarr v3 pipeline test",
+        roles=["data"],
+    )
+    writer.close()
+    return path
+
+
+def _write_tiff(
+    array: np.ndarray,
+    pixel_type: PixelType,
+    num_bands: int,
+    num_rows: int,
+    num_cols: int,
+    hints: dict,
+) -> Path:
+    """Write a TIFF file and return the path. Caller must clean up."""
+    with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
+        path = Path(f.name)
+
+    metadata = BufferedMetadataProvider()
+    for k, v in hints.items():
+        metadata[k] = v
+
+    tile_w = int(hints.get("322", "256"))
+    tile_h = int(hints.get("323", "256"))
+
+    provider = BufferedImageAssetProvider.create(
+        key="image:0",
+        num_columns=num_cols,
+        num_rows=num_rows,
+        num_bands=num_bands,
+        block_width=min(num_cols, tile_w),
+        block_height=min(num_rows, tile_h),
+        pixel_type=pixel_type,
+        metadata=metadata,
+    )
+    provider.set_full_image(array)
+
+    writer = IO.open([str(path)], "w", "tiff")
+    writer.metadata = metadata
+    writer.add_asset(
+        key="image:0",
+        provider=provider,
+        title="Test Image",
+        description="Zarr v3 pipeline test",
+        roles=["data"],
+    )
+    writer.close()
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Native v3 store harness
+# ---------------------------------------------------------------------------
+
+
+class _ChunkSet(NamedTuple):
+    """Everything a zarr array needs to describe a written image file's chunks.
+
+    ``chunks`` maps ``(band, row, col)`` — the v3 default chunk-key encoding's grid
+    coordinates — to the exact bytes that chunk's codec receives.
+    """
+
+    codec: object
+    chunk_shape: tuple
+    shape: tuple
+    dtype: np.dtype
+    chunks: dict
+
+
+def _extract_chunks(src_path: Path) -> _ChunkSet:
+    """Derive the zarr chunk view of a file ``IO.open()`` can read.
+
+    Chunk bytes come from the file's per-tile byte ranges (``asset.tile_byte_ranges()``
+    — the same source the v2 index uses); non-contiguous ranges are concatenated in
+    order, exactly as the numcodecs consumer path would receive them.
+
+    Chunk granularity mirrors ``_build_manifest_array``: normally one chunk spans
+    every band, but a planar multiband TIFF (``PlanarConfiguration = 2``) stores each
+    band as its own tile, so each plane becomes its own chunk — chunk shape
+    ``(1, block_h, block_w)``, grid coordinate ``(band, row, col)`` — with the codec
+    overridden to ``samples_per_pixel=1, planar_config=1``.
+    """
+    with IO.open([str(src_path)], "r") as reader:
+        keys = reader.get_asset_keys(asset_type=AssetType.Image)
+        asset = reader.get_asset(keys[0])
+        # A range list of length N means either "N fragments of one chunk" or "N
+        # per-band chunks" (planar TIFF); the two are indistinguishable by length,
+        # so disambiguate on the provider's declared planar configuration.
+        per_plane_chunks = _is_planar_multiband_tiff(asset)
+        custom_codec = _build_codec_instance(asset, single_plane=per_plane_chunks)
+        byte_ranges = asset.tile_byte_ranges()
+        if byte_ranges is None:
+            raise ValueError("tile_byte_ranges() returned None for this asset")
+
+        num_bands = asset.num_bands
+        num_rows = asset.num_rows
+        num_cols = asset.num_columns
+        block_h = asset.num_pixels_per_block_vertical
+        block_w = asset.num_pixels_per_block_horizontal
+        np_dtype = np.dtype(asset.pixel_value_type.to_numpy_dtype())
+
+    raw = src_path.read_bytes()
+
+    chunks = {}
+    for (row, col), range_list in byte_ranges.items():
+        if per_plane_chunks:
+            # Each range is a complete single-plane tile, decoded on its own — no
+            # concatenation, and one chunk per band.
+            for band, (offset, length) in enumerate(range_list):
+                chunks[(band, row, col)] = raw[offset:offset + length]
+            continue
+        chunks[(0, row, col)] = b"".join(
+            raw[offset:offset + length] for offset, length in range_list
+        )
+
+    bands_per_chunk = 1 if per_plane_chunks else num_bands
+    return _ChunkSet(
+        codec=custom_codec,
+        chunk_shape=(bands_per_chunk, block_h, block_w),
+        shape=(num_bands, num_rows, num_cols),
+        dtype=np_dtype,
+        chunks=chunks,
+    )
+
+
+def _materialize_v3_store(src_path: Path, store_dir: Path) -> _ChunkSet:
+    """Materialize a native zarr v3 store from a file ``IO.open()`` can read.
+
+    Writes a ``zarr.json`` with ``ArrayV3Metadata``-equivalent metadata whose codec
+    chain is ``[BytesCodec(), <custom codec>.to_dict()]`` (the custom codec derived
+    from ``_build_codec_instance``), plus raw chunk files at ``c/<band>/<row>/<col>``
+    — the chunk view :func:`_extract_chunks` derives, written to disk.
+
+    This is a materialized (non-reference) native v3 producer.  A reference-based
+    producer is a separate deliverable (design Phase 4).
+
+    Returns the :class:`_ChunkSet` the store was written from, so a caller can drive
+    the codec directly with the same bytes zarr will read.
+    """
+    chunk_set = _extract_chunks(src_path)
+
+    # BytesCodec (the ArrayBytesCodec) interprets the custom codec's decoded output.
+    # The Rust decoders return native-endian arrays (``.tobytes()`` is native order),
+    # so BytesCodec must be told the platform's byte order.
+    endian = "little" if sys.byteorder == "little" else "big"
+    codecs = [{"name": "bytes", "configuration": {"endian": endian}}]
+    if chunk_set.codec is not None:
+        codecs.append(chunk_set.codec.to_dict())
+
+    metadata = {
+        "zarr_format": 3,
+        "node_type": "array",
+        "shape": list(chunk_set.shape),
+        "data_type": chunk_set.dtype.name,
+        "chunk_grid": {
+            "name": "regular",
+            "configuration": {"chunk_shape": list(chunk_set.chunk_shape)},
+        },
+        "chunk_key_encoding": {"name": "default"},
+        "fill_value": 0,
+        "codecs": codecs,
+    }
+
+    (store_dir / "zarr.json").write_text(json.dumps(metadata))
+    for (band, row, col), chunk_bytes in chunk_set.chunks.items():
+        chunk_path = store_dir / "c" / str(band) / str(row) / str(col)
+        chunk_path.parent.mkdir(parents=True, exist_ok=True)
+        chunk_path.write_bytes(chunk_bytes)
+
+    return chunk_set
+
+
+# ---------------------------------------------------------------------------
+# Cross-protocol decode drivers (numcodecs single-buffer vs v3 batched)
+# ---------------------------------------------------------------------------
+
+
+def _decode_numcodecs(codec, chunk_bytes: bytes) -> np.ndarray:
+    """Decode via the numcodecs filter protocol: synchronous, single buffer.
+
+    Trivial by design — a named counterpart to :func:`_decode_v3_pipeline` so the two
+    routes under comparison read symmetrically at the call sites.  Returns the codec's
+    own ndarray, whose shape is whatever that route decides: for J2K edge tiles the
+    nominal tile size it re-derives from the main header, never the chunk shape the v3
+    route is handed.
+    """
+    return codec.decode(chunk_bytes)
+
+
+def _decode_v3_pipeline(codec, chunk_bytes: bytes, chunk_shape: tuple, np_dtype: np.dtype) -> np.ndarray:
+    """Decode via the v3 pipeline entry point: async, batched ``[(buffer, spec)]``.
+
+    This is the call ``BatchedCodecPipeline.decode_batch`` makes.  ``_decode_single``
+    returns a ``Buffer`` of raw bytes — reshaping them is the downstream
+    ``ArrayBytesCodec``'s job — so reshape to *chunk_shape* here for comparison.
+    """
+    prototype = default_buffer_prototype()
+    spec = ArraySpec(
+        shape=chunk_shape,
+        dtype=parse_dtype(np_dtype, zarr_format=3),
+        fill_value=0,
+        config=ArrayConfig.from_dict({}),
+        prototype=prototype,
+    )
+    batch = [(prototype.buffer.from_bytes(chunk_bytes), spec)]
+    decoded = list(asyncio.run(codec.decode(batch)))
+    assert len(decoded) == 1, f"v3 pipeline returned {len(decoded)} buffers for a 1-item batch"
+    return np.frombuffer(decoded[0].to_bytes(), dtype=np_dtype).reshape(chunk_shape)
+
+
+def _j2k_header_tile_size(codec) -> Optional[tuple]:
+    """``(XTsiz, YTsiz)`` from the codec's J2K main header, or ``None`` if absent.
+
+    Reads the SIZ fields at the same offsets ``Jpeg2000Codec.decode`` uses, so a test
+    can confirm the header the codec will consult really does declare the tile size
+    the image geometry implies — rather than assuming it.  ``None`` means the codec
+    carries no usable header, in which case that route does not pad at all and an
+    edge-tile padding test would assert nothing.
+    """
+    header = getattr(codec, "_main_header_bytes", None)
+    if header is None or len(header) < 40:
+        return None
+    xtsiz = struct.unpack(">I", header[24:28])[0]
+    ytsiz = struct.unpack(">I", header[28:32])[0]
+    return (xtsiz, ytsiz)
+
+
+def _assert_cross_protocol_parity(chunk_set: _ChunkSet, label: str) -> None:
+    """Assert both ``decode`` routes agree on every chunk of *chunk_set*.
+
+    The invariant: for the same chunk bytes and the same codec instance,
+    ``codec.decode(buf)`` (numcodecs) and ``await codec.decode([(buf, spec)])``
+    (v3 pipeline) must yield identical pixels, dtype, and element count.
+
+    Pixels are compared after ravel because the two routes legitimately *report*
+    shape differently — the numcodecs route returns a shaped ndarray, the v3 route a
+    flat buffer the ``ArrayBytesCodec`` reshapes downstream.  Element count must
+    still match exactly: a padding disagreement changes it.
+    """
+    codec = chunk_set.codec
+    assert codec is not None, (
+        f"{label}: asset has no codec configuration, so there is no dual-protocol "
+        f"decode to compare — pick a configuration that attaches a codec"
+    )
+    assert chunk_set.chunks, f"{label}: no chunks extracted"
+
+    for coord in sorted(chunk_set.chunks):
+        chunk_bytes = chunk_set.chunks[coord]
+        via_numcodecs = _decode_numcodecs(codec, chunk_bytes)
+        via_v3 = _decode_v3_pipeline(codec, chunk_bytes, chunk_set.chunk_shape, chunk_set.dtype)
+
+        assert via_numcodecs.dtype == via_v3.dtype, (
+            f"{label} chunk {coord}: dtype differs — "
+            f"numcodecs={via_numcodecs.dtype}, v3={via_v3.dtype}"
+        )
+        assert via_numcodecs.size == via_v3.size, (
+            f"{label} chunk {coord}: element count differs — "
+            f"numcodecs={via_numcodecs.shape} ({via_numcodecs.size}), "
+            f"v3={via_v3.shape} ({via_v3.size}). The two routes pad edge tiles via "
+            f"independent code, so a size difference means they disagree on padding."
+        )
+        np.testing.assert_array_equal(
+            via_numcodecs.ravel(),
+            via_v3.ravel(),
+            err_msg=(
+                f"{label} chunk {coord}: numcodecs single-buffer decode and v3 "
+                f"batched pipeline decode produced different pixels"
+            ),
+        )
+
+
+def _run_cross_protocol_parity(src_path: Path, label: str) -> _ChunkSet:
+    """Extract *src_path*'s chunks and assert both decode routes agree."""
+    chunk_set = _extract_chunks(src_path)
+    _assert_cross_protocol_parity(chunk_set, label)
+    return chunk_set
+
+
+def _read_all_tiles_via_io(path: Path) -> dict:
+    """Read all tiles from a file via IO.open, returning (row, col) → ndarray."""
+    tiles = {}
+    with IO.open([str(path)], "r") as reader:
+        keys = reader.get_asset_keys(asset_type=AssetType.Image)
+        asset = reader.get_asset(keys[0])
+        grid_rows, grid_cols = asset.block_grid_size
+        for r in range(grid_rows):
+            for c in range(grid_cols):
+                tiles[(r, c)] = asset.get_block(r, c, 0)
+    return tiles
+
+
+def _read_all_tiles_via_zarr_v3(store_dir: Path) -> dict:
+    """Read all tiles from a native v3 store via ``zarr.open_array``.
+
+    Opening the array drives the v3 codec pipeline: chunk bytes flow through the
+    inherited async ``BytesBytesCodec.decode`` (batched), not the numcodecs shim.
+    Tiles at the right/bottom edges are sliced to the array boundary so partial
+    tiles come back trimmed (mirroring the v2 reader).
+
+    Returns (row, col) → ndarray.
+    """
+    arr = zarr.open_array(str(store_dir), mode="r")
+    tile_bands, tile_h, tile_w = arr.chunks
+    _, total_rows, total_cols = arr.shape
+
+    grid_rows = (total_rows + tile_h - 1) // tile_h
+    grid_cols = (total_cols + tile_w - 1) // tile_w
+
+    tiles = {}
+    for r in range(grid_rows):
+        for c in range(grid_cols):
+            row_start = r * tile_h
+            col_start = c * tile_w
+            row_end = min(row_start + tile_h, total_rows)
+            col_end = min(col_start + tile_w, total_cols)
+            tiles[(r, c)] = np.asarray(arr[:, row_start:row_end, col_start:col_end])
+
+    assert len(tiles) > 0, "No tiles read from v3 store"
+    return tiles
+
+
+# ---------------------------------------------------------------------------
+# Comparison helpers (mirrors test_end_to_end.py)
+# ---------------------------------------------------------------------------
+
+
+def _assert_tiles_match_lossless(tiles_io, tiles_zarr, label="v3"):
+    """Assert all tiles match exactly. Trims to overlapping region for edge tiles."""
+    assert len(tiles_io) > 0, "No tiles from IO path"
+    assert len(tiles_zarr) > 0, f"No tiles from {label} path"
+    assert set(tiles_io.keys()) == set(tiles_zarr.keys()), (
+        f"Tile coordinate mismatch between IO and {label} paths. "
+        f"IO: {sorted(tiles_io.keys())}, {label}: {sorted(tiles_zarr.keys())}"
+    )
+    for coord in sorted(tiles_io.keys()):
+        io_tile = tiles_io[coord]
+        zarr_tile = tiles_zarr[coord]
+        assert io_tile.size > 0, f"IO tile {coord} is empty"
+        assert zarr_tile.size > 0, f"{label} tile {coord} is empty"
+        # Trim to overlapping region for edge tiles
+        b = min(io_tile.shape[0], zarr_tile.shape[0])
+        h = min(io_tile.shape[1], zarr_tile.shape[1])
+        w = min(io_tile.shape[2], zarr_tile.shape[2])
+        assert b > 0 and h > 0 and w > 0, (
+            f"Tile {coord} has zero overlap: IO={io_tile.shape}, {label}={zarr_tile.shape}"
+        )
+        np.testing.assert_array_equal(
+            zarr_tile[:b, :h, :w],
+            io_tile[:b, :h, :w],
+            err_msg=f"Tile {coord} differs between IO and {label} paths",
+        )
+
+
+def _assert_tiles_match_lossy(tiles_io, tiles_zarr, label="v3"):
+    """Assert all tiles are close enough for lossy compression.
+
+    Both paths decode the same compressed bytes with the same decoder, so results
+    should typically be identical.  Falls back to PSNR/SSIM if any divergence is
+    detected.
+    """
+    assert len(tiles_io) > 0, "No tiles from IO path"
+    assert len(tiles_zarr) > 0, f"No tiles from {label} path"
+    assert set(tiles_io.keys()) == set(tiles_zarr.keys()), (
+        f"Tile coordinate mismatch between IO and {label} paths. "
+        f"IO: {sorted(tiles_io.keys())}, {label}: {sorted(tiles_zarr.keys())}"
+    )
+    for coord in sorted(tiles_io.keys()):
+        io_tile = tiles_io[coord]
+        zarr_tile = tiles_zarr[coord]
+        assert io_tile.size > 0, f"IO tile {coord} is empty"
+        assert zarr_tile.size > 0, f"{label} tile {coord} is empty"
+        b = min(io_tile.shape[0], zarr_tile.shape[0])
+        h = min(io_tile.shape[1], zarr_tile.shape[1])
+        w = min(io_tile.shape[2], zarr_tile.shape[2])
+        assert b > 0 and h > 0 and w > 0, (
+            f"Tile {coord} has zero overlap: IO={io_tile.shape}, {label}={zarr_tile.shape}"
+        )
+        io_trimmed = io_tile[:b, :h, :w]
+        zarr_trimmed = zarr_tile[:b, :h, :w]
+
+        assert io_trimmed.dtype == zarr_trimmed.dtype, (
+            f"Tile {coord} dtype mismatch: IO={io_trimmed.dtype}, {label}={zarr_trimmed.dtype}"
+        )
+        if not np.array_equal(io_trimmed, zarr_trimmed):
+            psnr = calculate_psnr(io_trimmed, zarr_trimmed, use_actual_range=True)
+            ssim = calculate_ssim(io_trimmed, zarr_trimmed)
+            assert psnr >= MIN_PSNR_DB, (
+                f"Tile {coord} PSNR {psnr:.2f} dB below threshold {MIN_PSNR_DB} dB"
+            )
+            assert ssim >= MIN_SSIM, (
+                f"Tile {coord} SSIM {ssim:.4f} below threshold {MIN_SSIM}"
+            )
+
+
+def _run_v3_parity(src_path: Path, lossy: bool) -> None:
+    """Materialize a v3 store from *src_path* and assert tile parity with IO.open()."""
+    tiles_io = _read_all_tiles_via_io(src_path)
+    with tempfile.TemporaryDirectory() as store_dir:
+        _materialize_v3_store(src_path, Path(store_dir))
+        tiles_zarr = _read_all_tiles_via_zarr_v3(Path(store_dir))
+        if lossy:
+            _assert_tiles_match_lossy(tiles_io, tiles_zarr)
+        else:
+            _assert_tiles_match_lossless(tiles_io, tiles_zarr)
+
+
+# ---------------------------------------------------------------------------
+# NITF Uncompressed (IC=NC) — JbpBlockCodec, lossless
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.property
+class TestV3NitfUncompressed:
+    """Native v3 pipeline: NITF uncompressed (IC=NC) → JbpBlockCodec.
+
+    Dimensions are intentionally left non-block-aligned so partial edge tiles
+    exercise the trimming path in the comparison helper.
+    """
+
+    @given(realistic_image_for_compression(min_size=48, max_size=128, min_bands=1, max_bands=3))
+    @pbt_settings
+    def test_nc_io_vs_v3(self, image_tuple):
+        """IO path and native v3 pipeline produce identical tiles for IC=NC."""
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+
+        path = _write_nitf(
+            array, pixel_type, num_bands, num_rows, num_cols,
+            metadata_hints={"IC": "NC", "IMODE": "B"},
+            block_width=32, block_height=32,
+        )
+        try:
+            _run_v3_parity(path, lossy=False)
+        finally:
+            path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# NITF JPEG 2000 (IC=C8) — Jpeg2000Codec, lossy
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.property
+class TestV3NitfJ2K:
+    """Native v3 pipeline: NITF JPEG 2000 (IC=C8) → Jpeg2000Codec.
+
+    Dimensions are aligned to block size to avoid partial-tile J2K encoding
+    issues; non-block-aligned edge-tile parity is covered in Phase 2.
+    """
+
+    @given(realistic_image_for_compression(min_size=64, max_size=128, min_bands=1, max_bands=3))
+    @pbt_settings
+    def test_c8_io_vs_v3(self, image_tuple):
+        """IO path and native v3 pipeline produce matching tiles for IC=C8."""
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+
+        block_size = 32
+        num_rows = (num_rows // block_size) * block_size
+        num_cols = (num_cols // block_size) * block_size
+        assume(num_rows >= block_size and num_cols >= block_size)
+        array = np.ascontiguousarray(array[:, :num_rows, :num_cols])
+
+        decomp_levels = min(5, max(1, int(np.floor(np.log2(block_size))) - 1))
+
+        path = _write_nitf(
+            array, pixel_type, num_bands, num_rows, num_cols,
+            metadata_hints={
+                "IC": "C8",
+                "COMRAT": "02.0",
+                "J2K_DECOMPOSITION_LEVELS": str(decomp_levels),
+            },
+            block_width=block_size, block_height=block_size,
+        )
+        try:
+            _run_v3_parity(path, lossy=True)
+        finally:
+            path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# NITF JPEG DCT (IC=C3) — JpegCodec, lossy
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.property
+class TestV3NitfJpeg:
+    """Native v3 pipeline: NITF JPEG DCT (IC=C3) → JpegCodec."""
+
+    @given(jpeg_image_for_compression(min_size=64, max_size=128, min_bands=1, max_bands=3))
+    @pbt_settings
+    def test_c3_io_vs_v3(self, image_tuple):
+        """IO path and native v3 pipeline produce matching tiles for IC=C3."""
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+
+        block_size = 32
+        num_rows = (num_rows // block_size) * block_size
+        num_cols = (num_cols // block_size) * block_size
+        assume(num_rows >= block_size and num_cols >= block_size)
+        array = np.ascontiguousarray(array[:, :num_rows, :num_cols])
+
+        path = _write_nitf(
+            array, pixel_type, num_bands, num_rows, num_cols,
+            metadata_hints={"IC": "C3", "COMRAT": "75.0"},
+            block_width=block_size, block_height=block_size,
+        )
+        try:
+            _run_v3_parity(path, lossy=True)
+        finally:
+            path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# TIFF — TiffTileCodec, lossless
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.property
+class TestV3Tiff:
+    """Native v3 pipeline: TIFF → TiffTileCodec."""
+
+    @given(tiff_writable_image(min_size=48, max_size=128, min_bands=1, max_bands=3))
+    @pbt_settings
+    def test_tiff_io_vs_v3(self, image_tuple):
+        """IO path and native v3 pipeline produce identical tiles for TIFF.
+
+        Covers the full lossless matrix — ``{1..3} bands × {uncompressed, LZW,
+        Deflate} × {chunky, planar}`` — over every writer pixel type, with
+        dimensions left non-block-aligned so partial edge tiles exercise the
+        per-plane padding path.  Only lossy JPEG-in-TIFF is excluded (the JPEG
+        codec's pixel parity is covered by the NITF-C3 suite, which compares with
+        PSNR/SSIM rather than exact equality).
+        """
+        array, pixel_type, num_bands, num_rows, num_cols, hints = image_tuple
+        compression = hints["259"]
+        assume(compression != 7)  # JPEG TIFF is lossy; NITF-C3 covers the JPEG codec.
+
+        path = _write_tiff(array, pixel_type, num_bands, num_rows, num_cols, hints)
+        try:
+            _run_v3_parity(path, lossy=False)
+        finally:
+            path.unlink(missing_ok=True)
+
+    @pytest.mark.parametrize("num_bands", [1, 3])
+    @pytest.mark.parametrize("compression", [1, 5, 8])
+    @pytest.mark.parametrize("planar_config", [1, 2])
+    @pytest.mark.parametrize("pixel_type", [PixelType.UInt8, PixelType.UInt16])
+    def test_tiff_edge_tile_parity(self, num_bands, compression, planar_config, pixel_type):
+        """100×100 image on a 64×64 tile grid: partial edge tiles, every config.
+
+        The Hypothesis case above draws dimensions freely and will reach partial
+        edge tiles, but not deterministically for a *specific* config.  This pins
+        the whole matrix at a geometry where the right and bottom tiles are
+        partial, which is where per-plane padding needed separate verification —
+        a planar chunk is one plane's tile, so each plane pads independently.
+        """
+        num_rows = num_cols = 100
+        hints = {
+            "322": "64",           # TileWidth
+            "323": "64",           # TileLength
+            "259": compression,    # Compression
+            "317": 1,              # Predictor: None
+            "284": planar_config,  # PlanarConfiguration
+        }
+        dtype = np.dtype(pixel_type.to_numpy_dtype())
+        rng = np.random.default_rng(0)
+        array = rng.integers(
+            0, np.iinfo(dtype).max, size=(num_bands, num_rows, num_cols), dtype=dtype
+        )
+
+        path = _write_tiff(array, pixel_type, num_bands, num_rows, num_cols, hints)
+        try:
+            _run_v3_parity(path, lossy=False)
+        finally:
+            path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# DTED — DtedTileCodec, lossless (fixture-based)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.property
+class TestV3Dted:
+    """Native v3 pipeline: DTED → DtedTileCodec.
+
+    DTED is not writable via ``IO.open``, so this uses a checked-in fixture rather
+    than a Hypothesis strategy (per the design's DTED-writability resolution).
+    """
+
+    def test_dted_io_vs_v3(self):
+        """IO path and native v3 pipeline produce identical tiles for DTED."""
+        if not DTED_FIXTURE.exists():
+            pytest.skip("DTED test fixture not available")
+        _run_v3_parity(DTED_FIXTURE, lossy=False)
+
+
+# ---------------------------------------------------------------------------
+# Cross-protocol equivalence — the invariant the dual-protocol design rests on
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.property
+class TestCrossProtocolEquivalence:
+    """``decode(buf)`` (numcodecs) and ``await decode([(buf, spec)])`` (v3) agree.
+
+    Every codec in ``zarr_codecs.py`` carries two ``decode`` semantics in one class:
+    the synchronous single-buffer numcodecs filter protocol defined in the class
+    body, and the inherited asynchronous batched ``BytesBytesCodec.decode`` that the
+    v3 pipeline calls.  The class-body definition shadows the inherited one, so
+    ``decode`` routes on an ``_is_numcodecs_buffer`` discriminator at runtime.
+
+    That design is only sound if both routes are *equivalent* — the tests here are
+    what makes that a checked invariant rather than an assumption.  They feed one
+    codec instance the same chunk bytes twice, once per route, and require identical
+    pixels, dtype, and element count.
+    """
+
+    @given(realistic_image_for_compression(min_size=48, max_size=128, min_bands=1, max_bands=3))
+    @pbt_settings
+    def test_nc_cross_protocol(self, image_tuple):
+        """JbpBlockCodec: uncompressed NITF blocks decode identically both ways."""
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+
+        path = _write_nitf(
+            array, pixel_type, num_bands, num_rows, num_cols,
+            metadata_hints={"IC": "NC", "IMODE": "B"},
+            block_width=32, block_height=32,
+        )
+        try:
+            _run_cross_protocol_parity(path, "NITF-NC")
+        finally:
+            path.unlink(missing_ok=True)
+
+    @given(realistic_image_for_compression(min_size=64, max_size=128, min_bands=1, max_bands=3))
+    @pbt_settings
+    def test_c8_cross_protocol(self, image_tuple):
+        """Jpeg2000Codec: J2K codestreams decode identically both ways.
+
+        Dimensions are block-aligned here so this case isolates the decode itself;
+        the padding divergence the two routes are most likely to disagree on is
+        covered by :class:`TestEdgeTilePaddingParity`.
+        """
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+
+        block_size = 32
+        num_rows = (num_rows // block_size) * block_size
+        num_cols = (num_cols // block_size) * block_size
+        assume(num_rows >= block_size and num_cols >= block_size)
+        array = np.ascontiguousarray(array[:, :num_rows, :num_cols])
+
+        decomp_levels = min(5, max(1, int(np.floor(np.log2(block_size))) - 1))
+
+        path = _write_nitf(
+            array, pixel_type, num_bands, num_rows, num_cols,
+            metadata_hints={
+                "IC": "C8",
+                "COMRAT": "02.0",
+                "J2K_DECOMPOSITION_LEVELS": str(decomp_levels),
+            },
+            block_width=block_size, block_height=block_size,
+        )
+        try:
+            _run_cross_protocol_parity(path, "NITF-C8")
+        finally:
+            path.unlink(missing_ok=True)
+
+    @given(jpeg_image_for_compression(min_size=64, max_size=128, min_bands=1, max_bands=3))
+    @pbt_settings
+    def test_c3_cross_protocol(self, image_tuple):
+        """JpegCodec: JPEG streams decode identically both ways."""
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+
+        block_size = 32
+        num_rows = (num_rows // block_size) * block_size
+        num_cols = (num_cols // block_size) * block_size
+        assume(num_rows >= block_size and num_cols >= block_size)
+        array = np.ascontiguousarray(array[:, :num_rows, :num_cols])
+
+        path = _write_nitf(
+            array, pixel_type, num_bands, num_rows, num_cols,
+            metadata_hints={"IC": "C3", "COMRAT": "75.0"},
+            block_width=block_size, block_height=block_size,
+        )
+        try:
+            _run_cross_protocol_parity(path, "NITF-C3")
+        finally:
+            path.unlink(missing_ok=True)
+
+    @given(tiff_writable_image(min_size=48, max_size=128, min_bands=1, max_bands=3))
+    @pbt_settings
+    def test_tiff_cross_protocol(self, image_tuple):
+        """TiffTileCodec: TIFF tiles decode identically both ways.
+
+        Skips configurations that attach no codec — single-band uncompressed TIFF is
+        raw pixel bytes, so there is no dual-protocol ``decode`` to compare.
+        """
+        array, pixel_type, num_bands, num_rows, num_cols, hints = image_tuple
+        assume(hints["259"] != 7)  # JPEG-in-TIFF is lossy; NITF-C3 covers the JPEG codec.
+
+        path = _write_tiff(array, pixel_type, num_bands, num_rows, num_cols, hints)
+        try:
+            chunk_set = _extract_chunks(path)
+            # Single-band uncompressed TIFF legitimately has no codec (the raw tile
+            # bytes *are* the pixel data, per TIFF 6.0 tag 284 p. 38).
+            assume(chunk_set.codec is not None)
+            _assert_cross_protocol_parity(chunk_set, "TIFF")
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_dted_cross_protocol(self):
+        """DtedTileCodec: DTED records decode identically both ways."""
+        if not DTED_FIXTURE.exists():
+            pytest.skip("DTED test fixture not available")
+        _run_cross_protocol_parity(DTED_FIXTURE, "DTED")
+
+
+# ---------------------------------------------------------------------------
+# Edge-tile padding parity — where the two routes pad via independent code
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.property
+class TestEdgeTilePaddingParity:
+    """Partial edge tiles pad identically on both ``decode`` routes.
+
+    This is the sharpest cross-protocol case because the two routes reach *different
+    padding implementations* rather than a shared one:
+
+    - the numcodecs route in ``Jpeg2000Codec.decode`` re-derives the nominal tile
+      size from the J2K main header (``struct.unpack`` of ``XTsiz``/``YTsiz``,
+      divided by ``2 ** resolution_level``) and pads to that;
+    - ``_decode_single`` pads to ``chunk_spec.shape``, which zarr supplies.
+
+    Nothing in the code ties those two numbers together, so every case below uses
+    dimensions that are **not** block-aligned — the right and bottom tiles decode
+    smaller than a full tile and must be padded — and asserts both routes land on
+    the same shape and the same content.
+    """
+
+    @pytest.mark.parametrize("num_bands", [1, 3])
+    @pytest.mark.parametrize("resolution_level", [0, 1, 2])
+    def test_j2k_edge_tile_padding(self, num_bands, resolution_level):
+        """J2K partial tiles: header-derived padding equals chunk-shape padding.
+
+        100×100 on a 64×64 block grid, so three of four tiles are partial (36 rows
+        and/or 36 columns of real data).  ``resolution_level`` is swept because it
+        divides both padding computations — the numcodecs route by
+        ``2 ** resolution_level`` off the header, the v3 route implicitly through
+        the chunk shape — and a mismatch in the ceil-division would only surface at
+        an odd reduced size (64→32→16 here stays even, 36→18→9 does not).
+        """
+        num_rows = num_cols = 100
+        block_size = 64
+        rng = np.random.default_rng(0)
+        array = rng.integers(0, 255, size=(num_bands, num_rows, num_cols), dtype=np.uint8)
+
+        path = _write_nitf(
+            array, PixelType.UInt8, num_bands, num_rows, num_cols,
+            metadata_hints={
+                "IC": "C8",
+                "COMRAT": "02.0",
+                "J2K_DECOMPOSITION_LEVELS": "4",
+            },
+            block_width=block_size, block_height=block_size,
+        )
+        try:
+            base = _extract_chunks(path)
+            codec = type(base.codec)(
+                main_header=base.codec.main_header,
+                resolution_level=resolution_level,
+            )
+
+            # Expected padded shape comes from the *image geometry* written above —
+            # a full block, reduced by the resolution level — not from re-reading the
+            # codec's header the way its own padding code does.  Deriving it
+            # independently is what makes this an oracle instead of a restatement.
+            scale = 1 << resolution_level
+            reduced = math.ceil(block_size / scale)
+            expected_shape = (num_bands, reduced, reduced)
+
+            # Confirm the header the numcodecs route will consult agrees with that
+            # geometry, so a header/geometry disagreement fails here and is not
+            # silently absorbed into the shape comparison below.
+            header_tile = _j2k_header_tile_size(codec)
+            assert header_tile == (block_size, block_size), (
+                f"J2K main header declares tile size {header_tile}, but the image was "
+                f"written with {block_size}×{block_size} blocks; without a usable "
+                f"header the numcodecs route does not pad at all"
+            )
+
+            chunk_set = base._replace(codec=codec, chunk_shape=expected_shape)
+
+            grid = sorted(chunk_set.chunks)
+            assert len(grid) == 4, f"expected a 2×2 tile grid, got {grid}"
+            partial = [c for c in grid if c != (0, 0, 0)]
+            assert len(partial) == 3, (
+                f"expected 3 partial edge tiles at {num_rows}×{num_cols} on a "
+                f"{block_size}×{block_size} grid, got {partial}"
+            )
+
+            _assert_cross_protocol_parity(chunk_set, f"NITF-C8 rl={resolution_level}")
+
+            # Both routes must also land on the full tile shape, not merely agree
+            # with each other — otherwise two routes that both failed to pad would
+            # pass.  Check that each partial tile really does decode short first,
+            # so the padding step is known to have had work to do.
+            for coord in partial:
+                raw = decode_jpeg2000(
+                    chunk_set.chunks[coord],
+                    main_header=codec._main_header_bytes,
+                    resolution_level=resolution_level,
+                )
+                assert raw.shape != expected_shape, (
+                    f"tile {coord} decoded to the full {expected_shape} unpadded, so "
+                    f"this geometry does not exercise the padding paths"
+                )
+                padded = _decode_numcodecs(codec, chunk_set.chunks[coord])
+                assert padded.shape == expected_shape, (
+                    f"partial tile {coord}: numcodecs route padded {raw.shape} to "
+                    f"{padded.shape}, expected the nominal tile shape {expected_shape}"
+                )
+        finally:
+            path.unlink(missing_ok=True)
+
+    @pytest.mark.parametrize("num_bands", [1, 3])
+    @pytest.mark.parametrize("compression", [1, 5, 8])
+    @pytest.mark.parametrize("planar_config", [1, 2])
+    def test_tiff_edge_tile_padding(self, num_bands, compression, planar_config):
+        """TIFF partial tiles decode identically both ways, across the matrix.
+
+        Planar sources are chunked per plane, so each plane is decoded on its own —
+        the case per-plane handling needed separate verification.
+
+        Unlike J2K, TIFF edge tiles do not actually reach the codecs' padding code:
+        per TIFF 6.0 (TileWidth, tag 322, p. 67) tile data is always stored padded out
+        to the full nominal tile, so the decoder returns a full tile and both routes'
+        padding steps are no-ops.  The assertion below records that, so if a future
+        change starts handing short TIFF buffers to the codec, this test says which
+        of the two assumptions broke rather than just failing on pixels.
+        """
+        num_rows = num_cols = 100
+        block_size = 64
+        hints = {
+            "322": str(block_size),  # TileWidth
+            "323": str(block_size),  # TileLength
+            "259": compression,      # Compression
+            "317": 1,                # Predictor: None
+            "284": planar_config,    # PlanarConfiguration
+        }
+        rng = np.random.default_rng(0)
+        array = rng.integers(0, 255, size=(num_bands, num_rows, num_cols), dtype=np.uint8)
+
+        path = _write_tiff(array, PixelType.UInt8, num_bands, num_rows, num_cols, hints)
+        try:
+            chunk_set = _extract_chunks(path)
+            if chunk_set.codec is None:
+                pytest.skip(
+                    "single-band uncompressed TIFF attaches no codec (raw tile bytes "
+                    "are the pixel data), so there are no two routes to compare"
+                )
+
+            label = f"TIFF bands={num_bands} compression={compression} planar={planar_config}"
+            grid = sorted(chunk_set.chunks)
+            assert {(r, c) for _, r, c in grid} == {(0, 0), (0, 1), (1, 0), (1, 1)}, (
+                f"{label}: expected a 2×2 tile grid with partial right/bottom tiles, "
+                f"got {grid}"
+            )
+
+            _assert_cross_protocol_parity(chunk_set, label)
+
+            # Every tile, edge included, decodes to a full nominal tile — the source
+            # of the "padding is a no-op here" claim in the docstring.
+            codec = chunk_set.codec
+            for coord in grid:
+                raw = decode_tiff_tile(
+                    chunk_set.chunks[coord],
+                    compression=codec.compression,
+                    bits_per_sample=codec.bits_per_sample,
+                    samples_per_pixel=codec.samples_per_pixel,
+                    photometric=codec.photometric,
+                    planar_config=codec.planar_config,
+                    predictor=codec.predictor,
+                    tile_width=codec.tile_width,
+                    tile_height=codec.tile_height,
+                    sample_format=codec.sample_format,
+                    jpeg_tables=codec._jpeg_tables_bytes,
+                )
+                assert raw.shape == chunk_set.chunk_shape, (
+                    f"{label} tile {coord}: decoded to {raw.shape}, expected the full "
+                    f"nominal tile {chunk_set.chunk_shape} — TIFF stores edge tiles "
+                    f"padded, so a short decode means that assumption no longer holds"
+                )
+        finally:
+            path.unlink(missing_ok=True)
+
+    @given(realistic_image_for_compression(min_size=48, max_size=128, min_bands=1, max_bands=3))
+    @pbt_settings
+    def test_nc_edge_tile_padding(self, image_tuple):
+        """Uncompressed NITF partial tiles decode identically both ways.
+
+        Dimensions are used as drawn — deliberately *not* rounded to the block size
+        — so partial right/bottom blocks occur.
+        """
+        array, pixel_type, num_bands, num_rows, num_cols = image_tuple
+        block_size = 32
+        # A block-aligned draw exercises no padding, which is not what this asserts.
+        assume(num_rows % block_size != 0 or num_cols % block_size != 0)
+
+        path = _write_nitf(
+            array, pixel_type, num_bands, num_rows, num_cols,
+            metadata_hints={"IC": "NC", "IMODE": "B"},
+            block_width=block_size, block_height=block_size,
+        )
+        try:
+            _run_cross_protocol_parity(path, "NITF-NC edge")
+        finally:
+            path.unlink(missing_ok=True)
