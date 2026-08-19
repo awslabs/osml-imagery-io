@@ -543,15 +543,37 @@ OVERVIEW_PATTERN = re.compile(r"^(image:\d+):overview:(\d+)$")
 MASK_PATTERN = re.compile(r":mask$")
 
 
+def _no_indexable_segments(url):
+    """Build the error raised when a URL yields nothing indexable.
+
+    Two distinct conditions produce it — no parent image assets at all, and
+    parents whose arrays could not be built — and both mean the same thing to a
+    caller, so the wording lives here rather than being duplicated at each
+    raise site.
+    """
+    return ValueError(f"No indexable image segments found in {url}")
+
+
 def _classify_assets(all_assets):
     """Classify assets into parent images and their overviews.
+
+    The classification rule is **"not an overview, not a mask"**: every
+    remaining key is a parent.  Callers pass keys already filtered by
+    ``get_asset_keys(asset_type=AssetType.Image)``, so each key is by
+    definition an image asset — re-testing the key *spelling* would discard
+    that guarantee for a weaker one.  Do not reintroduce a ``key.startswith
+    ("image:")`` test here: ``image:N`` is a NITF/TIFF convention, not a
+    library-wide one, and requiring it made every other format unindexable.
+    DTED, whose sole image asset is keyed ``elevation``, was silently dropped
+    until this was relaxed.
 
     Transparency-mask assets (keys ending in ``:mask``) are recognized via
     :data:`MASK_PATTERN` and deliberately excluded from both ``parents`` and
     ``overviews``: they are not part of the resolution pyramid the Zarr view
     exposes.  Consuming a mask as nodata is a deferred follow-on (see the
     design doc's Non-Goals), so masks are skipped here rather than surfaced as
-    extra Zarr arrays.
+    extra Zarr arrays.  The mask check must stay *first* in the loop — it is
+    what keeps masks out of the catch-all parent branch.
 
     Parameters
     ----------
@@ -560,7 +582,7 @@ def _classify_assets(all_assets):
     Returns
     -------
     parents : dict
-        Mapping parent key (e.g. "image:0") to asset.
+        Mapping parent key (e.g. "image:0", or "elevation" for DTED) to asset.
     overviews : dict
         Mapping parent key to list of (level, asset) tuples
         sorted by level number ascending.
@@ -576,7 +598,11 @@ def _classify_assets(all_assets):
             parent_key = m.group(1)
             level = int(m.group(2))
             overviews.setdefault(parent_key, []).append((level, asset))
-        elif key.startswith("image:"):
+        else:
+            # Any non-overview, non-mask image asset is a parent, whatever its
+            # key spelling.  Every overview-key producer in the library emits
+            # ``image:N:overview:M`` (matched above), so nothing lands here by
+            # accident.
             parents[key] = asset
 
     # Sort overviews by level number
@@ -983,6 +1009,12 @@ class OversightMLParser:
             # so the access path (``root["0/data"]``) is the same regardless
             # of whether overviews are present.
             #
+            # Nothing to index.  Report it in the caller's terms — ``max()`` on
+            # an empty dict would otherwise raise "max() iterable argument is
+            # empty", which names neither the file nor the problem.
+            if not parents:
+                raise _no_indexable_segments(url)
+
             # When multiple independent parent segments exist (e.g. a main
             # image + an embedded thumbnail), select the largest by pixel
             # count.  The previous loop overwrote ``group`` on each
@@ -1035,9 +1067,7 @@ class OversightMLParser:
                 )
 
             if group is None:
-                raise ValueError(
-                    f"No indexable image segments found in {url}"
-                )
+                raise _no_indexable_segments(url)
 
             store = ManifestStore(group=group, registry=registry)
 

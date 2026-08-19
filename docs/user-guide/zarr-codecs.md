@@ -358,10 +358,29 @@ The codec introduces a capability not found in existing Zarr codecs:
 **overlap-aware edge trimming**. DTED cells share boundary posts with their
 neighbors (the easternmost column of one cell duplicates the westernmost column
 of the next). The `trim_*` parameters discard these shared edges during decode,
-so the output chunks tile seamlessly without data duplication. This enables
-representing an entire DTED archive as a single contiguous Zarr array — each
-file becomes one chunk, edges are trimmed at decode time, and consumers see a
-seamless elevation surface with no preprocessing required.
+so the output chunks tile seamlessly without data duplication. This makes it
+possible to represent an entire DTED archive as a single contiguous Zarr array —
+each file becomes one chunk, edges are trimmed at decode time, and consumers see
+a seamless elevation surface with no preprocessing required.
+
+```{note}
+The codec supports multi-cell archives, but this library does not build them for
+you. `OversightMLParser` indexes **one file at a time** (plus its `.rN` R-set
+companions), producing a single-cell, one-chunk array — so `iminfo`, `tiles`, and
+`write_tile_index` all operate per file.
+
+To build an archive mosaic, write a store yourself with one chunk reference per
+cell and `trim_*` set from each cell's grid position. Cells you omit resolve to
+the array's `fill_value`, so a sparse global array does not need a file for every
+1° cell.
+
+One array covers one DTED **latitude zone**. Zarr declares `codecs` per array
+rather than per chunk, so all chunks share one `num_lon_lines`; per
+MIL-PRF-89020B §3.9.2 and Table II, DTED's longitude spacing widens with
+latitude (3″ below 50°, 6″ from 50°–70°, and so on). A single array spans
+0°–50° cleanly; a pole-to-pole mosaic needs one array per zone or a resampling
+step. See [the DTED codec reference](../codecs/dted.md) for the zone table.
+```
 
 ```json
 {

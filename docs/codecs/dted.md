@@ -66,9 +66,48 @@ reasons:
 
 The codec handles all three transformations: stripping record framing, converting
 signed-magnitude to two's complement, transposing to row-major order, and
-trimming shared boundary posts. This enables representing an entire DTED archive
-as a single contiguous Zarr array where each file becomes one chunk and consumers
-see a seamless elevation surface with no preprocessing required.
+trimming shared boundary posts.
+
+### Multi-cell archives
+
+Because `trim_*` removes the shared boundary posts at decode time, the codec
+supports a *multi-cell* array: one chunk per DTED file, tiled into a single
+seamless elevation surface with no duplicated edges and no preprocessing.
+
+Two things are worth stating precisely, because the capability and the tooling
+are not the same thing:
+
+**This library ships no multi-cell producer.** `OversightMLParser` indexes one
+URL at a time (plus its `.rN` R-set companions), yielding a single-cell,
+one-chunk array. Assembling an archive is a consumer-side task: emit one chunk
+reference per cell into a Zarr store whose `codecs` chain carries this codec,
+with `trim_*` set from each cell's position in the grid. Cells absent from the
+store — oceans, unreleased areas — resolve to the array's `fill_value`, so a
+sparse global array needs no file for every 1° cell.
+
+**One array covers one DTED latitude zone.** Zarr declares `codecs` per *array*,
+not per chunk, so every chunk in an array shares one configuration — including
+`num_lon_lines`. MIL-PRF-89020B §3.9.2 fixes latitude spacing per DTED level but
+makes longitude spacing depend on the geographic zone, so cell dimensions change
+with latitude ([MIL-PRF-89020B][mil-prf-89020b] Table II, Level 1):
+
+| Zone | Latitude | Interval (lat × lon, arc-sec) |
+|------|----------|-------------------------------|
+| I    | 0°–50°   | 3 × 3                         |
+| II   | 50°–70°  | 3 × 6                         |
+| III  | 70°–75°  | 3 × 9                         |
+| IV   | 75°–80°  | 3 × 12                        |
+| V    | 80°–90°  | 3 × 18                        |
+
+A single array therefore spans Zone I (0°–50°, either hemisphere) cleanly, and a
+pole-to-pole mosaic needs one array per zone — a Zarr group of five — or a
+resampling step to normalize spacing. `record_size` is unaffected: it derives from
+`num_lat_points`, which is constant within a level.
+
+The trimming model itself is spec-backed for any zone. MIL-PRF-89020B §3.5.1
+defines cells as 1°×1° on whole-degree lines, and §3.5.2 requires that adjacent
+files have no gaps and that "the only overlap that exists is along adjacent
+boundaries. All adjacent boundaries shall be coincident."
 
 ## Configuration Parameters
 

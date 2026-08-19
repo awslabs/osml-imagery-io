@@ -29,6 +29,7 @@ Feature: virtualizarr-migration
 """
 
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -63,6 +64,11 @@ from aws.osml.io.virtualizarr_parsers import (  # noqa: E402
     OversightMLParser,
     write_tile_index,
 )
+
+# DTED is not writable via IO.open, so its producer coverage uses a checked-in
+# fixture (mirrors test_v3_pipeline.py).
+DATA_DIR = Path("data/unit")
+DTED_FIXTURE = DATA_DIR / "dted-16x16-1band-int16.dt1"
 
 # ---------------------------------------------------------------------------
 # Writers (mirrors test_v3_pipeline.py / test_end_to_end.py)
@@ -338,11 +344,7 @@ def _assert_is_native_v3(refs: dict) -> None:
 class TestV3ProducerRoundTrip:
     """A produced v3 reference index reads back the pixels ``IO.open()`` sees.
 
-    One case per codec the producer can attach.  DTED is absent by necessity, not
-    oversight: its assets are keyed ``elevation`` rather than ``image:N``, so
-    ``OversightMLParser`` indexes no segments for it at all — a pre-existing
-    format-independent limitation of the parser, identical on the v2 path.  DTED's
-    codec is covered against a hand-built store in ``test_v3_pipeline.py``.
+    One case per codec the producer can attach.
     """
 
     @given(realistic_image_for_compression(min_size=48, max_size=128, min_bands=1, max_bands=3))
@@ -439,6 +441,38 @@ class TestV3ProducerRoundTrip:
             _assert_is_native_v3(refs)
         finally:
             path.unlink(missing_ok=True)
+
+    @pytest.mark.parametrize("zarr_format", [2, 3])
+    def test_dted_producer_round_trip(self, zarr_format):
+        """DtedTileCodec: DTED through a produced index, in both Zarr formats.
+
+        Uses the checked-in fixture rather than a Hypothesis strategy because
+        DTED is not writable via ``IO.open`` — a limitation independent of
+        indexability.  The fixture is copied into a temp dir so the produced
+        index references a path this test owns.
+
+        Both formats are asserted because the defect that kept DTED out of this
+        suite lived in the *parser*, upstream of either serializer: DTED assets
+        are keyed ``elevation`` rather than ``image:N``, and the asset classifier
+        required the ``image:`` prefix, so no segments were indexed and the
+        parser raised ``max() iterable argument is empty`` on both paths.
+        """
+        if not DTED_FIXTURE.exists():
+            pytest.skip("DTED test fixture not available")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / DTED_FIXTURE.name
+            shutil.copy(DTED_FIXTURE, src)
+
+            tiles_io = _read_all_tiles_via_io(src)
+            index_path = Path(tmp) / f"index-v{zarr_format}.json"
+            _produce_index(src, index_path, zarr_format=zarr_format)
+
+            tiles_idx = _read_all_tiles_via_index(index_path)
+            _assert_tiles_match_lossless(tiles_io, tiles_idx, f"v{zarr_format} index")
+
+            if zarr_format == 3:
+                _assert_is_native_v3(json.loads(index_path.read_text())["refs"])
 
 
 # ---------------------------------------------------------------------------

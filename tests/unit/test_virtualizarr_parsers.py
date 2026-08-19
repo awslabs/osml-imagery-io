@@ -604,6 +604,90 @@ class TestClassifyAssets:
         assert parents == {"image:1": image}
         assert overviews == {}
 
+    def test_non_image_prefixed_key_is_a_parent(self):
+        """A key that is not spelled ``image:N`` is still a parent image.
+
+        ``image:N`` is a NITF/TIFF convention, not a library-wide one. DTED's
+        sole image asset is keyed ``elevation`` (``src/dted/image.rs``), and
+        while the classifier required an ``image:`` prefix that asset was
+        silently dropped — leaving ``parents`` empty so the caller raised
+        ``max() iterable argument is empty``. Keys reaching this function have
+        already passed ``get_asset_keys(asset_type=AssetType.Image)``, so the
+        key spelling carries no additional information worth filtering on.
+        """
+        from aws.osml.io.virtualizarr_parsers import _classify_assets
+
+        elevation = "elevation_sentinel"
+        all_assets = [("elevation", elevation)]
+
+        parents, overviews = _classify_assets(all_assets)
+
+        assert parents == {"elevation": elevation}
+        assert overviews == {}
+
+    def test_non_image_prefixed_key_with_masks_and_overviews(self):
+        """The relaxed parent rule still excludes masks and groups overviews.
+
+        Guards the catch-all ``else`` branch: broadening what counts as a parent
+        must not let a mask or an overview fall through into ``parents``.
+        """
+        from aws.osml.io.virtualizarr_parsers import _classify_assets
+
+        elevation = "elevation_sentinel"
+        ovr1 = "overview_1_sentinel"
+        mask = "mask_sentinel"
+        all_assets = [
+            ("elevation", elevation),
+            ("image:0", "image_0_sentinel"),
+            ("image:0:overview:1", ovr1),
+            ("image:0:mask", mask),
+        ]
+
+        parents, overviews = _classify_assets(all_assets)
+
+        assert parents == {"elevation": elevation, "image:0": "image_0_sentinel"}
+        assert overviews == {"image:0": [(1, ovr1)]}
+
+
+class TestNoIndexableSegments:
+    """A URL yielding no indexable image assets reports that, in those terms."""
+
+    def test_empty_parents_raises_intended_message(self, tmp_dir, monkeypatch):
+        """No parent assets → the "no indexable image segments" ValueError.
+
+        Regression guard: this condition used to flow into a bare ``max()`` over
+        an empty dict, so the failure surfaced as ``max() iterable argument is
+        empty`` — naming neither the file nor the problem — and the library's
+        own message for the case was unreachable.
+
+        Every fixture in ``data/unit/`` has at least one image asset, so the
+        state is induced by stubbing the classifier rather than with a crafted
+        file.
+        """
+        import aws.osml.io.virtualizarr_parsers as vp
+
+        path = tmp_dir / "test.ntf"
+        _write_nitf(path, num_cols=64, num_rows=64, num_bands=1)
+
+        monkeypatch.setattr(vp, "_classify_assets", lambda _assets: ({}, {}))
+
+        with pytest.raises(ValueError, match="No indexable image segments"):
+            vp.OversightMLParser()(str(path))
+
+    def test_empty_parents_error_names_the_url(self, tmp_dir, monkeypatch):
+        """The error identifies which URL had nothing to index."""
+        import aws.osml.io.virtualizarr_parsers as vp
+
+        path = tmp_dir / "test.ntf"
+        _write_nitf(path, num_cols=64, num_rows=64, num_bands=1)
+
+        monkeypatch.setattr(vp, "_classify_assets", lambda _assets: ({}, {}))
+
+        with pytest.raises(ValueError) as excinfo:
+            vp.OversightMLParser()(str(path))
+
+        assert "test.ntf" in str(excinfo.value)
+
 
 def _make_manifest_array(rows, cols, num_bands=1):
     """Create a synthetic ManifestArray with the given dimensions.
