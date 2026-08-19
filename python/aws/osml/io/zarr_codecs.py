@@ -1,9 +1,16 @@
 """Zarr codec plugins for JPEG 2000, JPEG, uncompressed JBP/NITF, TIFF, and DTED imagery.
 
 Codec classes subclass the zarr-python v3 ``BytesBytesCodec`` ABC and are
-registered via entry points in ``pyproject.toml``.  The zarr v3 codec pipeline
-discovers them automatically when it encounters the corresponding URI-based
-codec name in ``.zarray`` metadata.
+registered via entry points in ``pyproject.toml``.  Two groups are declared,
+because the two consumer paths resolve codecs through different registries:
+
+- ``zarr.codecs`` — the native v3 pipeline (``zarr.open`` / ``xarray``) matches
+  the URI-based codec name in a ``zarr.json`` codec chain.
+- ``numcodecs.codecs`` — the numcodecs / Kerchunk v2 path (fsspec
+  ``ReferenceFileSystem``) matches the ``id`` field in ``.zarray`` filters.
+
+Declaring both is what makes discovery automatic on either path; a group
+covers only its own registry.
 
 Usage (automatic via entry points — no import needed):
     import xarray as xr
@@ -1056,6 +1063,13 @@ def _register_numcodecs():
     reads zarr v2 metadata from Kerchunk JSON and uses
     ``numcodecs.get_codec(filter_config)`` to resolve codecs by their ``id``
     field.  This function registers our codec classes so that resolution works.
+
+    Redundant for an installed package — the ``numcodecs.codecs`` entry points in
+    ``pyproject.toml`` let ``get_codec`` load these classes without any prior
+    import, which is what makes a cold v2 read work.  This call still matters when
+    the package is used from a source tree with no distribution metadata, where
+    entry points are unavailable and importing this module is the only way the
+    codecs become resolvable.
     """
     try:
         import numcodecs

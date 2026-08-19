@@ -59,7 +59,21 @@ docs = [
 Homepage = "https://github.com/awslabs/osml-imagery-io"
 Repository = "https://github.com/awslabs/osml-imagery-io"
 
+# Native zarr v3 pipeline: zarr.open / xarray resolve codecs by URI from this group.
 [project.entry-points."zarr.codecs"]
+"https://awslabs.github.io/osml-imagery-io/codecs/jpeg2000" = "aws.osml.io.zarr_codecs:Jpeg2000Codec"
+"https://awslabs.github.io/osml-imagery-io/codecs/jpeg" = "aws.osml.io.zarr_codecs:JpegCodec"
+"https://awslabs.github.io/osml-imagery-io/codecs/jbp-block" = "aws.osml.io.zarr_codecs:JbpBlockCodec"
+"https://awslabs.github.io/osml-imagery-io/codecs/tiff-tile" = "aws.osml.io.zarr_codecs:TiffTileCodec"
+"https://awslabs.github.io/osml-imagery-io/codecs/dted" = "aws.osml.io.zarr_codecs:DtedTileCodec"
+
+# numcodecs / Kerchunk v2 path: `.zarray` filters name codecs by their `id`, which
+# numcodecs resolves from its own entry-point group — it does not read zarr.codecs
+# above. Without this group a v2 read raises UnknownCodecError unless the consumer
+# imports aws.osml.io.zarr_codecs first (importing aws.osml.io is not enough, since
+# nothing in the package imports the codec module eagerly). The keys match each
+# codec's `codec_id`, which is what `get_config()` writes into the index.
+[project.entry-points."numcodecs.codecs"]
 "https://awslabs.github.io/osml-imagery-io/codecs/jpeg2000" = "aws.osml.io.zarr_codecs:Jpeg2000Codec"
 "https://awslabs.github.io/osml-imagery-io/codecs/jpeg" = "aws.osml.io.zarr_codecs:JpegCodec"
 "https://awslabs.github.io/osml-imagery-io/codecs/jbp-block" = "aws.osml.io.zarr_codecs:JbpBlockCodec"

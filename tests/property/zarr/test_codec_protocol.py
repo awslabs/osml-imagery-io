@@ -14,11 +14,13 @@ reached at all:
    unit suite pins seven hand-picked cases; this generalizes them with Hypothesis.
 
 2. **Entry-point discovery.**  Building metadata from ``codec.to_dict()`` with the
-   class already imported does not prove URI → entry point → class resolution.
+   class already imported does not prove name → entry point → class resolution.
    Only a *cold* interpreter does, so those tests run in a subprocess that
    asserts ``aws.osml.io.zarr_codecs`` is absent from ``sys.modules`` before
-   resolution and present after.  This is what validates the
-   ``[project.entry-points."zarr.codecs"]`` table in ``pyproject.toml``.
+   resolution and present after.  Both consumer paths are covered because they
+   read *different* entry-point groups — native v3 resolves URIs through
+   ``zarr.codecs``, while numcodecs/Kerchunk v2 resolves ``id`` values through
+   ``numcodecs.codecs`` — so declaring one does nothing for the other.
 
 3. **Config serialization.**  A codec reaches a consumer as a dict in
    ``zarr.json`` (``to_dict``/``from_dict``) or ``.zarray`` (``get_config``/
@@ -275,6 +277,54 @@ for store in manifest["stores"]:
 print("COLD-RESOLUTION-OK")
 """
 
+# The v2 counterpart: reads a real Kerchunk index through fsspec ReferenceFileSystem,
+# the flow docs/user-guide/zarr-codecs.md documents.  Codecs here are named by their
+# numcodecs ``id`` in ``.zarray`` filters and resolved through the
+# ``numcodecs.codecs`` entry-point group — a different registry from the v3 path
+# above, which is why declaring only ``zarr.codecs`` left this path broken.
+_COLD_V2_RESOLUTION_CHILD = r"""
+import json
+import sys
+
+import numpy as np
+
+MODULE = "aws.osml.io.zarr_codecs"
+
+assert MODULE not in sys.modules, (
+    "%s was already imported; this subprocess cannot prove numcodecs "
+    "entry-point discovery" % MODULE
+)
+
+manifest = json.load(open(sys.argv[1]))
+
+# Resolve by numcodecs id, exactly as zarr's v2 metadata parser does for .zarray
+# filters, before touching any store.
+import numcodecs
+
+for codec_id, config in manifest["numcodecs_configs"].items():
+    codec = numcodecs.get_codec(dict(config))
+    assert type(codec).__module__ == MODULE, (codec_id, type(codec).__module__)
+    assert codec.codec_id == codec_id, (codec_id, codec.codec_id)
+
+assert MODULE in sys.modules, (
+    "resolving a numcodecs id did not import %s, so the class did not come from "
+    "the entry point" % MODULE
+)
+
+import fsspec
+import zarr
+
+for store in manifest["indexes"]:
+    fs = fsspec.filesystem("reference", fo=store["index"], skip_instance_cache=True)
+    root = zarr.open_group(fs.get_mapper(""), mode="r")
+    got = np.asarray(root["0/data"][:])
+    expected = np.load(store["expected"])
+    assert got.shape == expected.shape, (store["label"], got.shape, expected.shape)
+    np.testing.assert_array_equal(got, expected, err_msg=store["label"])
+
+print("COLD-V2-RESOLUTION-OK")
+"""
+
 
 def _extract_fixture_chunks(src_path):
     """Return ``(codec, shape, chunk_shape, dtype, chunks, expected)`` for a fixture.
@@ -347,14 +397,21 @@ def _write_v3_store(store_dir, codec, shape, chunk_shape, dtype, chunks):
 
 @pytest.mark.property
 class TestEntryPointDiscovery:
-    """A v3 store opens by URI in an interpreter that never imported the codecs.
+    """Stores open in an interpreter that never imported the codec module.
 
     Every other test in the repo has ``aws.osml.io.zarr_codecs`` imported before zarr
     sees a store — including the unit test that builds metadata from
     ``codec.to_dict()`` — so none of them exercise the path a real consumer takes:
-    ``zarr.open`` finds an unknown codec name and must locate the class through the
-    ``zarr.codecs`` entry-point group.  A broken or missing entry in
-    ``pyproject.toml`` is invisible until then.
+    zarr finds an unknown codec name and must locate the class through an entry
+    point.  A broken or missing entry in ``pyproject.toml`` is invisible until then.
+
+    Both consumer paths are covered because they resolve through **different
+    registries**, and satisfying one does nothing for the other:
+
+    - native v3 (``zarr.json``, codec named by URI) → ``zarr.registry`` →
+      the ``zarr.codecs`` group;
+    - numcodecs / Kerchunk v2 (``.zarray`` filters, codec named by ``id``) →
+      ``numcodecs.registry`` → the ``numcodecs.codecs`` group.
     """
 
     def test_uris_resolve_and_stores_read_from_a_cold_interpreter(self, tmp_path):
@@ -394,12 +451,89 @@ class TestEntryPointDiscovery:
             f"subprocess exited 0 without completing its checks.\nstdout:\n{result.stdout}"
         )
 
-    def test_entry_point_table_covers_every_exported_codec(self):
-        """The declared entry points are exactly the module's public codec classes.
+    def test_kerchunk_v2_index_reads_from_a_cold_interpreter(self, tmp_path):
+        """A Kerchunk v2 index reads without importing the codec module first.
 
-        Catches the drift the subprocess test cannot: a codec added to ``__all__`` but
+        This is the flow ``docs/user-guide/zarr-codecs.md`` documents as needing no
+        explicit import.  It resolves codecs through ``numcodecs.registry``, keyed on
+        the ``id`` that ``get_config()`` writes into ``.zarray`` filters — so it needs
+        a ``numcodecs.codecs`` entry-point group of its own.  With only
+        ``zarr.codecs`` declared, this raised
+        ``UnknownCodecError: codec not available`` unless the consumer happened to
+        import ``aws.osml.io.zarr_codecs`` (importing ``aws.osml.io`` is not enough,
+        since nothing in the package imports the codec module eagerly).
+
+        Uses the shipping producer end to end — ``OversightMLParser`` →
+        ``write_tile_index`` — rather than a hand-built index, so the ``id`` values
+        under test are the ones the library actually emits.
+        """
+        pytest.importorskip("fsspec")
+        pytest.importorskip("virtualizarr")
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
+
+        # DTED is excluded: OversightMLParser finds no image segment to index for it,
+        # so there is no v2 artifact to read. Its codec still resolves cold — that is
+        # covered by the numcodecs_configs check the child runs before any store.
+        v2_fixtures = {slug: path for slug, path in CODEC_FIXTURES.items() if slug != "dted"}
+        missing = [slug for slug, path in v2_fixtures.items() if not path.exists()]
+        if missing:
+            pytest.skip(f"missing fixtures for {', '.join(sorted(missing))}")
+
+        indexes = []
+        for slug, fixture in sorted(v2_fixtures.items()):
+            _, _, _, _, _, expected = _extract_fixture_chunks(fixture)
+
+            index_path = tmp_path / f"{slug}.index.json"
+            store = OversightMLParser()(str(fixture.resolve()))
+            write_tile_index(store, str(index_path))
+
+            expected_path = tmp_path / f"{slug}.v2.npy"
+            np.save(expected_path, expected)
+            indexes.append({
+                "label": slug,
+                "index": str(index_path),
+                "expected": str(expected_path),
+            })
+
+        # Every codec's numcodecs config, including DTED's, resolved by `id` before any
+        # store is opened — so a missing entry fails on the codec that lacks it rather
+        # than only on the formats that happen to have a v2 fixture.
+        numcodecs_configs = {}
+        for slug, fixture in sorted(CODEC_FIXTURES.items()):
+            if not fixture.exists():
+                continue
+            codec, *_ = _extract_fixture_chunks(fixture)
+            numcodecs_configs[codec.codec_id] = codec.get_config()
+
+        manifest_path = tmp_path / "v2-manifest.json"
+        manifest_path.write_text(json.dumps({
+            "numcodecs_configs": numcodecs_configs,
+            "indexes": indexes,
+        }))
+
+        result = subprocess.run(
+            [sys.executable, "-c", _COLD_V2_RESOLUTION_CHILD, str(manifest_path)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            "cold-interpreter numcodecs resolution failed — the numcodecs.codecs entry "
+            "points in pyproject.toml may be missing or misspelled.\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        assert "COLD-V2-RESOLUTION-OK" in result.stdout, (
+            f"subprocess exited 0 without completing its checks.\nstdout:\n{result.stdout}"
+        )
+
+    @pytest.mark.parametrize("group", ["zarr.codecs", "numcodecs.codecs"])
+    def test_entry_point_table_covers_every_exported_codec(self, group):
+        """Each group's declared entry points are exactly the module's codec classes.
+
+        Catches the drift the subprocess tests cannot: a codec added to ``__all__`` but
         never declared in ``pyproject.toml`` would simply be absent from
-        ``REGISTERED_CODECS`` and silently untested above.
+        ``REGISTERED_CODECS`` and silently untested above.  Parametrized over both
+        groups so a codec declared for one consumer path but forgotten for the other
+        fails here — the exact shape of the bug this suite's v2 test was added for.
         """
         from importlib.metadata import entry_points
 
@@ -407,17 +541,17 @@ class TestEntryPointDiscovery:
 
         declared = {
             ep.name: ep.value
-            for ep in entry_points(group="zarr.codecs")
+            for ep in entry_points(group=group)
             if ep.name.startswith(CODEC_URI_PREFIX)
         }
         assert declared == {
             CODEC_URI_PREFIX + slug: f"{CODEC_MODULE}:{class_name}"
             for slug, class_name in REGISTERED_CODECS.items()
-        }, "installed zarr.codecs entry points do not match this suite's expectations"
+        }, f"installed {group} entry points do not match this suite's expectations"
 
         exported = {name for name in module.__all__ if name.endswith("Codec")}
         assert exported == set(REGISTERED_CODECS.values()), (
-            f"codec classes exported from {CODEC_MODULE} but not declared as zarr.codecs "
+            f"codec classes exported from {CODEC_MODULE} but not declared as {group} "
             f"entry points: {sorted(exported - set(REGISTERED_CODECS.values()))}"
         )
 
