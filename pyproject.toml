@@ -30,22 +30,31 @@ dependencies = [
     "numpy>=1.20",
 ]
 
+# Extras are user-facing features. Developer tooling lives in
+# [dependency-groups] below, so it stays out of published metadata.
 [project.optional-dependencies]
-dev = [
-    "maturin>=1.7",
-    "pytest>=7.0",
-    "pytest-benchmark>=4.0",
-    "pytest-cov>=4.0",
-    "pyyaml>=6.0",
-    "ruff>=0.1",
-    "hypothesis>=6.0",
-    "pyarrow>=14.0",
-]
-
 virtualizarr = ["virtualizarr>=2.0"]
+
 # zarr capped at <3.2: virtualizarr imports zarr.core.metadata.v3.RegularChunkGrid,
 # which was removed in zarr 3.2.0. Remove cap when virtualizarr supports zarr 3.2+.
-zarr = ["zarr>=3.0,<3.2", "fsspec"]
+#
+# pyarrow and kerchunk are runtime dependencies of Kerchunk Parquet tile indexes,
+# not dev tools, and nothing supplies either transitively:
+#   - pyarrow — the index is written and read with engine="pyarrow" at both ends
+#     (fastparquet cannot write one under pandas 3.x + numpy 2.x, and the engine
+#     is not recorded in the store). zarr requires none, fsspec only under its
+#     arrow/full/hdfs extras, virtualizarr names fastparquet instead.
+#   - kerchunk — fsspec's LazyReferenceMapper.write() does `import kerchunk.df`
+#     to encode inline chunk data, so Parquet *writes* fail without it. JSON
+#     output is unaffected.
+# Without both, a [zarr] install could not write a tile index, or read one it
+# had just written.
+zarr = [
+    "zarr>=3.0,<3.2",
+    "fsspec",
+    "pyarrow>=14.0",
+    "kerchunk>=0.2",
+]
 
 docs = [
     "sphinx>=7.0",
@@ -53,6 +62,39 @@ docs = [
     "sphinx-autodoc-typehints",
     "sphinxcontrib-mermaid",
     "furo",
+]
+
+# PEP 735 dependency groups — developer tooling, installed with
+# `pip install -e . --group dev`. These are deliberately NOT extras: nothing a
+# consumer installs should pull a test runner, and groups stay out of the
+# published wheel metadata.
+[dependency-groups]
+# Everything needed to run the full suite with nothing silently skipped. The
+# optional-feature gates are pulled via the extras rather than restated, so a
+# version can never drift between the two declarations.
+#
+# The zarr/virtualizarr surface is guarded by `pytest.importorskip`, so omitting
+# any of these does not fail — it *skips*, which reads as a green run over code
+# that never executed. `pytest -rs` shows what skipped and why; a skip count
+# above the handful of intentional ones means a gate is missing here.
+test = [
+    "pytest>=7.0",
+    "pytest-benchmark>=4.0",
+    "pytest-cov>=4.0",
+    "pyyaml>=6.0",
+    "hypothesis>=6.0",
+    "osml-imagery-io[zarr]",
+    "osml-imagery-io[virtualizarr]",
+    "xarray>=2024.1",       # tests/property/zarr/test_v3_producer.py
+    "fastparquet>=2024.2",  # engine-agnostic Parquet read coverage
+]
+
+lint = ["ruff>=0.1"]
+
+dev = [
+    {include-group = "test"},
+    {include-group = "lint"},
+    "maturin>=1.7",
 ]
 
 [project.urls]

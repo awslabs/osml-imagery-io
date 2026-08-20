@@ -21,6 +21,10 @@ Usage:
     # Parquet output, or list segments without indexing.
     python scripts/generate_tile_index.py s3://bucket/image.ntf -o index.parquet
     python scripts/generate_tile_index.py image.ntf --list-segments
+
+A Parquet index needs pyarrow (``pip install "osml-imagery-io[zarr]"``) and must be
+read back with ``MultiReferenceFileSystem``; a stock fsspec ``ReferenceFileSystem``
+cannot open one.
 """
 
 import argparse
@@ -96,51 +100,6 @@ def _patch_multi_range_refs(refs: dict, multi_range_refs: dict) -> dict:
     )
 
     return _patch(refs, multi_range_refs)
-
-
-def _write_json(vds, output: str, multi_range_refs: dict) -> None:
-    """Write kerchunk refs as JSON, patching in multi-range entries."""
-    import json
-
-    from virtualizarr.accessor import dataset_to_kerchunk_refs
-
-    kerchunk = dataset_to_kerchunk_refs(vds)
-    if "refs" in kerchunk:
-        kerchunk["refs"] = _patch_multi_range_refs(kerchunk["refs"], multi_range_refs)
-    else:
-        kerchunk = _patch_multi_range_refs(kerchunk, multi_range_refs)
-
-    with open(output, "w") as f:
-        json.dump(kerchunk, f)
-
-
-def _write_parquet(vds, output: str, multi_range_refs: dict | None = None) -> None:
-    """Write kerchunk refs as parquet using pyarrow engine.
-
-    Works around a fastparquet + pandas 3.x + numpy 2.x incompatibility
-    in the default ``to_kerchunk(format='parquet')`` path.
-    """
-    import fsspec
-    from fsspec.implementations.reference import LazyReferenceMapper
-    from virtualizarr.accessor import dataset_to_kerchunk_refs
-
-    refs = dataset_to_kerchunk_refs(vds)
-    if "refs" in refs:
-        refs = refs["refs"]
-
-    if multi_range_refs:
-        refs = _patch_multi_range_refs(refs, multi_range_refs)
-
-    fs, _ = fsspec.core.url_to_fs(output)
-    out = LazyReferenceMapper.create(
-        record_size=100_000,
-        root=output,
-        fs=fs,
-        engine="pyarrow",
-    )
-    for k in sorted(refs):
-        out[k] = refs[k]
-    out.flush()
 
 
 def generate_index(
@@ -279,6 +238,7 @@ Examples:
         "-o",
         "--output",
         help="Output file path. Extension determines format: .json or .parquet "
+        "(.parquet needs pyarrow and MultiReferenceFileSystem to read back) "
         "(default: <input_stem>.tile_index.json)",
     )
     parser.add_argument(

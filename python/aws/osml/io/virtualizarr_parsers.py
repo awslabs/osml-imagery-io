@@ -1282,16 +1282,35 @@ def _emit_refs(refs, output, ext, *, use_templates, zarr_format=2):
         from fsspec.implementations.reference import LazyReferenceMapper
 
         fs, _ = fsspec.core.url_to_fs(output)
-        # ``engine="pyarrow"`` is required, not a preference: writing with
-        # fastparquet under pandas 3.x + numpy 2.x fails outright ("Error
-        # converting column 'path' to bytes using encoding UTF8 ... Unable to
-        # avoid copy while creating an array as requested").
-        out = LazyReferenceMapper.create(
-            record_size=100_000,
-            root=output,
-            fs=fs,
-            engine="pyarrow",
-        )
+        # ``engine="pyarrow"`` is required, not a preference, on both sides:
+        #
+        # Writing — fastparquet under pandas 3.x + numpy 2.x fails outright
+        # ("Error converting column 'path' to bytes using encoding UTF8 ...
+        # Unable to avoid copy while creating an array as requested").
+        #
+        # Reading — the engine is *not recorded in the store* (``.zmetadata``
+        # holds only ``metadata`` and ``record_size``), and fsspec's
+        # ``LazyReferenceMapper`` defaults to fastparquet.  The two engines
+        # disagree on how a null in an object column round-trips, so a reader
+        # using the other engine misreads every chunk reference.  The writer and
+        # reader must therefore agree out of band:
+        # ``MultiReferenceFileSystem`` pins the same engine on the read side,
+        # which is why a Parquet index must be opened with it rather than a
+        # stock ``ReferenceFileSystem``.
+        try:
+            out = LazyReferenceMapper.create(
+                record_size=100_000,
+                root=output,
+                fs=fs,
+                engine="pyarrow",
+            )
+        except ImportError as exc:
+            raise ImportError(
+                "Writing a Kerchunk Parquet tile index requires the 'pyarrow' "
+                "package, which is not installed. Install it with "
+                "'pip install osml-imagery-io[zarr]' (the zarr extra supplies "
+                "pyarrow), or use a '.json' output path instead."
+            ) from exc
         for k in sorted(refs):
             out[k] = refs[k]
         out.flush()
@@ -1504,8 +1523,12 @@ def write_tile_index(
         The manifest store returned by ``OversightMLParser()``.
     output : str
         Output file path.  Extension determines format: ``.json`` for
-        Kerchunk JSON, ``.parquet`` for Kerchunk Parquet.  Parquet requires
-        ``zarr_format=2`` — see :func:`_emit_refs`.
+        Kerchunk JSON, ``.parquet`` for a Kerchunk Parquet directory.  Parquet
+        requires ``zarr_format=2`` — see :func:`_emit_refs` — needs ``pyarrow``
+        (the ``osml-imagery-io[zarr]`` extra), and must be read back with
+        ``MultiReferenceFileSystem``, which a stock fsspec
+        ``ReferenceFileSystem`` cannot do.  Multi-resolution pyramids are
+        supported in both formats.
     segments : list[str], optional
         Subgroup keys to include (e.g. ``["0", "2"]``).  If ``None``, all
         subgroups are included.
@@ -1526,6 +1549,8 @@ def write_tile_index(
         If the output extension is not ``.json`` or ``.parquet``, if a
         requested segment is not found, if both ``template_base`` and
         ``url_overrides`` are given, or if *zarr_format* is not 2 or 3.
+    ImportError
+        If ``.parquet`` output is requested without ``pyarrow`` installed.
 
     Examples
     --------

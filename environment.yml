@@ -18,26 +18,42 @@ dependencies:
   # Native libraries for image codec support
   - openjpeg>=2.5  # JPEG 2000 codec (libopenjp2)
 
-  # Development tools
-  - pytest>=7.0
-  - pytest-cov>=4.0
-  - ruff>=0.1
-  - hypothesis>=6.0
-  - pyarrow>=14.0
+  # Build tools (maturin from conda-forge — needed before `maturin develop`)
+  - maturin>=1.7
+  - pip
 
-  # Documentation
+  # Documentation (conda-forge builds; not in the `docs` extra's pip form)
   - sphinx>=7.0
   - myst-parser>=2.0
   - sphinx-autodoc-typehints
   - sphinxcontrib-mermaid
   - furo
 
-  # Build tools (maturin from conda-forge)
-  - maturin>=1.7
-
   # Rust toolchain (optional - can also use system rustup)
   # Uncomment if you want conda to manage Rust:
   # - rust>=1.70
+
+  # Test runners (conda-forge builds)
+  - pytest>=7.0
+  - pytest-cov>=4.0
+  - pytest-benchmark>=4.0
+  - pyyaml>=6.0
+  - ruff>=0.1
+  - hypothesis>=6.0
+
+  # Feature dependencies come from the extras so their versions live in exactly
+  # one place (pyproject.toml). Note pip rejects `--group` inside a requirements
+  # file, which is what this block is, so the PEP 735 `dev` group cannot be
+  # named here — the two test-only gates it adds are listed explicitly below.
+  #
+  # A missing gate does not fail the suite: pytest.importorskip makes it *skip*,
+  # which still reports green over code that never ran. Keep this in sync with
+  # the `test` group in pyproject.toml, and use `pytest -rs` to check nothing
+  # skipped for a missing dependency.
+  - pip:
+      - -e .[zarr,virtualizarr]
+      - xarray>=2024.1       # tests/property/zarr/test_v3_producer.py
+      - fastparquet>=2024.2  # engine-agnostic Parquet read coverage
 
 variables:
   # Environment variables set when conda env is activated

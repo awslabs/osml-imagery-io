@@ -101,8 +101,15 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install maturin pytest hypothesis
+          pip install maturin
           maturin develop --features extension-module,openjpeg,libjpeg-turbo,libtiff
-          pip install ".[dev,zarr,virtualizarr]" kerchunk
-          pytest tests/unit tests/property -m "not integration and not benchmark"
+          # The dev group pulls the zarr/virtualizarr extras and the test-only
+          # gates (xarray, fastparquet). Do not name individual packages here:
+          # anything missing makes importorskip skip its tests, which still
+          # reports green.
+          pip install -e . --group dev
+          # -rs lists every skip and its reason. Optional deps are gated by
+          # pytest.importorskip, so a missing one skips rather than fails; the
+          # skip list is what makes that visible in the log.
+          pytest tests/unit tests/property -m "not integration and not benchmark" -rs
 

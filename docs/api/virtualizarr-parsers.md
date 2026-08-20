@@ -179,6 +179,55 @@ each record from the v2 `.zarray` `shape`/`chunks`, which a native v3 store has
 no equivalent of. Requesting `.parquet` with `zarr_format=3` raises `ValueError`
 rather than writing an index nothing can read back.
 
+### Reading a Parquet index
+
+Parquet indexes must be opened with {class}`~aws.osml.io.multi_reference_fs.MultiReferenceFileSystem`.
+A stock fsspec `ReferenceFileSystem` **cannot** open one, and multi-resolution
+Parquet is fully supported:
+
+```python
+from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
+import zarr
+
+fs = MultiReferenceFileSystem(fo="image.tile_index.parquet")
+root = zarr.open_group(fs.get_mapper(""), mode="r", zarr_format=2)
+
+full_res = root["0/data"]     # level 0
+half_res = root["1/data"]     # level 1 — the pyramid survives the round-trip
+```
+
+Three properties of the Parquet container make this necessary, all handled by
+`MultiReferenceFileSystem`:
+
+- **The Parquet engine is not recorded in the store.** Indexes are written with
+  `engine="pyarrow"`, but `LazyReferenceMapper` defaults to `fastparquet` on
+  read, and the two engines decode nulls differently — enough to misread every
+  chunk reference. `MultiReferenceFileSystem` pins the same engine the writer
+  used, and normalizes nulls so an index written by another tool with
+  `fastparquet` reads correctly too.
+- **Nested group keys confuse the stock field listing.** A hierarchical store has
+  a `.zgroup` per pyramid level, which fsspec's `listdir()` mistakes for an array
+  field and then fails to find a `.zarray` for.
+- **Templates cannot be stored.** A Parquet store has nowhere to keep the
+  Kerchunk `"templates"` dict, so a portable index (`template_base="{{base}}"`)
+  resolves its placeholders from `template_overrides` alone:
+
+  ```python
+  fs = MultiReferenceFileSystem(
+      fo="image.tile_index.parquet",
+      template_overrides={"base": "s3://bucket/path/"},
+  )
+  ```
+
+Reading *and* writing a Parquet index requires `pyarrow`, supplied by the
+`zarr` extra:
+
+```bash
+pip install "osml-imagery-io[zarr]"
+```
+
+Without it, both paths raise an `ImportError` naming the package and this extra.
+
 ### Relocating chunk references
 
 Relocating chunk references is a serialization-time concern controlled by two

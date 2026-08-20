@@ -8,17 +8,26 @@ Tests cover:
 - Standard reference compatibility with ReferenceFileSystem
 - Async path produces same results as sync path
 - Constructor accepts same arguments as ReferenceFileSystem
+- Kerchunk Parquet reference directories, which the stock ReferenceFileSystem
+  cannot open at all for a hierarchical store
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import json
 from pathlib import Path
 
+import numpy as np
 import pytest
-from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
-from fsspec.implementations.reference import ReferenceFileSystem
+from aws.osml.io.multi_reference_fs import (
+    ArrayOnlyReferenceMapper,
+    MultiReferenceFileSystem,
+    _is_null,
+    _null_normalized,
+)
+from fsspec.implementations.reference import LazyReferenceMapper, ReferenceFileSystem
 
 # ---------------------------------------------------------------------------
 # _is_multi_range detection
@@ -420,3 +429,477 @@ class TestTemplateExpansion:
         assert len(fs.cat("single")) == 5
         expected_multi = content[0:3] + content[5:7]
         assert fs.cat("multi") == expected_multi
+
+
+# ---------------------------------------------------------------------------
+# Parquet null normalization predicates
+# ---------------------------------------------------------------------------
+
+
+class TestNullPredicate:
+    """_is_null classifies every value either Parquet engine can produce.
+
+    The predicate must be pandas-free (this library declares no pandas
+    dependency) yet catch the ``numpy.float64('nan')`` fastparquet produces.
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        [None, float("nan"), np.float64("nan")],
+        ids=["none", "float-nan", "numpy-float64-nan"],
+    )
+    def test_null_values(self, value):
+        assert _is_null(value)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            b"",
+            b"abc",
+            b"base64:AAEC",
+            "path/to/file",
+            np.bytes_(b"abc"),
+            bytearray(b"ab"),
+            0,
+            0.0,
+            np.float64(0.0),
+            1.5,
+        ],
+        ids=[
+            "empty-bytes", "bytes", "base64-bytes", "str", "numpy-bytes",
+            "bytearray", "int-zero", "float-zero", "numpy-float-zero", "float",
+        ],
+    )
+    def test_non_null_values(self, value):
+        """An empty inline chunk (b"") must not be mistaken for a null."""
+        assert not _is_null(value)
+
+    def test_object_dtype_nan_normalized(self):
+        """pyarrow returns ``path`` as object dtype holding nan, not float dtype.
+
+        A ``dtype.kind == "f"`` check alone would silently miss this, which is
+        why the normalizer tests ``"fO"``.
+        """
+        arr = np.array(["a/b", float("nan"), "c/d"], dtype=object)
+        out = _null_normalized(arr)
+        assert out[0] == "a/b"
+        assert out[1] is None
+        assert out[2] == "c/d"
+
+    def test_float_dtype_nan_normalized(self):
+        """fastparquet returns an all-null ``raw`` column as float64."""
+        out = _null_normalized(np.array([np.nan, np.nan], dtype="float64"))
+        assert out.dtype == object
+        assert out[0] is None and out[1] is None
+
+    def test_integer_columns_untouched(self):
+        """``offset``/``size`` cannot carry nulls and are returned as-is."""
+        arr = np.array([0, 869, 12], dtype="int64")
+        assert _null_normalized(arr) is arr
+
+
+# ---------------------------------------------------------------------------
+# Kerchunk Parquet reference directories
+# ---------------------------------------------------------------------------
+
+
+def _write_parquet_store(root: Path, src: Path, *, levels=("0",), template_base=None):
+    """Hand-build a hierarchical Kerchunk Parquet store.
+
+    Mirrors the shape ``write_tile_index(..., "x.parquet")`` produces — a root
+    group, a group per resolution level, and a ``data`` array under each — but
+    without depending on the parser, so this stays a unit test of the reader.
+
+    Each level's array has 4 one-byte chunks: chunks 0 and 2 are URL references
+    into *src*, chunks 1 and 3 are inline raw bytes.  That mix within a single
+    record is what forces ``path`` to object dtype containing ``nan`` under
+    pyarrow, distinguishing a correct null normalization from a float-only one.
+
+    Written with ``engine="pyarrow"`` for the same reason ``_emit_refs`` pins it:
+    fastparquet cannot write one of these stores under pandas 3.x + numpy 2.x.
+    """
+    import fsspec
+
+    content = src.read_bytes()
+    fs, root_str = fsspec.core.url_to_fs(str(root))
+    mapper = LazyReferenceMapper.create(
+        record_size=10, root=root_str, fs=fs, engine="pyarrow"
+    )
+    mapper[".zgroup"] = json.dumps({"zarr_format": 2})
+    mapper[".zattrs"] = json.dumps(
+        {
+            "multiscales": [
+                {
+                    "version": "0.4",
+                    "datasets": [{"path": lvl} for lvl in levels],
+                }
+            ]
+        }
+    )
+    expected: dict[str, bytes] = {}
+    for i, level in enumerate(levels):
+        mapper[f"{level}/.zgroup"] = json.dumps({"zarr_format": 2})
+        mapper[f"{level}/.zattrs"] = json.dumps({})
+        mapper[f"{level}/data/.zarray"] = json.dumps(
+            {
+                "zarr_format": 2,
+                "shape": [4],
+                "chunks": [1],
+                "dtype": "|u1",
+                "compressor": None,
+                "filters": None,
+                "fill_value": 0,
+                "order": "C",
+            }
+        )
+        mapper[f"{level}/data/.zattrs"] = json.dumps({"_ARRAY_DIMENSIONS": ["x"]})
+        url = f"{template_base}{src.name}" if template_base else str(src)
+        for chunk in range(4):
+            key = f"{level}/data/{chunk}"
+            if chunk % 2 == 0:
+                offset = 10 * i + chunk
+                mapper[key] = [url, offset, 1]
+                expected[key] = content[offset : offset + 1]
+            else:
+                inline = bytes([0xA0 + 10 * i + chunk])
+                mapper[key] = inline
+                expected[key] = inline
+    mapper.flush()
+    return expected
+
+
+@pytest.fixture
+def parquet_store(tmp_path, data_file):
+    """A single-level hierarchical Parquet store plus its expected chunk bytes."""
+    src, _ = data_file
+    root = tmp_path / "index.parquet"
+    expected = _write_parquet_store(root, src)
+    return root, expected
+
+
+class TestParquetReferenceDirectory:
+    """A hierarchical Parquet index opens and reads back correctly.
+
+    Every test here fails against the stock ``ReferenceFileSystem``: nested
+    ``.zgroup`` keys make upstream ``listdir()`` report the group prefix ``"0"``
+    as an array field, and ``_get_chunk_sizes("0")`` then raises
+    ``KeyError: '0/.zarray'`` while the store is still being constructed.
+    """
+
+    def test_construction_succeeds(self, parquet_store):
+        root, _ = parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        assert isinstance(fs.references, ArrayOnlyReferenceMapper)
+
+    def test_stock_mapper_misreports_group_prefix_as_a_field(self, parquet_store):
+        """Pins the upstream defect this class exists to work around.
+
+        Asserted against ``listdir()`` rather than by expecting the
+        ``KeyError: '0/.zarray'`` that ``ReferenceFileSystem(...)`` raises,
+        because that construction failure is *order-dependent*: ``listdir()``
+        returns a ``set``, and ``__init__`` stops iterating ``references.values()``
+        as soon as it resolves a remote protocol.  Whether it reaches the bogus
+        ``'0'`` field before breaking varies with set iteration order, i.e. with
+        ``PYTHONHASHSEED``.  The field set itself is deterministic.
+
+        If a future fsspec fixes ``listdir()``, this test fails and the override
+        can be reconsidered — it is the signal, not a guard against regression.
+        """
+        import fsspec
+
+        root, _ = parquet_store
+        ref_fs, root_str = fsspec.core.url_to_fs(str(root))
+        stock = LazyReferenceMapper(root_str, fs=ref_fs, engine="pyarrow")
+
+        # The group prefix '0' has a .zgroup but no .zarray, yet upstream reports
+        # it alongside the real array field — and every consumer of listdir()
+        # assumes an array, so _get_chunk_sizes('0') raises.
+        assert stock.listdir() == {"0", "0/data"}
+        with pytest.raises(KeyError, match=r"0/\.zarray"):
+            stock._get_chunk_sizes("0")
+
+        # Ours reports only the array field, so that call site is never reached.
+        assert ArrayOnlyReferenceMapper(root_str, fs=ref_fs).listdir() == {"0/data"}
+
+    def test_listdir_reports_only_array_fields(self, parquet_store):
+        root, _ = parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        assert fs.references.listdir() == {"0/data"}
+
+    def test_engine_is_pyarrow(self, parquet_store):
+        """The reader's engine matches the writer's, which the store cannot record."""
+        root, _ = parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        assert fs.references.engine == "pyarrow"
+
+    def test_chunk_reads_after_construction(self, parquet_store):
+        """Reads must work post-construction, not just at construction.
+
+        A second mapper is built lazily during the first read, so a
+        construction-only assertion can pass while every read still fails.
+        """
+        root, expected = parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        for key, want in expected.items():
+            assert fs.cat(key) == want, f"chunk {key} resolved incorrectly"
+
+    def test_mixed_inline_and_url_refs_in_one_record(self, parquet_store):
+        """Inline-raw and URL chunks in a single record all resolve.
+
+        This is the case that distinguishes a correct null normalization from one
+        checking float dtype only: with both kinds present, pyarrow returns
+        ``path`` as *object* dtype containing ``nan``.
+        """
+        root, expected = parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        url_keys = [k for k in expected if k.endswith(("/0", "/2"))]
+        inline_keys = [k for k in expected if k.endswith(("/1", "/3"))]
+        assert url_keys and inline_keys, "fixture must mix both reference forms"
+        for key in url_keys + inline_keys:
+            assert fs.cat(key) == expected[key]
+
+    def test_reads_with_fastparquet_engine_on_read(self, parquet_store, monkeypatch):
+        """Forcing fastparquet on read still resolves every chunk.
+
+        Without the null normalization this raises
+        ``TypeError: object of type 'numpy.float64' has no len()`` — fastparquet
+        decodes the null ``raw`` column to ``nan``, and upstream's
+        ``raw is not None`` test then returns the float as if it were chunk data.
+
+        This is what makes the reader engine-agnostic, so an index written by some
+        other tool with fastparquet is not a landmine.  It is asserted from the
+        read side because fastparquet cannot *write* one of these stores under
+        pandas 3.x + numpy 2.x at all (``Error converting column "path" to bytes
+        using encoding UTF8``) — the same incompatibility that makes the writer
+        pin pyarrow.
+        """
+        pytest.importorskip("fastparquet")
+        root, expected = parquet_store
+
+        class FastparquetMapper(ArrayOnlyReferenceMapper):
+            def __init__(self, mapper_root, fs=None, **kwargs):
+                kwargs["engine"] = "fastparquet"
+                super().__init__(mapper_root, fs=fs, **kwargs)
+
+        monkeypatch.setattr(
+            "aws.osml.io.multi_reference_fs.ArrayOnlyReferenceMapper",
+            FastparquetMapper,
+        )
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        assert fs.references.engine == "fastparquet"
+        for key, want in expected.items():
+            assert fs.cat(key) == want
+
+    def test_ls_root_succeeds(self, parquet_store):
+        """``ls("")`` works via the dircache fallback.
+
+        Narrowing ``listdir()`` to array fields makes the parent's short-circuit
+        to ``LazyReferenceMapper.ls`` raise for the root, since the parent never
+        consults ``dircache``.
+        """
+        root, _ = parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        names = fs.ls("", detail=False)
+        assert "0" in names, f"group level missing from ls(''): {names}"
+
+    def test_ls_detail_returns_dicts(self, parquet_store):
+        root, _ = parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        entries = fs.ls("", detail=True)
+        assert all(isinstance(e, dict) and "name" in e for e in entries)
+
+    def test_isdir_on_group_level(self, parquet_store):
+        """``isdir("0")`` is True even though ``listdir()`` omits group prefixes."""
+        root, _ = parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        assert fs.isdir("0")
+
+    def test_isdir_false_for_missing_path(self, parquet_store):
+        root, _ = parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        assert not fs.isdir("nope")
+
+    def test_ls_missing_path_raises(self, parquet_store):
+        root, _ = parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        with pytest.raises(FileNotFoundError):
+            fs.ls("nope")
+
+    def test_multi_level_store(self, tmp_path, data_file):
+        """A two-level pyramid keeps both levels readable."""
+        src, _ = data_file
+        root = tmp_path / "pyramid.parquet"
+        expected = _write_parquet_store(root, src, levels=("0", "1"))
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        assert fs.references.listdir() == {"0/data", "1/data"}
+        for key, want in expected.items():
+            assert fs.cat(key) == want
+
+    def test_zarr_group_reads_both_levels(self, tmp_path, data_file):
+        """zarr can open the store and both pyramid levels decode."""
+        zarr = pytest.importorskip("zarr", minversion="3.0")
+        src, _ = data_file
+        root = tmp_path / "zarr_pyramid.parquet"
+        expected = _write_parquet_store(root, src, levels=("0", "1"))
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        group = zarr.open_group(fs.get_mapper(""), mode="r", zarr_format=2)
+        assert "multiscales" in dict(group.attrs)
+        for level in ("0", "1"):
+            values = np.asarray(group[f"{level}/data"][:])
+            want = np.frombuffer(
+                b"".join(expected[f"{level}/data/{c}"] for c in range(4)),
+                dtype=np.uint8,
+            )
+            np.testing.assert_array_equal(values, want)
+
+
+class TestParquetTemplateExpansion:
+    """Portable Parquet indexes resolve ``{{base}}`` from ``template_overrides``.
+
+    The Parquet container has nowhere to store a Kerchunk ``"templates"`` dict, so
+    the overrides are the only source of substitutions.  Without expansion these
+    reads fail with ``ReferenceNotReachable`` on the literal ``{{base}}...`` URL.
+    """
+
+    @pytest.fixture
+    def portable_store(self, tmp_path, data_file):
+        src, _ = data_file
+        root = tmp_path / "portable.parquet"
+        expected = _write_parquet_store(root, src, template_base="{{base}}")
+        return root, expected, str(src.parent) + "/"
+
+    def test_templates_expanded_from_overrides(self, portable_store):
+        root, expected, base = portable_store
+        fs = MultiReferenceFileSystem(
+            fo=str(root),
+            skip_instance_cache=True,
+            template_overrides={"base": base},
+        )
+        for key, want in expected.items():
+            assert fs.cat(key) == want
+
+    def test_mapper_receives_the_overrides(self, portable_store):
+        root, _, base = portable_store
+        fs = MultiReferenceFileSystem(
+            fo=str(root),
+            skip_instance_cache=True,
+            template_overrides={"base": base},
+        )
+        assert fs.references.templates == {"base": base}
+
+    def test_unexpanded_placeholder_is_unreachable(self, portable_store):
+        """Without overrides the URL stays literal, and the fetch fails loudly."""
+        from fsspec.implementations.reference import ReferenceNotReachable
+
+        root, expected, _ = portable_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        url_key = next(k for k in expected if k.endswith("/0"))
+        with pytest.raises(ReferenceNotReachable):
+            fs.cat(url_key)
+
+    def test_inline_chunks_unaffected_by_templates(self, portable_store):
+        """Inline raw chunks carry no URL, so expansion must leave them alone."""
+        root, expected, base = portable_store
+        fs = MultiReferenceFileSystem(
+            fo=str(root),
+            skip_instance_cache=True,
+            template_overrides={"base": base},
+        )
+        for key in (k for k in expected if k.endswith(("/1", "/3"))):
+            assert fs.cat(key) == expected[key]
+
+    def test_absolute_urls_unaffected_by_overrides(self, parquet_store):
+        """An index with no placeholders ignores overrides rather than corrupting."""
+        root, expected = parquet_store
+        fs = MultiReferenceFileSystem(
+            fo=str(root),
+            skip_instance_cache=True,
+            template_overrides={"base": "s3://nope/"},
+        )
+        for key, want in expected.items():
+            assert fs.cat(key) == want
+
+
+class TestMissingPyarrowIsActionable:
+    """Absent pyarrow, the error names the package and the extra supplying it.
+
+    Upstream raises a bare ``ImportError("engine choice `pyarrow` is not
+    installed.")``, which does not tell a user how to fix their install.
+    """
+
+    @pytest.fixture
+    def pyarrow_absent(self, monkeypatch):
+        """Hide pyarrow the way fsspec detects it — via ``find_spec``."""
+        import importlib.util
+
+        real = importlib.util.find_spec
+
+        def fake(name, *args, **kwargs):
+            return None if name == "pyarrow" else real(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", fake)
+
+    def test_read_error_names_package_and_extra(self, parquet_store, pyarrow_absent):
+        import fsspec
+
+        root, _ = parquet_store
+        ref_fs, root_str = fsspec.core.url_to_fs(str(root))
+        with pytest.raises(ImportError) as excinfo:
+            ArrayOnlyReferenceMapper(root_str, fs=ref_fs)
+        message = str(excinfo.value)
+        assert "pyarrow" in message
+        assert "osml-imagery-io[zarr]" in message
+
+    def test_read_error_does_not_imply_read_only(self, parquet_store, pyarrow_absent):
+        """Writing needs pyarrow too; the message must not suggest otherwise."""
+        import fsspec
+
+        root, _ = parquet_store
+        ref_fs, root_str = fsspec.core.url_to_fs(str(root))
+        with pytest.raises(ImportError, match="not read-only"):
+            ArrayOnlyReferenceMapper(root_str, fs=ref_fs)
+
+    def test_write_error_names_package_and_extra(self, tmp_path, pyarrow_absent):
+        from aws.osml.io.virtualizarr_parsers import _emit_refs
+
+        with pytest.raises(ImportError) as excinfo:
+            _emit_refs(
+                {".zgroup": '{"zarr_format": 2}'},
+                str(tmp_path / "out.parquet"),
+                ".parquet",
+                use_templates=False,
+            )
+        message = str(excinfo.value)
+        assert "pyarrow" in message
+        assert "osml-imagery-io[zarr]" in message
+
+
+class TestNonParquetInputsUnchanged:
+    """JSON and dict inputs must take the parent path, untouched by the override."""
+
+    def test_dict_input_uses_plain_dict_references(self, data_file):
+        path, _ = data_file
+        fs = _make_fs({"k": [_file_url(path), 0, 5]})
+        assert not isinstance(fs.references, LazyReferenceMapper)
+
+    def test_json_input_uses_plain_dict_references(self, tmp_path, data_file):
+        path, content = data_file
+        index = tmp_path / "index.json"
+        index.write_text(
+            json.dumps({"version": 1, "refs": {"k": [_file_url(path), 0, 5]}})
+        )
+        fs = MultiReferenceFileSystem(fo=str(index), skip_instance_cache=True)
+        assert not isinstance(fs.references, LazyReferenceMapper)
+        assert fs.cat("k") == content[0:5]
+
+    def test_json_path_inside_a_directory_still_json(self, tmp_path, data_file):
+        """A ``.json`` path is never mistaken for a Parquet directory."""
+        path, _ = data_file
+        sub = tmp_path / "nested"
+        sub.mkdir()
+        index = sub / "index.json"
+        index.write_text(
+            json.dumps({"version": 1, "refs": {"k": [_file_url(path), 0, 5]}})
+        )
+        fs = MultiReferenceFileSystem(fo=str(index), skip_instance_cache=True)
+        assert not isinstance(fs.references, LazyReferenceMapper)

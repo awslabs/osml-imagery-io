@@ -601,9 +601,16 @@ parser = OversightMLParser()
 store = parser("local/image.ntf")
 
 # Serialize a portable index — chunk refs use {{base}}filename, resolved at
-# read time via template_overrides (Kerchunk JSON or .parquet, multi-range aware)
+# read time via template_overrides (multi-range aware)
 write_tile_index(store, "image.ntf.tile_index.json", template_base="{{base}}")
 ```
+
+A `.parquet` output path works the same way, but must be read back with
+`MultiReferenceFileSystem` rather than a stock `ReferenceFileSystem`, and needs
+`pyarrow` (`pip install "osml-imagery-io[zarr]"`). Because a Parquet store cannot
+carry the Kerchunk `templates` dict, a portable Parquet index resolves its
+placeholders from `template_overrides` alone. See
+[Reading a Parquet index](../api/virtualizarr-parsers.md#reading-a-parquet-index).
 
 Upload both the image and the index to S3:
 

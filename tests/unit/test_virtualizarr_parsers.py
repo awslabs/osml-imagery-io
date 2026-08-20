@@ -1233,10 +1233,17 @@ class TestWriteTileIndex:
             )
 
     def test_hierarchical_store_parquet_output(self, tmp_dir):
-        """A hierarchical ManifestStore serializes to Parquet as a non-empty directory.
+        """A hierarchical ManifestStore serializes to Parquet and reads back.
+
+        Reads the store back rather than asserting only that the output
+        directory is non-empty: both of those structural assertions pass on a
+        completely unreadable store, which is how the Parquet sink shipped
+        write-only.
 
         Requirements: 6.5
         """
+        import zarr
+        from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
         from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
         path_base = tmp_dir / "image.ntf"
@@ -1257,6 +1264,14 @@ class TestWriteTileIndex:
         assert len(contents) > 0, (
             "Parquet output directory should contain at least one file"
         )
+
+        # ...and the directory is actually readable, with both pyramid levels
+        # present and correctly shaped.
+        fs = MultiReferenceFileSystem(fo=output, skip_instance_cache=True)
+        root = zarr.open_group(fs.get_mapper(""), mode="r", zarr_format=2)
+        assert sorted(root.group_keys()) == ["0", "1"]
+        assert root["0/data"].shape == (1, 256, 256)
+        assert root["1/data"].shape == (1, 128, 128)
 
     def test_segments_filter_on_hierarchical_store(self, tmp_dir):
         """Filtering with segments=['0', '2'] on a 3-level hierarchical store
@@ -1664,19 +1679,120 @@ class TestPortableIndex:
             "Non-portable index should not contain 'templates'"
         )
 
-    def test_portable_index_round_trip_with_template_overrides(self, tmp_dir):
-        """End-to-end: create portable index, open with template_overrides,
-        verify chunk data is readable via zarr.
-        """
-        import json
+    def test_parquet_index_reads_back_with_pixel_parity(self, tmp_dir):
+        """A Parquet index of a compressed fixture reads back matching ``IO.open``.
 
+        Complements the parametrized round-trip above, which covers raw NITF-NC
+        written in-test: this one runs the real ``data/unit/`` fixtures through
+        the JPEG 2000, JPEG, and deflate-TIFF codecs, so a Parquet-specific
+        chunk-reference defect cannot hide behind an uncompressed layout.
+        """
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
+
+        from tests.property.zarr.test_v3_producer import (
+            _assert_tiles_match_lossy,
+            _read_all_tiles_via_index,
+            _read_all_tiles_via_io,
+        )
+
+        fixtures = [
+            "nitf21-256x256-3band-8bit-nc.ntf",
+            "nitf21-64x64-3band-8bit-j2k.ntf",
+            "nitf21-64x64-3band-8bit-jpeg.ntf",
+            "tiff-256x256-1band-8bit-tiled-deflate.tif",
+        ]
+        for name in fixtures:
+            src = Path("data/unit") / name
+            if not src.exists():
+                pytest.skip(f"fixture missing: {src}")
+
+            # The parser requires an absolute path.
+            store = OversightMLParser()(str(src.resolve()))
+            index_path = tmp_dir / f"{name}.tile_index.parquet"
+            write_tile_index(store, str(index_path))
+
+            _assert_tiles_match_lossy(
+                _read_all_tiles_via_io(src),
+                _read_all_tiles_via_index(index_path, skip_instance_cache=True),
+                label=f"parquet index ({name})",
+            )
+
+    def test_parquet_multi_resolution_pyramid_pixel_parity(self, tmp_dir):
+        """Both pyramid levels of a Parquet index read back with pixel parity.
+
+        This is the coverage that justifies preserving the hierarchy in Parquet
+        rather than flattening to a single resolution: it asserts the pyramid
+        survives the round-trip, level by level, against the pixels written.
+        """
+        import zarr
+        from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
+        from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
+
+        rng = np.random.default_rng(7)
+        levels = {}
+        for suffix, size in (("", 256), (".r1", 64)):
+            path = tmp_dir / f"image.ntf{suffix}"
+            metadata = BufferedMetadataProvider()
+            metadata["IC"] = "NC"
+            metadata["IMODE"] = "B"
+            provider = BufferedImageAssetProvider.create(
+                key="image:0",
+                num_columns=size,
+                num_rows=size,
+                num_bands=3,
+                block_width=size,
+                block_height=size,
+                metadata=metadata,
+            )
+            data = rng.integers(1, 255, size=(3, size, size), dtype=np.uint8)
+            provider.set_full_image(data)
+            writer = IO.open([str(path)], "w", "nitf")
+            writer.add_asset("image:0", provider, "Image", "test", ["data"])
+            writer.close()
+            levels[suffix] = data
+
+        store = OversightMLParser()(str((tmp_dir / "image.ntf").resolve()))
+        index_path = str(tmp_dir / "pyramid.tile_index.parquet")
+        write_tile_index(store, index_path)
+
+        fs = MultiReferenceFileSystem(fo=index_path, skip_instance_cache=True)
+        root = zarr.open_group(fs.get_mapper(""), mode="r", zarr_format=2)
+
+        assert "multiscales" in dict(root.attrs), (
+            "multiscales metadata missing from Parquet index root attrs"
+        )
+        assert sorted(root.group_keys()) == ["0", "1"]
+
+        for level, suffix in (("0", ""), ("1", ".r1")):
+            expected = levels[suffix]
+            actual = np.asarray(root[f"{level}/data"][:])
+            assert actual.shape == expected.shape, (
+                f"level {level}: expected {expected.shape}, got {actual.shape}"
+            )
+            np.testing.assert_array_equal(
+                actual, expected,
+                err_msg=f"level {level} pixels differ in the Parquet index",
+            )
+
+    @pytest.mark.parametrize("sink", ["json", "parquet"])
+    def test_portable_index_round_trip_with_template_overrides(self, tmp_dir, sink):
+        """End-to-end: create portable index, open with template_overrides,
+        verify chunk **pixels** match what was written.
+
+        Parametrized over both sinks so they cannot drift in coverage: JSON and
+        Parquet share every upstream stage (parsing, refs building, URL
+        relocation) and diverge only here, which is exactly the stage a
+        JSON-only test cannot reach.
+
+        Asserts values, not just ``tile.shape`` — a shape assertion passes on a
+        store full of fill_value zeros.
+        """
         import zarr
         from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
         from aws.osml.io.virtualizarr_parsers import (
             OversightMLParser,
             write_tile_index,
         )
-        from zarr.storage._fsspec import FsspecStore
 
         # Write a NITF with known data
         rng = np.random.default_rng(42)
@@ -1701,29 +1817,31 @@ class TestPortableIndex:
 
         # Create portable index (template_base rewrites refs to {{base}}filename)
         store = OversightMLParser()(str(path))
-        index_path = str(tmp_dir / "image.tile_index.json")
+        index_path = str(tmp_dir / f"image.tile_index.{sink}")
         write_tile_index(store, index_path, template_base="{{base}}")
 
-        # Verify the JSON has templates
-        with open(index_path) as f:
-            index_data = json.load(f)
-        assert index_data["templates"] == {"base": ""}
+        if sink == "json":
+            # Only the JSON container can carry the templates dict; a Parquet
+            # store has nowhere to put one, so its {{base}} placeholders are
+            # resolved from template_overrides alone.
+            import json
+
+            with open(index_path) as f:
+                assert json.load(f)["templates"] == {"base": ""}
 
         # Open with template_overrides pointing to the local directory
-        base_url = str(tmp_dir) + "/"
         fs = MultiReferenceFileSystem(
             fo=index_path,
-            template_overrides={"base": base_url},
+            template_overrides={"base": str(tmp_dir) + "/"},
             skip_instance_cache=True,
-            asynchronous=True,
         )
+        root = zarr.open_group(fs.get_mapper(""), mode="r", zarr_format=2)
 
-        store_zarr = FsspecStore(fs=fs, read_only=True, path="")
-        root = zarr.open_group(store_zarr, mode="r", zarr_format=2)
-
-        # Read the tile and verify shape
-        arr = root["0/data"]
-        tile = np.asarray(arr[0:1, 0:128, 0:128])
+        tile = np.asarray(root["0/data"][0:1, 0:128, 0:128])
         assert tile.shape == (1, 128, 128), (
             f"Expected (1, 128, 128), got {tile.shape}"
+        )
+        np.testing.assert_array_equal(
+            tile, data,
+            err_msg=f"{sink} index pixels differ from what was written",
         )
