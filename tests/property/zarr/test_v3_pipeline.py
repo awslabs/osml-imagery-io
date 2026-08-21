@@ -81,6 +81,9 @@ from zarr.core.dtype import parse_dtype  # noqa: E402
 # (per the design's "DTED writability" open question).
 DATA_DIR = Path("data/unit")
 DTED_FIXTURE = DATA_DIR / "dted-16x16-1band-int16.dt1"
+# 128x128 RPCL codestream, 64x64 tiles, 3 tile-parts per tile. The NITF writer cannot
+# emit this layout (no progression-order or tile-part hint), so it is checked in.
+J2K_MULTI_TILEPART_FIXTURE = DATA_DIR / "j2k-128x128-1band-8bit-rpcl-3tileparts.j2k"
 
 # ---------------------------------------------------------------------------
 # Writers (mirrors test_end_to_end.py so the two suites stay comparable)
@@ -716,6 +719,43 @@ class TestV3Dted:
         if not DTED_FIXTURE.exists():
             pytest.skip("DTED test fixture not available")
         _run_v3_parity(DTED_FIXTURE, lossy=False)
+
+
+# ---------------------------------------------------------------------------
+# Multi-tile-part J2K — one chunk carrying several tile-parts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.property
+class TestV3J2KMultiTilePart:
+    """A tile split across several tile-parts decodes identically on both routes.
+
+    A resolution-first progression order (RLCP, RPCL) emits one tile-part per
+    resolution level, so a single chunk holds N back-to-back ``SOT .. end-of-part``
+    runs. Each of those SOTs carries the tile's original ``Isot`` and each must be
+    rewritten for the synthetic single-tile codestream — OpenJPEG silently drops the
+    parts whose ``Isot`` does not match, yielding plausible but wrong pixels.
+
+    Every other J2K case in this module is a single tile-part, because the NITF
+    writer exposes no progression-order or tile-part hint and so cannot produce this
+    layout; hence the checked-in fixture. This is the shape the multi-range
+    machinery exists to serve, so leaving it uncovered left the one path that most
+    needs the check untested.
+    """
+
+    def test_multi_tilepart_j2k_io_vs_v3(self):
+        """IO path and native v3 pipeline agree on a 3-tile-part-per-tile codestream."""
+        if not J2K_MULTI_TILEPART_FIXTURE.exists():
+            pytest.skip("multi-tile-part J2K test fixture not available")
+        # Lossless comparison: both routes decode the same compressed bytes with the
+        # same decoder, so quality thresholds would hide a real divergence here.
+        _run_v3_parity(J2K_MULTI_TILEPART_FIXTURE, lossy=False)
+
+    def test_multi_tilepart_j2k_cross_protocol(self):
+        """The numcodecs and v3 batch routes agree on multi-tile-part chunks."""
+        if not J2K_MULTI_TILEPART_FIXTURE.exists():
+            pytest.skip("multi-tile-part J2K test fixture not available")
+        _run_cross_protocol_parity(J2K_MULTI_TILEPART_FIXTURE, "j2k-multi-tilepart")
 
 
 # ---------------------------------------------------------------------------

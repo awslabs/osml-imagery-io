@@ -75,39 +75,22 @@ pub fn decode_jpeg2000(
 
     let result = match main_header {
         Some(header) => {
-            use crate::j2k::markers::rewrite_siz_for_tile;
+            use crate::j2k::markers::{build_minimal_codestream_from_parts, split_tile_parts};
 
-            // Extract original Isot from the tile-part SOT marker before patching.
-            let isot = if codestream.len() >= 6 && codestream[0] == 0xFF && codestream[1] == 0x90 {
-                Some(u16::from_be_bytes([codestream[4], codestream[5]]))
+            // The chunk may hold several tile-parts concatenated together: a
+            // resolution-first progression order (RLCP, RPCL) scatters one tile's
+            // parts through the file, and the reference layer fetches every range
+            // and joins them. Split them apart so *each* part's SOT gets its Isot
+            // patched — patching only the first leaves OpenJPEG dropping the rest,
+            // which decodes to plausible but wrong pixels rather than an error.
+            let parts = split_tile_parts(codestream);
+            let full_codestream = if parts.is_empty() {
+                // Not an SOT-led buffer (e.g. a bare codestream fragment): keep the
+                // prior pass-through behavior of header + bytes + EOC.
+                build_minimal_codestream_from_parts(header, &[codestream])
             } else {
-                None
+                build_minimal_codestream_from_parts(header, &parts)
             };
-
-            // Rewrite SIZ to describe a single-tile image with actual edge tile
-            // dimensions. For interior tiles this is a no-op.
-            let patched_header = match isot {
-                Some(tile_index) => rewrite_siz_for_tile(header, tile_index),
-                None => header.to_vec(),
-            };
-
-            // Reconstruct a single-tile codestream:
-            // [patched header] + [tile-part bytes with Isot patched to 0] + [EOC]
-            let mut full_codestream =
-                Vec::with_capacity(patched_header.len() + codestream.len() + 2);
-            full_codestream.extend_from_slice(&patched_header);
-
-            // The codestream bytes start with SOT marker — patch Isot to 0
-            if codestream.len() >= 6 && codestream[0] == 0xFF && codestream[1] == 0x90 {
-                full_codestream.extend_from_slice(&codestream[..4]); // marker + Lsot
-                full_codestream.extend_from_slice(&[0x00, 0x00]); // Isot = 0
-                full_codestream.extend_from_slice(&codestream[6..]); // rest
-            } else {
-                full_codestream.extend_from_slice(codestream);
-            }
-
-            // Append EOC marker
-            full_codestream.extend_from_slice(&[0xFF, 0xD9]);
 
             codec.decode_tile(&full_codestream, 0, &params)?
         }

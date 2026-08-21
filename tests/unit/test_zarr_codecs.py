@@ -3,6 +3,7 @@
 Validates: Requirements 9.1, 12.2, 12.3, 14.1, 14.2, 14.3, 14.4, 14.5, 14.6
 """
 
+import base64
 from pathlib import Path
 
 import numpy as np
@@ -193,6 +194,10 @@ class TestCodecConfigRoundTrip:
 # Test data paths
 DATA_DIR = Path("data/unit")
 J2K_NTF = DATA_DIR / "nitf21-64x64-3band-8bit-j2k.ntf"
+# A 128x128 RPCL codestream, 64x64 tiles, **3 tile-parts per tile** — the shape that
+# distinguishes patching every tile-part's SOT from patching only the first. The NITF
+# fixture above is a single tile with one tile-part, where the two are identical.
+J2K_MULTI_TILEPART = DATA_DIR / "j2k-128x128-1band-8bit-rpcl-3tileparts.j2k"
 
 
 class TestDecodeCorrectness:
@@ -473,6 +478,146 @@ class TestDecodeCorrectness:
         )
         assert result.dtype == np.float32
         np.testing.assert_array_equal(result, values)
+
+
+class TestJpeg2000MultiTilePartDecode:
+    """A chunk holding several tile-parts decodes to the same pixels as ``IO.open()``.
+
+    Resolution-first progression orders (RLCP, RPCL) split each tile into one
+    tile-part per resolution level, so a single Zarr chunk carries N back-to-back
+    ``SOT .. end-of-part`` runs — either concatenated from N byte ranges by the
+    reference filesystem, or already adjacent in the file and merged into one range
+    by the parser. Every one of those SOTs carries the tile's original ``Isot``, and
+    every one must be rewritten to 0 for the synthetic single-tile codestream:
+    OpenJPEG silently drops the parts whose ``Isot`` does not match the tile it is
+    decoding, so patching only the first yields **plausible but wrong pixels rather
+    than an error**.
+
+    The regression these tests pin was invisible to every other J2K test because the
+    other fixtures are single-tile, single-tile-part codestreams, where "patch the
+    first SOT" and "patch every SOT" produce byte-identical output.
+    """
+
+    def _tile_parts_by_tile(self, codestream):
+        """Split a whole codestream into (main_header, {tile_index: [part_bytes]}).
+
+        Walks by ``Psot`` (each SOT records its own tile-part length, ISO/IEC
+        15444-1 Table A.5) rather than scanning for ``0xFF90``, which also occurs
+        inside compressed packet data.
+        """
+        import struct
+        from collections import defaultdict
+
+        pos = codestream.index(b"\xff\x90")  # first SOT ends the main header
+        header = codestream[:pos]
+        parts = defaultdict(list)
+        while pos + 12 <= len(codestream):
+            if codestream[pos:pos + 2] != b"\xff\x90":
+                break
+            isot = struct.unpack(">H", codestream[pos + 4:pos + 6])[0]
+            psot = struct.unpack(">I", codestream[pos + 6:pos + 10])[0]
+            end = len(codestream) if psot == 0 else pos + psot
+            parts[isot].append(codestream[pos:end])
+            pos = end
+        return header, dict(parts)
+
+    def test_fixture_really_has_multiple_tile_parts(self):
+        """Guard the fixture's defining property.
+
+        If this codestream were ever replaced by a single-tile-part one, the tests
+        below would still pass while covering nothing — the bug they exist for is
+        only reachable when a tile has more than one part.
+        """
+        if not J2K_MULTI_TILEPART.exists():
+            pytest.skip("multi-tile-part J2K test data not available")
+
+        _, parts = self._tile_parts_by_tile(J2K_MULTI_TILEPART.read_bytes())
+        assert len(parts) == 4, f"expected a 2x2 tile grid, got tiles {sorted(parts)}"
+        for isot, tile_parts in sorted(parts.items()):
+            assert len(tile_parts) > 1, (
+                f"tile {isot} has {len(tile_parts)} tile-part(s); this fixture must "
+                f"have several per tile or it does not exercise the SOT patching"
+            )
+        assert any(i != 0 for i in parts), "no tile with a non-zero Isot"
+
+    def test_all_tiles_match_io_open(self):
+        """Every tile decodes through the codec exactly as ``IO.open()`` reads it.
+
+        Tile 0 passes even with the defect (its ``Isot`` is already 0), so the
+        non-zero-``Isot`` tiles are what this actually guards — hence asserting all
+        four rather than a sample.
+        """
+        from aws.osml.io import IO, AssetType
+
+        if not J2K_MULTI_TILEPART.exists():
+            pytest.skip("multi-tile-part J2K test data not available")
+
+        codestream = J2K_MULTI_TILEPART.read_bytes()
+        header, parts = self._tile_parts_by_tile(codestream)
+        codec = Jpeg2000Codec(
+            main_header=base64.b64encode(header).decode("ascii"), resolution_level=0
+        )
+
+        with IO.open([str(J2K_MULTI_TILEPART)], "r") as reader:
+            asset = reader.get_asset(
+                reader.get_asset_keys(asset_type=AssetType.Image)[0]
+            )
+            grid_rows, grid_cols = asset.block_grid_size
+            assert grid_rows * grid_cols == len(parts)
+
+            for isot, tile_parts in sorted(parts.items()):
+                row, col = divmod(isot, grid_cols)
+                expected = asset.get_block(row, col, 0)
+
+                decoded = codec.decode(b"".join(tile_parts))
+                actual = np.frombuffer(decoded, dtype=expected.dtype).reshape(
+                    expected.shape
+                )
+
+                np.testing.assert_array_equal(
+                    actual,
+                    expected,
+                    err_msg=(
+                        f"tile {isot} (row {row}, col {col}) decoded through the "
+                        f"codec differs from the IO.open() read; a dropped tile-part "
+                        f"decodes to plausible pixels, so compare values not shapes"
+                    ),
+                )
+
+    def test_dropping_later_tile_parts_changes_the_pixels(self):
+        """Truncating a tile to its first part must *not* silently match.
+
+        This is the counter-check for the assertion above: it proves the later
+        tile-parts actually contribute pixel data, so `test_all_tiles_match_io_open`
+        would fail if they were dropped rather than passing for a trivial reason.
+        """
+        from aws.osml.io import IO, AssetType
+
+        if not J2K_MULTI_TILEPART.exists():
+            pytest.skip("multi-tile-part J2K test data not available")
+
+        header, parts = self._tile_parts_by_tile(J2K_MULTI_TILEPART.read_bytes())
+        codec = Jpeg2000Codec(
+            main_header=base64.b64encode(header).decode("ascii"), resolution_level=0
+        )
+
+        with IO.open([str(J2K_MULTI_TILEPART)], "r") as reader:
+            asset = reader.get_asset(
+                reader.get_asset_keys(asset_type=AssetType.Image)[0]
+            )
+            _, grid_cols = asset.block_grid_size
+            isot = max(parts)  # a non-zero-Isot tile
+            row, col = divmod(isot, grid_cols)
+            expected = asset.get_block(row, col, 0)
+
+            first_only = codec.decode(parts[isot][0])
+            partial = np.frombuffer(first_only, dtype=expected.dtype).reshape(
+                expected.shape
+            )
+            assert not np.array_equal(partial, expected), (
+                "decoding only the first tile-part produced the full tile's pixels, "
+                "so this fixture cannot distinguish complete from truncated decodes"
+            )
 
 
 class TestCodecABCConformance:

@@ -589,6 +589,50 @@ pub fn build_minimal_codestream(
     build_minimal_codestream_from_parts(decode_header, &part_slices)
 }
 
+/// Split a buffer holding one tile's concatenated tile-parts into per-part slices.
+///
+/// A single chunk of a Zarr tile index may carry **several** tile-parts: when a
+/// codestream uses a resolution-first progression order (RLCP, RPCL) the parts for
+/// one tile are scattered through the file, and the reference layer fetches every
+/// range and concatenates them. The result is one buffer containing N back-to-back
+/// `SOT .. end-of-part` runs, which is *not* the same as one tile-part — each run
+/// carries its own SOT that needs patching before OpenJPEG will accept the
+/// synthetic single-tile codestream.
+///
+/// Walks the buffer by `Psot` (each SOT records its own tile-part length, per
+/// ISO/IEC 15444-1 Table A.5) rather than searching for `0xFF90` byte pairs, which
+/// would also match compressed packet data that happens to contain those bytes.
+///
+/// Returns a single-element slice list when the buffer holds one part, and an empty
+/// list when it does not begin with an SOT — callers treat the latter as "pass the
+/// bytes through unchanged".
+pub fn split_tile_parts(buf: &[u8]) -> Vec<&[u8]> {
+    let mut parts = Vec::new();
+    let mut pos = 0usize;
+
+    while pos + 12 <= buf.len() {
+        if read_u16(buf, pos) != marker_codes::SOT {
+            break;
+        }
+        let psot = read_u32(buf, pos + 6) as usize;
+        // Psot == 0 means "this tile-part runs to the end of the codestream", and a
+        // Psot that overruns the buffer means the part was truncated; either way the
+        // remainder is one final part.
+        let end = if psot == 0 || pos + psot > buf.len() {
+            buf.len()
+        } else {
+            pos + psot
+        };
+        parts.push(&buf[pos..end]);
+        if end == buf.len() {
+            break;
+        }
+        pos = end;
+    }
+
+    parts
+}
+
 /// Construct a minimal single-tile codestream from tile-part byte slices.
 ///
 /// Identical to [`build_minimal_codestream`] but takes the tile-part *bytes*
@@ -596,6 +640,11 @@ pub fn build_minimal_codestream(
 /// is the seam a `Remote` decoder uses: it fetches only the target tile's
 /// byte ranges (via `OwnedBuffer::read_range`) and hands the resulting slices
 /// here, so the whole codestream never needs to be resident.
+///
+/// Every part's SOT is patched, not just the first: a tile with N tile-parts
+/// contributes N SOT markers, and OpenJPEG drops the parts whose `Isot` does not
+/// match the single tile it is decoding. See [`split_tile_parts`] for how a
+/// concatenated multi-part buffer is divided.
 ///
 /// # Arguments
 /// * `decode_header` - Main header with TLM markers stripped
@@ -1261,6 +1310,113 @@ mod tests {
         expected.extend_from_slice(&decode_header);
         expected.extend_from_slice(&[0xFF, 0xD9]);
         assert_eq!(result, expected);
+    }
+
+    // ---- split_tile_parts tests ----
+
+    /// Build one tile-part: SOT + SOD + `data`, with Psot set to the true total.
+    fn build_tile_part(isot: u16, tpsot: u8, tnsot: u8, data: &[u8]) -> Vec<u8> {
+        let psot = (12 + 2 + data.len()) as u32; // SOT(12) + SOD(2) + data
+        let mut part = build_sot(isot, psot, tpsot, tnsot);
+        part.extend_from_slice(&marker_codes::SOD.to_be_bytes());
+        part.extend_from_slice(data);
+        part
+    }
+
+    #[test]
+    fn test_split_tile_parts_single() {
+        let part = build_tile_part(7, 0, 1, &[0xAA, 0xBB, 0xCC]);
+        let parts = split_tile_parts(&part);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0], &part[..]);
+    }
+
+    /// The regression this function exists for: a chunk holding one tile's six
+    /// interleaved tile-parts, concatenated by the reference layer.
+    #[test]
+    fn test_split_tile_parts_multiple() {
+        let bodies: [&[u8]; 6] = [
+            &[0x01],
+            &[0x02, 0x02],
+            &[0x03; 5],
+            &[0x04; 9],
+            &[0x05; 3],
+            &[0x06; 7],
+        ];
+        let built: Vec<Vec<u8>> = bodies
+            .iter()
+            .enumerate()
+            .map(|(i, b)| build_tile_part(3, i as u8, 6, b))
+            .collect();
+        let joined: Vec<u8> = built.iter().flatten().copied().collect();
+
+        let parts = split_tile_parts(&joined);
+        assert_eq!(parts.len(), 6, "every tile-part must be found");
+        for (got, want) in parts.iter().zip(built.iter()) {
+            assert_eq!(*got, &want[..]);
+        }
+        // No bytes invented or dropped.
+        assert_eq!(parts.iter().map(|p| p.len()).sum::<usize>(), joined.len());
+    }
+
+    /// Every part's Isot must be zeroed, not just the first. Patching only the
+    /// first leaves OpenJPEG dropping the rest, which decodes to plausible but
+    /// wrong pixels rather than raising.
+    #[test]
+    fn test_build_minimal_codestream_zeroes_isot_in_every_part() {
+        let decode_header = marker_codes::SOC.to_be_bytes().to_vec();
+        let joined: Vec<u8> = (0..4)
+            .flat_map(|i| build_tile_part(43, i, 4, &[0xEE; 4]))
+            .collect();
+
+        let parts = split_tile_parts(&joined);
+        assert_eq!(parts.len(), 4);
+        let out = build_minimal_codestream_from_parts(&decode_header, &parts);
+
+        // Walk the result's SOT markers; all must carry Isot == 0.
+        let mut pos = decode_header.len();
+        let mut seen = 0;
+        while pos + 12 <= out.len() - 2 {
+            assert_eq!(read_u16(&out, pos), marker_codes::SOT);
+            assert_eq!(
+                read_u16(&out, pos + 4),
+                0,
+                "tile-part {} kept its Isot",
+                seen
+            );
+            pos += read_u32(&out, pos + 6) as usize;
+            seen += 1;
+        }
+        assert_eq!(seen, 4, "expected to walk all four tile-parts");
+    }
+
+    #[test]
+    fn test_split_tile_parts_rejects_non_sot_buffer() {
+        // A bare fragment with no SOT: callers pass the bytes through unchanged.
+        assert!(split_tile_parts(&[0xFF, 0x93, 0x01, 0x02]).is_empty());
+        assert!(split_tile_parts(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_split_tile_parts_psot_zero_runs_to_end() {
+        // Psot == 0 means "to the end of the codestream" (ISO/IEC 15444-1 Table A.5).
+        let mut buf = build_sot(1, 0, 0, 1);
+        buf.extend_from_slice(&marker_codes::SOD.to_be_bytes());
+        buf.extend_from_slice(&[0x77; 20]);
+        let parts = split_tile_parts(&buf);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].len(), buf.len());
+    }
+
+    #[test]
+    fn test_split_tile_parts_truncated_psot_does_not_overrun() {
+        // A Psot larger than the buffer (truncated fetch) must be clamped, not panic.
+        let mut buf = build_sot(2, 10_000, 0, 1);
+        buf.extend_from_slice(&marker_codes::SOD.to_be_bytes());
+        buf.extend_from_slice(&[0x33; 6]);
+        let parts = split_tile_parts(&buf);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].len(), buf.len());
     }
 
     // ---- rewrite_siz_for_tile tests ----
