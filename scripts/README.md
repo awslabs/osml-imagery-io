@@ -55,7 +55,7 @@ python scripts/chip_image_zarr.py s3://bucket/index.parquet chip.png --bbox 0 0 
 |--------|-------------|
 | `generate_synthetic_image.py` | Create a single-level test image with checkerboard pattern and tile IDs. Supports NITF, TIFF, PNG, J2K, JPEG with various compression modes. |
 | `generate_synthetic_image_pyramid.py` | Create a multi-resolution image pyramid as a COG (single TIFF with overviews) or NITF R-set (separate files per level). Each tile is labeled with its resolution level and grid coordinates. |
-| `generate_tile_index.py` | Build a Zarr tile index (JSON or Parquet) from a local or S3-hosted imagery file for cloud-native access via fsspec/Zarr. |
+| `generate_tile_index.py` | Build a Zarr tile index (JSON or Parquet) from a local or S3-hosted imagery file for cloud-native access via fsspec/Zarr. `--zarr-format {2,3}` selects the Kerchunk/Zarr-v2 or native Zarr-v3 layout. |
 
 ```bash
 # Generate a 1024x1024 RGB NITF with JPEG 2000 compression
@@ -72,6 +72,9 @@ python scripts/generate_tile_index.py s3://bucket/image.ntf -o index.json
 
 # Or index a local copy and point the refs at where it will be served from
 python scripts/generate_tile_index.py image.ntf --source-uri s3://bucket/image.ntf -o index.json
+
+# Emit a native Zarr v3 index instead (read via zarr.open/xarray, no numcodecs layer)
+python scripts/generate_tile_index.py image.ntf --zarr-format 3 -o index.v3.json
 ```
 
 ### End-to-End Example

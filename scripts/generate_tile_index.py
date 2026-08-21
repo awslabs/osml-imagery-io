@@ -11,6 +11,12 @@ so indexing a remote file does not download the whole object. Chunk references
 in the index point at the source you pass here, unless ``--source-uri`` rewrites
 them (see below).
 
+``--zarr-format`` selects which Zarr version the index describes. Both are
+Kerchunk reference files served through fsspec; the difference is the store keys
+inside, and therefore which consumer path reads them — ``2`` (the default) uses
+``.zgroup``/``.zarray`` keys read through the numcodecs registry, ``3`` uses
+native ``zarr.json`` keys read through zarr's entry-point codec pipeline.
+
 Usage:
     # Index a remote file directly — refs point at the S3 URL.
     python scripts/generate_tile_index.py s3://bucket/image.ntf
@@ -18,13 +24,16 @@ Usage:
     # Index a local copy, but point refs at where the data will be served.
     python scripts/generate_tile_index.py image.ntf --source-uri s3://bucket/image.ntf
 
+    # Native Zarr v3 index (JSON only).
+    python scripts/generate_tile_index.py image.ntf --zarr-format 3
+
     # Parquet output, or list segments without indexing.
     python scripts/generate_tile_index.py s3://bucket/image.ntf -o index.parquet
     python scripts/generate_tile_index.py image.ntf --list-segments
 
 A Parquet index needs pyarrow (``pip install "osml-imagery-io[zarr]"``) and must be
 read back with ``MultiReferenceFileSystem``; a stock fsspec ``ReferenceFileSystem``
-cannot open one.
+cannot open one. Parquet is a v2-only container — see ``--zarr-format``.
 """
 
 import argparse
@@ -84,29 +93,12 @@ def list_segments(path: str) -> int:
     return 0
 
 
-def _patch_multi_range_refs(refs: dict, multi_range_refs: dict) -> dict:
-    """Replace placeholder single-range entries with multi-range entries.
-
-    For each key in *multi_range_refs*, the corresponding entry in *refs*
-    is replaced with the multi-range form ``["url", [[offset, length], ...]]``.
-    Single-range entries not in *multi_range_refs* are left unchanged.
-
-    .. deprecated::
-        Use :func:`aws.osml.io.virtualizarr_parsers._patch_multi_range_refs`
-        or :func:`aws.osml.io.virtualizarr_parsers.write_tile_index` instead.
-    """
-    from aws.osml.io.virtualizarr_parsers import (
-        _patch_multi_range_refs as _patch,
-    )
-
-    return _patch(refs, multi_range_refs)
-
-
 def generate_index(
     path: str,
     source_uri: str | None,
     output: str,
     segments: list[str] | None,
+    zarr_format: int = 2,
 ) -> int:
     """Generate a tile index and save it to disk.
 
@@ -119,12 +111,29 @@ def generate_index(
             references point at *path* itself.
         output: Output index path (``.json`` or ``.parquet``).
         segments: Optional list of image asset keys to include (default: all).
+        zarr_format: ``2`` for the Kerchunk/Zarr v2 layout, ``3`` for the native
+            Zarr v3 layout. Only the store keys differ; every other stage of
+            this script is format-independent.
     """
     from aws.osml.io.virtualizarr_parsers import OversightMLParser, write_tile_index
 
     ext = Path(output).suffix.lower()
     if ext not in (".json", ".parquet"):
         print(f"Error: Unsupported output extension '{ext}'. Use .json or .parquet", file=sys.stderr)
+        return 1
+
+    # Reject the unsupported combination before parsing, which for a large
+    # remote file is minutes of byte-range reads. ``write_tile_index`` raises
+    # for it too, but only after the store has been built.
+    if zarr_format == 3 and ext == ".parquet":
+        print(
+            "Error: Parquet output is not supported for --zarr-format 3: the Kerchunk "
+            "Parquet container (fsspec's LazyReferenceMapper) indexes chunk references "
+            "by position using the v2 '.zarray' shape/chunks, which a native v3 store "
+            "does not have. Use a .json output path for v3 indexes, or --zarr-format 2 "
+            "for Parquet.",
+            file=sys.stderr,
+        )
         return 1
 
     # The VirtualiZarr manifest requires an absolute posix path or a URI for
@@ -143,6 +152,7 @@ def generate_index(
     else:
         print("Segments:     all")
     print(f"Output:       {output}")
+    print(f"Zarr format:  {zarr_format}")
     print()
 
     t0 = time.perf_counter()
@@ -172,7 +182,12 @@ def generate_index(
 
     t1 = time.perf_counter()
     try:
-        write_tile_index(store, output, segments=segments, url_overrides=url_overrides)
+        write_tile_index(
+            store, output,
+            segments=segments,
+            url_overrides=url_overrides,
+            zarr_format=zarr_format,
+        )
     except (ImportError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -212,8 +227,11 @@ Examples:
     python scripts/generate_tile_index.py image.ntf \\
         --source-uri s3://my-bucket/image.ntf
 
-    # Parquet output
+    # Parquet output (v2 only)
     python scripts/generate_tile_index.py s3://my-bucket/image.ntf -o index.parquet
+
+    # Native Zarr v3 index — read with zarr.open/xarray.open_zarr, no numcodecs
+    python scripts/generate_tile_index.py image.ntf --zarr-format 3 -o index.v3.json
 
     # Index only specific segments
     python scripts/generate_tile_index.py s3://my-bucket/multi_segment.ntf \\
@@ -242,6 +260,16 @@ Examples:
         "(default: <input_stem>.tile_index.json)",
     )
     parser.add_argument(
+        "--zarr-format",
+        type=int,
+        choices=(2, 3),
+        default=2,
+        help="Zarr version the index describes: 2 (default) emits the Kerchunk "
+        ".zgroup/.zarray layout read through the numcodecs registry; 3 emits a "
+        "native zarr.json layout read through zarr's entry-point codec pipeline. "
+        "Format 3 requires .json output — Parquet is a v2-only container.",
+    )
+    parser.add_argument(
         "--list-segments",
         action="store_true",
         help="List available image segments and exit without generating an index.",
@@ -264,7 +292,9 @@ Examples:
         stem = Path(args.path).stem
         output = f"{stem}.tile_index.json"
 
-    return generate_index(args.path, args.source_uri, output, args.segments)
+    return generate_index(
+        args.path, args.source_uri, output, args.segments, args.zarr_format
+    )
 
 
 if __name__ == "__main__":

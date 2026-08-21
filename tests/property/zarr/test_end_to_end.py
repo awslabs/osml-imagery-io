@@ -9,8 +9,18 @@ This module validates the full pipeline from the user's perspective:
 
 The fsspec/zarr path is the real user-facing interface described in
 docs/user-guide/zarr-codecs.md. It exercises the full stack: index
-serialization, fsspec reference resolution, byte-range reads, codec
-entry-point dispatch, and decode.
+serialization, fsspec reference resolution, byte-range reads, codec dispatch,
+and decode.
+
+Specifically it covers the **numcodecs / Kerchunk-v2 consumer path**: the index
+written here declares ``zarr_format: 2``, so codecs resolve through the numcodecs
+registry by their ``id`` and are called synchronously with a single buffer. The
+native zarr v3 path — codecs resolved by URI through the ``zarr.codecs`` entry
+points and driven by zarr's asynchronous batched pipeline — is a genuinely
+different route through the same codec classes, covered by ``test_v3_pipeline.py``
+(codecs), ``test_codec_protocol.py`` (entry-point resolution and the protocol
+discriminator), and ``test_v3_producer.py`` (``write_tile_index(...,
+zarr_format=3)``).
 
 Feature: virtualizarr-migration
 """

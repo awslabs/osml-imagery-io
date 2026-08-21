@@ -395,9 +395,8 @@ step. See [the DTED codec reference](../codecs/dted.md) for the zone table.
 }
 ```
 
-All five codecs are registered with the Zarr codec registry via Python entry
-points. They use URI-based names per the Zarr v3 specification to avoid
-conflicts with existing codecs:
+All five codecs are registered via Python entry points. They use URI-based names
+per the Zarr v3 specification to avoid conflicts with existing codecs:
 
 - `https://awslabs.github.io/osml-imagery-io/codecs/jpeg2000`
 - `https://awslabs.github.io/osml-imagery-io/codecs/jpeg`
@@ -407,6 +406,47 @@ conflicts with existing codecs:
 
 The URIs resolve to human-readable documentation. Implementations do not fetch
 them at runtime.
+
+### Two consumer paths
+
+The Zarr ecosystem is mid-migration between two array-storage generations, and
+this library supports both. Which one you get is decided by the tile index, not
+by the reader: `write_tile_index(..., zarr_format=2)` (the default) emits a
+Kerchunk/Zarr-v2 index, `zarr_format=3` emits a native Zarr v3 index. The
+codecs, byte ranges, and pixels are identical either way — what differs is how
+the store describes itself and, consequently, how the codec gets called:
+
+| | Kerchunk / Zarr v2 (default) | Native Zarr v3 |
+|---|---|---|
+| Metadata keys | `.zgroup`, `.zarray`, `.zattrs` | `zarr.json` per node |
+| Chunk keys | `0/data/0.0.0` | `0/data/c.0.0.0` |
+| Codec named by | the `id` field in `.zarray` filters | the URI in the `zarr.json` codec chain |
+| Resolved through | the **numcodecs** registry | the **`zarr.codecs`** entry points |
+| Codec called | synchronously, one buffer at a time | asynchronously, in batches |
+| Output containers | `.json`, `.parquet` | `.json` only |
+
+Each registry is fed by its own entry-point group (`numcodecs.codecs` and
+`zarr.codecs`), both declared by this package. That is what makes discovery
+automatic on either path — a group covers only its own registry.
+
+```{note}
+Because both entry-point groups are declared, codec registration needs no
+explicit import on either path: installing the package with the `zarr` extras
+(`pip install osml-imagery-io[zarr]`) is sufficient. Importing
+`aws.osml.io.zarr_codecs` still works and is the only way to register the codecs
+when running from a source tree with no distribution metadata, where entry
+points are unavailable.
+```
+
+The v2 path is the more heavily exercised of the two and remains the default:
+it is what the wider reference-file ecosystem (Kerchunk, fsspec's
+`ReferenceFileSystem`) reads, and it is the only path that supports Parquet
+output. The v3 path is the strategically forward-looking one — the numcodecs
+plumbing the v2 path rides is being superseded in zarr-python 3.x — and is the
+one to use if you want zarr's native codec pipeline with no v2 translation
+layer. Reading each is shown in
+[Step 2](#step-2-open-and-access-tiles) and
+[the native Zarr v3 read](#reading-a-native-zarr-v3-index) below.
 
 ## Zarr Access to Image Pyramids
 
@@ -612,6 +652,22 @@ carry the Kerchunk `templates` dict, a portable Parquet index resolves its
 placeholders from `template_overrides` alone. See
 [Reading a Parquet index](../api/virtualizarr-parsers.md#reading-a-parquet-index).
 
+This index is a Kerchunk/Zarr-v2 store, read through numcodecs — the default
+described in [Two consumer paths](#two-consumer-paths). Passing
+`zarr_format=3` instead emits a native Zarr v3 store; everything else on this
+page (portability, `url_overrides`, pyramids, multi-range entries) applies
+unchanged. See [Reading a native Zarr v3 index](#reading-a-native-zarr-v3-index).
+
+The same thing from the command line, with `--zarr-format` selecting the layout:
+
+```bash
+# Kerchunk / Zarr v2 (default)
+python scripts/generate_tile_index.py image.ntf -o image.tile_index.json
+
+# Native Zarr v3
+python scripts/generate_tile_index.py image.ntf --zarr-format 3 -o image.v3.json
+```
+
 Upload both the image and the index to S3:
 
 ```python
@@ -648,7 +704,9 @@ write_tile_index(store, "image.ntf.tile_index.json")
 ### Step 2: Open and access tiles
 
 Codec registration happens automatically when the package is installed with the
-`zarr` extras (`pip install osml-imagery-io[zarr]`). No explicit import is needed.
+`zarr` extras (`pip install osml-imagery-io[zarr]`). No explicit import is needed
+on either consumer path — the `numcodecs.codecs` entry points serve this v2 read,
+and `zarr.codecs` serves the v3 read below.
 
 Use `MultiReferenceFileSystem` to open the tile index. It handles both standard
 single-range entries and multi-range entries for JPEG 2000 images with
@@ -689,6 +747,66 @@ print(tile.dtype)  # uint8
 AWS credentials can also be provided through environment variables
 (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`) or any other
 method supported by boto3 and fsspec.
+
+### Reading a native Zarr v3 index
+
+An index written with `zarr_format=3` is still a Kerchunk reference file served
+over fsspec, so the filesystem setup is identical — `MultiReferenceFileSystem`
+for the same reasons (multi-range entries, portable templates). What changes is
+everything above the store: zarr reads `zarr.json` documents instead of
+`.zarray`, resolves the codec by its URI through the `zarr.codecs` entry points,
+and drives it with the asynchronous batched codec pipeline. There is no
+Kerchunk-to-v2 translation anywhere in the read.
+
+Note the absence of `zarr_format=2` on `open_group` — the store declares
+version 3 itself, so nothing has to be told which generation to expect.
+
+```python
+import numpy as np
+import zarr
+from aws.osml.io.multi_reference_fs import MultiReferenceFileSystem
+from zarr.storage._fsspec import FsspecStore
+
+fs = MultiReferenceFileSystem(
+    fo="s3://my-bucket/imagery/image.v3.json",
+    asynchronous=True,
+    remote_options={"asynchronous": True},
+    skip_instance_cache=True,
+)
+
+store = FsspecStore(fs=fs, read_only=True, path="")
+root = zarr.open_group(store, mode="r")
+
+arr = root["0/data"]
+print(arr.shape)            # (3, 1024, 1024)
+print(arr.chunks)           # (3, 256, 256)
+tile = np.asarray(arr[0:3, 512:768, 768:1024])
+print(tile.shape)           # (3, 256, 256)
+```
+
+The array access path is `root["0/data"]` here too: the GeoZarr multiscales
+layout is the same in both formats, so a v2 index and a v3 index of the same
+file are addressed identically and return identical pixels.
+
+`xarray` reads the store the same way, pointed at a level's subgroup:
+
+```python
+import xarray as xr
+
+ds = xr.open_zarr(FsspecStore(fs=fs, read_only=True, path="0"), consolidated=False)
+print(ds["data"].dims)      # ('bands', 'y', 'x')
+print(ds["data"].shape)     # (3, 1024, 1024)
+```
+
+```{note}
+Point the store at the level's path (`path="0"`) rather than passing xarray's
+`group="0"` argument. A reference filesystem serves only the keys the index
+names and does not enumerate nested group members, so xarray's group lookup
+finds no variables. This is a property of `ReferenceFileSystem` rather than of
+the v3 layout — it affects Kerchunk-v2 indexes the same way — and it is also why
+`xarray.open_datatree` works on a v2 index via `engine="kerchunk"` (shown below)
+but not on a reference-backed v3 store. Open each level individually instead.
+```
 
 ## End-to-End Example: Multi-Resolution COG Pyramid
 

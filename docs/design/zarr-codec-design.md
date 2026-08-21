@@ -372,6 +372,98 @@ pixel) to correctly interpret the decoded output. The `JpegCodec` carries
 these parameters and delegates to libjpeg-turbo via the Rust
 `JpegBlockDecoder`.
 
+## One Class, Two Codec Protocols
+
+Every codec class here subclasses zarr v3's `BytesBytesCodec` **and** implements
+the numcodecs filter protocol. That is deliberate: the two consumer paths a tile
+index can be read through resolve and call codecs differently, and a single class
+has to satisfy both.
+
+| | numcodecs / Kerchunk v2 | native zarr v3 |
+|---|---|---|
+| Read by | fsspec `ReferenceFileSystem` + `.zarray` filters | `zarr.open` / `xarray` + `zarr.json` codec chain |
+| Codec named by | the `id` field | the codec URI |
+| Resolved through | `numcodecs.codecs` entry points | `zarr.codecs` entry points |
+| `decode` receives | **one buffer**: `decode(buf)` | **a batch**: `decode([(buf, spec), ...])` |
+| `decode` is | synchronous, returns bytes | `async`, returns buffers |
+
+### The collision
+
+Both protocols name the method `decode`, with incompatible signatures. Because
+the synchronous single-buffer `decode` is defined in the class body, it
+**shadows** the inherited async batched `BytesBytesCodec.decode`. When zarr v3's
+pipeline does `await codec.decode(<iterable of (bytes, spec)>)` — see
+`BatchedCodecPipeline.decode_batch` in `zarr/core/codec_pipeline.py` — the call
+lands on the numcodecs shim, which treats the whole batch iterable as one chunk's
+bytes and hands it to the Rust decoder:
+
+```
+JbpBlockCodec(...).decode([])   ->  ValueError: Data size mismatch: expected 4 bytes, got 0
+```
+
+Left unresolved this makes **every** native v3 read fail, which is precisely what
+happened: the shadowing shipped undetected because no producer emitted a v3 store
+and no test read one.
+
+### The discriminator
+
+`decode` therefore begins by asking which protocol is calling, and hands batch
+calls back to the shadowed base method:
+
+```python
+def decode(self, buf, out=None):
+    # Defining decode() shadows BytesBytesCodec.decode; hand v3 pipeline calls back to it.
+    if not _is_numcodecs_buffer(buf):
+        return super().decode(buf)
+    ...  # synchronous single-buffer path
+```
+
+`_is_numcodecs_buffer` tests for **a single buffer** — `bytes`, `bytearray`,
+`memoryview`, anything exposing `__array__`, or anything `memoryview()` accepts —
+rather than testing for a batch. That direction matters: the batch is whatever
+iterable zarr happens to construct (a list, a `zip`, a generator), so it is not a
+stable thing to pattern-match, whereas "is a single buffer" is a property of the
+argument itself. Note that returning `super().decode(buf)` returns a *coroutine*,
+un-awaited, which is exactly what the async pipeline expects to await.
+
+The v3 path proper is `_decode_single(chunk_bytes, chunk_spec)`, which the
+inherited batched `decode` fans out to. It runs the same Rust decoder as the
+numcodecs path via `asyncio.to_thread`, so neither route blocks the event loop
+and both produce identical pixels.
+
+### Where the two routes can drift
+
+The routes share the decoder but not their surrounding code, and edge-tile
+padding is where that shows. Both must pad an undersized edge tile up to the
+nominal chunk shape so the consumer's reshape succeeds, and they derive that
+shape independently:
+
+- The numcodecs route re-derives it from the format's own metadata — for J2K, by
+  `struct.unpack`-ing `XTsiz`/`YTsiz` out of the base64 main header in its
+  configuration and ceil-dividing by `2 ** resolution_level`.
+- The v3 route reads `chunk_spec.shape`, which zarr supplies from the array
+  metadata.
+
+Those must agree, including on odd reduced sizes at non-zero resolution levels,
+and they are asserted to in `tests/property/zarr/test_v3_pipeline.py` — both for
+cross-protocol pixel equality and specifically for non-block-aligned edge tiles.
+(TIFF turns out never to reach either padding path: per TIFF 6.0 tag 322 tile
+data is stored padded to the full nominal tile, so `decode_tiff_tile` already
+returns a complete tile and both padding steps are no-ops. The tests assert that
+explicitly rather than assuming it.)
+
+### Why not two classes
+
+Splitting each codec into a numcodecs `Codec` and a zarr `BytesBytesCodec` over a
+shared Rust core would make `decode` mean exactly one thing per class and remove
+the runtime discriminator entirely. That is the structural fix, and it is the
+right end state. It is not urgent: the cost is duplicated registration and
+configuration plumbing on both sides, and the awkward shape is a symptom of the
+ecosystem's v2-to-v3 migration rather than something inherent to this design.
+Keeping one class per format also keeps one configuration schema per format,
+which is what guarantees a v2 and a v3 index of the same file describe the same
+codec.
+
 ## Why This Pattern
 
 ### Decoder library as a black box

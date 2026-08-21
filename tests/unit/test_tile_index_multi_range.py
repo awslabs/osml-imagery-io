@@ -1,13 +1,15 @@
-"""Tests for multi-range entry patching in generate_tile_index.py."""
+"""Tests for multi-range entry patching in the VirtualiZarr tile-index serializer.
+
+``_patch_multi_range_refs`` replaces the placeholder single-range entries
+VirtualiZarr emits for non-contiguous chunks with this project's multi-range
+reference form. These cases previously imported it through a pass-through shim in
+``scripts/generate_tile_index.py``; that shim is gone, so they target the parser
+module directly — which is where the behavior always lived.
+"""
 
 import json
-import sys
-from pathlib import Path
 
-# Add project root so the script module is importable
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from scripts.generate_tile_index import _patch_multi_range_refs
+from aws.osml.io.virtualizarr_parsers import _patch_multi_range_refs
 
 
 class TestPatchMultiRangeRefs:
