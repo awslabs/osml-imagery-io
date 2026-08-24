@@ -3,21 +3,50 @@
 ## How to Cut a Release
 
 1. Update the version in both `Cargo.toml` and `pyproject.toml` (they must match).
+   `Cargo.lock` is gitignored and regenerates on the next `cargo` invocation, so it
+   is not part of the commit.
 2. Commit the version bump.
-3. Tag the commit with a `v` prefix:
+3. Tag the commit with a `v` prefix and push the tag:
    ```bash
-   git tag v0.2.0
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
    ```
-4. Push the tag:
+4. Publish a GitHub Release for that tag:
    ```bash
-   git push origin v0.2.0
+   gh release create vX.Y.Z --title vX.Y.Z --notes-file <notes>
    ```
 
-Pushing the tag triggers the release workflow (`.github/workflows/release.yml`).
+**Publishing the Release is what triggers the release workflow**
+(`.github/workflows/release.yml`), which builds the wheels and publishes to PyPI.
+Pushing the tag alone does nothing — the workflow is triggered by
+`release: [published]`, not by a tag push. The same event also triggers the docs
+workflow (`.github/workflows/docs.yml`), which deploys the Sphinx site to GitHub
+Pages.
+
+### Building wheels without publishing
+
+To exercise the full wheel build without touching PyPI, dispatch the workflow
+manually and leave `publish` unchecked (its default):
+
+```bash
+gh workflow run release.yml
+```
+
+Every build job runs and uploads its artifacts; only the `publish` job is skipped.
+Dispatching with `publish: true` builds *and* publishes, which is the escape hatch
+if a Release was published but the workflow needs re-running.
+
+Note that no CI job builds the `static` feature that the release wheels use, so a
+release-only compile error will not surface until this workflow runs.
+`scripts/build-static-deps.sh` followed by `scripts/build-wheel.sh` reproduces the
+same feature set locally for the host platform.
 
 ## What the Release Workflow Does
 
-1. Compiles OpenJPEG, libjpeg-turbo, and libtiff from source as static libraries for each target platform.
+1. Compiles six C libraries from source as static libraries for each target platform, in
+   dependency order: OpenJPEG, libjpeg-turbo, libdeflate, zstd, LERC, then libtiff.
+   libtiff is built last because it links the four preceding it for JPEG, Deflate, Zstd,
+   and LERC tile compression.
 2. Builds abi3 wheels (Python 3.9+ stable ABI) for four platforms using `maturin` with the `static` feature flag.
 3. Builds an sdist (source distribution) as a fallback for platforms without pre-compiled wheels.
 4. Publishes all wheels and the sdist to PyPI via OIDC trusted publishing.
