@@ -503,68 +503,162 @@ class TestNullPredicate:
 # ---------------------------------------------------------------------------
 
 
-def _write_parquet_store(root: Path, src: Path, *, levels=("0",), template_base=None):
+_PARQUET_STORE_RECORD_SIZE = 10
+
+
+def _write_parquet_record(path: Path, references: dict, record_size: int) -> None:
+    """Write one ``refs.{record}.parq`` from ``{row: reference}``, by hand.
+
+    Deliberately does *not* call the library's own emitter: these are tests of the
+    reader, and validating a reader with the writer under test would make the pair
+    agree on a wrong encoding without anything noticing.  What is encoded here is
+    the container contract as documented — upstream's four columns
+    (``path``, ``offset``, ``size``, ``raw``) plus ``range_path`` / ``offsets`` /
+    ``sizes`` when a multi-range reference is present, with ``path`` null on those
+    rows.
+
+    Built with ``pyarrow`` alone, like the library's writer: this project declares no
+    ``pandas`` dependency and imports it nowhere, so a test helper must not either.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    paths = np.full(record_size, None, dtype="O")
+    offsets = np.zeros(record_size, dtype="int64")
+    sizes = np.zeros(record_size, dtype="int64")
+    raws = np.full(record_size, None, dtype="O")
+    range_paths = np.full(record_size, None, dtype="O")
+    range_offsets = np.full(record_size, None, dtype="O")
+    range_sizes = np.full(record_size, None, dtype="O")
+    any_multi_range = False
+
+    for row, reference in references.items():
+        if isinstance(reference, bytes):
+            raws[row] = reference
+        elif isinstance(reference[1], list):
+            any_multi_range = True
+            range_paths[row] = reference[0]
+            range_offsets[row] = [o for o, _ in reference[1]]
+            range_sizes[row] = [n for _, n in reference[1]]
+        else:
+            paths[row], offsets[row], sizes[row] = reference
+
+    def typed(values, value_type):
+        """All-null columns take Arrow's ``null`` type, as a conforming writer does."""
+        if all(v is None for v in values):
+            return pa.nulls(len(values))
+        return pa.array(values, type=value_type)
+
+    int_list = pa.list_(pa.int64())
+    columns = {
+        "path": typed(paths, pa.string()),
+        "offset": pa.array(offsets, type=pa.int64()),
+        "size": pa.array(sizes, type=pa.int64()),
+        "raw": typed(raws, pa.binary()),
+    }
+    if any_multi_range:
+        columns["range_path"] = pa.array(range_paths, type=pa.string())
+        columns["offsets"] = pa.array(range_offsets, type=int_list)
+        columns["sizes"] = pa.array(range_sizes, type=int_list)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(
+        pa.table(columns), path, compression="zstd", write_statistics=False,
+    )
+
+
+def _write_parquet_store(
+    root: Path, src: Path, *, levels=("0",), template_base=None, multi_range=False
+):
     """Hand-build a hierarchical Kerchunk Parquet store.
 
     Mirrors the shape ``write_tile_index(..., "x.parquet")`` produces — a root
     group, a group per resolution level, and a ``data`` array under each — but
-    without depending on the parser, so this stays a unit test of the reader.
+    without depending on the parser or on the library's emitter, so this stays a
+    unit test of the reader.
 
-    Each level's array has 4 one-byte chunks: chunks 0 and 2 are URL references
-    into *src*, chunks 1 and 3 are inline raw bytes.  That mix within a single
-    record is what forces ``path`` to object dtype containing ``nan`` under
-    pyarrow, distinguishing a correct null normalization from a float-only one.
+    Each level's array has 4 chunks: chunks 0 and 2 are URL references into *src*,
+    chunks 1 and 3 are inline raw bytes.  That mix within a single record is what
+    forces ``path`` to object dtype containing ``nan`` under pyarrow,
+    distinguishing a correct null normalization from a float-only one.
 
-    Written with ``engine="pyarrow"`` for the same reason ``_emit_refs`` pins it:
-    fastparquet cannot write one of these stores under pandas 3.x + numpy 2.x.
+    With ``multi_range=True`` chunk 2 becomes a multi-range reference of two
+    non-adjacent fragments, so one record carries all three reference forms at
+    once — and ``path`` keeps a non-null entry, so the column stays
+    ``large_string`` with nulls rather than collapsing to Arrow's ``null`` type.
+    Chunks widen from 1 byte to 2 in that mode, because two fragments cannot fit a
+    one-element chunk and a store whose chunk lengths disagree with its ``.zarray``
+    decodes to garbage rather than failing.
     """
-    import fsspec
-
     content = src.read_bytes()
-    fs, root_str = fsspec.core.url_to_fs(str(root))
-    mapper = LazyReferenceMapper.create(
-        record_size=10, root=root_str, fs=fs, engine="pyarrow"
-    )
-    mapper[".zgroup"] = json.dumps({"zarr_format": 2})
-    mapper[".zattrs"] = json.dumps(
-        {
+    # 2-byte chunks in multi-range mode so the multi-range chunk's two 1-byte
+    # fragments add up to exactly one chunk's worth of data.
+    width = 2 if multi_range else 1
+    zmetadata = {
+        ".zgroup": {"zarr_format": 2},
+        ".zattrs": {
             "multiscales": [
                 {
                     "version": "0.4",
                     "datasets": [{"path": lvl} for lvl in levels],
                 }
             ]
-        }
-    )
+        },
+    }
     expected: dict[str, bytes] = {}
+    records: dict[str, dict] = {}
+
     for i, level in enumerate(levels):
-        mapper[f"{level}/.zgroup"] = json.dumps({"zarr_format": 2})
-        mapper[f"{level}/.zattrs"] = json.dumps({})
-        mapper[f"{level}/data/.zarray"] = json.dumps(
-            {
-                "zarr_format": 2,
-                "shape": [4],
-                "chunks": [1],
-                "dtype": "|u1",
-                "compressor": None,
-                "filters": None,
-                "fill_value": 0,
-                "order": "C",
-            }
-        )
-        mapper[f"{level}/data/.zattrs"] = json.dumps({"_ARRAY_DIMENSIONS": ["x"]})
+        zmetadata[f"{level}/.zgroup"] = {"zarr_format": 2}
+        zmetadata[f"{level}/.zattrs"] = {}
+        zmetadata[f"{level}/data/.zarray"] = {
+            "zarr_format": 2,
+            "shape": [4 * width],
+            "chunks": [width],
+            "dtype": "|u1",
+            "compressor": None,
+            "filters": None,
+            "fill_value": 0,
+            "order": "C",
+        }
+        zmetadata[f"{level}/data/.zattrs"] = {"_ARRAY_DIMENSIONS": ["x"]}
+
         url = f"{template_base}{src.name}" if template_base else str(src)
+        references: dict[int, object] = {}
         for chunk in range(4):
             key = f"{level}/data/{chunk}"
-            if chunk % 2 == 0:
-                offset = 10 * i + chunk
-                mapper[key] = [url, offset, 1]
-                expected[key] = content[offset : offset + 1]
-            else:
-                inline = bytes([0xA0 + 10 * i + chunk])
-                mapper[key] = inline
+            if chunk % 2:
+                inline = bytes(0xA0 + 10 * i + chunk + b for b in range(width))
+                references[chunk] = inline
                 expected[key] = inline
-    mapper.flush()
+            elif multi_range and chunk == 2:
+                # Two non-adjacent single bytes well inside the 100-byte source, so
+                # a reader that fetched only the first fragment, or concatenated
+                # them out of order, is caught — ``content[n] == n``, so the two
+                # fragments always differ.
+                first, second = 10 * i + 2, 10 * i + 60
+                references[chunk] = [url, [[first, 1], [second, 1]]]
+                expected[key] = (
+                    content[first : first + 1] + content[second : second + 1]
+                )
+            else:
+                offset = 10 * i + chunk
+                references[chunk] = [url, offset, width]
+                expected[key] = content[offset : offset + width]
+        # A 1-D 4-chunk array ravels to row == chunk index, and 4 < record_size, so
+        # everything lands in record 0.
+        records[f"{level}/data"] = references
+
+    root.mkdir(parents=True, exist_ok=True)
+    (root / ".zmetadata").write_text(
+        json.dumps(
+            {"metadata": zmetadata, "record_size": _PARQUET_STORE_RECORD_SIZE}
+        )
+    )
+    for field, references in records.items():
+        _write_parquet_record(
+            root / field / "refs.0.parq", references, _PARQUET_STORE_RECORD_SIZE
+        )
     return expected
 
 
@@ -626,8 +720,15 @@ class TestParquetReferenceDirectory:
         fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
         assert fs.references.listdir() == {"0/data"}
 
-    def test_engine_is_pyarrow(self, parquet_store):
-        """The reader's engine matches the writer's, which the store cannot record."""
+    def test_engine_attribute_is_pyarrow(self, parquet_store):
+        """``engine`` is vestigial for reads, but must stay "pyarrow".
+
+        :meth:`ArrayOnlyReferenceMapper.setup` reads with ``pyarrow.parquet``
+        unconditionally, so this attribute no longer selects anything.  It is still
+        asserted because upstream's ``__init__`` uses it to run
+        ``find_spec("pyarrow")`` — the check that turns a missing install into an
+        actionable message instead of a ModuleNotFoundError mid-read.
+        """
         root, _ = parquet_store
         fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
         assert fs.references.engine == "pyarrow"
@@ -658,37 +759,106 @@ class TestParquetReferenceDirectory:
         for key in url_keys + inline_keys:
             assert fs.cat(key) == expected[key]
 
-    def test_reads_with_fastparquet_engine_on_read(self, parquet_store, monkeypatch):
-        """Forcing fastparquet on read still resolves every chunk.
+    def test_reads_a_store_whose_null_columns_are_float64(self, tmp_path, data_file):
+        """A store written by another tool, with ``nan`` for nulls, still reads.
 
-        Without the null normalization this raises
-        ``TypeError: object of type 'numpy.float64' has no len()`` — fastparquet
-        decodes the null ``raw`` column to ``nan``, and upstream's
-        ``raw is not None`` test then returns the float as if it were chunk data.
-
-        This is what makes the reader engine-agnostic, so an index written by some
-        other tool with fastparquet is not a landmine.  It is asserted from the
-        read side because fastparquet cannot *write* one of these stores under
-        pandas 3.x + numpy 2.x at all (``Error converting column "path" to bytes
-        using encoding UTF8``) — the same incompatibility that makes the writer
-        pin pyarrow.
+        ``fastparquet`` types an all-null column ``float64``, so its nulls arrive as
+        ``nan`` rather than ``None``.  Upstream's ``raw is not None`` test passes for
+        ``nan`` and hands the float back as if it were chunk data —
+        ``TypeError: object of type 'numpy.float64' has no len()``.  Normalizing
+        nulls in the loader is what makes the reader independent of who wrote the
+        store, and this is the property that used to be checked by forcing
+        ``engine="fastparquet"``; that no longer proves anything now the loader is
+        pyarrow-only, so the *column type* is reproduced directly instead — which
+        also drops the fastparquet dependency from the test.
         """
-        pytest.importorskip("fastparquet")
-        root, expected = parquet_store
+        import pyarrow as pa
+        import pyarrow.parquet as pq
 
-        class FastparquetMapper(ArrayOnlyReferenceMapper):
-            def __init__(self, mapper_root, fs=None, **kwargs):
-                kwargs["engine"] = "fastparquet"
-                super().__init__(mapper_root, fs=fs, **kwargs)
-
-        monkeypatch.setattr(
-            "aws.osml.io.multi_reference_fs.ArrayOnlyReferenceMapper",
-            FastparquetMapper,
+        src, content = data_file
+        root = tmp_path / "float_nulls.parquet"
+        root.mkdir()
+        (root / ".zmetadata").write_text(
+            json.dumps({
+                "metadata": {
+                    ".zgroup": {"zarr_format": 2},
+                    "0/.zgroup": {"zarr_format": 2},
+                    "0/data/.zarray": {
+                        "zarr_format": 2, "shape": [2], "chunks": [1],
+                        "dtype": "|u1", "compressor": None, "filters": None,
+                        "fill_value": 0, "order": "C",
+                    },
+                },
+                "record_size": _PARQUET_STORE_RECORD_SIZE,
+            })
         )
+        n = _PARQUET_STORE_RECORD_SIZE
+        (root / "0" / "data").mkdir(parents=True)
+        pq.write_table(
+            pa.table({
+                "path": pa.array([str(src), str(src)] + [None] * (n - 2),
+                                 type=pa.string()),
+                "offset": pa.array([3, 9] + [0] * (n - 2), type=pa.int64()),
+                "size": pa.array([1, 1] + [0] * (n - 2), type=pa.int64()),
+                # The fastparquet spelling: an all-null column as float64 nan.
+                "raw": pa.array([float("nan")] * n, type=pa.float64()),
+            }),
+            root / "0" / "data" / "refs.0.parq",
+            compression="zstd",
+        )
+
         fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
-        assert fs.references.engine == "fastparquet"
-        for key, want in expected.items():
-            assert fs.cat(key) == want
+        assert fs.cat("0/data/0") == content[3:4]
+        assert fs.cat("0/data/1") == content[9:10]
+
+    def test_reads_a_pandas_written_store(self, tmp_path, data_file):
+        """Interop: a store written through pandas reads identically.
+
+        This library writes with pyarrow directly and imports no pandas, which
+        produces Arrow ``string`` rather than ``large_string`` and omits pandas'
+        schema-metadata block.  Neither should matter, in either direction — kerchunk
+        and other Kerchunk-ecosystem tools write via pandas, and their indexes must
+        remain readable here.  Guarded rather than assumed available, since pandas is
+        not a dependency of this project.
+        """
+        pd = pytest.importorskip("pandas")
+
+        src, content = data_file
+        root = tmp_path / "pandas_written.parquet"
+        root.mkdir()
+        (root / ".zmetadata").write_text(
+            json.dumps({
+                "metadata": {
+                    ".zgroup": {"zarr_format": 2},
+                    "0/.zgroup": {"zarr_format": 2},
+                    "0/data/.zarray": {
+                        "zarr_format": 2, "shape": [2], "chunks": [1],
+                        "dtype": "|u1", "compressor": None, "filters": None,
+                        "fill_value": 0, "order": "C",
+                    },
+                },
+                "record_size": _PARQUET_STORE_RECORD_SIZE,
+            })
+        )
+        n = _PARQUET_STORE_RECORD_SIZE
+        paths = np.full(n, np.nan, dtype="O")
+        offsets = np.zeros(n, dtype="int64")
+        sizes = np.zeros(n, dtype="int64")
+        raws = np.full(n, np.nan, dtype="O")
+        paths[0], offsets[0], sizes[0] = str(src), 3, 1
+        raws[1] = b"\x5a"
+        (root / "0" / "data").mkdir(parents=True)
+        pd.DataFrame(
+            {"path": paths, "offset": offsets, "size": sizes, "raw": raws},
+            copy=False,
+        ).to_parquet(
+            root / "0" / "data" / "refs.0.parq",
+            engine="pyarrow", compression="zstd", index=False,
+        )
+
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        assert fs.cat("0/data/0") == content[3:4]
+        assert fs.cat("0/data/1") == b"\x5a"
 
     def test_ls_root_succeeds(self, parquet_store):
         """``ls("")`` works via the dircache fallback.
@@ -751,6 +921,215 @@ class TestParquetReferenceDirectory:
                 dtype=np.uint8,
             )
             np.testing.assert_array_equal(values, want)
+
+
+@pytest.fixture
+def multi_range_parquet_store(tmp_path, data_file):
+    """A Parquet store mixing inline, single-range and multi-range chunks."""
+    src, _ = data_file
+    root = tmp_path / "multirange.parquet"
+    expected = _write_parquet_store(root, src, multi_range=True)
+    return root, expected
+
+
+class TestParquetMultiRangeReferences:
+    """The Parquet container carries multi-range chunk references.
+
+    Upstream's record schema has only scalar ``offset`` / ``size`` columns, so a
+    variable-length range list has nowhere to go — writing one raised
+    ``TypeError: int() argument must be ... not 'list'`` from inside fsspec, and no
+    column existed that a reader could have returned it from.  The container is
+    widened with ``range_path`` / ``offsets`` / ``sizes``, and these tests cover the
+    read half of that contract against a hand-built store.
+    """
+
+    def test_schema_carries_the_range_columns(self, multi_range_parquet_store):
+        """The three appended columns are present, and the list ones are lists."""
+        pa = pytest.importorskip("pyarrow")
+        import pyarrow.parquet as pq
+
+        root, _ = multi_range_parquet_store
+        schema = pq.read_schema(root / "0" / "data" / "refs.0.parq")
+        assert schema.names == [
+            "path", "offset", "size", "raw", "range_path", "offsets", "sizes",
+        ], schema.names
+        for name in ("offsets", "sizes"):
+            # Checked semantically rather than by the type's string form, which
+            # Parquet renames from "item" to "element" across the write.
+            field_type = schema.field(name).type
+            assert pa.types.is_list(field_type), field_type
+            assert field_type.value_type == pa.int64(), field_type
+
+    def test_load_one_key_returns_the_multi_range_form(
+        self, multi_range_parquet_store
+    ):
+        """A multi-range row decodes to ``[url, [[offset, length], ...]]``."""
+        import fsspec
+
+        root, _ = multi_range_parquet_store
+        ref_fs, root_str = fsspec.core.url_to_fs(str(root))
+        mapper = ArrayOnlyReferenceMapper(root_str, fs=ref_fs)
+
+        reference = mapper["0/data/2"]
+        assert MultiReferenceFileSystem._is_multi_range(reference), reference
+        assert reference[1] == [[2, 1], [60, 1]], reference[1]
+
+    def test_multi_range_chunk_concatenates_in_order(
+        self, multi_range_parquet_store
+    ):
+        """``fs.cat`` returns the fragments joined in the stored order.
+
+        The fixture's two fragments are far apart and hold different bytes, so a
+        reader that fetched only the first, or reversed them, fails here.
+        """
+        root, expected = multi_range_parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        assert len(expected["0/data/2"]) == 2, "fixture should have two fragments"
+        assert fs.cat("0/data/2") == expected["0/data/2"]
+
+    def test_all_reference_forms_coexist_in_one_record(
+        self, multi_range_parquet_store
+    ):
+        """Inline, single-range and multi-range rows all resolve side by side.
+
+        This is the case where ``path`` keeps a non-null entry, so the column stays
+        Arrow ``large_string`` with nulls rather than collapsing to the ``null``
+        type an all-multi-range record produces.  The two decode through different
+        pyarrow paths, so both are covered.
+        """
+        root, expected = multi_range_parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        for key, want in expected.items():
+            assert fs.cat(key) == want, f"chunk {key} resolved incorrectly"
+
+    def test_zarr_reads_the_store(self, multi_range_parquet_store):
+        """zarr decodes the array with a multi-range chunk in it."""
+        zarr = pytest.importorskip("zarr", minversion="3.0")
+        root, expected = multi_range_parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        group = zarr.open_group(fs.get_mapper(""), mode="r", zarr_format=2)
+        want = np.frombuffer(
+            b"".join(expected[f"0/data/{c}"] for c in range(4)), dtype=np.uint8
+        )
+        np.testing.assert_array_equal(np.asarray(group["0/data"][:]), want)
+
+    def test_async_path_matches_the_sync_path(self, multi_range_parquet_store):
+        """``_cat_file`` fans the fragments out concurrently, same bytes.
+
+        ``_fetch_multi_range_async`` and ``_fetch_multi_range_sync`` are separate
+        implementations and ``fs.cat`` reaches only the sync one, so the async
+        entry point is exercised directly.
+        """
+        root, expected = multi_range_parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        got = asyncio.run(fs._cat_file("0/data/2"))
+        assert got == expected["0/data/2"] == fs.cat("0/data/2")
+
+    def test_multi_range_chunks_are_absent_from_listings(
+        self, multi_range_parquet_store
+    ):
+        """Pins the one cosmetic consequence of leaving ``path`` null.
+
+        Upstream's ``ls()`` drops rows whose first column is falsy, so multi-range
+        chunks do not appear in a listing of their field.  Reads are unaffected —
+        Zarr fetches by key — so this is documented and asserted rather than fixed
+        by re-implementing upstream's ``ls``.  If a future change makes listings
+        load-bearing, this test is the place that says so.
+        """
+        root, _ = multi_range_parquet_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        names = {entry["name"] for entry in fs.ls("0/data", detail=True)}
+        assert "0/data/0" in names, f"single-range chunk should be listed: {names}"
+        assert "0/data/2" not in names, (
+            f"multi-range chunk unexpectedly listed — if this now works, drop the "
+            f"caveat from ArrayOnlyReferenceMapper's docstring: {names}"
+        )
+        # Reading it still works, which is the property that actually matters.
+        assert fs.cat("0/data/2")
+
+
+class TestMultiRangeParquetFailsLoudForUnawareReaders:
+    """A reader that ignores the range columns fails; it never returns pixels.
+
+    This is a deliberate design property and otherwise invisible, so it is pinned
+    here.  ``path`` is left null on a multi-range row precisely so that an unaware
+    reader breaks: seeding it with the first fragment would hand such a reader one
+    fragment of a chunk as though it were the whole thing, and populating it with
+    ``offset=size=0`` would make upstream read the *entire* source file as one
+    chunk.  Both would be silent wrong pixels.
+    """
+
+    def test_stock_mapper_raises_on_an_all_multi_range_record(
+        self, tmp_path, data_file
+    ):
+        """Every row multi-range → ``path`` is Arrow ``null`` → clean ``KeyError``.
+
+        With no non-null entry, pyarrow types the column ``null`` and returns
+        ``None``, so upstream's own ``selection[0] is None`` test fires.
+        """
+        import fsspec
+
+        src, _ = data_file
+        root = tmp_path / "allmulti.parquet"
+        root.mkdir()
+        (root / ".zmetadata").write_text(
+            json.dumps({
+                "metadata": {
+                    ".zgroup": {"zarr_format": 2},
+                    "0/.zgroup": {"zarr_format": 2},
+                    "0/data/.zarray": {
+                        "zarr_format": 2, "shape": [2], "chunks": [1],
+                        "dtype": "|u1", "compressor": None, "filters": None,
+                        "fill_value": 0, "order": "C",
+                    },
+                },
+                "record_size": _PARQUET_STORE_RECORD_SIZE,
+            })
+        )
+        _write_parquet_record(
+            root / "0" / "data" / "refs.0.parq",
+            {
+                0: [str(src), [[0, 1], [40, 1]]],
+                1: [str(src), [[1, 1], [50, 1]]],
+            },
+            _PARQUET_STORE_RECORD_SIZE,
+        )
+
+        ref_fs, root_str = fsspec.core.url_to_fs(str(root))
+        stock = LazyReferenceMapper(root_str, fs=ref_fs, engine="pyarrow")
+        with pytest.raises(KeyError):
+            stock["0/data/0"]
+
+        # Ours reads the same store correctly.
+        ours = ArrayOnlyReferenceMapper(root_str, fs=ref_fs)
+        assert ours["0/data/0"] == [str(src), [[0, 1], [40, 1]]]
+
+    def test_stock_mapper_returns_a_malformed_ref_on_a_mixed_record(
+        self, multi_range_parquet_store
+    ):
+        """Mixed record → ``path`` stays ``large_string`` and the null survives.
+
+        A stock reader does not normalize nulls, so pyarrow's ``nan`` reaches
+        upstream's ``selection[0] is None`` test, passes it, and falls through to
+        the whole-file branch returning ``[nan]``.  Still a failure — a
+        single-element reference naming a non-string URL — but not the clean
+        ``KeyError`` of the all-null case, so it is pinned as what it is rather than
+        advertised as clean.
+        """
+        import fsspec
+
+        root, expected = multi_range_parquet_store
+        ref_fs, root_str = fsspec.core.url_to_fs(str(root))
+        stock = LazyReferenceMapper(root_str, fs=ref_fs, engine="pyarrow")
+
+        reference = stock["0/data/2"]
+        assert isinstance(reference, list) and len(reference) == 1, reference
+        assert not isinstance(reference[0], (str, bytes)), (
+            f"a stock reader must not resolve a multi-range row to a usable "
+            f"reference, got {reference!r}"
+        )
+        # Single-range and inline rows are unaffected for a stock reader.
+        assert stock["0/data/1"] == expected["0/data/1"]
 
 
 class TestParquetTemplateExpansion:
@@ -818,6 +1197,41 @@ class TestParquetTemplateExpansion:
         )
         for key, want in expected.items():
             assert fs.cat(key) == want
+
+    @pytest.fixture
+    def portable_multi_range_store(self, tmp_path, data_file):
+        src, _ = data_file
+        root = tmp_path / "portable_mr.parquet"
+        expected = _write_parquet_store(
+            root, src, template_base="{{base}}", multi_range=True
+        )
+        return root, expected, str(src.parent) + "/"
+
+    def test_range_path_is_expanded_too(self, portable_multi_range_store):
+        """``{{base}}`` must be substituted in ``range_path``, not only ``path``.
+
+        Expanding one column and not the other leaves the placeholder literal in
+        exactly the entries a portable index most needs — for RPCL J2K imagery
+        every chunk reference is multi-range — and the failure surfaces as an
+        unreachable URL rather than as an unexpanded template.
+        """
+        root, expected, base = portable_multi_range_store
+        fs = MultiReferenceFileSystem(
+            fo=str(root),
+            skip_instance_cache=True,
+            template_overrides={"base": base},
+        )
+        url = fs.references["0/data/2"][0]
+        assert url.startswith(base), f"range_path not expanded: {url!r}"
+        assert fs.cat("0/data/2") == expected["0/data/2"]
+
+    def test_unexpanded_range_path_fails_loudly(self, portable_multi_range_store):
+        """Without overrides a multi-range read fails rather than reading garbage."""
+        root, _, _ = portable_multi_range_store
+        fs = MultiReferenceFileSystem(fo=str(root), skip_instance_cache=True)
+        assert fs.references["0/data/2"][0].startswith("{{base}}")
+        with pytest.raises((FileNotFoundError, OSError)):
+            fs.cat("0/data/2")
 
 
 class TestMissingPyarrowIsActionable:

@@ -160,7 +160,7 @@ reads them:
 | Chunk keys | `0/data/0.0.0` | `0/data/c.0.0.0` |
 | Codec resolution | numcodecs registry, by `id` | `zarr.codecs` entry points, by URI |
 | Codec call convention | synchronous, single buffer | async, batched pipeline |
-| Output formats | `.json`, `.parquet` | `.json` only |
+| Output formats | `.json`, `.parquet` — both carry all four reference forms, including multi-range | `.json` only |
 
 ```python
 parser = OversightMLParser()
@@ -173,11 +173,21 @@ write_tile_index(store, "image.tile_index.json")
 write_tile_index(store, "image.v3.json", zarr_format=3)
 ```
 
-Parquet output requires `zarr_format=2`. The Kerchunk Parquet container
-(fsspec's `LazyReferenceMapper`) indexes chunk references positionally, deriving
-each record from the v2 `.zarray` `shape`/`chunks`, which a native v3 store has
-no equivalent of. Requesting `.parquet` with `zarr_format=3` raises `ValueError`
-rather than writing an index nothing can read back.
+Parquet output requires `zarr_format=2`, and requesting `.parquet` with
+`zarr_format=3` raises `ValueError` rather than writing an index nothing can read
+back.
+
+This is a **deferral, not a structural limit**. The Kerchunk Parquet container
+indexes chunk references positionally, deriving each row from the array's
+chunk-grid shape and parsing the chunk key's last segment as grid coordinates. A
+v3 store carries everything that needs — `zarr.json` states `shape` and
+`chunk_grid.configuration.chunk_shape`, and `chunk_key_encoding` names the chunk
+key separator — just not under the v2 names. What is missing is read-side support:
+deriving chunk counts from `zarr.json` rather than `{field}/.zarray`, parsing
+`c.<band>.<row>.<col>` chunk keys whose leading `c` is not a coordinate, and
+recognizing `zarr.json` as metadata. That is a bounded piece of work — a few more
+overrides alongside the ones `MultiReferenceFileSystem` already carries — and is
+simply not implemented.
 
 ### Reading a Parquet index
 
@@ -196,21 +206,37 @@ full_res = root["0/data"]     # level 0
 half_res = root["1/data"]     # level 1 — the pyramid survives the round-trip
 ```
 
-Three properties of the Parquet container make this necessary, all handled by
+Four properties of the Parquet container make this necessary, all handled by
 `MultiReferenceFileSystem`:
 
-- **The Parquet engine is not recorded in the store.** Indexes are written with
-  `engine="pyarrow"`, but `LazyReferenceMapper` defaults to `fastparquet` on
-  read, and the two engines decode nulls differently — enough to misread every
-  chunk reference. `MultiReferenceFileSystem` pins the same engine the writer
-  used, and normalizes nulls so an index written by another tool with
+- **Multi-range chunks need extra columns.** Upstream's record schema has only
+  scalar `offset` and `size` columns, so a chunk assembled from several
+  non-contiguous fragments — every chunk, in RPCL JPEG 2000 imagery — has nowhere
+  to go. This library appends `range_path` (the URL), plus `offsets` and `sizes`
+  as `list<int64>` columns, and leaves `path` **null** on those rows. A reader
+  that does not know the columns therefore fails on such a chunk rather than
+  handing back one fragment of six as if it were the whole thing.
+  `MultiReferenceFileSystem` decodes them into the multi-range reference form and
+  fetches the fragments — concurrently on the async path — joining them in the
+  stored order.
+- **The record loader routes through pandas, and nulls decode inconsistently.**
+  fsspec loads each record with `pandas.read_parquet(...)` and then immediately
+  calls `to_numpy()` on every column — pandas decodes via pyarrow and is thrown
+  away, which would make `pandas` a runtime requirement of merely *reading* an
+  index. Worse, the writer's engine is not recorded in the store while
+  `LazyReferenceMapper` defaults to `fastparquet` on read, and the two engines
+  decode nulls differently — enough to misread every chunk reference.
+  `MultiReferenceFileSystem` loads with `pyarrow` directly and normalizes nulls,
+  so this library never imports pandas and an index written by another tool with
   `fastparquet` reads correctly too.
 - **Nested group keys confuse the stock field listing.** A hierarchical store has
   a `.zgroup` per pyramid level, which fsspec's `listdir()` mistakes for an array
   field and then fails to find a `.zarray` for.
 - **Templates cannot be stored.** A Parquet store has nowhere to keep the
   Kerchunk `"templates"` dict, so a portable index (`template_base="{{base}}"`)
-  resolves its placeholders from `template_overrides` alone:
+  resolves its placeholders from `template_overrides` alone. The substitution is
+  applied to `range_path` as well as `path`, so multi-range chunks of a portable
+  index resolve too:
 
   ```python
   fs = MultiReferenceFileSystem(
@@ -219,14 +245,23 @@ Three properties of the Parquet container make this necessary, all handled by
   )
   ```
 
-Reading *and* writing a Parquet index requires `pyarrow`, supplied by the
-`zarr` extra:
+Reading *and* writing a Parquet index requires `pyarrow`, supplied by the `zarr`
+extra:
 
 ```bash
 pip install "osml-imagery-io[zarr]"
 ```
 
 Without it, both paths raise an `ImportError` naming the package and this extra.
+
+```{note}
+One cosmetic consequence of leaving `path` null on multi-range rows: fsspec's
+`ls()` builds its chunk listing from rows with a non-null `path`, so multi-range
+chunks do not appear in a listing of their array field. Reads are unaffected —
+Zarr fetches chunks by key, and both consumer paths decode them correctly — but a
+`fs.ls("0/data")` on an index of interleaved imagery will show the metadata keys
+and no chunks. The JSON container does list them.
+```
 
 ### Relocating chunk references
 

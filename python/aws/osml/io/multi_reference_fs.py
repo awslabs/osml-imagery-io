@@ -78,6 +78,24 @@ def _null_normalized(array):
     return out
 
 
+def is_multi_range_ref(part) -> bool:
+    """Is *part* a multi-range reference ``["url", [[offset, length], ...]]``?
+
+    A reference is multi-range when it is a 2-element list whose second element is
+    a non-empty list of lists.  The single source of truth for the form, shared
+    with the writer in ``virtualizarr_parsers`` so the two ends of the contract
+    cannot drift: a writer that emitted a shape the reader did not recognize would
+    produce an index that reads as missing chunks rather than as a failure.
+    """
+    return (
+        isinstance(part, list)
+        and len(part) == 2
+        and isinstance(part[1], list)
+        and len(part[1]) > 0
+        and isinstance(part[1][0], list)
+    )
+
+
 def _expand_templates(url, templates):
     """Substitute ``{{name}}`` placeholders in *url* from the *templates* map.
 
@@ -102,16 +120,19 @@ class ArrayOnlyReferenceMapper(LazyReferenceMapper):
     store and cannot read the hierarchical (GeoZarr multiscales) stores this
     library writes.  Two independent container-level defects stack:
 
-    1. **The writer's engine is not recorded in the store.**  ``.zmetadata``
-       holds only ``{"metadata": ..., "record_size": ...}``, so a reader cannot
-       recover which Parquet engine wrote the refs.  The write side must use
-       ``pyarrow`` (``fastparquet`` fails outright under pandas 3.x + numpy 2.x),
-       while ``LazyReferenceMapper`` defaults to ``fastparquet`` on read.  The
-       two engines then disagree on nulls, and upstream's ``raw is not None``
-       test takes the inline-data branch for ``nan``, surfacing as
-       ``TypeError: object of type 'numpy.float64' has no len()``.  Fixed here by
-       pinning ``engine="pyarrow"`` *and* normalizing nulls, so an index written
-       by some other tool with ``fastparquet`` also reads correctly.
+    1. **The record loader goes through pandas, and nulls decode inconsistently.**
+       Upstream's loader is ``pandas.read_parquet(..., engine=self.engine)``
+       followed immediately by ``to_numpy()`` per column, so pandas decodes via
+       pyarrow and is then thrown away — making ``pandas`` a runtime requirement of
+       merely *reading* a tile index, in exchange for nothing.  Worse, the writer's
+       engine is *not recorded in the store* (``.zmetadata`` holds only
+       ``{"metadata": ..., "record_size": ...}``) while ``LazyReferenceMapper``
+       defaults to ``fastparquet`` on read, and the engines disagree on nulls:
+       upstream's ``raw is not None`` test takes the inline-data branch for ``nan``,
+       surfacing as ``TypeError: object of type 'numpy.float64' has no len()``.
+       Fixed here by loading with ``pyarrow.parquet.read_table`` directly *and*
+       normalizing nulls, so this library never imports pandas and an index written
+       by some other tool with ``fastparquet`` still reads correctly.
     2. **Group prefixes are mistaken for array fields.**  Upstream ``listdir()``
        derives its field list by stripping the last segment off every metadata
        key, excluding only *root-level* ``.z*`` keys.  A nested ``0/.zgroup``
@@ -129,15 +150,48 @@ class ArrayOnlyReferenceMapper(LazyReferenceMapper):
     unsubstituted URL.  Pass *templates* (from ``template_overrides``) to expand
     them as refs are loaded.
 
-    All three fixes are deliberately confined to extension points — the ``engine``
-    kwarg, ``listdir()``, and the ``open_refs`` closure built by ``setup()`` — so
-    no upstream method body is duplicated and there is nothing to re-diff when
-    fsspec changes.
+    Finally, this class decodes the **multi-range** rows this library's writer
+    emits.  Upstream's record schema has only scalar ``offset`` / ``size`` columns,
+    so the writer appends ``range_path`` / ``offsets`` / ``sizes`` (the latter two
+    ``list<int64>``) and leaves ``path`` null on those rows;
+    :meth:`_load_one_key` recognizes them and returns the multi-range reference
+    form ``[url, [[offset, length], ...]]``, which
+    :meth:`MultiReferenceFileSystem._cat_common` then fans out.  Because ``path``
+    is null, a reader without this override gets a broken reference rather than one
+    fragment mistaken for a whole chunk — see :meth:`_load_one_key`.
+
+    One consequence of that null is worth knowing: upstream's ``ls()`` builds its
+    chunk entries from ``_generate_all_records`` and drops any row whose first
+    column is falsy, so **multi-range chunks do not appear in a listing** of their
+    array field.  Reads are unaffected — Zarr fetches chunks by key, and both the
+    ``zarr_format=2`` mapper and the ``FsspecStore`` path decode multi-range chunks
+    correctly — so this is cosmetic and left alone rather than fixed by
+    re-implementing upstream's ``ls``.  It is asserted in the tests so it cannot
+    drift into something load-bearing unnoticed.  Note the JSON container does list
+    them, so the two containers differ here.
+
+    These fixes are confined to four overrides — ``listdir()``, ``setup()``,
+    ``_load_one_key()`` and ``__init__`` — and only ``setup()`` restates any upstream
+    logic: the four lines that read ``.zmetadata`` into ``_items`` / ``record_size``
+    / ``zmetadata``, which come along with replacing the loader rather than wrapping
+    it.  Everything that consumes those arrays — ``_key_to_record``,
+    ``_get_chunk_sizes``, ``ls``, ``items()`` — is upstream's and untouched.
+
+    The *write* path does not route through ``LazyReferenceMapper`` at all:
+    ``virtualizarr_parsers._write_parquet_index`` emits the store directly, because
+    ``LazyReferenceMapper.write()`` builds a hardcoded four-column DataFrame with no
+    seam to widen for the range columns.  What the two ends share is the on-disk
+    layout, not any code.
     """
 
     def __init__(self, root, fs=None, templates=None, **kwargs):
         # Set before super().__init__: it may trigger setup() via __getattr__.
         self.templates = dict(templates or {})
+        # ``engine`` no longer selects anything — :meth:`setup` reads with pyarrow
+        # unconditionally.  It is still set to "pyarrow" because upstream's
+        # ``__init__`` uses that value to run ``find_spec("pyarrow")``, which is the
+        # check that lets a missing install surface as ``_PYARROW_HINT`` rather than
+        # as a ModuleNotFoundError from inside the first chunk read.
         kwargs.setdefault("engine", "pyarrow")
         try:
             super().__init__(root, fs=fs, **kwargs)
@@ -164,59 +218,127 @@ class ArrayOnlyReferenceMapper(LazyReferenceMapper):
         }
 
     def setup(self):
-        """Build the ref loader, then wrap it to fix up the columns it returns.
+        """Read ``.zmetadata`` and install a ``pyarrow``-only record loader.
 
-        ``super().setup()`` installs an ``open_refs(field, record)`` closure
-        returning ``{column: ndarray}``.  Normalizing nulls there — rather than
-        overriding ``_load_one_key`` — leaves upstream's reference decoding
-        untouched: its ``raw is not None`` and ``selection[0] is None`` tests both
-        become correct once the arrays hold real ``None``.  Template expansion
-        rides the same seam, since it is also a per-column rewrite of ``path``.
+        Replaces ``super().setup()`` rather than wrapping it.  Upstream's loader is
+        ``pandas.read_parquet(...)`` followed immediately by ``to_numpy()`` per
+        column — pandas decodes through pyarrow and is then discarded — so calling it
+        would make ``pandas`` a runtime requirement of merely *reading* a tile index,
+        for no capability.  ``pyarrow.parquet.read_table`` produces the same values
+        directly; see defect 1 in the class docstring.
+
+        The three column fix-ups this class exists for all happen here, which is why
+        the loader rather than ``_load_one_key`` is the seam:
+
+        * **Nulls** are normalized to ``None``.  pyarrow already yields ``None``, so
+          this is now insurance for stores written by other tools — fastparquet types
+          an all-null column ``float64``, whose ``nan`` would sail through upstream's
+          ``raw is not None`` test as if it were chunk data.
+        * **Templates** are expanded in *both* URL columns.  Missing ``range_path``
+          would leave ``{{base}}`` literal in exactly the entries a portable index
+          most needs — the multi-range ones — and the failure would look like an
+          unreachable reference rather than an unexpanded template.
+        * Everything downstream (``_load_one_key``, ``_key_to_record``, ``ls``) is
+          upstream's and reads these arrays unchanged.
         """
-        super().setup()
-        load = self.open_refs
+        import io
+        import json
+
+        import pyarrow.parquet as pq
+
+        self._items = {}
+        self._items[".zmetadata"] = self.fs.cat_file(
+            "/".join([self.root, ".zmetadata"])
+        )
+        met = json.loads(self._items[".zmetadata"])
+        self.record_size = met["record_size"]
+        self.zmetadata = met["metadata"]
+
         templates = self.templates
 
         @lru_cache(maxsize=self.cache_size)
         def open_refs(field, record):
-            refs = load(field, record)
-            # Upstream returns None on OSError and ``_load_one_key`` relies on
-            # that to raise KeyError; preserve the short-circuit.
-            if refs is None:
+            path = self.url.format(field=field, record=record)
+            try:
+                table = pq.read_table(io.BytesIO(self.fs.cat_file(path)))
+            except OSError:
+                # Upstream returns None here and ``_load_one_key`` relies on that
+                # to raise KeyError; preserve the short-circuit.
                 return None
-            refs = {c: _null_normalized(a) for c, a in refs.items()}
-            if templates and "path" in refs:
+            refs = {
+                name: _null_normalized(
+                    table.column(name).to_numpy(zero_copy_only=False)
+                )
+                for name in table.schema.names
+            }
+            if templates:
                 import numpy as np
 
-                refs["path"] = np.array(
-                    [_expand_templates(p, templates) for p in refs["path"]],
-                    dtype=object,
-                )
+                for column in ("path", "range_path"):
+                    if column in refs:
+                        refs[column] = np.array(
+                            [
+                                _expand_templates(url, templates)
+                                for url in refs[column]
+                            ],
+                            dtype=object,
+                        )
             return refs
 
-        self.open_refs = _CacheClearingProxy(open_refs, load)
+        self.open_refs = open_refs
 
+    def _load_one_key(self, key):
+        """Return the reference for *key*, decoding multi-range rows.
 
-class _CacheClearingProxy:
-    """Callable that forwards ``cache_clear()`` to a wrapped inner cache too.
+        A multi-range row is one whose ``offsets`` cell is populated; it decodes to
+        ``[range_path, [[offset, length], ...]]``, the fourth reference form
+        :class:`MultiReferenceFileSystem` fans out.  Everything else — metadata,
+        inline ``raw``, whole-file and single-range references — delegates to
+        upstream unchanged.
 
-    ``LazyReferenceMapper.flush()`` calls ``self.open_refs.cache_clear()``, and
-    ``functools.lru_cache`` wrappers do not accept attribute assignment, so the
-    normalizing wrapper needs a small object to keep both caches in step.
-    """
+        Note what a reader *without* this override sees for such a row: ``path`` is
+        null, so upstream raises
+        ``KeyError("This reference does not exist or has been deleted")`` once nulls
+        are normalized, and returns a malformed single-element reference if they are
+        not.  Either way it fails; neither hands back pixels.  That is the point of
+        leaving ``path`` null — seeding it with the first fragment would make an
+        unaware reader decode one sixth of a chunk as if it were the whole thing.
+        """
+        ranges = self._multi_range_for(key)
+        if ranges is not None:
+            return ranges
+        return super()._load_one_key(key)
 
-    __slots__ = ("_outer", "_inner")
+    def _multi_range_for(self, key):
+        """Decode *key* as a multi-range reference, or ``None`` if it is not one.
 
-    def __init__(self, outer, inner):
-        self._outer = outer
-        self._inner = inner
+        Returns ``None`` — rather than raising — for every key that is not a chunk
+        in the widened schema, so :meth:`_load_one_key` can fall through to
+        upstream and keep a single place that decides what a missing key means.
+        """
+        if key in self._items or key in self.zmetadata:
+            return None
+        if "/" not in key or self._is_meta(key):
+            return None
 
-    def __call__(self, field, record):
-        return self._outer(field, record)
+        field, _ = key.rsplit("/", 1)
+        try:
+            record, index, _ = self._key_to_record(key)
+            refs = self.open_refs(field, record)
+        except (KeyError, ValueError, TypeError, FileNotFoundError):
+            return None
+        if not refs or "offsets" not in refs:
+            return None
 
-    def cache_clear(self):
-        self._outer.cache_clear()
-        self._inner.cache_clear()
+        offsets = refs["offsets"][index]
+        if offsets is None or len(offsets) == 0:
+            return None
+        sizes = refs["sizes"][index]
+        url = refs["range_path"][index]
+        return [
+            url,
+            [[int(offset), int(length)] for offset, length in zip(offsets, sizes)],
+        ]
 
 
 class MultiReferenceFileSystem(ReferenceFileSystem):
@@ -423,16 +545,9 @@ class MultiReferenceFileSystem(ReferenceFileSystem):
     def _is_multi_range(part) -> bool:
         """Detect multi-range reference entries.
 
-        A reference is multi-range when it is a 2-element list whose second
-        element is a non-empty list of 2-element lists (each ``[offset, length]``).
+        Delegates to :func:`is_multi_range_ref`, which the writer shares.
         """
-        return (
-            isinstance(part, list)
-            and len(part) == 2
-            and isinstance(part[1], list)
-            and len(part[1]) > 0
-            and isinstance(part[1][0], list)
-        )
+        return is_multi_range_ref(part)
 
     def _cat_common(self, path, start=None, end=None):
         """Resolve a reference key to bytes.

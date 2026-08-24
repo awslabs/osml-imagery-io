@@ -638,13 +638,38 @@ class TestV3ProducerArtifact:
     def test_parquet_rejected_for_v3(self, nitf_src, tmp_path):
         """Parquet + v3 raises rather than writing an unreadable index.
 
-        The Kerchunk Parquet container indexes chunk references positionally from
-        the v2 ``.zarray`` shape/chunks, which a v3 store has no equivalent of, so
-        failing loudly is the only honest outcome.
+        The behavior is a deferral, not a structural limit, and the message must say
+        so: a v3 ``zarr.json`` does carry the shape and chunk shape that the
+        container's positional indexing needs, just not under the v2 names, so what
+        blocks it is missing read-side support.  The message is asserted because it
+        is the only place a user learns which of those two it is.
         """
         store = OversightMLParser()(str(nitf_src.resolve()))
         with pytest.raises(ValueError, match="Parquet output is not supported"):
             write_tile_index(store, str(tmp_path / "x.parquet"), zarr_format=3)
+
+        with pytest.raises(ValueError, match="not implemented"):
+            write_tile_index(store, str(tmp_path / "x.parquet"), zarr_format=3)
+
+    def test_v3_parquet_rejection_does_not_claim_impossibility(
+        self, nitf_src, tmp_path
+    ):
+        """The message must not say a v3 store lacks what positional indexing needs.
+
+        It used to assert that a v3 store "does not have" the ``.zarray``
+        ``shape``/``chunks`` the container indexes by.  A v3 store has both, under
+        different names, so the claim was false and pointed a reader away from work
+        that is actually bounded.
+        """
+        store = OversightMLParser()(str(nitf_src.resolve()))
+        with pytest.raises(ValueError) as excinfo:
+            write_tile_index(store, str(tmp_path / "x.parquet"), zarr_format=3)
+
+        message = str(excinfo.value)
+        assert "does not have" not in message, message
+        assert "zarr.json" in message, (
+            "the message should name what a v3 store carries instead of .zarray"
+        )
 
     @pytest.mark.parametrize("bad_format", [0, 1, 4, "3", None])
     def test_invalid_zarr_format_rejected(self, nitf_src, tmp_path, bad_format):

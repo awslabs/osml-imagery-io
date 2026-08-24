@@ -53,7 +53,6 @@ dependencies:
   - pip:
       - -e .[zarr,virtualizarr]
       - xarray>=2024.1       # tests/property/zarr/test_v3_producer.py
-      - fastparquet>=2024.2  # engine-agnostic Parquet read coverage
 
 variables:
   # Environment variables set when conda env is activated

@@ -32,8 +32,11 @@ Usage:
     python scripts/generate_tile_index.py image.ntf --list-segments
 
 A Parquet index needs pyarrow (``pip install "osml-imagery-io[zarr]"``) and must be
-read back with ``MultiReferenceFileSystem``; a stock fsspec ``ReferenceFileSystem``
-cannot open one. Parquet is a v2-only container — see ``--zarr-format``.
+read back with ``MultiReferenceFileSystem``; a stock fsspec
+``ReferenceFileSystem`` cannot open one. Multi-range chunk references — the
+interleaved-tile-part JPEG 2000 case — are carried in both containers. Parquet is
+v2-only for now, which is a gap in the read path rather than a property of the
+format; see ``--zarr-format``.
 """
 
 import argparse
@@ -127,11 +130,12 @@ def generate_index(
     # for it too, but only after the store has been built.
     if zarr_format == 3 and ext == ".parquet":
         print(
-            "Error: Parquet output is not supported for --zarr-format 3: the Kerchunk "
-            "Parquet container (fsspec's LazyReferenceMapper) indexes chunk references "
-            "by position using the v2 '.zarray' shape/chunks, which a native v3 store "
-            "does not have. Use a .json output path for v3 indexes, or --zarr-format 2 "
-            "for Parquet.",
+            "Error: Parquet output is not supported for --zarr-format 3: reading a v3 "
+            "Parquet index is not implemented. It is not structurally impossible — a "
+            "v3 'zarr.json' carries the shape and chunk_shape that the container's "
+            "positional indexing needs, just not under the v2 names — but it requires "
+            "read-side support that does not exist yet. Use a .json output path for "
+            "v3 indexes, or --zarr-format 2 for Parquet.",
             file=sys.stderr,
         )
         return 1
@@ -267,7 +271,8 @@ Examples:
         help="Zarr version the index describes: 2 (default) emits the Kerchunk "
         ".zgroup/.zarray layout read through the numcodecs registry; 3 emits a "
         "native zarr.json layout read through zarr's entry-point codec pipeline. "
-        "Format 3 requires .json output — Parquet is a v2-only container.",
+        "Format 3 currently requires .json output: reading a v3 Parquet index is "
+        "unimplemented, not impossible.",
     )
     parser.add_argument(
         "--list-segments",

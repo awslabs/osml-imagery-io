@@ -35,11 +35,23 @@ Generated files:
       Tiled TIFF, 256x256, 1-band uint8, 128x128 tiles, Deflate.
       Used by: TIFF API tests, IFD tag enumeration (Rust ffi.rs)
 
+  j2k-128x128-1band-8bit-rpcl-interleaved.j2k
+      Bare JPEG 2000 codestream, 128x128 1-band, 64x64 tiles, 3 resolutions,
+      RPCL progression, tile-parts *interleaved across tiles*.  Every tile's
+      data therefore occupies three non-contiguous byte ranges, which is the
+      only fixture in the repo that exercises the multi-range chunk reference
+      path end to end.  Requires the external ``opj_compress`` tool.
+      Used by: multi-range tile index tests (test_virtualizarr_parsers.py)
+
 Run:
     python scripts/generate_test_data.py
 """
 
+import shutil
+import struct
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -454,6 +466,142 @@ def generate_dted_integration(output_path: Path) -> None:
     writer.close()
 
 
+# ── JPEG 2000 tile-part interleaving ─────────────────────────────────────────
+#
+# The only generator here that needs an external tool.  Every other one uses this
+# library's own writers, but neither the NITF writer nor the J2K writer exposes a
+# progression-order or tile-part hint, so the layout below cannot be produced from
+# inside the library at all.
+
+_OPJ_COMPRESS_HINT = (
+    "generating j2k-128x128-1band-8bit-rpcl-interleaved.j2k requires opj_compress, "
+    "the OpenJPEG command-line encoder, which was not found on PATH. Install "
+    "OpenJPEG (conda: 'conda install -c conda-forge openjpeg'; macOS: "
+    "'brew install openjpeg') and re-run. No other generator in this script needs "
+    "an external tool."
+)
+
+# Seed for the interleaved fixture's pixel content.  Recorded here because the
+# encode is *lossless*, so a test can reconstruct the exact expected array from
+# this seed without needing opj_compress or a second checked-in file.
+J2K_INTERLEAVED_SEED = 1234
+
+
+def _split_tile_parts(codestream: bytes):
+    """Split a J2K codestream into ``(head, parts, tail)`` at its SOT markers.
+
+    Each element of *parts* is ``(Isot, TPsot, bytes)`` — the tile index, the
+    tile-part index within that tile, and the whole tile-part including its SOT
+    segment.  A tile-part's length is its ``Psot`` field; ``Psot == 0`` means "to
+    the end of the codestream", which only a final tile-part may use and which
+    this splitter does not handle, so it is rejected rather than mis-sliced.
+    """
+    i = codestream.index(b"\xff\x90")  # first SOT
+    head, parts = codestream[:i], []
+    while codestream[i : i + 2] == b"\xff\x90":
+        isot, psot, tpsot, _tnsot = struct.unpack(">HIBB", codestream[i + 4 : i + 12])
+        if psot == 0:
+            raise ValueError(
+                f"tile-part at offset {i} has Psot=0 (length runs to end of "
+                "codestream); reordering such a codestream is not supported"
+            )
+        parts.append((isot, tpsot, codestream[i : i + psot]))
+        i += psot
+    return head, parts, codestream[i:]
+
+
+def _interleave_tile_parts(codestream: bytes) -> bytes:
+    """Reorder *codestream*'s tile-parts from tile-major to resolution-major.
+
+    ``opj_compress -TP R`` emits every tile-part of tile 0, then every tile-part
+    of tile 1, and so on, so each tile's bytes end up contiguous and a reader
+    coalesces them into a single range.  Sorting by ``(TPsot, Isot)`` instead
+    groups all tiles' first tile-part, then all their second, and so on — the
+    layout several commercial satellite providers ship, and the one that makes
+    each tile's data non-contiguous.
+
+    The result is a legal codestream: a decoder routes each tile-part to its tile
+    by the SOT ``Isot`` field rather than by position, and resolution-major order
+    still presents each tile's parts in ascending ``TPsot``, which is the only
+    ordering constraint the format imposes.
+    """
+    head, parts, tail = _split_tile_parts(codestream)
+    order = sorted(range(len(parts)), key=lambda j: (parts[j][1], parts[j][0]))
+    return head + b"".join(parts[j][2] for j in order) + tail
+
+
+def generate_j2k_rpcl_interleaved(output_path: Path) -> None:
+    """Bare J2K codestream whose tile-parts interleave across tiles.
+
+    128x128, 1-band uint8, 64x64 tiles (4 tiles), 3 resolutions, RPCL
+    progression with one tile-part per resolution — 12 tile-parts total.  After
+    permutation each of the 4 tiles occupies 3 non-contiguous byte ranges, so the
+    parser emits 4 multi-range chunk references.
+
+    Distinct from ``j2k-128x128-1band-8bit-rpcl-3tileparts.j2k``, whose name is a
+    near neighbour: that fixture's tile-parts are *contiguous* per tile (the order
+    ``opj_compress`` writes them in), so the parser coalesces each tile back to a
+    single range and no multi-range reference is produced.  This one is the only
+    fixture where the multi-range path is reachable.
+
+    The encode is lossless, so the decoded pixels equal the generated array
+    exactly — see :data:`J2K_INTERLEAVED_SEED`.
+    """
+    print(f"  {output_path.name} ...")
+
+    if shutil.which("opj_compress") is None:
+        raise RuntimeError(_OPJ_COMPRESS_HINT)
+
+    rng = np.random.RandomState(J2K_INTERLEAVED_SEED)
+    array = rng.randint(0, 256, (128, 128)).astype(np.uint8)
+
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch_dir = Path(scratch)
+        source = scratch_dir / "src.pgm"
+        source.write_bytes(b"P5\n128 128\n255\n" + array.tobytes())
+        encoded = scratch_dir / "tile-major.j2k"
+
+        result = subprocess.run(
+            [
+                "opj_compress",
+                "-i", str(source),
+                "-o", str(encoded),
+                "-t", "64,64",     # 4 tiles
+                "-p", "RPCL",      # resolution-major progression
+                "-TP", "R",        # one tile-part per resolution
+                "-n", "3",         # 3 resolution levels
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"opj_compress failed (exit {result.returncode}):\n"
+                f"{result.stdout}\n{result.stderr}"
+            )
+
+        permuted = _interleave_tile_parts(encoded.read_bytes())
+        output_path.write_bytes(permuted)
+
+        # Permuting tile-parts must not change what the codestream decodes to.
+        # Checked here rather than in a test because the tile-major original is
+        # scratch: only the permuted form is checked in.
+        from aws.osml.io import imread  # noqa: PLC0415 - keeps the import local
+
+        before = imread(str(encoded))
+        after = imread(str(output_path))
+        if not np.array_equal(before, after):
+            raise RuntimeError(
+                "permuted codestream decodes differently from its tile-major "
+                "source; the tile-part reordering is not round-tripping"
+            )
+        if not np.array_equal(after.reshape(128, 128), array):
+            raise RuntimeError(
+                "decoded pixels differ from the generated array; the encode was "
+                "expected to be lossless"
+            )
+
+
 # ── Verification ─────────────────────────────────────────────────────────────
 
 def verify_file(file_path: Path) -> bool:
@@ -482,6 +630,7 @@ FILES = [
     ("nitf21-256x256-3band-8bit-nc.ntf", generate_nitf21_256x256),
     ("tiff-256x256-1band-8bit-tiled-deflate.tif", generate_tiff_tiled),
     ("dted-16x16-1band-int16.dt1", generate_dted_small),
+    ("j2k-128x128-1band-8bit-rpcl-interleaved.j2k", generate_j2k_rpcl_interleaved),
 ]
 
 INTEGRATION_FILES = [

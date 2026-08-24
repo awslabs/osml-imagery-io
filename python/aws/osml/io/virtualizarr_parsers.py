@@ -1236,6 +1236,364 @@ def _relocate_ref_urls(refs, root_attrs, template_base, url_overrides):
     return _rewrite_refs_urls(refs, rewrites), root_attrs
 
 
+# ---------------------------------------------------------------------------
+# Kerchunk Parquet emitter
+# ---------------------------------------------------------------------------
+#
+# This library writes the Kerchunk Parquet container itself rather than driving
+# fsspec's ``LazyReferenceMapper``.  The reason is the multi-range reference form
+# ``["url", [[offset, length], ...]]``: ``LazyReferenceMapper.write()`` builds a
+# hardcoded four-column DataFrame and unpacks every list-valued reference as
+# ``[url, offset, size]``, so a range *list* lands in an ``int64`` slot and the
+# write dies with ``TypeError: int() argument must be ... not 'list'``.  There is
+# no extension seam in that method, so the emitter had to become ours.
+#
+# What is *not* ours is the on-disk layout, which stays exactly as
+# ``LazyReferenceMapper`` defines it — ``.zmetadata`` at the root plus one
+# ``{field}/refs.{record}.parq`` per record, chunks placed positionally.  That
+# layout is the contract, and ``ArrayOnlyReferenceMapper`` reads it back through
+# upstream code.  Nothing here duplicates an upstream method body, so there is no
+# fsspec revision to re-diff; what must stay in step is the *placement rule*,
+# which ``_parquet_record_placement`` mirrors and the tests pin against
+# ``LazyReferenceMapper._key_to_record`` directly.
+#
+# The record schema is a *superset* of upstream's.  Its four columns keep their
+# names, types and leading order, so a record with no multi-range references is
+# byte-identical to what ``LazyReferenceMapper`` would have written.  Three columns
+# are appended when — and only when — a record carries a multi-range reference:
+#
+#   range_path : string      source URL (``path`` is null on these rows)
+#   offsets    : list<int64> per-fragment offsets, in concatenation order
+#   sizes      : list<int64> per-fragment lengths
+#
+# Parquet carries list columns natively, so a variable fragment count needs no
+# padding and no per-store maximum.  Splitting them into a companion file was
+# considered and rejected: a reader would pay a failed request per record probing
+# for a companion that usually does not exist, and a partial write could leave the
+# two files disagreeing, which reads as data loss rather than as a failure.
+#
+# ``path`` is left *null* on a multi-range row rather than seeded with the first
+# fragment.  That is deliberate fail-loud design: a reader that does not understand
+# the range columns gets a broken reference, not one of six fragments handed over
+# as though it were the whole chunk.
+
+_PARQUET_RECORD_SIZE = 100_000
+"""References per record file.  Inherited from the previous implementation.
+
+Kept deliberately: a record is written in full (unused rows are nulls, which zstd
+collapses to almost nothing), so a larger value costs little and a smaller one
+multiplies the number of round trips a reader makes.
+"""
+
+_PARQUET_CATEGORICAL_THRESHOLD = 10
+"""Encode ``path`` as a categorical once refs-per-unique-URL exceeds this.
+
+Upstream's ``categorical_threshold`` default.  Almost every index this library
+writes references one or two URLs across thousands of chunks, so the encoding
+saves real space; ``read_parquet`` restores the column transparently.
+"""
+
+_PYARROW_WRITE_HINT = (
+    "Writing a Kerchunk Parquet tile index requires the 'pyarrow' "
+    "package, which is not installed. Install it with "
+    "'pip install osml-imagery-io[zarr]' (the zarr extra supplies "
+    "pyarrow), or use a '.json' output path instead."
+)
+
+
+def _is_parquet_meta_key(key: str) -> bool:
+    """Does *key* address Zarr metadata rather than a chunk?
+
+    Same discrimination as ``LazyReferenceMapper.__setitem__`` — a key routes to
+    ``.zmetadata`` unless it has a ``/`` and is not a ``.z*`` document.  Kept
+    identical because the reader applies upstream's version when looking keys back
+    up, and a key the two classified differently would be unreachable.
+    """
+    return "/" not in key or key.startswith(".z") or "/.z" in key
+
+
+def _proc_raw(value) -> bytes:
+    """Normalize an inline chunk value to the bytes stored in the ``raw`` column.
+
+    Replaces ``kerchunk.df._proc_raw``, the single reason ``kerchunk`` used to be a
+    runtime dependency of this library.  ``base64:``-prefixed payloads are decoded
+    because the column holds raw bytes; the reader hands whatever it finds straight
+    to the codec.
+    """
+    if hasattr(value, "to_bytes"):
+        value = value.to_bytes()
+    elif not isinstance(value, bytes):
+        value = value.encode()
+    if value.startswith(b"base64:"):
+        return base64.b64decode(value[7:])
+    return value
+
+
+def _parquet_grid_shapes(zmetadata: dict) -> dict:
+    """Map each array field to its chunk-grid shape, from the ``.zarray`` docs.
+
+    ``ceil(shape / chunks)`` per axis, which is what
+    ``LazyReferenceMapper._get_chunk_sizes`` computes.  An empty result becomes
+    ``[1]`` for the same reason it does upstream: a zero-dimensional array still
+    owns one chunk.
+    """
+    import math
+
+    shapes = {}
+    suffix = "/.zarray"
+    for key, document in zmetadata.items():
+        if not key.endswith(suffix):
+            continue
+        ratio = [
+            math.ceil(s / c)
+            for s, c in zip(document["shape"], document["chunks"])
+        ]
+        shapes[key[: -len(suffix)]] = ratio or [1]
+    return shapes
+
+
+def _parquet_record_placement(key, grid_shapes, record_size=_PARQUET_RECORD_SIZE):
+    """Locate chunk *key* in the store as ``(field, record, row)``.
+
+    The positional indexing scheme the container is built on: a chunk key *is* its
+    row number, so this must agree exactly with
+    ``LazyReferenceMapper._key_to_record``, which the reader uses to look the same
+    key back up.  A disagreement does not fail — it silently misfiles every
+    reference, and the store reads back as other chunks' pixels.  The tests assert
+    the two agree key for key rather than trusting the restatement.
+
+    Raises
+    ------
+    ValueError
+        If *key*'s field has no ``.zarray`` in the index, or its last segment is
+        not dot-separated grid coordinates.
+    """
+    import numpy as np
+
+    field, chunk = key.rsplit("/", 1)
+    if field not in grid_shapes:
+        raise ValueError(
+            f"chunk reference '{key}' names field '{field}', which has no "
+            f"'.zarray' in the index; the Kerchunk Parquet container places "
+            f"chunks positionally and cannot locate a row without one"
+        )
+    try:
+        coords = [int(part) for part in chunk.split(".")]
+    except ValueError as exc:
+        raise ValueError(
+            f"chunk reference '{key}' does not end in dot-separated grid "
+            f"coordinates, which positional placement requires"
+        ) from exc
+
+    number = int(np.ravel_multi_index(coords, grid_shapes[field]))
+    return field, number // record_size, number % record_size
+
+
+def _nullable_array(values, value_type):
+    """Build an Arrow array of *value_type*, or of ``null`` type if all-null.
+
+    Reproduces the type pandas' dtype inference used to pick here, and it matters
+    for more than layout parity.  A ``null``-typed column decodes to ``None`` in
+    *every* Parquet reader, whereas a typed column full of nulls comes back as
+    ``nan`` under pandas.  Upstream's ``selection[0] is None`` test only fires for
+    the former, so an all-multi-range record — which is every record of RPCL JPEG
+    2000 imagery, the case this schema exists for — makes a stock fsspec reader
+    raise a clean ``KeyError`` instead of returning a malformed ``[nan]``.
+    """
+    import pyarrow as pa
+
+    if all(value is None for value in values):
+        return pa.nulls(len(values))
+    return pa.array(values, type=value_type)
+
+
+def _maybe_dictionary(column):
+    """Dictionary-encode *column* when it repeats few URLs across many rows.
+
+    Upstream applies this to ``path``; ``range_path`` gets it for the same reason
+    and by the same rule.  Any Parquet reader restores the column transparently, so
+    this is purely a size optimization.
+    """
+    import pyarrow as pa
+
+    values = column.drop_null()
+    if len(values) == 0:
+        return column
+    unique = len(values.unique())
+    if len(values) / unique > _PARQUET_CATEGORICAL_THRESHOLD:
+        return pa.chunked_array([column]).dictionary_encode()
+    return column
+
+
+def _parquet_record_table(partition: dict, record_size: int):
+    """Build one record's Arrow table from ``{row: reference}``.
+
+    Four columns in upstream's order and types — ``path``, ``offset``, ``size``,
+    ``raw`` — with every row the partition does not fill left null.  Records are
+    written at full width rather than trimmed to the rows in use because the
+    reader indexes by absolute row; zstd reduces the unused run to a few bytes.
+
+    ``range_path`` / ``offsets`` / ``sizes`` are appended only if this record
+    actually holds a multi-range reference, so a record without one has exactly
+    upstream's four-column layout.
+
+    Built with ``pyarrow`` directly rather than through a ``pandas`` DataFrame.
+    ``DataFrame.to_parquet(engine="pyarrow")`` is only a wrapper over
+    ``pa.Table.from_pandas`` + ``pq.write_table``, so routing through pandas bought
+    nothing but a hard dependency on it.  Column *types* are stated explicitly here
+    rather than inferred, which pandas' dtype mapping used to decide for us: an
+    all-null ``path`` would otherwise infer Arrow's ``null`` type and lose the
+    column's real type.
+    """
+    import numpy as np
+    import pyarrow as pa
+
+    # Local import: keeps ``fsspec`` (which ``multi_reference_fs`` needs at import
+    # time) off this module's own import-time dependency list.  Shared with the
+    # reader so the writer cannot emit a shape the reader fails to recognize.
+    from aws.osml.io.multi_reference_fs import is_multi_range_ref
+
+    paths = np.full(record_size, None, dtype="O")
+    offsets = np.zeros(record_size, dtype="int64")
+    sizes = np.zeros(record_size, dtype="int64")
+    raws = np.full(record_size, None, dtype="O")
+
+    # Allocated lazily: their presence is what tells the reader this record uses
+    # the widened schema.
+    range_paths = range_offsets = range_sizes = None
+
+    for row, reference in partition.items():
+        if is_multi_range_ref(reference):
+            if range_paths is None:
+                range_paths = np.full(record_size, None, dtype="O")
+                range_offsets = np.full(record_size, None, dtype="O")
+                range_sizes = np.full(record_size, None, dtype="O")
+            url, ranges = reference
+            range_paths[row] = url
+            range_offsets[row] = [int(offset) for offset, _ in ranges]
+            range_sizes[row] = [int(length) for _, length in ranges]
+        elif isinstance(reference, list):
+            paths[row] = reference[0]
+            if len(reference) > 1:
+                offsets[row] = reference[1]
+                sizes[row] = reference[2]
+        else:
+            raws[row] = _proc_raw(reference)
+
+    int_list = pa.list_(pa.int64())
+    columns = {
+        "path": _maybe_dictionary(_nullable_array(paths, pa.string())),
+        "offset": pa.array(offsets, type=pa.int64()),
+        "size": pa.array(sizes, type=pa.int64()),
+        "raw": _nullable_array(raws, pa.binary()),
+    }
+    if range_paths is not None:
+        # Never all-null: the columns are allocated only when a row fills them.
+        columns["range_path"] = _maybe_dictionary(
+            pa.array(range_paths, type=pa.string())
+        )
+        columns["offsets"] = pa.array(range_offsets, type=int_list)
+        columns["sizes"] = pa.array(range_sizes, type=int_list)
+
+    return pa.table(columns)
+
+
+def _write_parquet_index(refs, output, *, record_size=_PARQUET_RECORD_SIZE):
+    """Write *refs* as a Kerchunk Parquet reference directory at *output*.
+
+    Produces the layout ``ArrayOnlyReferenceMapper`` reads: a root ``.zmetadata``
+    holding ``{"metadata": {...}, "record_size": N}``, and one
+    ``{field}/refs.{record}.parq`` per record of chunk references.
+
+    Each record file carries upstream's four columns — ``path``, ``offset``,
+    ``size``, ``raw`` — and, for any record holding a multi-range reference, three
+    more: ``range_path`` (string), ``offsets`` (``list<int64>``) and ``sizes``
+    (``list<int64>``).  On a multi-range row ``path`` is null and the source URL
+    lives in ``range_path``; the fragment offsets and lengths pair up positionally
+    in concatenation order.  A record with no multi-range reference is written with
+    the four columns alone, matching upstream's layout exactly.
+
+    Written with ``pyarrow`` alone.  ``pandas`` is deliberately not used: a Parquet
+    record is a table of columns, and ``DataFrame.to_parquet(engine="pyarrow")`` only
+    wraps ``pa.Table.from_pandas`` + ``pq.write_table``, so the DataFrame was pure
+    overhead in exchange for a heavyweight dependency this library does not want.
+    Stores written either way are mutually readable — the differences are Arrow
+    ``string`` in place of ``large_string`` and the absence of pandas' schema
+    metadata block, neither of which a reader consults.
+
+    Like ``LazyReferenceMapper.create()``, an existing directory at *output* is
+    removed before writing, so a failure part-way through leaves no index rather
+    than a half-updated one.
+    """
+    import json
+    from collections import defaultdict
+    from importlib.util import find_spec
+
+    import fsspec
+
+    # Checked before importing pyarrow so a missing optional dependency surfaces as
+    # an actionable message rather than a bare ModuleNotFoundError.
+    if find_spec("pyarrow") is None:
+        raise ImportError(_PYARROW_WRITE_HINT)
+
+    zmetadata = {}
+    chunk_refs = {}
+    for key, value in refs.items():
+        if _is_parquet_meta_key(key):
+            zmetadata[key] = json.loads(_as_json_text(value))
+        else:
+            chunk_refs[key] = value
+
+    grid_shapes = _parquet_grid_shapes(zmetadata)
+
+    partitions = defaultdict(dict)
+    for key, reference in chunk_refs.items():
+        field, record, row = _parquet_record_placement(
+            key, grid_shapes, record_size
+        )
+        partitions[(field, record)][row] = reference
+
+    import pyarrow.parquet as pq
+
+    fs, root = fsspec.core.url_to_fs(output)
+
+    if fs.exists(root):
+        fs.rm(root, recursive=True)
+    fs.makedirs(root, exist_ok=True)
+
+    for (field, record), partition in sorted(partitions.items()):
+        fs.makedirs(f"{root}/{field}", exist_ok=True)
+        # ``fs.open`` rather than a path so the write goes through the same
+        # filesystem object as everything else here, remote included; pyarrow
+        # would otherwise resolve the path with its own filesystem layer.
+        with fs.open(f"{root}/{field}/refs.{record}.parq", "wb") as handle:
+            pq.write_table(
+                _parquet_record_table(partition, record_size),
+                handle,
+                compression="zstd",
+                write_statistics=False,
+            )
+
+    fs.pipe(
+        f"{root}/.zmetadata",
+        json.dumps({"metadata": zmetadata, "record_size": record_size}).encode(),
+    )
+
+
+def _as_json_text(value) -> str:
+    """Coerce a metadata reference value to the JSON text to be parsed.
+
+    Metadata arrives as a JSON string from this library's own refs builders, but
+    zarr buffers and raw bytes are both accepted for the same reasons upstream
+    accepts them — the value may have come straight from a zarr serializer.
+    """
+    if hasattr(value, "to_bytes"):
+        return value.to_bytes().decode()
+    if isinstance(value, bytes):
+        return value.decode()
+    return value
+
+
 def _emit_refs(refs, output, ext, *, use_templates, zarr_format=2):
     """Write a flat Kerchunk reference mapping to ``.json`` or ``.parquet``.
 
@@ -1243,13 +1601,28 @@ def _emit_refs(refs, output, ext, *, use_templates, zarr_format=2):
     it carries, so it serves both the v2 (``.zgroup`` / ``.zarray``) and the v3
     (``zarr.json`` / ``c.<coords>``) layouts.
 
-    The Kerchunk **Parquet** container is not: ``LazyReferenceMapper`` stores chunk
-    references positionally, deriving each chunk's record index from the array's
-    ``.zarray`` ``shape``/``chunks`` and parsing the key's last path segment as
-    dot-separated grid coordinates.  A v3 store has no ``.zarray``, and its
-    ``c.<band>.<row>.<col>`` key would parse the leading ``c`` as a coordinate.
-    Parquet output is therefore rejected for ``zarr_format=3`` rather than written
-    in a form nothing can read back.
+    The Kerchunk **Parquet** container is v2-only *as implemented here*, and that
+    is a deferral rather than a structural limit.  Chunk references are stored
+    positionally: a chunk's row is derived from the array's chunk-grid shape, and
+    its key's last segment is parsed as dot-separated grid coordinates.  A v3 store
+    carries everything that needs — ``zarr.json`` states ``shape`` and
+    ``chunk_grid.configuration.chunk_shape``, and its ``chunk_key_encoding`` names
+    the separator — just under different names, and it *is* reachable: what stands
+    in the way is three v2 assumptions on the *read* side, all in methods
+    ``ArrayOnlyReferenceMapper`` already subclasses.  ``_get_chunk_sizes`` reads
+    ``{field}/.zarray``; ``_key_to_record`` parses the last key segment as ints, so
+    the leading ``c`` of ``c.0.0.0`` raises; and ``_is_meta`` tests for a ``.z``
+    prefix, so ``zarr.json`` is not recognized as metadata.  Our own ``listdir()``
+    keying off ``/.zarray`` is a fourth.
+
+    Until those overrides exist, ``.parquet`` with ``zarr_format=3`` is rejected
+    rather than written in a form nothing can read back.
+
+    Both containers carry multi-range references, in different encodings: JSON as a
+    fourth reference form ``[url, [[offset, length], ...]]``, Parquet as the
+    ``range_path`` / ``offsets`` / ``sizes`` columns described on
+    :func:`_write_parquet_index`.  A Parquet index carrying them is readable only
+    through ``MultiReferenceFileSystem``.
 
     Raises
     ------
@@ -1271,49 +1644,18 @@ def _emit_refs(refs, output, ext, *, use_templates, zarr_format=2):
             # Raised before the pyarrow-backed imports so the reason surfaces even
             # in an environment without that optional dependency installed.
             raise ValueError(
-                "Parquet output is not supported for zarr_format=3: the Kerchunk "
-                "Parquet container (fsspec's LazyReferenceMapper) indexes chunk "
-                "references by position using the v2 '.zarray' shape/chunks, which "
-                "a native v3 store does not have. Use a .json output path for v3 "
-                "indexes, or zarr_format=2 for Parquet."
+                "Parquet output is not supported for zarr_format=3: reading a v3 "
+                "Parquet index is not implemented. It is not structurally "
+                "impossible — a v3 'zarr.json' carries the shape and chunk_shape "
+                "that positional indexing needs, just not under the v2 names — but "
+                "it requires read-side overrides that do not exist yet, for "
+                "deriving chunk counts from 'zarr.json' instead of '.zarray', "
+                "parsing 'c.<band>.<row>.<col>' chunk keys, and recognizing "
+                "'zarr.json' as metadata. Use a .json output path for v3 indexes, "
+                "or zarr_format=2 for Parquet."
             )
 
-        import fsspec
-        from fsspec.implementations.reference import LazyReferenceMapper
-
-        fs, _ = fsspec.core.url_to_fs(output)
-        # ``engine="pyarrow"`` is required, not a preference, on both sides:
-        #
-        # Writing — fastparquet under pandas 3.x + numpy 2.x fails outright
-        # ("Error converting column 'path' to bytes using encoding UTF8 ...
-        # Unable to avoid copy while creating an array as requested").
-        #
-        # Reading — the engine is *not recorded in the store* (``.zmetadata``
-        # holds only ``metadata`` and ``record_size``), and fsspec's
-        # ``LazyReferenceMapper`` defaults to fastparquet.  The two engines
-        # disagree on how a null in an object column round-trips, so a reader
-        # using the other engine misreads every chunk reference.  The writer and
-        # reader must therefore agree out of band:
-        # ``MultiReferenceFileSystem`` pins the same engine on the read side,
-        # which is why a Parquet index must be opened with it rather than a
-        # stock ``ReferenceFileSystem``.
-        try:
-            out = LazyReferenceMapper.create(
-                record_size=100_000,
-                root=output,
-                fs=fs,
-                engine="pyarrow",
-            )
-        except ImportError as exc:
-            raise ImportError(
-                "Writing a Kerchunk Parquet tile index requires the 'pyarrow' "
-                "package, which is not installed. Install it with "
-                "'pip install osml-imagery-io[zarr]' (the zarr extra supplies "
-                "pyarrow), or use a '.json' output path instead."
-            ) from exc
-        for k in sorted(refs):
-            out[k] = refs[k]
-        out.flush()
+        _write_parquet_index(refs, output)
 
     else:
         raise ValueError(
@@ -1524,8 +1866,9 @@ def write_tile_index(
     output : str
         Output file path.  Extension determines format: ``.json`` for
         Kerchunk JSON, ``.parquet`` for a Kerchunk Parquet directory.  Parquet
-        requires ``zarr_format=2`` — see :func:`_emit_refs` — needs ``pyarrow``
-        (the ``osml-imagery-io[zarr]`` extra), and must be read back with
+        requires ``zarr_format=2``, cannot carry multi-range chunk references,
+        and needs ``pyarrow`` (the ``osml-imagery-io[zarr]`` extra) — see
+        :func:`_emit_refs`.  It must be read back with
         ``MultiReferenceFileSystem``, which a stock fsspec
         ``ReferenceFileSystem`` cannot do.  Multi-resolution pyramids are
         supported in both formats.

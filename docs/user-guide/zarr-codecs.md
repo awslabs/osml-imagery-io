@@ -149,22 +149,41 @@ order, and the interleaved tile-part layout is common in large multi-resolution
 JPEG 2000 files.
 
 `MultiReferenceFileSystem` is a drop-in subclass of fsspec's
-`ReferenceFileSystem` that extends the Kerchunk reference spec with a fourth
-form:
+`ReferenceFileSystem` that extends the Kerchunk reference model with a fourth
+form.
 
-| Form | Format | Description |
-|------|--------|-------------|
-| Inline | `"base64:..."` or raw bytes | Inline data |
-| Whole file | `["url"]` | Entire file |
-| Single range | `["url", offset, length]` | One contiguous byte range |
-| **Multi-range** | `["url", [[offset, length], ...]]` | **Multiple non-contiguous byte ranges** |
+#### The four reference forms
 
-A multi-range entry is a 2-element list where the first element is the URL and
-the second is a list of `[offset, length]` pairs. Each pair identifies one
-tile-part's location in the file. The filesystem fetches all ranges and
-concatenates them in order before handing the bytes to the codec.
+A reference says *where a chunk's bytes are*. There are four kinds, independent
+of how any container writes them down:
 
-For example, a tile with six tile-parts scattered across a file:
+| Form | Meaning |
+|------|---------|
+| Inline | The bytes are in the index itself, not in a separate file. |
+| Whole file | The chunk is the entire contents of one file. |
+| Single range | The chunk is one contiguous byte range within a file. |
+| **Multi-range** | **The chunk is several non-contiguous byte ranges within one file, concatenated in the order given.** |
+
+Only the last is unusual. It exists because a JPEG 2000 tile with interleaved
+tile-parts has no single contiguous extent — each pair identifies one tile-part's
+location, and the filesystem fetches them all and joins them before handing the
+bytes to the codec. The order is significant: it is decode order, not file order.
+
+#### How each container encodes them
+
+The forms above are the model. The two output containers `write_tile_index`
+produces encode that model differently, and both carry all four forms:
+
+| Form | Kerchunk **JSON** value | Kerchunk **Parquet** columns |
+|------|------------------------|------------------------------|
+| Inline | `"base64:..."` or raw bytes | `raw` |
+| Whole file | `["url"]` | `path`, with `offset = size = 0` |
+| Single range | `["url", offset, length]` | `path`, `offset`, `size` |
+| **Multi-range** | `["url", [[offset, length], ...]]` | `range_path`, `offsets`, `sizes` — with `path` **null** |
+
+In JSON a refs value is a free-form list, so multi-range is expressible as a new
+*value shape*: a 2-element list whose second element is a list of
+`[offset, length]` pairs.
 
 ```json
 {
@@ -176,9 +195,24 @@ For example, a tile with six tile-parts scattered across a file:
 }
 ```
 
-The URL appears once rather than being repeated for each sub-range. For a file
-with 1,722 tiles and six tile-parts each, this saves roughly 775 KB of redundant
-URL strings compared to a flat list of single-range entries.
+Parquet has no free-form value. Each chunk is one row of a fixed schema, so
+multi-range is expressed as extra *columns* instead: `range_path` holds the URL,
+and `offsets` and `sizes` are `list<int64>` columns that pair up positionally.
+Parquet carries list columns natively, so a chunk may have any number of
+fragments with no padding and no per-store maximum. Those three columns are
+written only in record files that actually contain a multi-range chunk, so an
+index of ordinary imagery is unchanged.
+
+`path` is deliberately left **null** on a multi-range row. A reader that does not
+understand the range columns therefore fails on that chunk instead of quietly
+decoding one fragment of six as though it were the whole thing. This is why a
+Parquet index must be read with `MultiReferenceFileSystem` rather than a stock
+`ReferenceFileSystem` — see
+[Reading a Parquet index](../api/virtualizarr-parsers.md#reading-a-parquet-index).
+
+Either way the URL is stored once per chunk rather than once per fragment. For a
+file with 1,722 tiles and six tile-parts each, that saves roughly 775 KB of
+redundant URL strings compared to a flat list of single-range entries.
 
 ```{image} /_static/images/kerchunk-multirange.png
 :alt: Figure showing how J2K tile parts interleaved by resolution level are referenced by kerchunk index.
@@ -220,11 +254,21 @@ code that uses `fsspec.filesystem("reference", ...)` can switch by replacing
 the filesystem instantiation.
 
 ```{note}
-This multi-range reference format is a novel extension to the Kerchunk
-reference spec introduced by this project. The standard Kerchunk and Zarr
-ecosystem does not handle the case of non-contiguous byte ranges for a single
-chunk. If you encounter JPEG 2000 imagery with interleaved tile-parts
-elsewhere, `MultiReferenceFileSystem` is the component that makes it work.
+The multi-range reference form is a novel extension to the Kerchunk reference
+spec introduced by this project. The standard Kerchunk and Zarr ecosystem does
+not handle the case of non-contiguous byte ranges for a single chunk. If you
+encounter JPEG 2000 imagery with interleaved tile-parts elsewhere,
+`MultiReferenceFileSystem` is the component that makes it work.
+
+The extension takes a different shape in each container, which is why the two
+tables above are separate. In JSON — which has a versioned spec, Kerchunk
+reference specification version 1 — it adds a *form*: a new value shape in a
+field that was already free-form. In Parquet — which has no spec, only fsspec's
+`LazyReferenceMapper` implementation and the `preffs` layout it descends from —
+it adds *columns*, because a row of a fixed schema has no free-form field to
+extend. Reading a Parquet index of interleaved imagery needs a reader that knows
+those columns; reading a JSON one needs a reader that knows the fourth form. In
+both cases that reader is `MultiReferenceFileSystem`.
 ```
 
 ### Custom Codecs
@@ -645,11 +689,20 @@ store = parser("local/image.ntf")
 write_tile_index(store, "image.ntf.tile_index.json", template_base="{{base}}")
 ```
 
-A `.parquet` output path works the same way, but must be read back with
-`MultiReferenceFileSystem` rather than a stock `ReferenceFileSystem`, and needs
-`pyarrow` (`pip install "osml-imagery-io[zarr]"`). Because a Parquet store cannot
-carry the Kerchunk `templates` dict, a portable Parquet index resolves its
-placeholders from `template_overrides` alone. See
+A `.parquet` output path accepts the same arguments and carries the same four
+reference forms, but encodes them differently and has two caveats of its own:
+
+- It must be read back with `MultiReferenceFileSystem` rather than a stock
+  `ReferenceFileSystem`, and needs `pyarrow`
+  (`pip install "osml-imagery-io[zarr]"`).
+- Because a Parquet store cannot carry the Kerchunk `templates` dict, a portable
+  Parquet index resolves its placeholders from `template_overrides` alone.
+
+Multi-range chunks are supported in Parquet, encoded as the `range_path` /
+`offsets` / `sizes` columns rather than as a value shape — see
+[How each container encodes them](#how-each-container-encodes-them). Because
+`path` is null on those rows, a reader unaware of the columns fails on them
+rather than returning partial data. See
 [Reading a Parquet index](../api/virtualizarr-parsers.md#reading-a-parquet-index).
 
 This index is a Kerchunk/Zarr-v2 store, read through numcodecs — the default

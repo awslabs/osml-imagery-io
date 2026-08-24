@@ -38,22 +38,13 @@ virtualizarr = ["virtualizarr>=2.0"]
 # zarr capped at <3.2: virtualizarr imports zarr.core.metadata.v3.RegularChunkGrid,
 # which was removed in zarr 3.2.0. Remove cap when virtualizarr supports zarr 3.2+.
 #
-# pyarrow and kerchunk are runtime dependencies of Kerchunk Parquet tile indexes,
-# not dev tools, and nothing supplies either transitively:
-#   - pyarrow — the index is written and read with engine="pyarrow" at both ends
-#     (fastparquet cannot write one under pandas 3.x + numpy 2.x, and the engine
-#     is not recorded in the store). zarr requires none, fsspec only under its
-#     arrow/full/hdfs extras, virtualizarr names fastparquet instead.
-#   - kerchunk — fsspec's LazyReferenceMapper.write() does `import kerchunk.df`
-#     to encode inline chunk data, so Parquet *writes* fail without it. JSON
-#     output is unaffected.
-# Without both, a [zarr] install could not write a tile index, or read one it
-# had just written.
+# pyarrow is a runtime dependency of Kerchunk Parquet tile indexes, not a dev tool,
+# and nothing supplies it transitively: zarr requires none, fsspec only under its
+# arrow/full/hdfs extras, virtualizarr names fastparquet instead.
 zarr = [
     "zarr>=3.0,<3.2",
     "fsspec",
     "pyarrow>=14.0",
-    "kerchunk>=0.2",
 ]
 
 docs = [
@@ -86,7 +77,6 @@ test = [
     "osml-imagery-io[zarr]",
     "osml-imagery-io[virtualizarr]",
     "xarray>=2024.1",       # tests/property/zarr/test_v3_producer.py
-    "fastparquet>=2024.2",  # engine-agnostic Parquet read coverage
 ]
 
 lint = ["ruff>=0.1"]
