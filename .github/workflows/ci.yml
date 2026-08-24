@@ -101,12 +101,22 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
+          # PEP 735 `pip install --group` needs pip >= 25.1; the runner's venv
+          # ships 25.0.1. maturin >= 1.13 auto-installs dependency groups during
+          # `develop` by shelling out to `pip install --group`, so an un-upgraded
+          # pip fails the build on the maturin step itself, before the explicit
+          # install below is ever reached.
+          python -m pip install --upgrade pip
           pip install maturin
           maturin develop --features extension-module,openjpeg,libjpeg-turbo,libtiff
+          # Keep this explicit install even though `maturin develop` already
+          # pulls the dev group: maturin's group install resolves the
+          # `osml-imagery-io[zarr]` self-reference without picking up pyarrow,
+          # and a missing pyarrow makes the Parquet tests skip rather than fail.
+          #
           # The dev group pulls the zarr/virtualizarr extras and the test-only
-          # gates (xarray, fastparquet). Do not name individual packages here:
-          # anything missing makes importorskip skip its tests, which still
-          # reports green.
+          # gates (xarray). Do not name individual packages here: anything
+          # missing makes importorskip skip its tests, which still reports green.
           pip install -e . --group dev
           # -rs lists every skip and its reason. Optional deps are gated by
           # pytest.importorskip, so a missing one skips rather than fails; the
