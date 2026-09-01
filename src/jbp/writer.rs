@@ -3938,6 +3938,66 @@ mod tests {
         assert_eq!(geolob["PSO"], "+038.0000000000");
     }
 
+    #[test]
+    fn writer_round_trip_tre_metadata_with_embedded_null() {
+        use crate::buffered::{
+            BufferedImageAssetProvider, BufferedMetadataProvider, MemoryImageConfig,
+        };
+        use crate::jbp::reader::JBPDatasetReader;
+        use crate::owned_buffer::OwnedBuffer;
+        use crate::traits::DatasetReader;
+        use crate::types::AssetType;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tre_round_trip_nulls.ntf");
+
+        let config = MemoryImageConfig::new(16, 16)
+            .with_bands(1)
+            .with_block_size(16, 16);
+
+        let metadata = BufferedMetadataProvider::new();
+        metadata.set(
+            "NBLOCA",
+            serde_json::json!({
+                "FRAME_1_OFFSET": 439,
+                "NUMBER_OF_FRAMES": 1
+            }),
+        );
+
+        let provider =
+            BufferedImageAssetProvider::new("test_image", config).with_metadata(Arc::new(metadata));
+        provider.set_full_image(&vec![128u8; 16 * 16]).unwrap();
+
+        let registry = Arc::new(StructureRegistry::new());
+        let mut writer =
+            JBPDatasetWriter::with_registry(&path, NitfFormat::Nitf21, registry).unwrap();
+        writer
+            .add_asset(
+                "test_image",
+                AssetProvider::Image(Arc::new(provider)),
+                "Test",
+                "",
+                &[],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        let data = std::fs::read(&path).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
+        let asset_keys = reader.get_asset_keys(Some(AssetType::Image), None);
+        let asset = reader.get_asset(&asset_keys[0]).unwrap();
+        let meta = asset.as_image().unwrap().metadata().entries(None);
+
+        assert!(
+            meta.contains_key("NBLOCA"),
+            "NBLOCA TRE not found in roundtrip. Keys: {:?}",
+            meta.keys().collect::<Vec<_>>()
+        );
+        let nbloca = meta["NBLOCA"].as_object().unwrap();
+        assert_eq!(nbloca["FRAME_1_OFFSET"], 439);
+        assert_eq!(nbloca["NUMBER_OF_FRAMES"], 1);
+    }
+
     /// Test collect_provided_blocks returns correct set of blocks
     #[test]
     fn collect_provided_blocks_returns_provided_only() {

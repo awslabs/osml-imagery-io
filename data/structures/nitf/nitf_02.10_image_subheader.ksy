@@ -372,6 +372,7 @@ seq:
 
   # User Defined Image Data
   - id: UDID
+    type: bytes
     size: UDIDL.to_i - 3
     if: UDIDL.to_i > 0
     doc: User defined image data.
@@ -393,6 +394,7 @@ seq:
 
   # Image Extended Subheader Data
   - id: IXSHD
+    type: bytes
     size: IXSHDL.to_i - 3
     if: IXSHDL.to_i > 0
     doc: Image extended subheader data (TREs).
