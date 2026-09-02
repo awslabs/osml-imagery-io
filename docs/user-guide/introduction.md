@@ -63,7 +63,7 @@ from aws.osml.io import IO
 with IO.open("satellite_scene.ntf", "r") as dataset:
     # Navigate all segments in the file
     for key in dataset.get_asset_keys():
-        print(key)  # "image:0", "image:1", "text:0", "data:0", ...
+        print(key)  # "image:0", "image:1", "text:0", "des:0", ...
 
     image = dataset.get_asset("image:0")
     meta = image.metadata.entries()
