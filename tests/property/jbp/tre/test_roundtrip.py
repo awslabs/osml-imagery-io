@@ -197,7 +197,7 @@ def test_count_list_mismatch_raises(registry: StructureRegistry) -> None:
     record = {
         "ENGLN": "03", "ENGLBL": "ABC", "ENGMTXC": "0001", "ENGMTXR": "0001",
         "ENGTYP": "A", "ENGDTS": "1", "ENGDATU": "NA", "ENGDATC": "00000002",
-        "ENGDATA": "XY",
+        "ENGDATA": "5859",  # bytes-typed: hex for b"XY"
     }
     # RECNT says 2 records, but only one is supplied.
     mismatched = {"RESRC": "SENSOR", "RECNT": "002", "RECORDS": [record]}

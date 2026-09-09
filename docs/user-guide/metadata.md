@@ -163,6 +163,71 @@ byte_count = unknown["_length"]
 Overflow TREs stored in data extension segments are resolved automatically —
 you don't need to chase them across segments.
 
+#### File-Level vs. Segment-Level TREs
+
+NITF places TREs in two different kinds of container, and the library exposes
+them on two different objects:
+
+| TRE location | Header fields | Where it appears |
+|--------------|---------------|------------------|
+| File header | `UDHD`, `XHD` | `dataset.metadata` |
+| Image subheader | `UDID`, `IXSHD` | `dataset.get_asset("image:0").metadata` |
+| Graphic subheader | `SXSHD` | the graphic asset's `metadata` |
+| Text subheader | `TXSHD` | the text asset's `metadata` |
+
+A file-header TRE describes the file as a whole — `CSDIDA` and `SYSIDA`
+identify the collecting system, for instance — so it will not show up on an
+image asset, and a segment TRE like `RPC00B` will not show up on the dataset:
+
+```python
+with IO.open(["image.ntf"], "r") as dataset:
+    # File-header TREs — the dataset's own provider
+    csdida = dataset.metadata["CSDIDA"]           # {"DAY": "26", "MONTH": "JUL", ...}
+    platform = dataset.metadata["SYSIDA"]["PLATFORM_ID"]
+
+    # Segment TREs — the asset's provider
+    image = dataset.get_asset("image:0")
+    rpc = image.metadata["RPC00B"]
+
+    "RPC00B" in dataset.metadata      # False — it lives on the image subheader
+    "CSDIDA" in image.metadata        # False — it lives on the file header
+```
+
+Both levels are fully readable and writable, and both resolve overflow TREs out
+of `TRE_OVERFLOW` data extension segments automatically. Note that `iminfo`
+returns segment-level metadata only, so file-header TREs are not visible
+through it — use `IO.open(...).metadata` for those.
+
+#### Raw TRE Container Fields
+
+The nested CETAG dicts above are the intended way to read TREs. The six NITF
+fields that physically *hold* TRE bytes are also exposed, but as undecoded
+blobs, and because TRE payloads are frequently binary they come back as
+lowercase hex strings rather than text:
+
+| Field | Location | Holds |
+|-------|----------|-------|
+| `UDHD` | file header | user-defined header data |
+| `XHD` | file header | extended header data |
+| `UDID` | image subheader | user-defined image data |
+| `IXSHD` | image subheader | image extended subheader data |
+| `SXSHD` | graphic subheader | graphic extended subheader data |
+| `TXSHD` | text subheader | text extended subheader data |
+
+```python
+# The container field is the raw bytes, hex-encoded
+raw = dataset.metadata["XHD"]        # "435344494441303030373032364a554c..."
+
+# The same content, decoded — this is what you want
+csdida = dataset.metadata["CSDIDA"]  # {"DAY": "26", "MONTH": "JUL", ...}
+```
+
+Every TRE these fields contain is already available under its own CETAG key, so
+there is normally no reason to read them. They are hex because a TRE whose
+CEDATA contains non-UTF-8 bytes — common in `ENGRDA`, `BANDSB`, and `PIXQLA` —
+cannot be represented as a string, and hex is what round-trips through the
+writer unchanged.
+
 #### Repeated Fields as Arrays
 
 Repeated fields in the image subheader (like band info) appear as Python lists
@@ -207,6 +272,7 @@ underlying structure definition:
 | Known TREs | `dict` of `dict` | `{"GEOLOB": {"ARV": "..."}}` |
 | Unknown TREs | `dict` with `_raw`, `_length` | `{"_raw": "0102", "_length": 2}` |
 | Binary byte fields | `str` (hex-encoded) | `"ff8000"` |
+| Raw TRE containers (`XHD`, `IXSHD`, …) | `str` (hex-encoded) | `"435344494441..."` |
 
 ### Writing NITF Metadata
 
@@ -362,6 +428,48 @@ image_meta["ICHIPB"] = {
 
 Text fields (BCS-A) are right-padded with spaces if short and rejected if
 too long. Values that cannot fit any field after formatting raise an error.
+
+The same syntax writes file-header TREs — set them on the writer's metadata
+provider instead of an asset's:
+
+```python
+file_meta = BufferedMetadataProvider()
+file_meta["FTITLE"] = "Reconnaissance Mission 2026-03-15"
+file_meta["CSDIDA"] = {
+    "DAY": "26",
+    "MONTH": "JUL",
+    "YEAR": "2021",
+    # ... remaining CSDIDA fields
+}
+
+writer = IO.open(["output.ntf"], "w", "nitf")
+writer.metadata = file_meta
+```
+
+Any TRE too large for the inline field spills into a `TRE_OVERFLOW` data
+extension segment automatically, with `XHDLOFL` set to point at it. A single
+TRE is never split across the two, per JBP-2021.2-037.
+
+##### File-header TREs are written to XHD
+
+The file header has two TRE containers — user-defined (`UDHD`) and extended
+(`XHD`) — and the writer always uses `XHD`. A TRE read out of a file's `UDHD`
+is therefore written back into `XHD`.
+
+`XHD` is the interoperable choice, not an implementation shortcut. Several TREs
+require it outright: GeoSDE's `GEOPS` and the ATTPTA profile's `GEOPSB` both say
+the TRE "shall be placed in the XHD Field (or corresponding TRE_OVERFLOW DES)",
+and nothing in STDI-0002 requires `UDHD`. The reason the specs give is
+compatibility with existing readers — STDI-0002 Vol 1, App AS §AS.6.2 notes that
+"some legacy and not-so-legacy NITF 2.1 readers do not look in the user-defined
+section of a header for NTB-managed TREs", and the GeoSDE appendix adds "for
+interoperability with older applications use Extended fields not User Defined
+fields". Since every TRE this library has a definition for is NTB-registered,
+`XHD` satisfies every placement rule in the corpus while `UDHD` would violate
+two.
+
+Reading is unaffected: TREs are parsed from both `UDHD` and `XHD`, so a file
+that puts them in the user-defined field is read correctly.
 
 #### Encoding Tolerance
 

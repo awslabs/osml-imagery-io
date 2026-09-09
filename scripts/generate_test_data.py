@@ -14,6 +14,11 @@ Generated files:
       Minimal NSIF 1.0, 8x8 grayscale, no compression.
       Used by: round-trip tests (test_io_contracts.py)
 
+  nitf21-8x8-1band-8bit-file-tres.ntf
+      Minimal NITF 2.1, 8x8 grayscale, with CSDIDA and SYSIDA TREs in the
+      *file header* (XHD).
+      Used by: file-header TRE tests (Rust writer.rs, tests/unit/jbp/)
+
   nitf21-multisegment-2img-1txt-1des.ntf
       NITF 2.1 with 2 image segments, 1 text, 1 DES.
       Used by: multi-segment round-trip tests (test_io_contracts.py)
@@ -155,6 +160,70 @@ def generate_nsif10_8x8(output_path: Path) -> None:
     writer.metadata = file_meta
     writer.add_asset("image:0", provider, "8x8 Grayscale",
                      "Minimal test image", ["data"])
+    writer.close()
+
+
+def generate_nitf21_file_tres(output_path: Path) -> None:
+    """Minimal NITF 2.1 whose *file header* carries TREs (CSDIDA + SYSIDA).
+
+    The pair mirrors the file in awslabs/osml-imagery-io#11. Both are written
+    to the extended header data (XHD) field, which is where the writer places
+    every file-header TRE.
+    """
+    print(f"  {output_path.name} ...")
+
+    file_meta = _nitf_file_metadata("8x8 grayscale NITF 2.1 with file-header TREs")
+    file_meta["CSDIDA"] = {
+        "DAY": "26",
+        "MONTH": "JUL",
+        "YEAR": "2021",
+        "PLATFORM_CODE": "WV",
+        "VEHICLE_ID": "03",
+        "PASS": "03",
+        "OPERATION": "000",
+        "SENSOR_ID": "AA",
+        "PRODUCT_ID": "P1",
+        "RESERVED_1": "0000",
+        "TIME": "20210726022422",
+        "PROCESS_TIME": "20210726035421",
+        "RESERVED_2": "00",
+        "RESERVED_3": "01",
+        "RESERVED_4": "N",
+        "RESERVED_5": "N",
+        "SOFTWARE_VERSION_NUMBER": "4.54.0",
+    }
+    file_meta["SYSIDA"] = {
+        "PLATFORM_ID_LEN": "003",
+        "PLATFORM_ID": "WV3",
+        "PAYLOAD_ID_LEN": "000",
+        "SENSOR_ID_LEN": "003",
+        "SENSOR_ID": "PAN",
+    }
+
+    img_meta = _nitf_image_metadata(ic="NC", imode="B")
+
+    provider = BufferedImageAssetProvider.create(
+        key="image:0",
+        num_columns=8,
+        num_rows=8,
+        num_bands=1,
+        block_width=8,
+        block_height=8,
+        pixel_type=PixelType.UInt8,
+        metadata=img_meta,
+        title="8x8 Grayscale",
+        description="File-header TRE test image",
+    )
+
+    array = np.array(
+        [[(x + y) % 256 for x in range(8)] for y in range(8)], dtype=np.uint8
+    ).reshape(1, 8, 8)
+    provider.set_full_image(array)
+
+    writer = IO.open([str(output_path)], "w", "nitf")
+    writer.metadata = file_meta
+    writer.add_asset("image:0", provider, "8x8 Grayscale",
+                     "File-header TRE test image", ["data"])
     writer.close()
 
 
@@ -624,6 +693,7 @@ def verify_file(file_path: Path) -> bool:
 FILES = [
     ("nitf21-8x8-1band-8bit-nc.ntf", generate_nitf21_8x8),
     ("nsif10-8x8-1band-8bit-nc.nsif", generate_nsif10_8x8),
+    ("nitf21-8x8-1band-8bit-file-tres.ntf", generate_nitf21_file_tres),
     ("nitf21-multisegment-2img-1txt-1des.ntf", generate_multisegment),
     ("nitf21-64x64-3band-8bit-j2k.ntf", generate_nitf21_j2k),
     ("nitf21-64x64-3band-8bit-jpeg.ntf", generate_nitf21_jpeg),

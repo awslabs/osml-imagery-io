@@ -193,6 +193,117 @@ const MAX_SXSHD_TRE_SIZE: usize = 99996;
 #[allow(dead_code)]
 const MAX_TXSHD_TRE_SIZE: usize = 99996;
 
+/// Maximum TRE data size for the file header UDHD field (UDHDL max 99999 - 3
+/// bytes for UDHOFL).
+const MAX_UDHD_TRE_SIZE: usize = 99996;
+
+/// Maximum TRE data size for the file header XHD field (XHDL max 99999 - 3
+/// bytes for XHDLOFL).
+const MAX_XHD_TRE_SIZE: usize = 99996;
+
+/// One file-header TRE container field (`UDHD` or `XHD`) and its overflow.
+///
+/// `payload` holds the concatenated TRE envelopes that fit inline. It
+/// *excludes* the 3-byte `UDHOFL`/`XHDLOFL` subfield that `UDHDL`/`XHDL`
+/// nonetheless count, so the on-the-wire length field is `payload.len() + 3` —
+/// or `00000` when the field carries nothing at all, in which case the `*OFL`
+/// subfield is absent entirely (MIL-STD-2500C Table A-1 gives both length
+/// fields a range of `00000, 00003 to 99999`).
+///
+/// `overflow` holds the envelopes that did not fit and are written to a
+/// `TRE_OVERFLOW` DES instead; `ofl_index` is that DES's 1-based index, filled
+/// in once the DES has been placed and written into the `*OFL` subfield. A
+/// field with overflow but an empty inline payload is legal and encodes as
+/// `00003` — that happens when a single envelope alone exceeds the inline cap.
+#[derive(Debug, Default)]
+struct TreContainerField {
+    /// TRE envelope bytes written inline.
+    payload: Vec<u8>,
+    /// TRE envelopes spilled into a `TRE_OVERFLOW` DES.
+    overflow: Vec<TreEnvelope>,
+    /// 1-based index of the overflow DES, or 0 when there is no overflow.
+    ofl_index: u16,
+}
+
+impl TreContainerField {
+    /// Split `envelopes` at `max_size`, keeping whole envelopes on each side.
+    ///
+    /// A TRE must never be divided between an inline field and an overflow DES
+    /// (JBP-2021.2-037, restated with a worked counter-example in STDI-0002
+    /// Vol 1), and the inline field is filled before spilling — CSDIDA §AS.6.2
+    /// warns that some legacy readers cannot read a `TRE_OVERFLOW` DES at all,
+    /// so it is a last resort rather than a default.
+    fn pack(envelopes: Vec<TreEnvelope>, max_size: usize) -> Self {
+        let (fits, overflow) = JBPDatasetWriter::split_tres_by_size(envelopes, max_size);
+        Self {
+            payload: write_tre_envelopes(&fits),
+            overflow,
+            ofl_index: 0,
+        }
+    }
+
+    /// Whether this field carries anything — inline bytes, overflow, or both.
+    fn is_empty(&self) -> bool {
+        self.payload.is_empty() && self.overflow.is_empty()
+    }
+
+    /// Bytes this field contributes to the header length: 5 for the length
+    /// field, plus the `*OFL` subfield and payload when it carries anything.
+    fn field_len(&self) -> usize {
+        if self.is_empty() {
+            5
+        } else {
+            5 + 3 + self.payload.len()
+        }
+    }
+}
+
+/// Serialized file-header TREs, one container field each.
+///
+/// All file-header TREs are placed in XHD; `udhd` exists so the length
+/// accounting and overflow plumbing are symmetric, and is currently always
+/// empty. XHD is the spec-preferred field: several STDI-0002 appendices
+/// *require* it for file-header placement (Vol 1 App. P §P.3.2.5.1 for GEOPS,
+/// Vol 1 App. W §B.6 for GEOPSB) while none requires UDHD, and both GeoSDE
+/// §P.2.1.1 and CSDIDA §AS.6.2 note that legacy readers do not look in the
+/// user-defined section for NTB-managed TREs.
+#[derive(Debug, Default)]
+struct FileHeaderTres {
+    /// The `UDHD` container field.
+    udhd: TreContainerField,
+    /// The `XHD` container field.
+    xhd: TreContainerField,
+}
+
+impl FileHeaderTres {
+    /// Build the container fields from the envelopes destined for each.
+    fn from_envelopes(udhd: Vec<TreEnvelope>, xhd: Vec<TreEnvelope>) -> Self {
+        Self {
+            udhd: TreContainerField::pack(udhd, MAX_UDHD_TRE_SIZE),
+            xhd: TreContainerField::pack(xhd, MAX_XHD_TRE_SIZE),
+        }
+    }
+
+    /// The `TRE_OVERFLOW` DES entries these fields require, in `UDHD`-then-`XHD`
+    /// order. Empty when everything fit inline, which is the common case.
+    fn overflow_entries(&self) -> Vec<OverflowTreData> {
+        [
+            (OverflowSource::FileHeaderUdhd, &self.udhd),
+            (OverflowSource::FileHeaderXhd, &self.xhd),
+        ]
+        .into_iter()
+        .filter(|(_, field)| !field.overflow.is_empty())
+        .map(|(source, field)| OverflowTreData {
+            source,
+            // The file header is not a segment; `create_overflow_des` ignores
+            // this for file-header sources and emits DESITEM=000.
+            segment_index: 0,
+            envelopes: field.overflow.clone(),
+        })
+        .collect()
+    }
+}
+
 /// Overflow TRE data to be written to a TRE_OVERFLOW DES.
 #[derive(Debug, Clone)]
 struct OverflowTreData {
@@ -600,6 +711,41 @@ impl JBPDatasetWriter {
             serialize_tre_groups_to_envelopes(registry, &tre_groups, self.strict_encoding)
                 .map_err(|e| CodecError::Encode(e.to_string()))?;
         Ok(envelopes)
+    }
+
+    /// Serialize file-header TREs from the dataset-level metadata provider.
+    ///
+    /// TREs are sourced from the same CETAG-keyed nested-dict convention that
+    /// segments use — any top-level metadata entry whose value is a JSON object
+    /// is treated as a TRE. The five nested file-header fields (`IMAGE_INFO`,
+    /// `GRAPHIC_INFO`, `TEXT_INFO`, `DES_INFO`, `RES_INFO`) decode to JSON
+    /// *arrays*, so they are not mistaken for TREs.
+    ///
+    /// Returns empty payloads when there is no registry, no file metadata, or no
+    /// TRE entries — which keeps the header byte-identical to a file written
+    /// without file-header TREs.
+    ///
+    /// # Errors
+    /// Returns `CodecError` if TRE serialization fails (e.g., field values
+    /// exceed their defined widths).
+    fn serialize_file_header_tres(&self) -> Result<FileHeaderTres, CodecError> {
+        let (registry, metadata) = match (&self.registry, &self.file_metadata) {
+            (Some(registry), Some(metadata)) => (registry, metadata),
+            _ => return Ok(FileHeaderTres::default()),
+        };
+
+        let metadata_dict = metadata.entries(None);
+        let tre_groups = parse_tre_fields_from_metadata(&metadata_dict);
+        if tre_groups.is_empty() {
+            return Ok(FileHeaderTres::default());
+        }
+
+        let envelopes =
+            serialize_tre_groups_to_envelopes(registry, &tre_groups, self.strict_encoding)
+                .map_err(|e| CodecError::Encode(e.to_string()))?;
+
+        // Everything goes to XHD; see the `FileHeaderTres` doc comment.
+        Ok(FileHeaderTres::from_envelopes(Vec::new(), envelopes))
     }
 
     /// Create an image subheader with TRE data and overflow handling.
@@ -2078,7 +2224,8 @@ impl JBPDatasetWriter {
         }
     }
 
-    /// Calculate the file header length based on segment counts.
+    /// Calculate the file header length based on segment counts and the
+    /// serialized file-header TRE payloads.
     fn calculate_header_length(
         &self,
         numi: usize,
@@ -2086,6 +2233,7 @@ impl JBPDatasetWriter {
         numt: usize,
         numdes: usize,
         numres: usize,
+        file_tres: &FileHeaderTres,
     ) -> usize {
         // Fixed header portion (before segment info)
         let fixed_len = 9  // FHDR + FVER
@@ -2126,8 +2274,8 @@ impl JBPDatasetWriter {
         let text_info_len = 3 + numt * (4 + 5); // NUMT + (LTSH + LT) * numt
         let des_info_len = 3 + numdes * (4 + 9); // NUMDES + (LDSH + LD) * numdes
         let res_info_len = 3 + numres * (4 + 7); // NUMRES + (LRESH + LRE) * numres
-        let udhd_len = 5; // UDHDL
-        let xhd_len = 5; // XHDL
+        let udhd_len = file_tres.udhd.field_len(); // UDHDL + UDHOFL + UDHD
+        let xhd_len = file_tres.xhd.field_len(); // XHDL + XHDLOFL + XHD
 
         fixed_len
             + image_info_len
@@ -2140,7 +2288,38 @@ impl JBPDatasetWriter {
             + xhd_len
     }
 
+    /// Write a file-header TRE container field: the 5-digit length, then — when
+    /// the field carries anything — the 3-byte `*OFL` overflow-DES index
+    /// followed by the inline TRE payload.
+    ///
+    /// A field with overflow but no inline payload writes `00003` and a non-zero
+    /// index with no payload bytes, which is how a single over-cap envelope is
+    /// encoded.
+    fn write_tre_container_field<W: Write>(
+        writer: &mut W,
+        field: &TreContainerField,
+    ) -> Result<(), CodecError> {
+        if field.is_empty() {
+            writer
+                .write_all(b"00000")
+                .map_err(|e| JBPError::IoError { source: e })?;
+            return Ok(());
+        }
+        // The length field counts the 3-byte *OFL subfield along with the payload.
+        writer
+            .write_all(format!("{:05}", field.payload.len() + 3).as_bytes())
+            .map_err(|e| JBPError::IoError { source: e })?;
+        writer
+            .write_all(format!("{:03}", field.ofl_index).as_bytes())
+            .map_err(|e| JBPError::IoError { source: e })?;
+        writer
+            .write_all(&field.payload)
+            .map_err(|e| JBPError::IoError { source: e })?;
+        Ok(())
+    }
+
     /// Write the file header.
+    #[allow(clippy::too_many_arguments)]
     fn write_file_header<W: Write>(
         &self,
         writer: &mut W,
@@ -2150,6 +2329,7 @@ impl JBPDatasetWriter {
         graphic_info: &[(usize, usize)],
         text_info: &[(usize, usize)],
         des_info: &[(usize, usize)],
+        file_tres: &FileHeaderTres,
     ) -> Result<(), CodecError> {
         // Build metadata dict from file_metadata (empty if not set)
         let empty_map = std::collections::HashMap::new();
@@ -2297,14 +2477,10 @@ impl JBPDatasetWriter {
             .write_all(b"000")
             .map_err(|e| JBPError::IoError { source: e })?;
 
-        // UDHDL (5)
-        writer
-            .write_all(b"00000")
-            .map_err(|e| JBPError::IoError { source: e })?;
-        // XHDL (5)
-        writer
-            .write_all(b"00000")
-            .map_err(|e| JBPError::IoError { source: e })?;
+        // UDHDL (5) + UDHOFL (3) + UDHD (UDHDL - 3)
+        Self::write_tre_container_field(writer, &file_tres.udhd)?;
+        // XHDL (5) + XHDLOFL (3) + XHD (XHDL - 3)
+        Self::write_tre_container_field(writer, &file_tres.xhd)?;
 
         Ok(())
     }
@@ -2453,22 +2629,37 @@ impl DatasetWriter for JBPDatasetWriter {
             des_data.push(data);
         }
 
+        // Serialize file-header TREs once — the payloads are needed for the
+        // header length, the overflow DES, and the header write, and computing
+        // them more than once would let those drift. This has to happen before
+        // the overflow-DES loop below, because a file-header spill adds a DES
+        // and therefore changes NUMDES and the header length.
+        let mut file_tres = self.serialize_file_header_tres()?;
+        overflow_tres.extend(file_tres.overflow_entries());
+
         // Create TRE_OVERFLOW DES segments for any overflow TREs
         // The DES index is 1-based, starting after any existing DES segments
         let base_des_count = des_info.len();
         for (overflow_idx, overflow_data) in overflow_tres.iter().enumerate() {
             let des_index = (base_des_count + overflow_idx + 1) as u16; // 1-based index
 
-            // Patch the overflow index in the source segment's subheader
+            // Record the overflow DES index in the source header
             match overflow_data.source {
                 OverflowSource::ImageUdid | OverflowSource::ImageIxshd => {
+                    // Image subheaders are built before the DES index is known,
+                    // so the placeholder in the already-serialized bytes is
+                    // patched in place.
                     let segment_idx = overflow_data.segment_index as usize;
                     if segment_idx < image_subheaders.len() {
                         Self::patch_overflow_index(&mut image_subheaders[segment_idx], des_index);
                     }
                 }
+                // The file header is written after this loop, so its *OFL values
+                // are simply recorded — no byte patching needed.
+                OverflowSource::FileHeaderUdhd => file_tres.udhd.ofl_index = des_index,
+                OverflowSource::FileHeaderXhd => file_tres.xhd.ofl_index = des_index,
                 _ => {
-                    // Other overflow sources not yet implemented
+                    // Graphic and text segment overflow not yet implemented
                 }
             }
 
@@ -2493,7 +2684,8 @@ impl DatasetWriter for JBPDatasetWriter {
         let numres = 0;
 
         // Calculate header length
-        let header_length = self.calculate_header_length(numi, nums, numt, numdes, numres);
+        let header_length =
+            self.calculate_header_length(numi, nums, numt, numdes, numres, &file_tres);
 
         // Calculate total file length
         let segments_length: usize = image_info.iter().map(|(sh, d)| sh + d).sum::<usize>()
@@ -2523,6 +2715,7 @@ impl DatasetWriter for JBPDatasetWriter {
             &graphic_info,
             &text_info,
             &des_info,
+            &file_tres,
         )?;
 
         // Write image segments
@@ -3998,6 +4191,627 @@ mod tests {
         assert_eq!(nbloca["NUMBER_OF_FRAMES"], 1);
     }
 
+    // ---- File-header TRE writing (UDHD / XHD) -----------------------------
+
+    /// Byte offsets into a NITF 2.1 file header carrying exactly one image
+    /// segment and no graphic/text/DES/RES segments. Derived from the field
+    /// widths in `calculate_header_length`.
+    mod file_header_offsets {
+        /// FL — file length (12 bytes).
+        pub const FL: usize = 342;
+        /// HL — header length (6 bytes), immediately after FL.
+        pub const HL: usize = FL + 12;
+        /// UDHDL — user defined header data length (5 bytes).
+        pub const UDHDL: usize = 394;
+        /// XHDL — extended header data length (5 bytes).
+        pub const XHDL: usize = 399;
+        /// Header length with both TRE container fields empty.
+        pub const BARE_HEADER_LEN: usize = 404;
+        /// Bytes one DES entry adds to the header: LDSH (4) + LD (9). Every
+        /// offset from `UDHDL` onwards shifts by this much per DES segment, so a
+        /// file that spills TREs into a `TRE_OVERFLOW` DES pays it once.
+        pub const DES_INFO_ENTRY: usize = 4 + 9;
+    }
+
+    /// CSDIDA CEDATA, 70 bytes, matching the values set by
+    /// [`csdida_metadata`]. Mirrors the TRE in the upstream report.
+    const CSDIDA_CEDATA: &str =
+        "26JUL2021WV0303000AAP1000020210726022422202107260354210001NN4.54.0    ";
+
+    /// A CSDIDA TRE as CETAG-keyed nested-dict metadata.
+    fn csdida_metadata() -> serde_json::Value {
+        serde_json::json!({
+            "DAY": "26",
+            "MONTH": "JUL",
+            "YEAR": "2021",
+            "PLATFORM_CODE": "WV",
+            "VEHICLE_ID": "03",
+            "PASS": "03",
+            "OPERATION": "000",
+            "SENSOR_ID": "AA",
+            "PRODUCT_ID": "P1",
+            "RESERVED_1": "0000",
+            "TIME": "20210726022422",
+            "PROCESS_TIME": "20210726035421",
+            "RESERVED_2": "00",
+            "RESERVED_3": "01",
+            "RESERVED_4": "N",
+            "RESERVED_5": "N",
+            "SOFTWARE_VERSION_NUMBER": "4.54.0"
+        })
+    }
+
+    /// Write an 8x8 single-band NITF 2.1 file with the given dataset-level
+    /// metadata provider, returning the raw file bytes.
+    fn write_nitf_with_file_metadata(
+        path: &Path,
+        file_metadata: Option<Arc<dyn MetadataProvider>>,
+    ) -> Vec<u8> {
+        write_with_format_and_file_metadata(path, NitfFormat::Nitf21, file_metadata)
+    }
+
+    /// Write an 8x8 single-band file in `format` with the given dataset-level
+    /// metadata provider, returning the raw file bytes.
+    ///
+    /// Both `.ksy` file-header definitions name `UDHDL`/`UDHD`/`XHDL`/`XHDLOFL`/
+    /// `XHD` identically and place them at the same offsets, so NITF 2.1 and
+    /// NSIF 1.0 share every byte assertion in these tests.
+    fn write_with_format_and_file_metadata(
+        path: &Path,
+        format: NitfFormat,
+        file_metadata: Option<Arc<dyn MetadataProvider>>,
+    ) -> Vec<u8> {
+        use crate::buffered::{BufferedImageAssetProvider, MemoryImageConfig};
+
+        let config = MemoryImageConfig::new(8, 8)
+            .with_bands(1)
+            .with_block_size(8, 8);
+        let provider = BufferedImageAssetProvider::new("test_image", config);
+        provider.set_full_image(&[7u8; 8 * 8]).unwrap();
+
+        let registry = Arc::new(StructureRegistry::new());
+        let mut writer = JBPDatasetWriter::with_registry(path, format, registry).unwrap();
+        if let Some(metadata) = file_metadata {
+            writer.set_metadata(metadata).unwrap();
+        }
+        writer
+            .add_asset(
+                "test_image",
+                AssetProvider::Image(Arc::new(provider)),
+                "Test",
+                "",
+                &[],
+            )
+            .unwrap();
+        writer.close().unwrap();
+
+        std::fs::read(path).unwrap()
+    }
+
+    #[test]
+    fn writer_file_header_tre_written_to_xhd() {
+        use crate::buffered::BufferedMetadataProvider;
+        use file_header_offsets as off;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("file_header_tre.ntf");
+
+        let file_metadata = BufferedMetadataProvider::new();
+        file_metadata.set("CSDIDA", csdida_metadata());
+
+        let bytes = write_nitf_with_file_metadata(&path, Some(Arc::new(file_metadata)));
+
+        // One CSDIDA envelope: CETAG (6) + CEL (5) + CEDATA (70).
+        let payload = [b"CSDIDA00070".as_slice(), CSDIDA_CEDATA.as_bytes()].concat();
+        assert_eq!(payload.len(), 81);
+
+        // XHD costs the 3-byte XHDLOFL subfield plus the payload on top of the
+        // bare header.
+        let expected_hl = off::BARE_HEADER_LEN + 3 + payload.len();
+        assert_eq!(
+            &bytes[off::HL..off::HL + 6],
+            format!("{:06}", expected_hl).as_bytes(),
+            "HL"
+        );
+        assert_eq!(
+            &bytes[off::FL..off::FL + 12],
+            format!("{:012}", bytes.len()).as_bytes(),
+            "FL"
+        );
+
+        // All file-header TREs go to XHD, so UDHDL stays 00000 with no UDHOFL.
+        assert_eq!(&bytes[off::UDHDL..off::UDHDL + 5], b"00000", "UDHDL");
+        // XHDL counts the 3-byte XHDLOFL subfield along with the payload.
+        assert_eq!(
+            &bytes[off::XHDL..off::XHDL + 5],
+            format!("{:05}", payload.len() + 3).as_bytes(),
+            "XHDL"
+        );
+        let xhdlofl = off::XHDL + 5;
+        assert_eq!(&bytes[xhdlofl..xhdlofl + 3], b"000", "XHDLOFL");
+        let xhd = xhdlofl + 3;
+        assert_eq!(&bytes[xhd..xhd + payload.len()], payload, "XHD");
+        // The payload is the last thing in the header.
+        assert_eq!(xhd + payload.len(), expected_hl);
+    }
+
+    #[test]
+    fn writer_without_file_metadata_emits_empty_tre_container_fields() {
+        use file_header_offsets as off;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("no_file_metadata.ntf");
+        let bytes = write_nitf_with_file_metadata(&path, None);
+
+        assert_eq!(
+            &bytes[off::HL..off::HL + 6],
+            format!("{:06}", off::BARE_HEADER_LEN).as_bytes(),
+            "HL"
+        );
+        assert_eq!(
+            &bytes[off::FL..off::FL + 12],
+            format!("{:012}", bytes.len()).as_bytes(),
+            "FL"
+        );
+        // Both container fields collapse to a bare 00000 with no *OFL subfield,
+        // and the header ends there — byte-identical to output produced before
+        // file-header TRE support existed.
+        assert_eq!(
+            &bytes[off::UDHDL..off::BARE_HEADER_LEN],
+            b"0000000000",
+            "UDHDL + XHDL"
+        );
+    }
+
+    #[test]
+    fn writer_file_metadata_without_tres_leaves_header_unchanged() {
+        use crate::buffered::BufferedMetadataProvider;
+        use file_header_offsets as off;
+
+        let dir = tempdir().unwrap();
+
+        let file_metadata = BufferedMetadataProvider::new();
+        file_metadata.set("FTITLE", serde_json::json!("No TREs here"));
+        let with_metadata = write_nitf_with_file_metadata(
+            &dir.path().join("scalar_only.ntf"),
+            Some(Arc::new(file_metadata)),
+        );
+        let without_metadata = write_nitf_with_file_metadata(&dir.path().join("bare.ntf"), None);
+
+        assert_eq!(with_metadata.len(), without_metadata.len());
+        assert_eq!(
+            &with_metadata[off::UDHDL..off::BARE_HEADER_LEN],
+            b"0000000000",
+            "UDHDL + XHDL"
+        );
+        assert_eq!(
+            &with_metadata[off::HL..off::HL + 6],
+            &without_metadata[off::HL..off::HL + 6],
+            "HL"
+        );
+    }
+
+    #[test]
+    fn writer_skips_unknown_file_header_tres() {
+        use crate::buffered::BufferedMetadataProvider;
+        use file_header_offsets as off;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("unknown_file_tre.ntf");
+
+        // ZZZZZZ has no registry definition; serialization drops it rather than
+        // failing the write. Same pre-existing behavior as segment TREs.
+        let file_metadata = BufferedMetadataProvider::new();
+        file_metadata.set("ZZZZZZ", serde_json::json!({ "SOMEFIELD": "1" }));
+
+        let bytes = write_nitf_with_file_metadata(&path, Some(Arc::new(file_metadata)));
+
+        assert_eq!(
+            &bytes[off::UDHDL..off::BARE_HEADER_LEN],
+            b"0000000000",
+            "UDHDL + XHDL"
+        );
+        assert_eq!(
+            &bytes[off::HL..off::HL + 6],
+            format!("{:06}", off::BARE_HEADER_LEN).as_bytes(),
+            "HL"
+        );
+    }
+
+    // ---- File-header TRE round trips --------------------------------------
+
+    /// A SYSIDA TRE as CETAG-keyed nested-dict metadata. Its identifier fields
+    /// are sized by sibling length fields, so pairing it with the fixed-width
+    /// CSDIDA exercises both shapes. SYSIDA + CSDIDA is also the pair carried
+    /// in the file header of the file in the upstream report.
+    fn sysida_metadata() -> serde_json::Value {
+        serde_json::json!({
+            "PLATFORM_ID_LEN": "003",
+            "PLATFORM_ID": "WV3",
+            "PAYLOAD_ID_LEN": "000",
+            "SENSOR_ID_LEN": "003",
+            "SENSOR_ID": "PAN"
+        })
+    }
+
+    /// Assert that a read-back file header exposes both TREs written by
+    /// [`round_trip_file_header_tres`] with every field value intact.
+    fn assert_round_tripped_tres(entries: &HashMap<String, serde_json::Value>) {
+        let csdida = entries
+            .get("CSDIDA")
+            .expect("CSDIDA should survive the round trip")
+            .as_object()
+            .expect("CSDIDA should be a nested dict");
+        assert_eq!(csdida["DAY"], "26");
+        assert_eq!(csdida["MONTH"], "JUL");
+        assert_eq!(csdida["YEAR"], "2021");
+        assert_eq!(csdida["PLATFORM_CODE"], "WV");
+        assert_eq!(csdida["VEHICLE_ID"], "03");
+        assert_eq!(csdida["PASS"], "03");
+        assert_eq!(csdida["OPERATION"], "000");
+        assert_eq!(csdida["SENSOR_ID"], "AA");
+        assert_eq!(csdida["PRODUCT_ID"], "P1");
+        assert_eq!(csdida["RESERVED_1"], "0000");
+        assert_eq!(csdida["TIME"], "20210726022422");
+        assert_eq!(csdida["PROCESS_TIME"], "20210726035421");
+        assert_eq!(csdida["RESERVED_2"], "00");
+        assert_eq!(csdida["RESERVED_3"], "01");
+        assert_eq!(csdida["RESERVED_4"], "N");
+        assert_eq!(csdida["RESERVED_5"], "N");
+        // SOFTWARE_VERSION_NUMBER is 10 bytes; the writer pads the value out.
+        assert_eq!(csdida["SOFTWARE_VERSION_NUMBER"], "4.54.0    ");
+
+        let sysida = entries
+            .get("SYSIDA")
+            .expect("SYSIDA should survive the round trip")
+            .as_object()
+            .expect("SYSIDA should be a nested dict");
+        assert_eq!(sysida["PLATFORM_ID_LEN"], "003");
+        assert_eq!(sysida["PLATFORM_ID"], "WV3");
+        assert_eq!(sysida["PAYLOAD_ID_LEN"], "000");
+        assert_eq!(sysida["SENSOR_ID_LEN"], "003");
+        assert_eq!(sysida["SENSOR_ID"], "PAN");
+    }
+
+    /// Write a file carrying CSDIDA and SYSIDA as file-level metadata, read it
+    /// back, and assert both TREs round-trip through XHD with their field
+    /// values intact.
+    fn round_trip_file_header_tres(format: NitfFormat, file_name: &str) {
+        use crate::buffered::BufferedMetadataProvider;
+        use crate::jbp::reader::JBPDatasetReader;
+        use crate::owned_buffer::OwnedBuffer;
+        use crate::traits::DatasetReader;
+        use file_header_offsets as off;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(file_name);
+
+        let file_metadata = BufferedMetadataProvider::new();
+        file_metadata.set("CSDIDA", csdida_metadata());
+        file_metadata.set("SYSIDA", sysida_metadata());
+
+        let bytes =
+            write_with_format_and_file_metadata(&path, format, Some(Arc::new(file_metadata)));
+
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes.clone())).unwrap();
+        let entries = reader.metadata().entries(None);
+
+        assert_round_tripped_tres(&entries);
+
+        // Both TREs went to XHD, so UDHD stays a bare 00000 and XHDL accounts
+        // for the two envelopes plus the 3-byte XHDLOFL subfield. CSDIDA is
+        // 6 + 5 + 70 = 81 bytes, SYSIDA is 6 + 5 + 15 = 26.
+        assert_eq!(&bytes[off::UDHDL..off::UDHDL + 5], b"00000", "UDHDL");
+        assert_eq!(entries["UDHDL"], "00000");
+        assert_eq!(entries["XHDL"], format!("{:05}", 81 + 26 + 3));
+
+        // The raw XHD field is hex, and envelope order is not guaranteed, so
+        // assert each envelope appears somewhere in it.
+        let xhd_hex = entries["XHD"].as_str().unwrap();
+        for (tag, cel) in [("CSDIDA", "00070"), ("SYSIDA", "00015")] {
+            let envelope_hex: String = format!("{}{}", tag, cel)
+                .bytes()
+                .map(|b| format!("{:02x}", b))
+                .collect();
+            assert!(
+                xhd_hex.contains(&envelope_hex),
+                "XHD should contain the {} envelope header",
+                tag
+            );
+        }
+    }
+
+    #[test]
+    fn file_header_tres_round_trip_nitf21() {
+        round_trip_file_header_tres(NitfFormat::Nitf21, "round_trip.ntf");
+    }
+
+    #[test]
+    fn file_header_tres_round_trip_nsif10() {
+        round_trip_file_header_tres(NitfFormat::Nsif10, "round_trip.nsif");
+    }
+
+    /// A TRE read out of `UDHD` is written back into `XHD` and still survives.
+    ///
+    /// The writer places every file-header TRE in XHD — the spec-preferred
+    /// field, since several STDI-0002 appendices require it and none requires
+    /// UDHD (see the [`FileHeaderTres`] doc comment). Reading a UDHD-sourced
+    /// TRE and writing it back therefore relocates it, which this test pins
+    /// down: the CETAG and its field values are preserved, only the container
+    /// field changes.
+    #[test]
+    fn udhd_sourced_tre_is_rewritten_into_xhd() {
+        use crate::buffered::BufferedMetadataProvider;
+        use crate::jbp::reader::tests::{create_minimal_nitf_header_with_tres, MinimalNitfTres};
+        use crate::jbp::reader::JBPDatasetReader;
+        use crate::owned_buffer::OwnedBuffer;
+        use crate::traits::DatasetReader;
+        use file_header_offsets as off;
+
+        // A synthetic source file with SYSIDA in UDHD and CSDIDA in XHD, built
+        // from independently asserted bytes rather than by our own writer.
+        let udhd = [b"SYSIDA00015".as_slice(), b"003WV3000003PAN".as_slice()].concat();
+        let xhd = [b"CSDIDA00070".as_slice(), CSDIDA_CEDATA.as_bytes()].concat();
+        let source = create_minimal_nitf_header_with_tres(
+            1,
+            0,
+            0,
+            0,
+            0,
+            &MinimalNitfTres {
+                udhd: &udhd,
+                xhd: &xhd,
+                ..Default::default()
+            },
+        );
+        let source_reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(source)).unwrap();
+        let source_entries = source_reader.metadata().entries(None);
+
+        // Feed just the decoded CETAG entries back to the writer, which is the
+        // convention a caller copying metadata between files would use.
+        let file_metadata = BufferedMetadataProvider::new();
+        for tag in ["SYSIDA", "CSDIDA"] {
+            file_metadata.set(tag, source_entries[tag].clone());
+        }
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("relocated.ntf");
+        let bytes = write_nitf_with_file_metadata(&path, Some(Arc::new(file_metadata)));
+
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes.clone())).unwrap();
+        let entries = reader.metadata().entries(None);
+        assert_round_tripped_tres(&entries);
+
+        // The UDHD-sourced TRE moved to XHD.
+        assert_eq!(&bytes[off::UDHDL..off::UDHDL + 5], b"00000", "UDHDL");
+        assert_eq!(entries["XHDL"], format!("{:05}", 81 + 26 + 3));
+    }
+
+    // ---- File-header TRE overflow ------------------------------------------
+
+    /// A SECURA TRE, as CETAG-keyed nested-dict metadata, whose `SECURITY` field
+    /// is `seclen` bytes long.
+    ///
+    /// SECURA is the lever these overflow tests need: it is a known TRE the spec
+    /// allows in the file header (STDI-0002 Vol 1 App. AI) and its `SECURITY`
+    /// field is sized `SECLEN.to_i`, so the envelope can be grown to any chosen
+    /// size. CEDATA is `14 + 9 + 207 + 8 + 8 + 5 + SECLEN` = `251 + seclen`, and
+    /// the envelope adds CETAG (6) + CEL (5) on top.
+    fn secura_metadata(seclen: usize) -> serde_json::Value {
+        serde_json::json!({
+            "FDATTIM": "20240101120000",
+            "FORMATVER": "NITF02.10",
+            "SECFLDS": " ".repeat(207),
+            "SECSTD": "ARH.XML",
+            "SECCOMP": "",
+            "SECLEN": format!("{:05}", seclen),
+            // `bytes`-typed fields round-trip as lowercase hex; 0x41 is 'A'.
+            "SECURITY": "41".repeat(seclen),
+        })
+    }
+
+    /// Envelope size of the SECURA produced by [`secura_metadata`].
+    fn secura_envelope_len(seclen: usize) -> usize {
+        6 + 5 + 251 + seclen
+    }
+
+    /// Locate the `TRE_OVERFLOW` DES subheader in a written file and assert its
+    /// `DESOFLW`/`DESITEM` fields, returning nothing.
+    ///
+    /// Field offsets within the DES subheader follow `create_overflow_des`:
+    /// DE (2) + DESID (25) + DESVER (2) + security (167) puts DESOFLW at 196 and
+    /// DESITEM at 202.
+    fn assert_tre_overflow_des(bytes: &[u8], expected_desoflw: &str) {
+        const DESID: &[u8] = b"DETRE_OVERFLOW             01";
+        let start = bytes
+            .windows(DESID.len())
+            .position(|w| w == DESID)
+            .expect("a TRE_OVERFLOW DES subheader should be present");
+
+        assert_eq!(
+            &bytes[start + 196..start + 202],
+            expected_desoflw.as_bytes(),
+            "DESOFLW"
+        );
+        assert_eq!(&bytes[start + 202..start + 205], b"000", "DESITEM");
+        assert_eq!(&bytes[start + 205..start + 209], b"0000", "DESSHL");
+    }
+
+    /// TREs that do not all fit inline spill into a `TRE_OVERFLOW` DES, and every
+    /// one of them comes back on read.
+    ///
+    /// This exercises both formerly dead overflow paths at once: the file-header
+    /// branch of `create_overflow_des` on write, and
+    /// `overflow::get_file_header_overflow_indices` on read.
+    #[test]
+    fn file_header_tres_overflow_into_des_and_round_trip() {
+        use crate::buffered::BufferedMetadataProvider;
+        use crate::jbp::reader::JBPDatasetReader;
+        use crate::owned_buffer::OwnedBuffer;
+        use crate::traits::DatasetReader;
+        use file_header_offsets as off;
+
+        // Sized so SECURA alone fits inline but SECURA + CSDIDA (81 bytes) does
+        // not, forcing exactly one of the two into the overflow DES.
+        const SECLEN: usize = 99_700;
+        let secura_len = secura_envelope_len(SECLEN);
+        assert!(secura_len <= MAX_XHD_TRE_SIZE);
+        assert!(secura_len + 81 > MAX_XHD_TRE_SIZE);
+
+        let file_metadata = BufferedMetadataProvider::new();
+        file_metadata.set("CSDIDA", csdida_metadata());
+        file_metadata.set("SECURA", secura_metadata(SECLEN));
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("overflow.ntf");
+        let bytes = write_nitf_with_file_metadata(&path, Some(Arc::new(file_metadata)));
+
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes.clone())).unwrap();
+        let entries = reader.metadata().entries(None);
+
+        // Both TREs survive, whichever side of the split each landed on.
+        let csdida = entries["CSDIDA"].as_object().expect("CSDIDA nested dict");
+        assert_eq!(csdida["TIME"], "20210726022422");
+        let secura = entries["SECURA"].as_object().expect("SECURA nested dict");
+        assert_eq!(secura["SECLEN"], format!("{:05}", SECLEN));
+        assert_eq!(secura["SECURITY"], "41".repeat(SECLEN));
+
+        // Exactly one overflow DES was added, and it is a well-formed
+        // TRE_OVERFLOW pointing at the file header's extended data field.
+        assert_eq!(reader.segment_offsets().des.len(), 1);
+        assert_tre_overflow_des(&bytes, "UDHDX ");
+
+        // UDHD is untouched; XHDL covers the XHDLOFL subfield plus whichever
+        // envelope stayed inline, and XHDLOFL names the 1-based DES index. The
+        // overflow DES adds a header entry, so both fields sit one entry later
+        // than in a DES-less file.
+        let udhdl = off::UDHDL + off::DES_INFO_ENTRY;
+        let xhdl = off::XHDL + off::DES_INFO_ENTRY;
+        assert_eq!(&bytes[udhdl..udhdl + 5], b"00000", "UDHDL");
+        let inline_len: usize = entries["XHDL"]
+            .as_str()
+            .unwrap()
+            .parse::<usize>()
+            .map(|xhdl| xhdl - 3)
+            .unwrap();
+        assert!(
+            inline_len == 81 || inline_len == secura_len,
+            "one whole envelope should be inline, got {inline_len} bytes"
+        );
+        assert_eq!(&bytes[xhdl + 5..xhdl + 8], b"001", "XHDLOFL");
+    }
+
+    /// A single envelope larger than the inline cap goes entirely to the
+    /// overflow DES, leaving `XHDL` at its `00003` minimum.
+    ///
+    /// A TRE must never be split between an inline field and an overflow DES
+    /// (JBP-2021.2-037, and STDI-0002 Vol 1 spells it out with a worked
+    /// counter-example), so there is nothing to keep inline here.
+    #[test]
+    fn oversized_single_file_header_tre_goes_entirely_to_overflow() {
+        use crate::buffered::BufferedMetadataProvider;
+        use crate::jbp::reader::JBPDatasetReader;
+        use crate::owned_buffer::OwnedBuffer;
+        use crate::traits::DatasetReader;
+        use file_header_offsets as off;
+
+        // SECLEN's maximum per STDI-0002 Vol 1 App. AI; the resulting envelope is
+        // 99999 bytes, three over the 99996-byte inline cap.
+        const SECLEN: usize = 99_737;
+        assert!(secura_envelope_len(SECLEN) > MAX_XHD_TRE_SIZE);
+
+        let file_metadata = BufferedMetadataProvider::new();
+        file_metadata.set("SECURA", secura_metadata(SECLEN));
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("oversized.ntf");
+        let bytes = write_nitf_with_file_metadata(&path, Some(Arc::new(file_metadata)));
+
+        // XHDL is the bare 00003 — the XHDLOFL subfield with no payload behind
+        // it. Over the bare header, HL grows by that 3-byte subfield plus the
+        // overflow DES's own header entry, which also shifts XHDL along.
+        let xhdl = off::XHDL + off::DES_INFO_ENTRY;
+        assert_eq!(&bytes[xhdl..xhdl + 5], b"00003", "XHDL");
+        assert_eq!(&bytes[xhdl + 5..xhdl + 8], b"001", "XHDLOFL");
+        assert_eq!(
+            &bytes[off::HL..off::HL + 6],
+            format!("{:06}", off::BARE_HEADER_LEN + off::DES_INFO_ENTRY + 3).as_bytes(),
+            "HL"
+        );
+        assert_eq!(
+            &bytes[off::FL..off::FL + 12],
+            format!("{:012}", bytes.len()).as_bytes(),
+            "FL"
+        );
+        assert_tre_overflow_des(&bytes, "UDHDX ");
+
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
+        let entries = reader.metadata().entries(None);
+        let secura = entries["SECURA"].as_object().expect("SECURA nested dict");
+        assert_eq!(secura["SECURITY"], "41".repeat(SECLEN));
+    }
+
+    #[test]
+    fn tre_container_field_packs_whole_envelopes_only() {
+        use crate::jbp::tre::TreEnvelope;
+
+        // Three 21-byte envelopes against a 50-byte cap: two inline, one spilled.
+        let envelopes: Vec<TreEnvelope> = (1..=3)
+            .map(|i| TreEnvelope::new(format!("TEST0{i}"), vec![0; 10]).unwrap())
+            .collect();
+        let field = TreContainerField::pack(envelopes, 50);
+
+        assert_eq!(field.payload.len(), 42);
+        assert_eq!(field.overflow.len(), 1);
+        assert_eq!(field.overflow[0].tag, "TEST03");
+        assert!(!field.is_empty());
+        // 5 for XHDL + 3 for XHDLOFL + the inline payload.
+        assert_eq!(field.field_len(), 5 + 3 + 42);
+    }
+
+    #[test]
+    fn tre_container_field_with_only_overflow_is_not_empty() {
+        use crate::jbp::tre::TreEnvelope;
+
+        let envelopes = vec![TreEnvelope::new("TEST01", vec![0; 100]).unwrap()];
+        let field = TreContainerField::pack(envelopes, 10);
+
+        assert!(field.payload.is_empty());
+        assert_eq!(field.overflow.len(), 1);
+        assert!(!field.is_empty());
+        // The length field still has to carry the *OFL subfield: 00003.
+        assert_eq!(field.field_len(), 8);
+    }
+
+    #[test]
+    fn empty_tre_container_field_costs_only_its_length_field() {
+        let field = TreContainerField::default();
+        assert!(field.is_empty());
+        assert_eq!(field.field_len(), 5);
+    }
+
+    /// The checked-in fixture generated by `scripts/generate_test_data.py`
+    /// exposes its file-header TREs — the durable regression guard for the
+    /// reported defect, independent of anything these tests construct.
+    #[test]
+    fn checked_in_fixture_exposes_file_header_tres() {
+        use crate::jbp::reader::JBPDatasetReader;
+        use crate::owned_buffer::OwnedBuffer;
+        use crate::traits::DatasetReader;
+
+        const FIXTURE: &str = "data/unit/nitf21-8x8-1band-8bit-file-tres.ntf";
+        let path = Path::new(FIXTURE);
+        if !path.exists() {
+            eprintln!("skipping: {} not found", FIXTURE);
+            return;
+        }
+
+        let bytes = std::fs::read(path).unwrap();
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(bytes)).unwrap();
+        let entries = reader.metadata().entries(None);
+        assert_round_tripped_tres(&entries);
+    }
+
     /// Test collect_provided_blocks returns correct set of blocks
     #[test]
     fn collect_provided_blocks_returns_provided_only() {
@@ -5414,7 +6228,16 @@ mod metadata_writing_tests {
 
         let mut buf = Vec::new();
         writer
-            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .write_file_header(
+                &mut buf,
+                1000,
+                500,
+                &[],
+                &[],
+                &[],
+                &[],
+                &FileHeaderTres::default(),
+            )
             .unwrap();
 
         // FTITLE is at offset: 9(magic) + 2(CLEVEL) + 4(STYPE) + 10(OSTAID) + 14(FDT) = 39
@@ -5434,7 +6257,16 @@ mod metadata_writing_tests {
 
         let mut buf = Vec::new();
         writer
-            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .write_file_header(
+                &mut buf,
+                1000,
+                500,
+                &[],
+                &[],
+                &[],
+                &[],
+                &FileHeaderTres::default(),
+            )
             .unwrap();
 
         // ONAME offset: 39(before FTITLE) + 80(FTITLE) + 167(security+FSCOP+FSCPYS+ENCRYP+FBKGC)
@@ -5457,7 +6289,16 @@ mod metadata_writing_tests {
 
         let mut buf = Vec::new();
         writer
-            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .write_file_header(
+                &mut buf,
+                1000,
+                500,
+                &[],
+                &[],
+                &[],
+                &[],
+                &FileHeaderTres::default(),
+            )
             .unwrap();
 
         // OPHONE offset = 300 + 24 = 324
@@ -5477,7 +6318,16 @@ mod metadata_writing_tests {
 
         let mut buf = Vec::new();
         writer
-            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .write_file_header(
+                &mut buf,
+                1000,
+                500,
+                &[],
+                &[],
+                &[],
+                &[],
+                &FileHeaderTres::default(),
+            )
             .unwrap();
 
         // FDT offset: 9 + 2 + 4 + 10 = 25
@@ -5493,7 +6343,16 @@ mod metadata_writing_tests {
 
         let mut buf = Vec::new();
         writer
-            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .write_file_header(
+                &mut buf,
+                1000,
+                500,
+                &[],
+                &[],
+                &[],
+                &[],
+                &FileHeaderTres::default(),
+            )
             .unwrap();
 
         // OSTAID offset: 9 + 2 + 4 = 15
@@ -5513,7 +6372,16 @@ mod metadata_writing_tests {
 
         let mut buf = Vec::new();
         writer
-            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .write_file_header(
+                &mut buf,
+                1000,
+                500,
+                &[],
+                &[],
+                &[],
+                &[],
+                &FileHeaderTres::default(),
+            )
             .unwrap();
 
         // CLEVEL offset: 9
@@ -5529,7 +6397,16 @@ mod metadata_writing_tests {
 
         let mut buf = Vec::new();
         writer
-            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .write_file_header(
+                &mut buf,
+                1000,
+                500,
+                &[],
+                &[],
+                &[],
+                &[],
+                &FileHeaderTres::default(),
+            )
             .unwrap();
 
         // FSCLAS offset: 39 + 80 = 119
@@ -5545,7 +6422,16 @@ mod metadata_writing_tests {
 
         let mut buf = Vec::new();
         writer
-            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .write_file_header(
+                &mut buf,
+                1000,
+                500,
+                &[],
+                &[],
+                &[],
+                &[],
+                &FileHeaderTres::default(),
+            )
             .unwrap();
 
         // FBKGC offset: 119 + 167 + 5 + 5 + 1 = 297
@@ -5562,7 +6448,16 @@ mod metadata_writing_tests {
 
         let mut buf = Vec::new();
         writer
-            .write_file_header(&mut buf, 1000, 500, &[], &[], &[], &[])
+            .write_file_header(
+                &mut buf,
+                1000,
+                500,
+                &[],
+                &[],
+                &[],
+                &[],
+                &FileHeaderTres::default(),
+            )
             .unwrap();
 
         // CLEVEL defaults to "03"

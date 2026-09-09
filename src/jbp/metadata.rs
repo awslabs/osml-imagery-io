@@ -9,9 +9,11 @@
 //!
 //! # TRE Support
 //!
-//! [`JBPSegmentMetadataProvider`] supports TRE (Tagged Record Extension) metadata
-//! through the `with_tres()` constructor. TRE fields are exposed as nested
-//! dictionaries keyed by CETAG (e.g., `{"GEOLOB": {"ARV": "...", "BRV": "..."}}`).
+//! Both providers support TRE (Tagged Record Extension) metadata through their
+//! `with_tres()` constructors — [`JBPFileMetadataProvider`] for the file header's
+//! UDHD/XHD fields, [`JBPSegmentMetadataProvider`] for a subheader's UDID/IXSHD/
+//! SXSHD/TXSHD fields. TRE fields are exposed as nested dictionaries keyed by
+//! CETAG (e.g., `{"GEOLOB": {"ARV": "...", "BRV": "..."}}`).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,6 +31,13 @@ use super::tre_fields;
 /// Provides access to file-level metadata from the NITF header through the
 /// [`MetadataProvider`] trait. Fields are eagerly parsed at construction into a
 /// cached HashMap for O(1) access.
+///
+/// # TRE Support
+///
+/// When created with `with_tres()`, TREs read from the file header's UDHD and XHD
+/// fields are parsed eagerly and stored as top-level keys (CETAG) mapped to nested
+/// dictionaries, exactly as [`JBPSegmentMetadataProvider`] does for subheader TREs.
+/// Unknown TREs produce a raw representation: `{"_raw": "<hex>", "_length": N}`.
 ///
 /// # Example
 ///
@@ -53,6 +62,27 @@ impl JBPFileMetadataProvider {
     /// during construction and not retained.
     pub fn from_definition(definition: Arc<StructureDefinition>, raw_bytes: OwnedBuffer) -> Self {
         let tags = parse_fields_from_definition(&definition, raw_bytes.as_bytes(), None);
+        Self { tags, raw_bytes }
+    }
+
+    /// Create with TRE support.
+    ///
+    /// Eagerly parses all file header fields and the TRE entries extracted from the
+    /// header's UDHD/XHD fields into a cached HashMap. The definition, registry, and
+    /// TRE envelopes are consumed during construction and not retained.
+    ///
+    /// Unlike [`Self::from_definition`], the registry is passed to field decoding so
+    /// nested struct types can resolve through it as well as through the definition's
+    /// own local `types` map.
+    pub fn with_tres(
+        definition: Arc<StructureDefinition>,
+        raw_bytes: OwnedBuffer,
+        tre_envelopes: Vec<TreEnvelope>,
+        registry: Arc<StructureRegistry>,
+    ) -> Self {
+        let mut tags =
+            parse_fields_from_definition(&definition, raw_bytes.as_bytes(), Some(&registry));
+        parse_tre_entries(&mut tags, &tre_envelopes, &registry);
         Self { tags, raw_bytes }
     }
 }
@@ -512,6 +542,153 @@ mod tests {
                     .with_encoding(Encoding::BcsN)
                     .with_doc("Latitude density"),
             )
+    }
+
+    #[test]
+    fn file_provider_with_tres_includes_tre_fields() {
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        // A file-header TRE envelope, as UDHD/XHD would yield.
+        // ARV: "000360000" (9 bytes), BRV: "000360000" (9 bytes)
+        let tre_envelope = TreEnvelope {
+            tag: "GEOLOB".to_string(),
+            data: b"000360000000360000".to_vec(),
+        };
+
+        let mut registry = StructureRegistry::new();
+        registry.register("tre_geolob", create_test_tre_definition());
+
+        let provider = JBPFileMetadataProvider::with_tres(
+            definition,
+            raw_bytes,
+            vec![tre_envelope],
+            Arc::new(registry),
+        );
+
+        let dict = provider.entries(None);
+
+        // Header fields survive alongside the TRE entries
+        assert!(dict.contains_key("FHDR"));
+        assert!(dict.contains_key("FVER"));
+
+        // GEOLOB appears as a top-level trimmed-CETAG key mapped to a nested dict
+        let geolob = dict.get("GEOLOB").unwrap().as_object().unwrap();
+        assert_eq!(geolob.get("arv"), Some(&serde_json::json!("000360000")));
+        assert_eq!(geolob.get("brv"), Some(&serde_json::json!("000360000")));
+
+        // Prefix filtering reaches the TRE the same way it does on segments
+        let filtered = provider.entries(Some("GEOLOB"));
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered.contains_key("GEOLOB"));
+    }
+
+    #[test]
+    fn file_provider_trims_cetag_padding() {
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        // CETAGs are space-padded to 6 bytes on disk; shorter tags must be trimmed.
+        let tre_def = StructureDefinition::new("tre_test").with_field(
+            FieldDefinition::new("value", FieldType::String).with_size(SizeSpec::Fixed(5)),
+        );
+
+        let mut registry = StructureRegistry::new();
+        registry.register("tre_test", tre_def);
+
+        let provider = JBPFileMetadataProvider::with_tres(
+            definition,
+            raw_bytes,
+            vec![TreEnvelope {
+                tag: "TEST  ".to_string(),
+                data: b"HELLO".to_vec(),
+            }],
+            Arc::new(registry),
+        );
+
+        let dict = provider.entries(None);
+        assert!(!dict.contains_key("TEST  "));
+        let test_tre = dict.get("TEST").unwrap().as_object().unwrap();
+        assert_eq!(test_tre.get("value"), Some(&serde_json::json!("HELLO")));
+    }
+
+    #[test]
+    fn file_provider_unknown_tres_get_raw_representation() {
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        // Empty registry — the TRE has no definition
+        let provider = JBPFileMetadataProvider::with_tres(
+            definition,
+            raw_bytes,
+            vec![TreEnvelope {
+                tag: "UNKNWN".to_string(),
+                data: vec![1, 2, 3, 4, 5],
+            }],
+            Arc::new(StructureRegistry::new()),
+        );
+
+        let dict = provider.entries(None);
+
+        assert!(dict.contains_key("FHDR"));
+
+        // Same `{"_raw", "_length"}` fallback the segment provider produces
+        let unknwn = dict.get("UNKNWN").unwrap().as_object().unwrap();
+        assert_eq!(unknwn.get("_raw"), Some(&serde_json::json!("0102030405")));
+        assert_eq!(unknwn.get("_length"), Some(&serde_json::json!(5)));
+    }
+
+    #[test]
+    fn file_provider_without_tres_has_no_tre_fields() {
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        let provider = JBPFileMetadataProvider::from_definition(definition, raw_bytes);
+
+        // `from_definition` is unchanged: header fields only, no TRE keys
+        assert_eq!(provider.entries(None).len(), 4);
+    }
+
+    #[test]
+    fn file_provider_with_tres_handles_multiple_tres() {
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        // Envelopes from both UDHD and XHD land in one flat CETAG namespace
+        let udhd_tre = TreEnvelope {
+            tag: "GEOLOB".to_string(),
+            data: b"000360000000360000".to_vec(),
+        };
+        let xhd_tre = TreEnvelope {
+            tag: "TEST  ".to_string(),
+            data: b"HELLO".to_vec(),
+        };
+
+        let tre2_def = StructureDefinition::new("tre_test").with_field(
+            FieldDefinition::new("value", FieldType::String).with_size(SizeSpec::Fixed(5)),
+        );
+
+        let mut registry = StructureRegistry::new();
+        registry.register("tre_geolob", create_test_tre_definition());
+        registry.register("tre_test", tre2_def);
+
+        let provider = JBPFileMetadataProvider::with_tres(
+            definition,
+            raw_bytes,
+            vec![udhd_tre, xhd_tre],
+            Arc::new(registry),
+        );
+
+        let dict = provider.entries(None);
+
+        let geolob = dict.get("GEOLOB").unwrap().as_object().unwrap();
+        assert_eq!(geolob.get("arv"), Some(&serde_json::json!("000360000")));
+
+        let test_tre = dict.get("TEST").unwrap().as_object().unwrap();
+        assert_eq!(test_tre.get("value"), Some(&serde_json::json!("HELLO")));
+
+        // 4 header fields + 2 TRE entries
+        assert_eq!(dict.len(), 6);
     }
 
     #[test]

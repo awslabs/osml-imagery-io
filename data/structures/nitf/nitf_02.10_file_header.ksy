@@ -301,6 +301,7 @@ seq:
 
   # User Defined Header Data
   - id: UDHD
+    type: bytes
     size: UDHDL.to_i - 3
     if: UDHDL.to_i > 0
     doc: User defined header data.
@@ -322,6 +323,7 @@ seq:
 
   # Extended Header Data
   - id: XHD
+    type: bytes
     size: XHDL.to_i - 3
     if: XHDL.to_i > 0
     doc: Extended header data.

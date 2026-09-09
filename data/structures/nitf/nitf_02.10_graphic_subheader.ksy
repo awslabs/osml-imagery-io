@@ -214,6 +214,7 @@ seq:
 
   # Graphic Extended Subheader Data
   - id: SXSHD
+    type: bytes
     size: SXSHDL.to_i - 3
     if: SXSHDL.to_i > 0
     doc: Graphic extended subheader data (TREs).

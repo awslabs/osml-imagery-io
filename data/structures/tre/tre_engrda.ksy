@@ -130,9 +130,13 @@ types:
           Range: 00000001 to 99999932.
 
       - id: ENGDATA
+        type: bytes
         size: ENGDATC.to_i
         doc: |
           Engineering Data - The actual engineering data values.
+          Value range is the full byte range (0x00-0xFF) per Table N-2
+          ("Alphanumeric & binary"), so this is a byte stream rather than
+          character data — it decodes to a lowercase hex string.
           Format depends on ENGTYP:
           - Binary/Integer/Signed: raw bytes in big-endian order
           - Real: IEEE 754 floating point

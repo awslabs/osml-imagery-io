@@ -182,11 +182,19 @@ impl JBPDatasetReader {
         // Validate segment counts
         Self::validate_segment_counts(&accessor, &segment_offsets, &mut warnings)?;
 
+        // Extract file-header TREs while `accessor` (which borrows `header_buf`)
+        // is still alive. `buffer` is still owned here — it is not moved into
+        // `source_data` until the struct literal below — so overflow DES bytes
+        // can be read from it.
+        let file_tres = Self::extract_file_header_tres(&accessor, &segment_offsets.des, &buffer);
+
         // Create file metadata provider (resident header bytes). Clone is O(1)
         // (refcount) and keeps `header_buf` borrowable by `accessor` below.
-        let file_metadata = Arc::new(JBPFileMetadataProvider::from_definition(
+        let file_metadata = Arc::new(JBPFileMetadataProvider::with_tres(
             file_header_definition.clone(),
             header_buf.clone(),
+            file_tres,
+            registry.clone(),
         ));
 
         // Validate file length if enabled
@@ -687,6 +695,65 @@ impl JBPDatasetReader {
         }
     }
 
+    /// Extract TRE envelopes from the file header.
+    ///
+    /// Parses TREs from the header's inline `UDHD` (user-defined header data) and
+    /// `XHD` (extended header data) fields, then resolves any overflow TREs from
+    /// the DES segments referenced by `UDHOFL` and `XHDLOFL`. All four fields are
+    /// optional in the `.ksy` definitions — gated on `UDHDL`/`XHDL` being
+    /// non-zero — so a missing or empty field simply contributes no envelopes.
+    ///
+    /// Takes its inputs as parameters rather than `&self` because it runs inside
+    /// [`Self::from_buffer`], before `Self` is constructed.
+    ///
+    /// Malformed TRE bytes are tolerated: a failed parse or a failed overflow
+    /// fetch skips those envelopes rather than failing the open, matching the
+    /// sibling segment extractors. This keeps a bad TRE from making an
+    /// otherwise-readable file unopenable.
+    ///
+    /// # Arguments
+    /// * `accessor` - Accessor over the parsed file header bytes
+    /// * `des_locations` - DES segment locations, indexed by the `*OFL` fields
+    /// * `source` - The whole-file buffer; only the referenced DES byte ranges
+    ///   are read
+    ///
+    /// # Returns
+    /// A vector of TRE envelopes: inline UDHD, inline XHD, then each field's
+    /// overflow contribution in the same order.
+    fn extract_file_header_tres(
+        accessor: &StructureAccessor,
+        des_locations: &[SegmentLocation],
+        source: &OwnedBuffer,
+    ) -> Vec<TreEnvelope> {
+        let mut tre_envelopes = Vec::new();
+
+        for field in ["UDHD", "XHD"] {
+            if let Ok(value) = accessor.get(field) {
+                let bytes = value.as_bytes();
+                if !bytes.is_empty() {
+                    if let Ok(tres) = TreEnvelope::parse_all(bytes) {
+                        tre_envelopes.extend(tres);
+                    }
+                }
+            }
+        }
+
+        // Resolve overflow TREs spilled into TRE_OVERFLOW DES segments.
+        if let Ok((udhofl, xhdlofl)) = overflow::get_file_header_overflow_indices(accessor) {
+            for des_index in [udhofl, xhdlofl] {
+                if des_index > 0 {
+                    if let Ok(overflow_tres) =
+                        overflow::fetch_overflow_tres(des_index, des_locations, source)
+                    {
+                        tre_envelopes.extend(overflow_tres);
+                    }
+                }
+            }
+        }
+
+        tre_envelopes
+    }
+
     /// Extract TRE envelopes from an image subheader.
     ///
     /// Parses TREs from UDID and IXSHD fields, and resolves any overflow TREs
@@ -972,7 +1039,7 @@ unsafe impl Send for JBPDatasetReader {}
 unsafe impl Sync for JBPDatasetReader {}
 
 #[cfg(test)]
-mod tests {
+pub(in crate::jbp) mod tests {
     use super::*;
 
     /// Create a minimal valid NITF 2.1 image subheader for testing.
@@ -1092,9 +1159,27 @@ mod tests {
         subheader
     }
 
+    /// Append a TRE container field trio: length (5) + overflow index (3) + payload.
+    ///
+    /// The length counts the 3-byte `*OFL` subfield along with the payload — see
+    /// the `size: XHDL.to_i - 3` expressions in the `.ksy` definitions. An empty
+    /// payload writes a bare `00000` and omits both the subfield and the data,
+    /// which is what every pre-existing fixture does.
+    fn push_tre_container(out: &mut Vec<u8>, payload: &[u8]) {
+        if payload.is_empty() {
+            out.extend_from_slice(b"00000");
+        } else {
+            out.extend_from_slice(format!("{:05}", payload.len() + 3).as_bytes());
+            out.extend_from_slice(b"000"); // *OFL - no overflow
+            out.extend_from_slice(payload);
+        }
+    }
+
     /// Create a minimal valid NITF 2.1 graphic subheader for testing.
-    /// Returns a properly formatted graphic subheader with valid field values.
-    fn create_minimal_graphic_subheader() -> Vec<u8> {
+    ///
+    /// `sxshd` is a raw TRE envelope payload (CETAG + CEL + CEDATA, concatenated)
+    /// for the `SXSHD` field; empty means no extended subheader data.
+    fn create_minimal_graphic_subheader(sxshd: &[u8]) -> Vec<u8> {
         let mut subheader = Vec::new();
 
         // SY (2) - Graphic segment marker
@@ -1155,15 +1240,20 @@ mod tests {
         subheader.extend_from_slice(b"0010000100");
         // SRES2 (2) - Reserved
         subheader.extend_from_slice(b"  ");
-        // SXSHDL (5) - No extended subheader
-        subheader.extend_from_slice(b"00000");
+        // SXSHDL (5) [+ SXSOFL (3) + SXSHD]
+        push_tre_container(&mut subheader, sxshd);
 
         subheader
     }
 
     /// Create a minimal valid text subheader for testing.
-    /// Size: 282 bytes (TE(2) + TEXTID(7) + TXTALVL(3) + TXTDT(14) + TXTITL(80) + Security(167) + ENCRYP(1) + TXTFMT(3) + TXSHDL(5))
-    fn create_minimal_text_subheader() -> Vec<u8> {
+    ///
+    /// Size with no TREs: 282 bytes (TE(2) + TEXTID(7) + TXTALVL(3) + TXTDT(14) +
+    /// TXTITL(80) + Security(167) + ENCRYP(1) + TXTFMT(3) + TXSHDL(5)).
+    ///
+    /// `txshd` is a raw TRE envelope payload (CETAG + CEL + CEDATA, concatenated)
+    /// for the `TXSHD` field; empty means no extended subheader data.
+    fn create_minimal_text_subheader(txshd: &[u8]) -> Vec<u8> {
         let mut subheader = Vec::new();
 
         // TE (2) - File Part Type
@@ -1215,8 +1305,8 @@ mod tests {
         subheader.extend_from_slice(b"0");
         // TXTFMT (3) - Text Format (STA = Standard ASCII)
         subheader.extend_from_slice(b"STA");
-        // TXSHDL (5) - No extended subheader
-        subheader.extend_from_slice(b"00000");
+        // TXSHDL (5) [+ TXSOFL (3) + TXSHD]
+        push_tre_container(&mut subheader, txshd);
 
         subheader
     }
@@ -1229,6 +1319,45 @@ mod tests {
         numdes: usize,
         numres: usize,
     ) -> Vec<u8> {
+        create_minimal_nitf_header_with_tres(
+            numi,
+            nums,
+            numt,
+            numdes,
+            numres,
+            &MinimalNitfTres::default(),
+        )
+    }
+
+    /// TRE payloads to embed in a synthetic NITF built by
+    /// [`create_minimal_nitf_header_with_tres`].
+    ///
+    /// Each field is a concatenation of raw TRE envelopes (CETAG + CEL + CEDATA).
+    /// The corresponding length field is written as `payload_len + 3`, because
+    /// every one of these length fields counts its 3-byte `*OFL` subfield along
+    /// with the payload — see the `size: XHDL.to_i - 3` expressions in the `.ksy`
+    /// definitions. An empty payload writes a bare `00000`.
+    #[derive(Default)]
+    pub(in crate::jbp) struct MinimalNitfTres<'a> {
+        /// File header user-defined header data (`UDHD`).
+        pub udhd: &'a [u8],
+        /// File header extended header data (`XHD`).
+        pub xhd: &'a [u8],
+        /// Graphic extended subheader data (`SXSHD`), applied to every graphic segment.
+        pub sxshd: &'a [u8],
+        /// Text extended subheader data (`TXSHD`), applied to every text segment.
+        pub txshd: &'a [u8],
+    }
+
+    /// Create a minimal valid NITF 2.1 file header carrying TRE bytes.
+    pub(in crate::jbp) fn create_minimal_nitf_header_with_tres(
+        numi: usize,
+        nums: usize,
+        numt: usize,
+        numdes: usize,
+        numres: usize,
+        tres: &MinimalNitfTres,
+    ) -> Vec<u8> {
         let mut header = Vec::new();
 
         // Get the image subheader size
@@ -1236,11 +1365,11 @@ mod tests {
         let image_subheader_len = image_subheader.len();
 
         // Get the graphic subheader size
-        let graphic_subheader = create_minimal_graphic_subheader();
+        let graphic_subheader = create_minimal_graphic_subheader(tres.sxshd);
         let graphic_subheader_len = graphic_subheader.len();
 
         // Get the text subheader size
-        let text_subheader = create_minimal_text_subheader();
+        let text_subheader = create_minimal_text_subheader(tres.txshd);
         let text_subheader_len = text_subheader.len();
 
         let image_data_len = 64 * 64; // 64x64 pixels, 1 band, 8 bits = 4096 bytes
@@ -1358,10 +1487,10 @@ mod tests {
             header.extend_from_slice(b"0000500"); // LRE (7)
         }
 
-        // UDHDL (5)
-        header.extend_from_slice(b"00000");
-        // XHDL (5)
-        header.extend_from_slice(b"00000");
+        // UDHDL (5) [+ UDHOFL (3) + UDHD]
+        push_tre_container(&mut header, tres.udhd);
+        // XHDL (5) [+ XHDLOFL (3) + XHD]
+        push_tre_container(&mut header, tres.xhd);
 
         // Update HL
         let hl = header.len();
@@ -1412,6 +1541,249 @@ mod tests {
         assert!(reader.is_ok());
         let reader = reader.unwrap();
         assert_eq!(reader.format(), NitfFormat::Nitf21);
+    }
+
+    /// Wrap a payload in a TRE envelope: CETAG (6) + CEL (5) + CEDATA.
+    fn tre_envelope_bytes(tag: &str, payload: &[u8]) -> Vec<u8> {
+        let mut out = tag.as_bytes().to_vec();
+        out.extend_from_slice(format!("{:05}", payload.len()).as_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    /// SYSIDA CEDATA: PLATFORM_ID="WV3", no PAYLOAD_ID, SENSOR_ID="PAN" (15 bytes).
+    const SYSIDA_PAYLOAD: &[u8] = b"003WV3000003PAN";
+
+    /// CSDIDA CEDATA (70 bytes), copied from the XHD of the file in the bug report
+    /// (awslabs/osml-imagery-io#11).
+    const CSDIDA_PAYLOAD: &[u8] =
+        b"26JUL2021WV0303000AAP1000020210726022422202107260354210001NN4.54.0    ";
+
+    /// Lowercase hex of `bytes`, matching how `bytes`-typed fields decode.
+    fn to_hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    }
+
+    /// SECURA CEDATA (255 bytes) whose SECURITY field holds non-UTF-8 bytes.
+    ///
+    /// SECURA is a known TRE that the spec allows in the file header ("Can be
+    /// placed in file header", STDI-0002 Vol 1 App AI), and its `SECURITY` field is
+    /// already declared `type: bytes`. That makes it the natural fixture for the
+    /// container-field defect: the CEDATA is legal, decodable TRE content that
+    /// nonetheless cannot survive a UTF-8 decode of the *enclosing* field.
+    ///
+    /// Layout: FDATTIM(14) FORMATVER(9) SECFLDS(207) SECSTD(8) SECCOMP(8)
+    /// SECLEN(5) SECURITY(SECLEN).
+    fn secura_payload(security: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"20240101120000"); // FDATTIM (14)
+        out.extend_from_slice(b"NITF02.10"); // FORMATVER (9)
+        out.extend_from_slice(&[b' '; 207]); // SECFLDS (207)
+        out.extend_from_slice(b"ARH.XML "); // SECSTD (8)
+        out.extend_from_slice(b"NONE    "); // SECCOMP (8)
+        out.extend_from_slice(format!("{:05}", security.len()).as_bytes()); // SECLEN (5)
+        out.extend_from_slice(security); // SECURITY (SECLEN)
+        out
+    }
+
+    /// Non-UTF-8 SECURITY bytes: 0xFF is never a valid UTF-8 byte, and 0x80 is a
+    /// continuation byte with no lead, so any UTF-8 decode of a field containing
+    /// these fails outright rather than substituting replacement characters.
+    const BINARY_CEDATA: &[u8] = &[0xFF, 0x00, 0x80, 0x41];
+
+    #[test]
+    fn file_header_tres_parsed_from_udhd_and_xhd() {
+        let udhd = tre_envelope_bytes("SYSIDA", SYSIDA_PAYLOAD);
+        let xhd = tre_envelope_bytes("CSDIDA", CSDIDA_PAYLOAD);
+        assert_eq!(udhd.len(), 26);
+        assert_eq!(xhd.len(), 81);
+
+        let data = create_minimal_nitf_header_with_tres(
+            1,
+            0,
+            0,
+            0,
+            0,
+            &MinimalNitfTres {
+                udhd: &udhd,
+                xhd: &xhd,
+                ..Default::default()
+            },
+        );
+
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.clone())).unwrap();
+
+        // --- Byte-level layout, asserted independently of any writer of ours.
+        // The header's trailing fields are, in order:
+        //   UDHDL(5) UDHOFL(3) UDHD  XHDL(5) XHDLOFL(3) XHD
+        let hl = reader.header_length();
+        let xhd_start = hl - xhd.len();
+        assert_eq!(&data[xhd_start..hl], xhd.as_slice(), "XHD payload");
+        assert_eq!(&data[xhd_start - 3..xhd_start], b"000", "XHDLOFL");
+        // XHDL counts the 3-byte XHDLOFL along with the payload: 81 + 3 = 84.
+        assert_eq!(&data[xhd_start - 8..xhd_start - 3], b"00084", "XHDL");
+        let udhd_end = xhd_start - 8;
+        assert_eq!(
+            &data[udhd_end - udhd.len()..udhd_end],
+            udhd.as_slice(),
+            "UDHD payload"
+        );
+        assert_eq!(
+            &data[udhd_end - udhd.len() - 3..udhd_end - udhd.len()],
+            b"000",
+            "UDHOFL"
+        );
+        assert_eq!(
+            &data[udhd_end - udhd.len() - 8..udhd_end - udhd.len() - 3],
+            b"00029",
+            "UDHDL"
+        );
+
+        // --- The defect: both CETAGs must surface as nested dicts.
+        let entries = reader.metadata().entries(None);
+
+        let sysida = entries
+            .get("SYSIDA")
+            .expect("SYSIDA from UDHD should be a top-level key")
+            .as_object()
+            .expect("SYSIDA should be a nested dict");
+        assert_eq!(sysida["PLATFORM_ID"], "WV3");
+        assert_eq!(sysida["PAYLOAD_ID_LEN"], "000");
+        assert_eq!(sysida["SENSOR_ID"], "PAN");
+
+        let csdida = entries
+            .get("CSDIDA")
+            .expect("CSDIDA from XHD should be a top-level key")
+            .as_object()
+            .expect("CSDIDA should be a nested dict");
+        assert_eq!(csdida["DAY"], "26");
+        assert_eq!(csdida["MONTH"], "JUL");
+        assert_eq!(csdida["YEAR"], "2021");
+        assert_eq!(csdida["PLATFORM_CODE"], "WV");
+        assert_eq!(csdida["TIME"], "20210726022422");
+        assert_eq!(csdida["PROCESS_TIME"], "20210726035421");
+        assert_eq!(csdida["SOFTWARE_VERSION_NUMBER"], "4.54.0    ");
+
+        // The raw fields stay alongside the decoded TREs. `UDHD`/`XHD` are
+        // `type: bytes`, so they surface as lowercase hex rather than as a string.
+        assert_eq!(entries["UDHDL"], "00029");
+        assert_eq!(entries["XHDL"], "00084");
+        assert_eq!(entries["UDHD"], to_hex(&udhd));
+        assert_eq!(entries["XHD"], to_hex(&xhd));
+    }
+
+    #[test]
+    fn file_header_tres_malformed_bytes_do_not_fail_open() {
+        // A CEL that overruns the available bytes: TreEnvelope::parse_all rejects it.
+        let bad = b"SYSIDA99999abc".to_vec();
+        let data = create_minimal_nitf_header_with_tres(
+            1,
+            0,
+            0,
+            0,
+            0,
+            &MinimalNitfTres {
+                xhd: &bad,
+                ..Default::default()
+            },
+        );
+
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data))
+            .expect("a malformed file-header TRE must not make the file unopenable");
+
+        let entries = reader.metadata().entries(None);
+        assert!(
+            !entries.contains_key("SYSIDA"),
+            "malformed TRE must be skipped"
+        );
+        assert_eq!(entries["UDHDL"], "00000");
+        assert_eq!(entries["XHDL"], format!("{:05}", bad.len() + 3));
+        assert_eq!(entries["XHD"], to_hex(&bad));
+    }
+
+    /// The TRE container fields are `type: bytes`, so a TRE whose CEDATA is not
+    /// valid UTF-8 is readable. Before that declaration the whole field failed to
+    /// decode, taking both the raw `XHD` key and every TRE inside it with it — a
+    /// non-zero `XHDL` with nothing behind it.
+    #[test]
+    fn file_header_tre_with_binary_cedata_is_readable() {
+        let xhd = tre_envelope_bytes("SECURA", &secura_payload(BINARY_CEDATA));
+        let data = create_minimal_nitf_header_with_tres(
+            1,
+            0,
+            0,
+            0,
+            0,
+            &MinimalNitfTres {
+                xhd: &xhd,
+                ..Default::default()
+            },
+        );
+
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
+        let entries = reader.metadata().entries(None);
+
+        let secura = entries
+            .get("SECURA")
+            .expect("SECURA with binary CEDATA should be a top-level key")
+            .as_object()
+            .expect("SECURA should be a nested dict");
+        assert_eq!(secura["FDATTIM"], "20240101120000");
+        assert_eq!(secura["FORMATVER"], "NITF02.10");
+        assert_eq!(secura["SECSTD"], "ARH.XML ");
+        assert_eq!(secura["SECLEN"], "00004");
+        // SECURITY is itself `type: bytes`, hence hex.
+        assert_eq!(secura["SECURITY"], to_hex(BINARY_CEDATA));
+
+        // The raw container field is present and hex-encoded, so `XHDL` and `XHD`
+        // no longer contradict each other.
+        assert_eq!(entries["XHDL"], format!("{:05}", xhd.len() + 3));
+        assert_eq!(entries["XHD"], to_hex(&xhd));
+    }
+
+    /// The same container-field fix applied to `SXSHD` and `TXSHD`: a graphic or
+    /// text segment carrying a TRE with binary CEDATA yields its CETAG key.
+    #[test]
+    fn segment_tres_with_binary_cedata_are_readable() {
+        let sxshd = tre_envelope_bytes("SECURA", &secura_payload(BINARY_CEDATA));
+        let txshd = tre_envelope_bytes("SECURA", &secura_payload(&[0xC0, 0xFF, 0xEE]));
+        let data = create_minimal_nitf_header_with_tres(
+            1,
+            1,
+            1,
+            0,
+            0,
+            &MinimalNitfTres {
+                sxshd: &sxshd,
+                txshd: &txshd,
+                ..Default::default()
+            },
+        );
+
+        let reader = JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data)).unwrap();
+
+        for (key, envelope, security) in [
+            ("graphic:0", &sxshd, BINARY_CEDATA),
+            ("text:0", &txshd, [0xC0u8, 0xFF, 0xEE].as_slice()),
+        ] {
+            let asset = reader.get_asset(key).unwrap();
+            let entries = asset.metadata().entries(None);
+
+            let secura = entries
+                .get("SECURA")
+                .unwrap_or_else(|| panic!("{key} should expose SECURA"))
+                .as_object()
+                .unwrap_or_else(|| panic!("{key} SECURA should be a nested dict"));
+            assert_eq!(secura["FORMATVER"], "NITF02.10");
+            assert_eq!(secura["SECURITY"], to_hex(security));
+
+            let raw_field = if key.starts_with("graphic") {
+                "SXSHD"
+            } else {
+                "TXSHD"
+            };
+            assert_eq!(entries[raw_field], to_hex(envelope));
+        }
     }
 
     #[test]
@@ -2143,6 +2515,11 @@ mod validation_property_tests {
 /// For any NITF file, TREs SHALL be extractable from all valid locations
 /// (UDHD, XHD, UDID, IXSHD, SXSHD, TXSHD), and the extracted TREs SHALL
 /// match the TREs present in those locations.
+///
+/// The properties in this module cover the segment locations only; the
+/// file-header locations (UDHD, XHD) are covered by the byte-pinned unit tests in
+/// [`tests`], since the shared minimal-header fixture writes both file-header
+/// length fields as zero.
 #[cfg(test)]
 mod tre_property_tests {
     use super::*;
@@ -2153,9 +2530,11 @@ mod tre_property_tests {
 
         /// Feature: tre-des-support, Property 6: TRE Location Extraction
         ///
-        /// For any NITF file, TREs SHALL be extractable from all valid locations
-        /// (UDHD, XHD, UDID, IXSHD, SXSHD, TXSHD), and the extracted TREs SHALL
-        /// match the TREs present in those locations.
+        /// Scoped to the *segment* TRE locations (UDID, IXSHD, SXSHD, TXSHD): this
+        /// test's fixture writes `UDHDL`/`XHDL` as zero, so it exercises no
+        /// file-header TREs. The file-header locations (UDHD, XHD) are covered by
+        /// `file_header_tres_parsed_from_udhd_and_xhd`, which pins them against an
+        /// explicitly asserted byte layout.
         ///
         /// This test verifies that:
         /// 1. The reader can be created with TRE support
@@ -2339,11 +2718,69 @@ mod nitf_integration_tests {
         files
     }
 
+    /// Header and subheader fields that decode to a nested structure rather
+    /// than a scalar. None of them is a TRE, so they must not be mistaken for
+    /// a CETAG key when auditing TRE extraction.
+    const NON_TRE_NESTED_KEYS: [&str; 6] = [
+        "IMAGE_INFO",
+        "GRAPHIC_INFO",
+        "TEXT_INFO",
+        "DES_INFO",
+        "RES_INFO",
+        "BAND_INFO",
+    ];
+
+    /// Collect the CETAG keys a metadata dictionary exposes.
+    ///
+    /// A parsed TRE surfaces as a top-level key mapped to a JSON object —
+    /// either the decoded fields of a known TRE or the `{"_raw", "_length"}`
+    /// fallback for an unknown one. Nested-but-not-TRE fields are filtered out
+    /// explicitly rather than relying on them decoding to arrays.
+    fn collect_cetag_keys(dict: &HashMap<String, serde_json::Value>) -> Vec<String> {
+        let mut keys: Vec<String> = dict
+            .iter()
+            .filter(|(k, v)| v.is_object() && !NON_TRE_NESTED_KEYS.contains(&k.as_str()))
+            .map(|(k, _)| k.clone())
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    /// Read a fixed-width ASCII numeric metadata field as a `u32`.
+    ///
+    /// Returns 0 when the field is absent, blank, or not parseable — the same
+    /// tolerance the reader itself applies to real-world headers.
+    fn ascii_numeric_field(dict: &HashMap<String, serde_json::Value>, field: &str) -> u32 {
+        dict.get(field)
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0)
+    }
+
+    /// Decode a `type: bytes` metadata value back into bytes.
+    ///
+    /// Fields declared `type: bytes` — the six TRE containers among them —
+    /// surface as lowercase hex strings so binary CEDATA survives the trip
+    /// through JSON. Malformed pairs are dropped rather than erroring; the
+    /// caller only uses the result to judge whether the bytes are parseable.
+    fn decode_hex_field(hex: &str) -> Vec<u8> {
+        (0..hex.len() / 2)
+            .filter_map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok())
+            .collect()
+    }
+
     /// Integration test: TRE extraction from real NITF files.
     ///
     /// This test verifies that TRE metadata is accessible via MetadataProvider
-    /// for real NITF files. It discovers files dynamically and skips if none
-    /// are available.
+    /// for real NITF files, covering both segment-level TREs (via each image
+    /// asset's provider) and file-header TREs in UDHD/XHD (via the dataset's
+    /// own provider). It discovers files dynamically and skips if none are
+    /// available.
+    ///
+    /// The file-header check has teeth: when a header declares a non-empty
+    /// UDHD/XHD payload — or points at a TRE_OVERFLOW DES — but the metadata
+    /// exposes no CETAG key, the test fails rather than merely printing. That
+    /// is exactly the state described in awslabs/osml-imagery-io#11.
     ///
     /// **Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5**
     #[test]
@@ -2360,19 +2797,45 @@ mod nitf_integration_tests {
             return;
         }
 
-        // Limit to first 20 files to keep test time reasonable
+        // `from_buffer` needs the whole file resident, so cap the per-file size
+        // rather than the file count. A flat `take(20)` was the previous cap and
+        // it confined the sample to whichever collection the directory walk
+        // reached first — the JITC file-header TRE conformance files
+        // (NITF_STD2-1_{UH,UHO,XH,XHO}_POS_01) sit deep in the tree and were
+        // never reached, so the file-header assertion below had nothing to bite
+        // on. Every candidate under the cap is now tested.
+        const MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
+
         // Skip files with "NEG" in path (negative/malformed test cases)
-        let test_files: Vec<_> = nitf_files
+        let candidates: Vec<_> = nitf_files
             .iter()
             .filter(|p| !p.to_string_lossy().contains("NEG"))
-            .take(20)
+            .collect();
+        let mut skipped_oversize = 0;
+        let test_files: Vec<_> = candidates
+            .into_iter()
+            .filter(|p| {
+                let too_big = std::fs::metadata(p).is_ok_and(|m| m.len() > MAX_FILE_BYTES);
+                if too_big {
+                    skipped_oversize += 1;
+                }
+                !too_big
+            })
             .collect();
 
-        eprintln!("Testing {} NITF files for TRE extraction", test_files.len());
+        eprintln!(
+            "Testing {} NITF files for TRE extraction ({} skipped as larger than {} MiB)",
+            test_files.len(),
+            skipped_oversize,
+            MAX_FILE_BYTES / (1024 * 1024)
+        );
 
         let mut files_with_tres = 0;
         let mut total_tres_found = 0;
         let mut files_tested = 0;
+        let mut file_headers_with_tres = 0;
+        let mut file_header_tres_found = 0;
+        let mut malformed_containers = 0;
 
         for file_path in &test_files {
             // Try to open the file
@@ -2383,13 +2846,85 @@ mod nitf_integration_tests {
                     continue;
                 }
             };
-            let reader = match JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data.to_vec())) {
+            let reader = match JBPDatasetReader::from_buffer(OwnedBuffer::from_vec(data)) {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("Warning: Failed to parse {:?}: {}", file_path, e);
                     continue;
                 }
             };
+
+            // File-header TREs live on the dataset's own provider, not on any
+            // asset's. Both length fields count the 3-byte *OFL subfield, so
+            // the inline TRE payload is the declared length less 3.
+            let file_dict = reader.metadata().entries(None);
+            for (len_field, ofl_field, container) in
+                [("UDHDL", "UDHOFL", "UDHD"), ("XHDL", "XHDLOFL", "XHD")]
+            {
+                let declared_len = ascii_numeric_field(&file_dict, len_field);
+                let payload_len = declared_len.saturating_sub(3);
+                let overflow_index = ascii_numeric_field(&file_dict, ofl_field);
+                if payload_len == 0 && overflow_index == 0 {
+                    continue;
+                }
+
+                // Real corpora carry headers whose TRE bytes are truncated —
+                // JITC's NITF_HDR_POS_02.ntf declares a PIAPRD with CEL=00201
+                // but supplies 8 bytes of CEDATA. The reader deliberately skips
+                // unparseable envelopes rather than failing the open, so those
+                // files are not the #11 defect and must not fail here. Demand a
+                // CETAG key only once the container bytes actually parse.
+                let container_bytes = file_dict
+                    .get(container)
+                    .and_then(|v| v.as_str())
+                    .map(decode_hex_field)
+                    .unwrap_or_default();
+                let inline_envelopes = match TreEnvelope::parse_all(&container_bytes) {
+                    Ok(envelopes) => envelopes.len(),
+                    Err(e) => {
+                        eprintln!(
+                            "  {:?}: malformed TRE bytes in {} ({} bytes), skipping: {}",
+                            file_path.file_name().unwrap_or_default(),
+                            container,
+                            container_bytes.len(),
+                            e
+                        );
+                        malformed_containers += 1;
+                        continue;
+                    }
+                };
+                if inline_envelopes == 0 && overflow_index == 0 {
+                    continue;
+                }
+
+                let cetag_keys = collect_cetag_keys(&file_dict);
+                assert!(
+                    !cetag_keys.is_empty(),
+                    "{:?}: header declares {}={} ({} payload bytes parsing to {} TRE \
+                     envelope(s)) with {}={}, but no file-header TRE reached the \
+                     metadata provider. This is the defect in \
+                     awslabs/osml-imagery-io#11 — {} content is present and \
+                     well-formed but never surfaced as a CETAG key.",
+                    file_path,
+                    len_field,
+                    declared_len,
+                    payload_len,
+                    inline_envelopes,
+                    ofl_field,
+                    overflow_index,
+                    container,
+                );
+
+                file_headers_with_tres += 1;
+                file_header_tres_found += cetag_keys.len();
+                eprintln!(
+                    "  {:?}: {} bytes in {} -> TREs {:?}",
+                    file_path.file_name().unwrap_or_default(),
+                    payload_len,
+                    container,
+                    cetag_keys
+                );
+            }
 
             // Get all asset keys
             let keys = reader.get_asset_keys(None, None);
@@ -2416,13 +2951,8 @@ mod nitf_integration_tests {
                             if let Ok(udidl) = udidl_str.trim().parse::<u32>() {
                                 if udidl > 0 {
                                     files_with_tres += 1;
-
-                                    // Count TREs by looking for CETAG-prefixed fields
-                                    let tre_fields: Vec<_> = dict
-                                        .keys()
-                                        .filter(|k| k.contains('.') && k.len() > 6)
-                                        .collect();
-                                    total_tres_found += tre_fields.len();
+                                    // Parsed TREs are nested dicts keyed by CETAG.
+                                    total_tres_found += collect_cetag_keys(&dict).len();
                                 }
                             }
                         }
@@ -2445,8 +2975,15 @@ mod nitf_integration_tests {
         }
 
         eprintln!(
-            "Integration test results: {} segments tested, {} with TREs, {} TRE fields found",
-            files_tested, files_with_tres, total_tres_found
+            "Integration test results: {} segments tested, {} with TREs, {} segment TREs found; \
+             {} file headers with TREs, {} file-header TREs found, \
+             {} containers skipped as malformed",
+            files_tested,
+            files_with_tres,
+            total_tres_found,
+            file_headers_with_tres,
+            file_header_tres_found,
+            malformed_containers
         );
 
         // The test passes if we can access the metadata without errors.

@@ -172,6 +172,7 @@ seq:
 
   # Text Extended Subheader Data
   - id: TXSHD
+    type: bytes
     size: TXSHDL.to_i - 3
     if: TXSHDL.to_i > 0
     doc: Text extended subheader data (TREs).
