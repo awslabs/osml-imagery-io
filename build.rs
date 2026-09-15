@@ -143,8 +143,6 @@ fn rerun_if_changed_recursive(dir: &std::path::Path) {
 /// Panics with a descriptive error if any required env var is unset or a `.a` file is missing.
 #[cfg(feature = "static")]
 fn configure_static_linking() {
-    use std::path::Path;
-
     let openjp2_root = required_env("DEP_OPENJP2_ROOT", "OpenJPEG");
     let jpeg_root = required_env("DEP_JPEG_ROOT", "libjpeg-turbo");
     let tiff_root = required_env("DEP_TIFF_ROOT", "libtiff");
@@ -200,31 +198,58 @@ fn configure_static_linking() {
         println!("cargo:rustc-link-arg=-Wl,-force_load,{}", tiff_lib);
         println!("cargo:rustc-link-arg=-Wl,-force_load,{}", openjp2_lib);
     }
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-lib=static=Lerc");
+        println!("cargo:rustc-link-lib=static=zstd");
+        println!("cargo:rustc-link-lib=static=deflate");
+        println!("cargo:rustc-link-lib=static=turbojpeg");
+        println!("cargo:rustc-link-lib=static=jpeg");
+
+        // Transitive dependencies of libtiff and LERC
+        println!("cargo:rustc-link-lib=z");
+        println!("cargo:rustc-link-lib=c++");
+        println!("cargo:rustc-link-lib=framework=CoreFoundation");
+    }
     #[cfg(target_os = "linux")]
     {
+        // Everything on Linux goes through `rustc-link-arg`, in dependency order,
+        // because rustc appends link-args *after* every `rustc-link-lib` flag.
+        // Mixing the two mechanisms puts the codec archives on the command line
+        // before libtiff.a introduces the undefined references to them, and GNU ld
+        // never rescans an archive it has already passed: it silently discards
+        // libzstd.a / libLerc.a / libdeflate.a, and drops -lz / -llzma / -lstdc++
+        // under the default --as-needed. A `-shared` link does not error on
+        // unresolved symbols, so the extension module builds fine and then fails
+        // at import with e.g. `undefined symbol: ZSTD_compressStream`.
+        //
+        // This only reproduces where GNU ld is the linker. rust-lld — the default
+        // for x86_64-unknown-linux-gnu since Rust 1.90 — resolves archive members
+        // order-independently and masks the bug, so x86_64 wheels linked correctly
+        // while cross-compiled aarch64 wheels (GNU ld) shipped broken.
         println!("cargo:rustc-link-arg=-Wl,--whole-archive");
         println!("cargo:rustc-link-arg={}", tiff_lib);
         println!("cargo:rustc-link-arg={}", openjp2_lib);
         println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
-    }
-    println!("cargo:rustc-link-lib=static=Lerc");
-    println!("cargo:rustc-link-lib=static=zstd");
-    println!("cargo:rustc-link-lib=static=deflate");
-    println!("cargo:rustc-link-lib=static=turbojpeg");
-    println!("cargo:rustc-link-lib=static=jpeg");
 
-    // Platform-specific transitive dependencies required by libtiff and LERC
-    #[cfg(target_os = "linux")]
-    {
-        println!("cargo:rustc-link-lib=z");
-        println!("cargo:rustc-link-lib=lzma");
-        println!("cargo:rustc-link-lib=stdc++");
-    }
-    #[cfg(target_os = "macos")]
-    {
-        println!("cargo:rustc-link-lib=z");
-        println!("cargo:rustc-link-lib=c++");
-        println!("cargo:rustc-link-lib=framework=CoreFoundation");
+        for lib in [
+            find_static_lib(&lerc_root, "Lerc"),
+            find_static_lib(&zstd_root, "zstd"),
+            find_static_lib(&deflate_root, "deflate"),
+            find_static_lib(&jpeg_root, "turbojpeg"),
+            find_static_lib(&jpeg_root, "jpeg"),
+        ] {
+            println!("cargo:rustc-link-arg={}", lib);
+        }
+
+        // Transitive dependencies of libtiff and LERC. `--no-as-needed` keeps the
+        // DT_NEEDED entries even though the references come from archives that the
+        // linker has already consumed.
+        println!("cargo:rustc-link-arg=-Wl,--no-as-needed");
+        println!("cargo:rustc-link-arg=-lz");
+        println!("cargo:rustc-link-arg=-llzma");
+        println!("cargo:rustc-link-arg=-lstdc++");
+        println!("cargo:rustc-link-arg=-Wl,--as-needed");
     }
 }
 

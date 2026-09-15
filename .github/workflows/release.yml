@@ -131,6 +131,9 @@ jobs:
           DEP_ZSTD_ROOT: ${{ runner.temp }}/deps/zstd
           DEP_LERC_ROOT: ${{ runner.temp }}/deps/lerc
 
+      - name: Verify statically-linked codecs resolved
+        run: scripts/check-wheel-symbols.sh
+
       - uses: actions/upload-artifact@v7
         with:
           name: wheel-macos-${{ matrix.target }}
@@ -301,6 +304,9 @@ jobs:
           DEP_DEFLATE_ROOT: /tmp/deps/libdeflate
           DEP_ZSTD_ROOT: /tmp/deps/zstd
           DEP_LERC_ROOT: /tmp/deps/lerc
+
+      - name: Verify statically-linked codecs resolved
+        run: scripts/check-wheel-symbols.sh
 
       - uses: actions/upload-artifact@v7
         with:
