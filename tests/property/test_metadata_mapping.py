@@ -8,13 +8,20 @@ Feature: metadata-mapping-api
 """
 
 import collections.abc
+from pathlib import Path
 
 import pytest
-from aws.osml.io import BufferedMetadataProvider
+from aws.osml.io import IO, BufferedMetadataProvider
 from hypothesis import given
 from hypothesis import strategies as st
 
 from .conftest import pbt_settings
+
+UNIT_DATA = Path("data/unit")
+
+# Every checked-in fixture the library can open — one per format family, so a
+# provider sweep covers NITF, NSIF, TIFF, J2K, and DTED. Dotfiles are excluded.
+UNIT_FIXTURES = sorted(p for p in UNIT_DATA.glob("*") if p.is_file() and not p.name.startswith("."))
 
 json_primitives = st.one_of(
     st.text(min_size=0, max_size=50, alphabet=st.characters(categories=("L", "N", "P", "S", "Z"))),
@@ -214,6 +221,63 @@ class TestABCRegistration:
         """BufferedMetadataProvider instances are recognized as MutableMapping."""
         provider = BufferedMetadataProvider()
         assert isinstance(provider, collections.abc.MutableMapping)
+
+
+# =============================================================================
+# Property 7: TRE accessor invariant — md[tag] == md.get_all(tag)[0]
+# =============================================================================
+
+
+@pytest.mark.property
+class TestTreAccessorInvariant:
+    """Property: the ordered TRE view agrees with the dict surface everywhere.
+
+    *For any* metadata provider and *any* ``tag in md``, ``md.get_all(tag)`` SHALL be
+    non-empty and its first element SHALL equal ``md[tag]``; for any tag not in
+    ``md`` it SHALL be ``[]``. This holds on every provider, not just the JBP ones,
+    because :meth:`MetadataProvider.get_all` has a trait default that projects the
+    single value under the key.
+
+    The absence of this assertion is what let awslabs/osml-imagery-io#12 through:
+    repeated TREs collapsed to one instance with nothing checking the two surfaces
+    against each other.
+    """
+
+    @given(entries=st.dictionaries(metadata_keys, json_values, min_size=0, max_size=15))
+    @pbt_settings
+    def test_invariant_holds_on_buffered_provider(self, entries):
+        """Arbitrary buffered content satisfies the invariant."""
+        provider = BufferedMetadataProvider()
+        for k, v in entries.items():
+            provider[k] = v
+
+        for key in provider:
+            instances = provider.get_all(key)
+            assert len(instances) >= 1, f"get_all({key!r}) must report at least one instance"
+            _assert_json_equal(instances[0], provider[key])
+
+    @pytest.mark.parametrize("path", UNIT_FIXTURES, ids=lambda p: p.name)
+    def test_invariant_holds_on_reader_providers(self, path):
+        """Every provider a reader hands back satisfies the invariant.
+
+        Sweeps the checked-in fixtures so NITF, NSIF, TIFF, J2K, and DTED providers
+        are all covered, not just the two that store TREs.
+        """
+        with IO.open([str(path)], "r") as dataset:
+            providers = [dataset.metadata]
+            providers.extend(dataset.get_asset(key).metadata for key in dataset.get_asset_keys())
+
+            for provider in providers:
+                for key in provider:
+                    instances = provider.get_all(key)
+                    assert len(instances) >= 1, f"{path.name}: get_all({key!r}) must be non-empty"
+                    _assert_json_equal(instances[0], provider[key])
+
+                assert provider.get_all("NO_SUCH_TAG_EXISTS") == []
+
+                # Keys are unique, so `keys()` + `get_all()` visits every value once.
+                keys = provider.keys()
+                assert len(keys) == len(set(keys))
 
 
 # =============================================================================

@@ -14,6 +14,11 @@
 //! UDHD/XHD fields, [`JBPSegmentMetadataProvider`] for a subheader's UDID/IXSHD/
 //! SXSHD/TXSHD fields. TRE fields are exposed as nested dictionaries keyed by
 //! CETAG (e.g., `{"GEOLOB": {"ARV": "...", "BRV": "..."}}`).
+//!
+//! A container may hold the same CETAG more than once (STDI-0002 Volume 1 §2
+//! describes a *sequence* of extensions and never requires tag uniqueness), so
+//! both providers keep every instance in file order. The dictionary surface
+//! projects the **first** instance; [`MetadataProvider::get_all`] returns them all.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -51,7 +56,7 @@ use super::tre_fields;
 /// let security_fields = provider.entries(Some("FS"));
 /// ```
 pub struct JBPFileMetadataProvider {
-    tags: HashMap<String, serde_json::Value>,
+    store: TagStore,
     raw_bytes: OwnedBuffer,
 }
 
@@ -61,8 +66,11 @@ impl JBPFileMetadataProvider {
     /// Eagerly parses all fields into a cached HashMap. The definition is consumed
     /// during construction and not retained.
     pub fn from_definition(definition: Arc<StructureDefinition>, raw_bytes: OwnedBuffer) -> Self {
-        let tags = parse_fields_from_definition(&definition, raw_bytes.as_bytes(), None);
-        Self { tags, raw_bytes }
+        let fields = parse_fields_from_definition(&definition, raw_bytes.as_bytes(), None);
+        Self {
+            store: TagStore::new(fields),
+            raw_bytes,
+        }
     }
 
     /// Create with TRE support.
@@ -80,10 +88,11 @@ impl JBPFileMetadataProvider {
         tre_envelopes: Vec<TreEnvelope>,
         registry: Arc<StructureRegistry>,
     ) -> Self {
-        let mut tags =
+        let fields =
             parse_fields_from_definition(&definition, raw_bytes.as_bytes(), Some(&registry));
-        parse_tre_entries(&mut tags, &tre_envelopes, &registry);
-        Self { tags, raw_bytes }
+        let mut store = TagStore::new(fields);
+        store.push_tre_entries(&tre_envelopes, &registry);
+        Self { store, raw_bytes }
     }
 }
 
@@ -93,31 +102,27 @@ impl MetadataProvider for JBPFileMetadataProvider {
     }
 
     fn get_value(&self, key: &str) -> Option<serde_json::Value> {
-        self.tags.get(key).cloned()
+        self.store.get_value(key)
     }
 
     fn contains_key(&self, key: &str) -> bool {
-        self.tags.contains_key(key)
+        self.store.contains_key(key)
     }
 
     fn len(&self) -> usize {
-        self.tags.len()
+        self.store.len()
     }
 
     fn keys(&self) -> Vec<String> {
-        self.tags.keys().cloned().collect()
+        self.store.keys()
     }
 
     fn entries(&self, prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
-        match prefix {
-            None => self.tags.clone(),
-            Some(prefix) => self
-                .tags
-                .iter()
-                .filter(|(k, _)| k.starts_with(prefix))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        }
+        self.store.entries(prefix)
+    }
+
+    fn get_all(&self, key: &str) -> Vec<serde_json::Value> {
+        self.store.tres(key)
     }
 }
 
@@ -147,7 +152,7 @@ impl MetadataProvider for JBPFileMetadataProvider {
 /// let geolob_fields = provider.entries(Some("GEOLOB"));
 /// ```
 pub struct JBPSegmentMetadataProvider {
-    tags: HashMap<String, serde_json::Value>,
+    store: TagStore,
     raw_bytes: OwnedBuffer,
 }
 
@@ -156,8 +161,11 @@ impl JBPSegmentMetadataProvider {
     ///
     /// Eagerly parses all subheader fields into a cached HashMap.
     pub fn from_definition(definition: Arc<StructureDefinition>, raw_bytes: OwnedBuffer) -> Self {
-        let tags = parse_fields_from_definition(&definition, raw_bytes.as_bytes(), None);
-        Self { tags, raw_bytes }
+        let fields = parse_fields_from_definition(&definition, raw_bytes.as_bytes(), None);
+        Self {
+            store: TagStore::new(fields),
+            raw_bytes,
+        }
     }
 
     /// Create with TRE support.
@@ -171,10 +179,11 @@ impl JBPSegmentMetadataProvider {
         tre_envelopes: Vec<TreEnvelope>,
         registry: Arc<StructureRegistry>,
     ) -> Self {
-        let mut tags =
+        let fields =
             parse_fields_from_definition(&definition, raw_bytes.as_bytes(), Some(&registry));
-        parse_tre_entries(&mut tags, &tre_envelopes, &registry);
-        Self { tags, raw_bytes }
+        let mut store = TagStore::new(fields);
+        store.push_tre_entries(&tre_envelopes, &registry);
+        Self { store, raw_bytes }
     }
 }
 
@@ -184,31 +193,27 @@ impl MetadataProvider for JBPSegmentMetadataProvider {
     }
 
     fn get_value(&self, key: &str) -> Option<serde_json::Value> {
-        self.tags.get(key).cloned()
+        self.store.get_value(key)
     }
 
     fn contains_key(&self, key: &str) -> bool {
-        self.tags.contains_key(key)
+        self.store.contains_key(key)
     }
 
     fn len(&self) -> usize {
-        self.tags.len()
+        self.store.len()
     }
 
     fn keys(&self) -> Vec<String> {
-        self.tags.keys().cloned().collect()
+        self.store.keys()
     }
 
     fn entries(&self, prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
-        match prefix {
-            None => self.tags.clone(),
-            Some(prefix) => self
-                .tags
-                .iter()
-                .filter(|(k, _)| k.starts_with(prefix))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        }
+        self.store.entries(prefix)
+    }
+
+    fn get_all(&self, key: &str) -> Vec<serde_json::Value> {
+        self.store.tres(key)
     }
 }
 
@@ -224,43 +229,139 @@ fn parse_fields_from_definition(
     codec::decode_fields(definition, raw_bytes, registry)
 }
 
-/// Parse TRE envelopes into an existing tags HashMap.
+/// Header/subheader fields alongside ordered TRE instances.
 ///
-/// Each TRE is stored as a top-level key (trimmed CETAG) mapped to either a nested
-/// dictionary of parsed fields, or a raw representation if the TRE definition is unknown.
-fn parse_tre_entries(
-    tags: &mut HashMap<String, serde_json::Value>,
-    tre_envelopes: &[TreEnvelope],
-    registry: &StructureRegistry,
-) {
-    for envelope in tre_envelopes {
-        let tag = envelope.tag.trim();
-        match tre_fields::create_accessor(registry, tag, &envelope.data) {
-            Ok(Some(tre_accessor)) => {
-                let tre_def = tre_accessor.definition.clone();
-                let mut tre_dict = serde_json::Map::new();
-                for field_path in tre_accessor.fields() {
-                    if let Ok(value) = tre_accessor.get(&field_path) {
-                        if let Some(json_value) =
-                            value_to_json(&value, Some(registry), Some(&tre_def))
-                        {
-                            tre_dict.insert(field_path, json_value);
+/// TREs are kept as a `Vec` per trimmed CETAG rather than a single value, because a
+/// container holds a *sequence* of extensions and no part of the corpus requires
+/// CETAG uniqueness (STDI-0002 Volume 1 §2; JBP §5.9.2). The ordered list is the
+/// single source of truth: the dictionary surface (`get_value`, `entries`, `keys`,
+/// `len`) projects instance 0 out of it, so `get_value(tag) == get_all(tag)[0]` holds
+/// by construction rather than by keeping a second copy in sync.
+///
+/// Where a TRE tag collides with a header field name the TRE wins, matching the
+/// previous behavior of inserting TREs into the field map after parsing it.
+struct TagStore {
+    /// Plain header/subheader fields.
+    fields: HashMap<String, serde_json::Value>,
+    /// TRE instances keyed by trimmed CETAG, each `Vec` in file order.
+    tres: HashMap<String, Vec<serde_json::Value>>,
+    /// CETAGs in first-appearance order, so `keys()` reflects the file.
+    tre_order: Vec<String>,
+}
+
+impl TagStore {
+    /// Create a store holding header fields and no TREs.
+    fn new(fields: HashMap<String, serde_json::Value>) -> Self {
+        Self {
+            fields,
+            tres: HashMap::new(),
+            tre_order: Vec::new(),
+        }
+    }
+
+    /// Append TRE envelopes in file order.
+    ///
+    /// Each envelope becomes one instance under its trimmed CETAG, mapped to either a
+    /// nested dictionary of parsed fields or a `{"_raw", "_length"}` representation if
+    /// the TRE definition is unknown. Repeats append rather than replace.
+    fn push_tre_entries(&mut self, tre_envelopes: &[TreEnvelope], registry: &StructureRegistry) {
+        for envelope in tre_envelopes {
+            let tag = envelope.tag.trim();
+            let value = match tre_fields::create_accessor(registry, tag, &envelope.data) {
+                Ok(Some(tre_accessor)) => {
+                    let tre_def = tre_accessor.definition.clone();
+                    let mut tre_dict = serde_json::Map::new();
+                    for field_path in tre_accessor.fields() {
+                        if let Ok(value) = tre_accessor.get(&field_path) {
+                            if let Some(json_value) =
+                                value_to_json(&value, Some(registry), Some(&tre_def))
+                            {
+                                tre_dict.insert(field_path, json_value);
+                            }
                         }
                     }
+                    serde_json::Value::Object(tre_dict)
                 }
-                tags.insert(tag.to_string(), serde_json::Value::Object(tre_dict));
-            }
-            Ok(None) | Err(_) => {
-                let mut raw_dict = serde_json::Map::new();
-                let hex: String = envelope.data.iter().map(|b| format!("{:02x}", b)).collect();
-                raw_dict.insert("_raw".to_string(), serde_json::Value::String(hex));
-                raw_dict.insert(
-                    "_length".to_string(),
-                    serde_json::Value::Number(envelope.data.len().into()),
-                );
-                tags.insert(tag.to_string(), serde_json::Value::Object(raw_dict));
+                Ok(None) | Err(_) => {
+                    let mut raw_dict = serde_json::Map::new();
+                    let hex: String = envelope.data.iter().map(|b| format!("{:02x}", b)).collect();
+                    raw_dict.insert("_raw".to_string(), serde_json::Value::String(hex));
+                    raw_dict.insert(
+                        "_length".to_string(),
+                        serde_json::Value::Number(envelope.data.len().into()),
+                    );
+                    serde_json::Value::Object(raw_dict)
+                }
+            };
+
+            match self.tres.get_mut(tag) {
+                Some(instances) => instances.push(value),
+                None => {
+                    self.tres.insert(tag.to_string(), vec![value]);
+                    self.tre_order.push(tag.to_string());
+                }
             }
         }
+    }
+
+    /// The first instance under `key`, or the plain field of that name.
+    fn get_value(&self, key: &str) -> Option<serde_json::Value> {
+        match self.tres.get(key) {
+            Some(instances) => instances.first().cloned(),
+            None => self.fields.get(key).cloned(),
+        }
+    }
+
+    fn contains_key(&self, key: &str) -> bool {
+        self.tres.contains_key(key) || self.fields.contains_key(key)
+    }
+
+    /// One entry per tag — TREs count once regardless of instance count.
+    fn len(&self) -> usize {
+        self.plain_fields().count() + self.tres.len()
+    }
+
+    fn keys(&self) -> Vec<String> {
+        self.plain_fields()
+            .map(|(k, _)| k.clone())
+            .chain(self.tre_order.iter().cloned())
+            .collect()
+    }
+
+    fn entries(&self, prefix: Option<&str>) -> HashMap<String, serde_json::Value> {
+        let matches = |key: &str| prefix.is_none_or(|p| key.starts_with(p));
+
+        let mut out: HashMap<String, serde_json::Value> = self
+            .plain_fields()
+            .filter(|(k, _)| matches(k))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        for tag in &self.tre_order {
+            if matches(tag) {
+                if let Some(first) = self.tres[tag].first() {
+                    out.insert(tag.clone(), first.clone());
+                }
+            }
+        }
+
+        out
+    }
+
+    fn tres(&self, tag: &str) -> Vec<serde_json::Value> {
+        match self.tres.get(tag) {
+            Some(instances) => instances.clone(),
+            // Fall back to the plain-field lookup so the trait invariant
+            // `get_value(tag) == get_all(tag)[0]` holds for every key, not just CETAGs.
+            None => self.fields.get(tag).cloned().into_iter().collect(),
+        }
+    }
+
+    /// Header fields that are not shadowed by a TRE of the same name.
+    fn plain_fields(&self) -> impl Iterator<Item = (&String, &serde_json::Value)> {
+        self.fields
+            .iter()
+            .filter(|(k, _)| !self.tres.contains_key(*k))
     }
 }
 
@@ -689,6 +790,113 @@ mod tests {
 
         // 4 header fields + 2 TRE entries
         assert_eq!(dict.len(), 6);
+    }
+
+    #[test]
+    fn repeated_tre_keeps_every_instance_in_file_order() {
+        // awslabs/osml-imagery-io#12: three envelopes with the same CETAG used to
+        // collapse to the last one. STDI-0002 Vol 1 §2 makes the container a
+        // sequence, so all three must survive in file order.
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        let tre_def = StructureDefinition::new("tre_test").with_field(
+            FieldDefinition::new("value", FieldType::String).with_size(SizeSpec::Fixed(5)),
+        );
+        let mut registry = StructureRegistry::new();
+        registry.register("tre_test", tre_def);
+
+        let provider = JBPSegmentMetadataProvider::with_tres(
+            definition,
+            raw_bytes,
+            vec![
+                TreEnvelope {
+                    tag: "TEST  ".to_string(),
+                    data: b"FIRST".to_vec(),
+                },
+                TreEnvelope {
+                    tag: "TEST  ".to_string(),
+                    data: b"SCOND".to_vec(),
+                },
+                TreEnvelope {
+                    tag: "TEST".to_string(),
+                    data: b"THIRD".to_vec(),
+                },
+            ],
+            Arc::new(registry),
+        );
+
+        let instances = provider.get_all("TEST");
+        assert_eq!(instances.len(), 3);
+        let values: Vec<&str> = instances
+            .iter()
+            .map(|i| i.as_object().unwrap()["value"].as_str().unwrap())
+            .collect();
+        assert_eq!(values, vec!["FIRST", "SCOND", "THIRD"]);
+
+        // The dict surface projects instance 0 and still counts the tag once.
+        assert_eq!(provider.get_value("TEST"), Some(instances[0].clone()));
+        assert_eq!(provider.entries(None).get("TEST"), Some(&instances[0]));
+        assert_eq!(provider.len(), 5); // 4 header fields + 1 TRE tag
+        assert_eq!(provider.keys().iter().filter(|k| *k == "TEST").count(), 1);
+    }
+
+    #[test]
+    fn repeated_unknown_tre_keeps_every_instance() {
+        // The `{"_raw", "_length"}` fallback collided through the same insert as the
+        // parsed path, so it needs the same accumulation.
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+
+        let provider = JBPFileMetadataProvider::with_tres(
+            definition,
+            raw_bytes,
+            vec![
+                TreEnvelope {
+                    tag: "UNKNWN".to_string(),
+                    data: vec![1, 2],
+                },
+                TreEnvelope {
+                    tag: "UNKNWN".to_string(),
+                    data: vec![3, 4, 5],
+                },
+            ],
+            Arc::new(StructureRegistry::new()),
+        );
+
+        let instances = provider.get_all("UNKNWN");
+        assert_eq!(instances.len(), 2);
+        assert_eq!(instances[0]["_raw"], serde_json::json!("0102"));
+        assert_eq!(instances[0]["_length"], serde_json::json!(2));
+        assert_eq!(instances[1]["_raw"], serde_json::json!("030405"));
+        assert_eq!(instances[1]["_length"], serde_json::json!(3));
+
+        assert_eq!(provider.get_value("UNKNWN"), Some(instances[0].clone()));
+        assert_eq!(provider.len(), 5);
+    }
+
+    #[test]
+    fn get_all_matches_get_value_for_plain_fields_and_absent_tags() {
+        let definition = create_test_definition();
+        let raw_bytes = create_test_data();
+        let provider = JBPFileMetadataProvider::from_definition(definition, raw_bytes);
+
+        // The invariant covers every key, not just CETAGs.
+        assert_eq!(provider.get_all("FHDR"), vec![serde_json::json!("NITF")]);
+        assert_eq!(
+            provider.get_value("FHDR"),
+            Some(provider.get_all("FHDR")[0].clone())
+        );
+
+        // Absent tags give an empty list, never a `None`-shaped surprise.
+        assert!(provider.get_all("NOTHERE").is_empty());
+
+        // `get_all` is total over `keys()`, which is what lets a caller enumerate
+        // everything with `keys()` + `get_all()` and miss nothing.
+        assert!(provider
+            .keys()
+            .iter()
+            .all(|k| !provider.get_all(k).is_empty()));
     }
 
     #[test]

@@ -8,8 +8,10 @@ Requirements: 1.7
 """
 
 import collections.abc
+import warnings
 
-from aws.osml.io import BufferedMetadataProvider
+import pytest
+from aws.osml.io import BufferedMetadataProvider, MetadataProvider
 
 # =============================================================================
 # Construction Tests
@@ -588,3 +590,218 @@ class TestIntegration:
         assert modified["IC"] == "NC"  # Preserved
         assert modified["title"] == "Original Title"  # Preserved
         assert modified["COMRAT"] == "01.0"  # Added
+
+
+# =============================================================================
+# Repeated Key (NITF TRE) Tests
+# =============================================================================
+
+# Three PIAPEA-shaped records; STDI-0002 Vol 1 App C §C.4 defines PIAPEA as one
+# instance per person identified, so each is its own independent record.
+PERSON_A = {"LASTNME": "DURHAM", "FIRSTNME": "JAMES"}
+PERSON_B = {"LASTNME": "DAILEY", "FIRSTNME": "RICHARD"}
+PERSON_C = {"LASTNME": "WEBB", "FIRSTNME": "DAVE"}
+
+
+class TestRepeatedKeys:
+    """Authoring more than one instance of a single CETAG.
+
+    A NITF container holds a *sequence* of tagged record extensions and nothing in
+    the corpus requires the CETAG to be unique (STDI-0002 Volume 1 §2), so the
+    writer must be able to author repeats — otherwise a file with three PIAPEA
+    records is readable but not writable (awslabs/osml-imagery-io#12).
+    """
+
+    def test_set_all_stores_instances_in_order(self):
+        """The sequence given is the sequence stored, and the one written."""
+        provider = BufferedMetadataProvider()
+        provider.set_all("PIAPEA", [PERSON_A, PERSON_B, PERSON_C])
+
+        assert provider.get_all("PIAPEA") == [PERSON_A, PERSON_B, PERSON_C]
+
+    def test_append_adds_instances(self):
+        """``append`` extends the slot rather than replacing it."""
+        provider = BufferedMetadataProvider()
+        provider.set_all("PIAPEA", [PERSON_A, PERSON_B])
+        provider.append("PIAPEA", PERSON_C)
+
+        assert provider.get_all("PIAPEA") == [PERSON_A, PERSON_B, PERSON_C]
+
+    def test_append_creates_the_slot_when_absent(self):
+        """``append`` on an unknown tag is the single-instance path."""
+        provider = BufferedMetadataProvider()
+        provider.append("PIAPEA", PERSON_A)
+
+        assert provider.get_all("PIAPEA") == [PERSON_A]
+        assert provider["PIAPEA"] == PERSON_A
+
+    def test_bare_dict_assignment_is_still_the_single_instance_path(self):
+        """``md[tag] = {...}`` keeps working unchanged for single extensions."""
+        provider = BufferedMetadataProvider()
+        provider["RPC00B"] = {"SUCCESS": "1", "ERR_BIAS": "0000.00"}
+
+        assert provider.get_all("RPC00B") == [{"SUCCESS": "1", "ERR_BIAS": "0000.00"}]
+        assert provider["RPC00B"] == provider.get_all("RPC00B")[0]
+
+    def test_item_access_returns_the_first_instance(self):
+        """The invariant that keeps every provider interchangeable."""
+        provider = BufferedMetadataProvider()
+        provider.set_all("PIAPEA", [PERSON_A, PERSON_B, PERSON_C])
+
+        assert provider["PIAPEA"] == provider.get_all("PIAPEA")[0] == PERSON_A
+
+    def test_repeated_tag_counts_once_on_the_dict_surface(self):
+        """One key per tag: the mapping surface stays monomorphic."""
+        provider = BufferedMetadataProvider()
+        provider["ICAT"] = "VIS"
+        provider.set_all("PIAPEA", [PERSON_A, PERSON_B, PERSON_C])
+
+        assert len(provider) == 2
+        assert list(provider).count("PIAPEA") == 1
+        assert provider.entries()["PIAPEA"] == PERSON_A
+
+    def test_keys_are_sorted_and_get_all_is_total(self):
+        """The enumeration contract: sorted keys, every one with at least one value.
+
+        Sorted because the NITF writer emits extensions in the order it walks these
+        keys, so a ``HashMap`` order would make envelope bytes differ between runs.
+        """
+        provider = BufferedMetadataProvider()
+        provider["ICAT"] = "VIS"
+        provider["IMAGE_INFO"] = [{"LISH": "439"}]
+        provider["RPC00B"] = {"SUCCESS": "1"}
+        provider.set_all("PIAPEA", [PERSON_A, PERSON_B])
+
+        assert provider.keys() == ["ICAT", "IMAGE_INFO", "PIAPEA", "RPC00B"]
+        assert [len(provider.get_all(key)) for key in provider.keys()] == [1, 1, 2, 1]
+        # An array-valued field is wrapped, not spread — one value that is a list.
+        assert provider.get_all("IMAGE_INFO") == [[{"LISH": "439"}]]
+
+    def test_tres_shape_is_uniform_regardless_of_count(self):
+        """Always a list, so callers never branch on type."""
+        provider = BufferedMetadataProvider()
+        provider.set_all("PIAPEA", [PERSON_A])
+
+        assert provider.get_all("PIAPEA") == [PERSON_A]
+        assert provider.get_all("NOTHERE") == []
+
+    def test_set_all_with_empty_list_removes_the_key(self):
+        """No instances means no key, not a key holding nothing."""
+        provider = BufferedMetadataProvider()
+        provider.set_all("PIAPEA", [PERSON_A])
+        provider.set_all("PIAPEA", [])
+
+        assert "PIAPEA" not in provider
+        assert provider.get_all("PIAPEA") == []
+
+
+class TestWholeSlotAssignment:
+    """``__setitem__`` and ``del`` replace or remove the whole slot.
+
+    ``d[k] = v`` on a mapping means *k maps to v afterwards*, not "v plus whatever
+    else was there" — keeping that literal is what preserves ``md[k] = v; md[k] == v``
+    and therefore keeps this provider interchangeable with every other one.
+    """
+
+    def test_assignment_discards_other_instances(self):
+        """``set_all([A, B])`` then ``md[tag] = C`` leaves exactly ``[C]``."""
+        provider = BufferedMetadataProvider()
+        provider.set_all("PIAPEA", [PERSON_A, PERSON_B])
+
+        with pytest.warns(UserWarning):
+            provider["PIAPEA"] = PERSON_C
+
+        assert provider.get_all("PIAPEA") == [PERSON_C]
+        assert provider["PIAPEA"] == provider.get_all("PIAPEA")[0]
+
+    def test_assignment_over_multiple_instances_warns(self):
+        """Legal, but it is the silent narrowing that caused the defect."""
+        provider = BufferedMetadataProvider()
+        provider.set_all("PIAPEA", [PERSON_A, PERSON_B, PERSON_C])
+
+        with pytest.warns(UserWarning, match="PIAPEA.*held 3 instances"):
+            provider["PIAPEA"] = PERSON_A
+
+    def test_assignment_over_one_instance_is_silent(self):
+        """No narrowing, no warning — the ordinary single-extension path."""
+        provider = BufferedMetadataProvider()
+        provider["RPC00B"] = {"SUCCESS": "0"}
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            provider["RPC00B"] = {"SUCCESS": "1"}
+
+        assert provider["RPC00B"] == {"SUCCESS": "1"}
+
+    def test_update_obeys_the_whole_slot_rule_and_warns(self):
+        """``update`` is bulk ``__setitem__``, with the same rule and warning."""
+        provider = BufferedMetadataProvider()
+        provider.set_all("PIAPEA", [PERSON_A, PERSON_B])
+
+        with pytest.warns(UserWarning, match="PIAPEA"):
+            provider.update({"PIAPEA": PERSON_C, "ICAT": "VIS"})
+
+        assert provider.get_all("PIAPEA") == [PERSON_C]
+        assert provider["ICAT"] == "VIS"
+
+    def test_del_removes_every_instance(self):
+        """Deletion is whole-slot too, symmetric with assignment."""
+        provider = BufferedMetadataProvider()
+        provider.set_all("PIAPEA", [PERSON_A, PERSON_B, PERSON_C])
+
+        del provider["PIAPEA"]
+
+        assert "PIAPEA" not in provider
+        assert provider.get_all("PIAPEA") == []
+        with pytest.raises(KeyError):
+            provider["PIAPEA"]
+
+
+class TestFromProvider:
+    """``from_provider`` is the duplicate-safe copy path."""
+
+    def test_from_provider_preserves_every_instance(self):
+        """A naive ``update(src.entries())`` would carry only instance 0."""
+        source = BufferedMetadataProvider()
+        source["ICAT"] = "VIS"
+        source.set_all("PIAPEA", [PERSON_A, PERSON_B, PERSON_C])
+
+        copied = BufferedMetadataProvider.from_provider(source)
+
+        assert isinstance(copied, BufferedMetadataProvider)
+        assert copied.get_all("PIAPEA") == [PERSON_A, PERSON_B, PERSON_C]
+        assert copied["ICAT"] == "VIS"
+        assert len(copied) == len(source)
+
+    def test_constructor_source_argument_matches_from_provider(self):
+        """``BufferedMetadataProvider(source=...)`` takes the same path."""
+        source = BufferedMetadataProvider()
+        source.set_all("PIAPEA", [PERSON_A, PERSON_B])
+
+        assert BufferedMetadataProvider(source=source).get_all("PIAPEA") == source.get_all("PIAPEA")
+
+    def test_copy_is_independent_of_the_source(self):
+        """Mutating the copy's instances leaves the source alone."""
+        source = BufferedMetadataProvider()
+        source.set_all("PIAPEA", [PERSON_A, PERSON_B])
+
+        copied = BufferedMetadataProvider.from_provider(source)
+        copied.append("PIAPEA", PERSON_C)
+
+        assert len(source.get_all("PIAPEA")) == 2
+        assert len(copied.get_all("PIAPEA")) == 3
+
+    def test_accessors_are_inherited_not_reimplemented(self):
+        """``get_all`` comes from :class:`MetadataProvider` (issue #12 OQ4).
+
+        The base class must wrap the *same* buffer as the subclass, or a mutation
+        made through the subclass would be invisible through the inherited reader.
+        """
+        provider = BufferedMetadataProvider()
+        provider.set_all("PIAPEA", [PERSON_A])
+
+        assert BufferedMetadataProvider.get_all is MetadataProvider.get_all
+        assert BufferedMetadataProvider.keys is MetadataProvider.keys
+
+        provider.append("PIAPEA", PERSON_B)
+        assert MetadataProvider.get_all(provider, "PIAPEA") == [PERSON_A, PERSON_B]

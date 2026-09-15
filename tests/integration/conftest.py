@@ -192,6 +192,67 @@ def integration_summary(request):
     request.addfinalizer(_log_summary)
 
 
+@pytest.fixture(scope="session")
+def tre_multiplicity_survey(request):
+    """Collect CETAGs that appear more than once in a single container.
+
+    Nothing in the specification requires a CETAG to be unique — STDI-0002
+    Volume 1 §2 describes a *sequence* of extensions — but the corpus is the only
+    source of truth for which tags real producers actually repeat. This survey is
+    **reporting, not an assertion**: it records what it sees and prints it at
+    session end so the empirical tag list can inform the user guide.
+
+    The yielded dict holds:
+
+    ``tags``
+        ``CETAG`` to a list of ``(file path, container, instance count)``.
+    ``containers``
+        How many containers were inspected, so an empty ``tags`` can be told
+        apart from a survey that never ran.
+    ``assets_skipped``
+        Files whose asset subheaders were *not* inspected because the entry is
+        tagged ``slow``. Reported rather than left implicit — coverage that looks
+        complete but is not would misread as "no tag repeats anywhere".
+    """
+    survey: dict = {"tags": {}, "containers": 0, "assets_skipped": []}
+
+    yield survey
+
+    def _report_survey():
+        if survey["containers"] == 0:
+            return
+
+        tags = survey["tags"]
+        logger.info(
+            "Repeated TREs observed across %d containers: %s",
+            survey["containers"],
+            ", ".join(sorted(tags)) or "none",
+        )
+
+        reporter = request.config.pluginmanager.getplugin("terminalreporter")
+        if reporter is None:
+            return
+
+        reporter.write_sep("=", "Repeated TRE survey")
+        reporter.write_line(f"  {survey['containers']} containers inspected")
+        for tag in sorted(tags):
+            sightings = tags[tag]
+            worst = max(count for _, _, count in sightings)
+            reporter.write_line(
+                f"  {tag}: {len(sightings)} container(s), up to {worst} instances "
+                f"(e.g. {sightings[0][0]} — {sightings[0][1]})"
+            )
+        if not tags:
+            reporter.write_line("  no CETAG repeated within a container")
+        if survey["assets_skipped"]:
+            reporter.write_line(
+                f"  file headers only for {len(survey['assets_skipped'])} slow "
+                "entries (rerun with --include-tags slow to cover their subheaders)"
+            )
+
+    request.addfinalizer(_report_survey)
+
+
 # =============================================================================
 # Manifest Update
 # =============================================================================

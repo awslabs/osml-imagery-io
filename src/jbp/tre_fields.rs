@@ -38,7 +38,10 @@ use crate::parser::{
 ///
 /// Normalizes the tag (trim whitespace, lowercase) and prepends `tre_` to form
 /// the registry key. Returns `None` if no definition exists for this tag.
-fn lookup_definition(registry: &StructureRegistry, tag: &str) -> Option<Arc<StructureDefinition>> {
+pub(crate) fn lookup_definition(
+    registry: &StructureRegistry,
+    tag: &str,
+) -> Option<Arc<StructureDefinition>> {
     let normalized_tag = tag.trim().to_lowercase();
     let def_name = format!("tre_{}", normalized_tag);
     registry.get(&def_name)
@@ -198,35 +201,42 @@ pub fn serialize_tre_to_envelope(
     Ok(Some(envelope))
 }
 
-/// Serialize multiple TRE field groups to TreEnvelopes.
+/// Serialize a sequence of TRE field groups to TreEnvelopes.
 ///
-/// Iterates over all groups and serializes those with known definitions.
+/// Groups are serialized in the order given, and the same group may appear more
+/// than once under the same CETAG — a container holds a *sequence* of extensions
+/// (STDI-0002 Volume 1 §2), and for repeats the order is part of the meaning:
+/// `CSEPHA` instances are recorded in time-sequence order (Vol 1 App D) and
+/// `BCHIPA` instances form a UUID-linked series (Vol 1 App AR). Because the input
+/// is an ordered slice rather than a map, the same input always produces the same
+/// bytes.
+///
 /// Unknown TREs (those without definitions) are skipped.
 ///
 /// # Arguments
 ///
 /// * `registry` - The structure registry containing TRE definitions
-/// * `groups` - A map of CETAG to TreFieldGroup
+/// * `groups` - TRE field groups in the order they should be written
 ///
 /// # Returns
 ///
-/// A vector of TreEnvelopes for all successfully serialized TREs.
+/// A vector of TreEnvelopes for all successfully serialized TREs, in input order.
 /// Unknown TREs are silently skipped.
 ///
 /// # Example
 ///
 /// ```ignore
-/// let groups = parse_tre_fields_from_metadata(&metadata);
-/// let envelopes = serialize_tre_groups_to_envelopes(&registry, &groups)?;
+/// let groups = extract_tre_fields_from_provider(&provider);
+/// let envelopes = serialize_tre_groups_to_envelopes(&registry, &groups, false)?;
 /// ```
 pub fn serialize_tre_groups_to_envelopes(
     registry: &StructureRegistry,
-    groups: &std::collections::HashMap<String, TreFieldGroup>,
+    groups: &[TreFieldGroup],
     strict: bool,
 ) -> Result<Vec<TreEnvelope>, SerializeTreError> {
-    let mut envelopes = Vec::new();
+    let mut envelopes = Vec::with_capacity(groups.len());
 
-    for group in groups.values() {
+    for group in groups {
         if let Some(envelope) = serialize_tre_to_envelope(registry, group, strict)? {
             envelopes.push(envelope);
         }
@@ -621,6 +631,88 @@ COMMENT002";
         let group = TreFieldGroup::new("UNKNOWN");
         let result = serialize_tre_fields(&registry, &group, false).unwrap();
         assert!(result.is_none());
+    }
+
+    /// Build three GEOLOB groups whose ARV values distinguish the instances.
+    fn geolob_instances() -> Vec<TreFieldGroup> {
+        ["000360001", "000360002", "000360003"]
+            .iter()
+            .map(|arv| {
+                let mut group = TreFieldGroup::new("GEOLOB");
+                group.insert("ARV", serde_json::json!(*arv));
+                group.insert("BRV", serde_json::json!("000360000"));
+                group.insert("LSO", serde_json::json!("000000000000000"));
+                group.insert("PSO", serde_json::json!("000000000000000"));
+                group
+            })
+            .collect()
+    }
+
+    #[test]
+    fn serialize_tre_groups_emits_one_envelope_per_instance_in_order() {
+        let mut registry = StructureRegistry::new();
+        registry.register("tre_geolob", create_test_geolob_definition());
+
+        let envelopes =
+            serialize_tre_groups_to_envelopes(&registry, &geolob_instances(), false).unwrap();
+
+        assert_eq!(envelopes.len(), 3);
+        assert!(envelopes.iter().all(|e| e.tag == "GEOLOB"));
+        // The ARV field leads the CEDATA, so the instance order is readable there.
+        let arvs: Vec<&str> = envelopes
+            .iter()
+            .map(|e| std::str::from_utf8(&e.data[..9]).unwrap())
+            .collect();
+        assert_eq!(arvs, vec!["000360001", "000360002", "000360003"]);
+    }
+
+    #[test]
+    fn serialize_tre_groups_is_byte_identical_across_runs() {
+        let mut registry = StructureRegistry::new();
+        registry.register("tre_geolob", create_test_geolob_definition());
+
+        // Interleave two tags so a map-backed implementation would have a chance to
+        // reorder them; the ordered slice makes repeat runs identical.
+        let mut groups = geolob_instances();
+        groups.insert(1, {
+            let mut other = TreFieldGroup::new("GEOLOB");
+            other.insert("ARV", serde_json::json!("000360009"));
+            other.insert("BRV", serde_json::json!("000360000"));
+            other.insert("LSO", serde_json::json!("000000000000000"));
+            other.insert("PSO", serde_json::json!("000000000000000"));
+            other
+        });
+
+        let first = crate::jbp::tre::write_tre_envelopes(
+            &serialize_tre_groups_to_envelopes(&registry, &groups, false).unwrap(),
+        );
+        let second = crate::jbp::tre::write_tre_envelopes(
+            &serialize_tre_groups_to_envelopes(&registry, &groups, false).unwrap(),
+        );
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 4 * (11 + 48));
+    }
+
+    #[test]
+    fn serialize_tre_groups_skips_unknown_tags_but_keeps_order() {
+        let mut registry = StructureRegistry::new();
+        registry.register("tre_geolob", create_test_geolob_definition());
+
+        let mut groups = geolob_instances();
+        // An unknown TRE has no definition, so it is dropped rather than written.
+        let mut unknown = TreFieldGroup::new("NOPEXX");
+        unknown.insert("WHATEVER", serde_json::json!("1"));
+        groups.insert(1, unknown);
+
+        let envelopes = serialize_tre_groups_to_envelopes(&registry, &groups, false).unwrap();
+
+        assert_eq!(envelopes.len(), 3);
+        let arvs: Vec<&str> = envelopes
+            .iter()
+            .map(|e| std::str::from_utf8(&e.data[..9]).unwrap())
+            .collect();
+        assert_eq!(arvs, vec!["000360001", "000360002", "000360003"]);
     }
 }
 

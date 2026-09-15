@@ -110,6 +110,23 @@ def _filter_nitf_metadata(metadata_dict: dict) -> dict:
     return {k: v for k, v in metadata_dict.items() if k not in _NITF_SKIP_FIELDS}
 
 
+def _expand_repeated_keys(meta, metadata_dict: dict) -> dict:
+    """Substitute every value of a repeated key into *metadata_dict*.
+
+    ``get_all()`` is total over ``keys()``, so walking every key catches a repeat
+    wherever it occurs, with no need to ask which keys are extensions.  Keys holding
+    a single value keep what ``entries()`` returned — an array-valued field stays an
+    array rather than becoming a list of one — and key order is preserved, so output
+    is unchanged for containers with no repeats.
+    """
+    expanded = dict(metadata_dict)
+    for key in metadata_dict:
+        instances = meta.get_all(key)
+        if len(instances) > 1:
+            expanded[key] = instances
+    return expanded
+
+
 def format_metadata(metadata_dict: dict, indent: int = 4) -> str:
     """Format metadata dictionary for display."""
     if not metadata_dict:
@@ -151,6 +168,7 @@ def describe_image_asset(asset, show_metadata: bool, is_nitf: bool = False) -> N
         else:
             if is_nitf:
                 meta_dict = _filter_nitf_metadata(meta_dict)
+            meta_dict = _expand_repeated_keys(meta, meta_dict)
             print(format_metadata(meta_dict, indent=6))
 
 
@@ -173,6 +191,7 @@ def describe_text_asset(asset, show_metadata: bool, is_nitf: bool = False) -> No
         meta_dict = meta.entries()
         if is_nitf:
             meta_dict = _filter_nitf_metadata(meta_dict)
+        meta_dict = _expand_repeated_keys(meta, meta_dict)
         print(format_metadata(meta_dict, indent=6))
 
 
@@ -224,6 +243,7 @@ def describe_data_asset(asset, show_metadata: bool, is_nitf: bool = False) -> No
         meta_dict = meta.entries()
         if is_nitf:
             meta_dict = _filter_nitf_metadata(meta_dict)
+        meta_dict = _expand_repeated_keys(meta, meta_dict)
         print(format_metadata(meta_dict, indent=6))
 
         # Display the XML content for SICD/SIDD segments
@@ -244,6 +264,7 @@ def describe_generic_asset(asset, show_metadata: bool, is_nitf: bool = False) ->
         meta_dict = meta.entries()
         if is_nitf:
             meta_dict = _filter_nitf_metadata(meta_dict)
+        meta_dict = _expand_repeated_keys(meta, meta_dict)
         print(format_metadata(meta_dict, indent=6))
 
 
@@ -292,6 +313,7 @@ def describe_dataset(path: str, show_metadata: bool) -> int:
                 meta_dict = file_meta.entries()
                 if is_nitf:
                     meta_dict = _filter_nitf_metadata(meta_dict)
+                meta_dict = _expand_repeated_keys(file_meta, meta_dict)
                 print(format_metadata(meta_dict))
                 print()
 

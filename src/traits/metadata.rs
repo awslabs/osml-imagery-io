@@ -51,4 +51,30 @@ pub trait MetadataProvider: Send + Sync {
     /// - `entries(None)` returns all key-value pairs.
     /// - `entries(Some(prefix))` returns only entries whose key starts with `prefix`.
     fn entries(&self, prefix: Option<&str>) -> HashMap<String, serde_json::Value>;
+
+    /// Returns every value stored under `key`, in file order.
+    ///
+    /// Most metadata keys hold exactly one value, but some formats let a key repeat
+    /// within one container, and then the dictionary surface can only show one of
+    /// them. This is the complete view. The return shape is uniform regardless of
+    /// count: `[]` when the key is absent, a single element when it appears once,
+    /// one element per instance otherwise.
+    ///
+    /// The invariant `get_value(key) == get_all(key).first()` holds on every
+    /// implementation: the dictionary surface projects the *first* value.
+    ///
+    /// The default implementation reports the single value under `key`, which is
+    /// correct for any format that cannot express a repeated key.
+    ///
+    /// # Format notes
+    ///
+    /// NITF/NSIF is the format where this matters: a subheader may carry the same
+    /// tagged record extension (TRE) several times, each instance a separate record.
+    /// STDI-0002 Volume 1 §2 describes a *sequence* of extensions and imposes no
+    /// uniqueness requirement on CETAG. TIFF IFD tags and Zarr attributes are unique
+    /// by construction, so `get_all` there is just the zero-or-one view of
+    /// `get_value`.
+    fn get_all(&self, key: &str) -> Vec<serde_json::Value> {
+        self.get_value(key).into_iter().collect()
+    }
 }

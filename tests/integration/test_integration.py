@@ -7,6 +7,9 @@ format-specific checks based on detected format.
 
 Pixel reads (get_block) are skipped for entries tagged "slow" unless those
 tags are explicitly included via --include-tags.
+
+Every entry also feeds the repeated-TRE survey, which reports at session end
+which CETAGs the corpus actually carries more than once in a single container.
 """
 
 import logging
@@ -135,6 +138,51 @@ def _check_image_metadata(asset, entry: IntegrationEntry) -> None:
     assert grid_rows > 0 and grid_cols > 0, (
         f"Invalid block_grid_size for '{key}' in {entry.path}"
     )
+
+
+def run_tre_multiplicity_survey(
+    reader,
+    entry: IntegrationEntry,
+    survey: dict,
+    *,
+    skip_assets: bool = False,
+) -> None:
+    """Record every CETAG this file carries more than once in one container.
+
+    A NITF container holds a sequence of extensions and the CETAG need not be
+    unique, so ``md.get_all(tag)`` is the full-fidelity view and ``md[tag]`` is only
+    its first instance. This sweep answers empirically which tags repeat in the
+    wild — better data than the specification prose provides.
+
+    Reporting only: nothing here asserts on a specific tag, because the expected
+    set is an *output* of the survey. Exercising ``keys()`` / ``get_all()`` over the
+    whole corpus is itself the check — a provider that throws or disagrees with
+    itself fails the entry. Sweeping every key rather than only the extensions also
+    means a repeated *plain* field would be caught, if one ever occurred.
+    """
+
+    def _record(metadata, container: str) -> None:
+        survey["containers"] += 1
+        for tag in metadata.keys():
+            instances = metadata.get_all(tag)
+            assert instances, f"keys() named '{tag}' but get_all() is empty ({entry.path})"
+            assert metadata[tag] == instances[0], (
+                f"md['{tag}'] is not instance 0 in {container} of {entry.path}"
+            )
+            if len(instances) > 1:
+                sightings = survey["tags"].setdefault(tag, [])
+                sightings.append((entry.path, container, len(instances)))
+
+    _record(reader.metadata, "file header")
+
+    if skip_assets:
+        # Asset construction is what this entry was tagged slow to avoid, so its
+        # subheaders go uninspected. Recorded so the report can say so.
+        survey["assets_skipped"].append(entry.path)
+        return
+
+    for key in reader.get_asset_keys():
+        _record(reader.get_asset(key).metadata, key)
 
 
 def run_pixel_checks(reader, entry: IntegrationEntry) -> None:
@@ -382,6 +430,7 @@ def test_integration(
     path: str,
     entry: Optional[IntegrationEntry],
     integration_summary,
+    tre_multiplicity_survey,
     request,
 ):
     """Run integration test for a single manifest entry.
@@ -421,6 +470,9 @@ def test_integration(
         reader = IO.open([str(file_path)], "r")
 
         run_agnostic_checks(reader, entry, skip_assets=skip_pixels)
+        run_tre_multiplicity_survey(
+            reader, entry, tre_multiplicity_survey, skip_assets=skip_pixels
+        )
 
         if not skip_pixels:
             fmt = detect_format(reader, file_path)

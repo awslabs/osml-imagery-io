@@ -21,6 +21,12 @@ use crate::traits::MetadataProvider;
 /// :class:`DatasetReader` or an :class:`AssetProvider` rather than creating
 /// one directly.
 ///
+/// A key may hold more than one value in formats that allow it — NITF/NSIF
+/// repeating a tagged record extension, for instance. ``metadata[key]`` gives the
+/// first and :meth:`get_all` gives all of them in file order, so iterating
+/// :meth:`keys` and calling :meth:`get_all` on each is a complete, lossless walk of
+/// the metadata.
+///
 /// Example:
 ///
 /// ```python
@@ -32,6 +38,7 @@ use crate::traits::MetadataProvider;
 ///     ic = meta.get("IC", "NC")            # default if missing
 ///     all_meta = meta.entries()            # full dict (single Rust call)
 ///     security = meta.entries("FS")        # prefix filter
+///     rpc = meta.get_all("RPC00B")            # every instance, in file order
 ///     for key in meta:
 ///         print(key, meta[key])
 /// ```
@@ -165,6 +172,45 @@ impl PyMetadataProvider {
                 )?;
                 py_list.append(tuple)?;
             }
+        }
+        Ok(py_list.into())
+    }
+
+    /// Return every value stored under *key*, in file order.
+    ///
+    /// Most metadata keys hold one value, so this usually returns a one-element
+    /// list. Some formats let a key repeat within a single container, and then
+    /// ``metadata[key]`` — being a single value — can only show the **first** one.
+    /// This is the complete, order-preserving view.
+    ///
+    /// The returned shape is uniform regardless of count: ``[]`` when the key is
+    /// absent, a one-element list when it appears once, one element per instance
+    /// otherwise. Callers never have to branch on type.
+    ///
+    /// ``metadata[key] == metadata.get_all(key)[0]`` holds whenever ``key in metadata``.
+    ///
+    /// :param key: The metadata key, e.g. ``"PIAPEA"`` (NITF) or ``"33550"`` (TIFF).
+    /// :type key: str
+    /// :returns: One entry per instance, in file order; empty if the key is absent.
+    /// :rtype: list
+    ///
+    /// Example:
+    ///
+    /// ```python
+    /// image.metadata.get_all("PIAPEA")               # [{...}, {...}, {...}]
+    /// image.metadata.get_all("PIAPEA")[2]["LASTNME"]
+    /// image.metadata.get_all("NOTHERE")              # []
+    /// ```
+    ///
+    /// .. note::
+    ///    NITF/NSIF is the format where repeats occur: a subheader may carry the
+    ///    same tagged record extension (TRE) several times, each instance its own
+    ///    record. TIFF IFD tags and Zarr attributes are unique per container, so
+    ///    ``get_all`` there is the zero-or-one view of ``metadata.get(key)``.
+    fn get_all<'py>(&self, py: Python<'py>, tag: &str) -> PyResult<Py<PyAny>> {
+        let py_list = PyList::empty(py);
+        for instance in self.inner.get_all(tag) {
+            py_list.append(json_value_to_py(py, &instance)?)?;
         }
         Ok(py_list.into())
     }

@@ -36,7 +36,9 @@ use crate::jbp::error::JBPError;
 use crate::jbp::image::encoder::create_block_encoder;
 use crate::jbp::image::types::InterleaveMode;
 use crate::jbp::overflow::{create_overflow_des, OverflowSource};
-use crate::jbp::tre::{parse_tre_fields_from_metadata, write_tre_envelopes, TreEnvelope};
+use crate::jbp::tre::{
+    declared_field_ids, extract_tre_fields_from_provider, write_tre_envelopes, TreEnvelope,
+};
 use crate::jbp::tre_fields::serialize_tre_groups_to_envelopes;
 use crate::jbp::types::{NitfFormat, SegmentType};
 use crate::parser::StructureRegistry;
@@ -412,6 +414,19 @@ struct QueuedAsset {
     segment_type: SegmentType,
 }
 
+/// Which NITF container a metadata provider describes.
+///
+/// Selects the `.ksy` definition whose declared field names distinguish header
+/// fields from extensions. Only the two containers the writer emits TREs into are
+/// represented; graphic and text subheaders do not carry TREs on the write path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContainerKind {
+    /// The file header (`UDHD` / `XHD`).
+    FileHeader,
+    /// An image subheader (`UDID` / `IXSHD`).
+    ImageSubheader,
+}
+
 /// Writer for NITF/NSIF files implementing the DatasetWriter trait.
 ///
 /// JBPDatasetWriter creates NITF imagery files using a two-pass approach
@@ -640,36 +655,82 @@ impl JBPDatasetWriter {
 
     /// Split TRE envelopes into those that fit within a size limit and overflow.
     ///
-    /// TREs are kept together - we don't split individual TREs across boundaries.
-    /// TREs are added to the "fits" list until adding another would exceed the limit.
+    /// A whole TRE never straddles the boundary, per JBP-2021.2-037. The split is a
+    /// **prefix**: everything up to the first envelope that does not fit stays inline
+    /// and everything from that envelope on spills, so the concatenation of inline
+    /// then overflow is the input order.
+    ///
+    /// Order is why this stops at the first non-fitting envelope rather than
+    /// continuing to pack. A reader reassembles a container by reading the inline
+    /// field and then the `TRE_OVERFLOW` DES, so letting a later, smaller envelope
+    /// take the leftover room would move it ahead of an earlier, larger one. That
+    /// reordering is silent and destructive for a repeated CETAG, where instance
+    /// order carries meaning: `CSEPHA` instances are defined in time-sequence order
+    /// (STDI-0002 Vol 1 App D), `BCHIPA` instances form a UUID-linked series
+    /// (Vol 1 App AR), and `MATESA` chunks one logical record across instances
+    /// (Vol 1 App AK). The cost is that a big TRE overflowing can send smaller
+    /// followers to the DES with room to spare inline; nothing in the corpus asks
+    /// for maximal packing, and order fidelity is worth more than density.
     ///
     /// # Arguments
-    /// * `envelopes` - The TRE envelopes to split
+    /// * `envelopes` - The TRE envelopes to split, in the order they must be written
     /// * `max_size` - Maximum total size in bytes for the "fits" portion
     ///
     /// # Returns
     /// A tuple of (fits, overflow) where:
-    /// - `fits` contains envelopes that fit within max_size
-    /// - `overflow` contains the remaining envelopes
+    /// - `fits` is the leading run that fits within max_size
+    /// - `overflow` is the remainder, in the same relative order
     fn split_tres_by_size(
         envelopes: Vec<TreEnvelope>,
         max_size: usize,
     ) -> (Vec<TreEnvelope>, Vec<TreEnvelope>) {
-        let mut fits = Vec::new();
-        let mut overflow = Vec::new();
+        let mut split_at = envelopes.len();
         let mut current_size = 0;
 
-        for envelope in envelopes {
+        for (index, envelope) in envelopes.iter().enumerate() {
             let envelope_size = envelope.envelope_size();
-            if current_size + envelope_size <= max_size {
-                current_size += envelope_size;
-                fits.push(envelope);
-            } else {
-                overflow.push(envelope);
+            if current_size + envelope_size > max_size {
+                split_at = index;
+                break;
             }
+            current_size += envelope_size;
         }
 
+        let mut fits = envelopes;
+        let overflow = fits.split_off(split_at);
         (fits, overflow)
+    }
+
+    /// Registry name of the definition for a container kind.
+    ///
+    /// Used to answer "is this metadata key a declared header field?" when
+    /// classifying keys as extensions. NSIF reuses the NITF subheader definitions,
+    /// so only the file header has a format-specific name.
+    fn container_definition_name(&self, kind: ContainerKind) -> &'static str {
+        match kind {
+            ContainerKind::FileHeader => match self.format {
+                NitfFormat::Nsif10 => "nsif_01.00_file_header",
+                NitfFormat::Nitf21 => "nitf_02.10_file_header",
+            },
+            ContainerKind::ImageSubheader => "nitf_02.10_image_subheader",
+        }
+    }
+
+    /// The field names a container declares, or an empty set if the definition is
+    /// missing.
+    ///
+    /// An empty set is the safe fallback: every key becomes an extension candidate,
+    /// and the registry lookup still has to recognize it as a TRE before anything is
+    /// written, so a missing definition cannot turn a header field into a bogus TRE.
+    fn header_field_ids(
+        &self,
+        registry: &StructureRegistry,
+        kind: ContainerKind,
+    ) -> std::collections::HashSet<String> {
+        registry
+            .get(self.container_definition_name(kind))
+            .map(|def| declared_field_ids(&def))
+            .unwrap_or_default()
     }
 
     /// Extract TRE envelopes from an asset's metadata.
@@ -696,12 +757,12 @@ impl JBPDatasetWriter {
             None => return Ok(Vec::new()),
         };
 
-        // Get metadata from the asset
+        // Take TRE groups straight from the provider, so repeated CETAGs survive
+        // and the order matches the source container.
         let metadata = asset.provider.metadata();
-        let metadata_dict = metadata.entries(None);
-
-        // Parse TRE fields from metadata
-        let tre_groups = parse_tre_fields_from_metadata(&metadata_dict);
+        let header_fields = self.header_field_ids(registry, ContainerKind::ImageSubheader);
+        let tre_groups =
+            extract_tre_fields_from_provider(metadata.as_ref(), registry, &header_fields);
         if tre_groups.is_empty() {
             return Ok(Vec::new());
         }
@@ -715,11 +776,14 @@ impl JBPDatasetWriter {
 
     /// Serialize file-header TREs from the dataset-level metadata provider.
     ///
-    /// TREs are sourced from the same CETAG-keyed nested-dict convention that
-    /// segments use — any top-level metadata entry whose value is a JSON object
-    /// is treated as a TRE. The five nested file-header fields (`IMAGE_INFO`,
-    /// `GRAPHIC_INFO`, `TEXT_INFO`, `DES_INFO`, `RES_INFO`) decode to JSON
-    /// *arrays*, so they are not mistaken for TREs.
+    /// TREs are the provider's keys that the file-header definition does not declare
+    /// as header fields and that the registry has a `tre_<tag>` definition for, with
+    /// every instance of each read back through `get_all()`. Both halves are
+    /// authoritative, so the five nested file-header fields (`IMAGE_INFO`,
+    /// `GRAPHIC_INFO`, `TEXT_INFO`, `DES_INFO`, `RES_INFO`) are excluded because the
+    /// `.ksy` declares them — not because of their shape. Hand-built providers need no
+    /// cooperation: authoring a TRE as a CETAG-keyed nested dict keeps working because
+    /// classification happens entirely outside the provider.
     ///
     /// Returns empty payloads when there is no registry, no file metadata, or no
     /// TRE entries — which keeps the header byte-identical to a file written
@@ -734,8 +798,9 @@ impl JBPDatasetWriter {
             _ => return Ok(FileHeaderTres::default()),
         };
 
-        let metadata_dict = metadata.entries(None);
-        let tre_groups = parse_tre_fields_from_metadata(&metadata_dict);
+        let header_fields = self.header_field_ids(registry, ContainerKind::FileHeader);
+        let tre_groups =
+            extract_tre_fields_from_provider(metadata.as_ref(), registry, &header_fields);
         if tre_groups.is_empty() {
             return Ok(FileHeaderTres::default());
         }
@@ -1980,12 +2045,12 @@ impl JBPDatasetWriter {
             None => return Ok(Vec::new()),
         };
 
-        // Get metadata from the asset
+        // Take TRE groups straight from the provider, so repeated CETAGs survive
+        // and the order matches the source container.
         let metadata = asset.provider.metadata();
-        let metadata_dict = metadata.entries(None);
-
-        // Parse TRE fields from metadata
-        let tre_groups = parse_tre_fields_from_metadata(&metadata_dict);
+        let header_fields = self.header_field_ids(registry, ContainerKind::ImageSubheader);
+        let tre_groups =
+            extract_tre_fields_from_provider(metadata.as_ref(), registry, &header_fields);
         if tre_groups.is_empty() {
             return Ok(Vec::new());
         }
@@ -3429,6 +3494,33 @@ mod tests {
     }
 
     #[test]
+    fn split_tres_by_size_splits_at_a_prefix_so_order_survives() {
+        use crate::jbp::tre::TreEnvelope;
+
+        // A big envelope that cannot fit, followed by a small one that could. Packing
+        // the small one into the leftover room would put it ahead of the big one once
+        // the reader concatenates inline + overflow, silently reordering instances of
+        // a repeated CETAG.
+        let envelopes = vec![
+            TreEnvelope::new("FIRST", vec![0; 10]).unwrap(), // 21 bytes
+            TreEnvelope::new("BIG", vec![0; 40]).unwrap(),   // 51 bytes — does not fit
+            TreEnvelope::new("LAST", vec![0; 10]).unwrap(),  // 21 bytes — would fit
+        ];
+
+        let (fits, overflow) = JBPDatasetWriter::split_tres_by_size(envelopes, 50);
+
+        assert_eq!(
+            fits.iter().map(|e| e.tag.as_str()).collect::<Vec<_>>(),
+            vec!["FIRST"]
+        );
+        assert_eq!(
+            overflow.iter().map(|e| e.tag.as_str()).collect::<Vec<_>>(),
+            vec!["BIG", "LAST"],
+            "everything from the first non-fitting envelope on must spill, in order"
+        );
+    }
+
+    #[test]
     fn split_tres_by_size_none_fit() {
         use crate::jbp::tre::TreEnvelope;
 
@@ -4799,7 +4891,7 @@ mod tests {
         use crate::owned_buffer::OwnedBuffer;
         use crate::traits::DatasetReader;
 
-        const FIXTURE: &str = "data/unit/nitf21-8x8-1band-8bit-file-tres.ntf";
+        const FIXTURE: &str = "data/unit/nitf21-8x8-1band-8bit-file-get_all.ntf";
         let path = Path::new(FIXTURE);
         if !path.exists() {
             eprintln!("skipping: {} not found", FIXTURE);
@@ -5577,22 +5669,22 @@ mod property_tests {
                 ),
             ) {
                 // Create TRE envelopes
-                let tres: Vec<TreEnvelope> = envelopes
+                let get_all: Vec<TreEnvelope> = envelopes
                     .iter()
                     .map(|(tag, data)| TreEnvelope::new(tag, data.clone()).unwrap())
                     .collect();
 
                 // Serialize all to bytes
-                let bytes = write_tre_envelopes(&tres);
+                let bytes = write_tre_envelopes(&get_all);
 
                 // Parse all back
                 let parsed = TreEnvelope::parse_all(&bytes).unwrap();
 
                 // Verify count matches
-                prop_assert_eq!(parsed.len(), tres.len(), "Should parse same number of TREs");
+                prop_assert_eq!(parsed.len(), get_all.len(), "Should parse same number of TREs");
 
                 // Verify each TRE matches
-                for (original, parsed_tre) in tres.iter().zip(parsed.iter()) {
+                for (original, parsed_tre) in get_all.iter().zip(parsed.iter()) {
                     prop_assert_eq!(original.tag.trim(), parsed_tre.tag.trim());
                     prop_assert_eq!(&original.data, &parsed_tre.data);
                 }

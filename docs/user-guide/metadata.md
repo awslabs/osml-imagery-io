@@ -65,6 +65,41 @@ with IO.open(["image.ntf"], "r") as dataset:
     # Asset-level metadata
     image = dataset.get_asset("image:0")
     image_meta = image.metadata.entries()
+
+    # Every value under a key, whether it repeats or not
+    image.metadata.get_all("PIAPEA")        # [{...}, {...}, {...}]
+    image.metadata.get_all("NROWS")         # ["00002048"]
+```
+
+One accessor sits alongside the Mapping protocol, for the case where a single key
+holds more than one value: `get_all(key)` returns them all in file order, and `[]` if
+the key is absent.
+
+`metadata[key]` is a single value, so it gives the **first** one and is lossy when a
+key repeats; `metadata[key] == metadata.get_all(key)[0]` always holds. Most formats
+cannot repeat a key at all — TIFF IFD tags and Zarr attributes are unique per
+container, so `get_all` there is just the zero-or-one view of `get(key)`. NITF/NSIF
+is the format where it matters, because a subheader may carry the same tagged record
+extension several times; see [Repeated TREs](#repeated-tres).
+
+Because `get_all` is defined for *every* key, iterating `keys()` and calling it on
+each is a complete, lossless walk of the metadata — no separate notion of which keys
+are "special" is involved:
+
+```python
+for key in image.metadata.keys():
+    for value in image.metadata.get_all(key):
+        ...
+```
+
+The wrapping also removes an ambiguity that `metadata[key]` has on its own. A field
+whose *value* is a list comes back as one element that happens to be a list, while a
+key with three instances comes back as three elements:
+
+```python
+md["BAND_INFO"]              # [{...}, {...}, {...}]   one value, a list of 3 bands
+md.get_all("BAND_INFO")      # [[{...}, {...}, {...}]] one instance, wrapped
+md.get_all("PIAPEA")         # [{...}, {...}, {...}]   three instances
 ```
 
 When writing, use `BufferedMetadataProvider` to build metadata. It implements
@@ -162,6 +197,54 @@ byte_count = unknown["_length"]
 
 Overflow TREs stored in data extension segments are resolved automatically —
 you don't need to chase them across segments.
+
+#### Repeated TREs
+
+A container may legally hold the same CETAG more than once. STDI-0002 Volume 1
+§2 describes the User Defined Header Data and Extended Header fields as carrying
+a *sequence* of tagged record extensions, and nothing in the corpus requires the
+CETAG to be unique. Because `metadata[tag]` returns a single dict, it can only
+give you one of them — always the **first** instance in file order. `get_all(tag)`
+gives you all of them:
+
+```python
+image = dataset.get_asset("image:0")
+md = image.metadata
+
+md.get_all("PIAPEA")                     # [{...DURHAM...}, {...DAILEY...}, {...WEBB...}]
+len(md.get_all("PIAPEA"))                # 3
+md.get_all("PIAPEA")[2]["LASTNME"]       # "WEBB"
+
+md["PIAPEA"]                             # {...DURHAM...} — first instance, lossy for repeats
+md["PIAPEA"] == md.get_all("PIAPEA")[0]  # True — holds on every provider
+```
+
+`get_all()` returns the same shape regardless of instance count, so you never have
+to branch on type:
+
+```python
+md.get_all("RPC00B")     # [{...}]  — a single instance is still a list
+md.get_all("NOTHERE")    # []       — absent tag, no KeyError
+```
+
+To walk a container at full fidelity, iterate `keys()` and call `get_all()` on each —
+there is no separate "which keys are TREs" step, because `get_all` is defined for
+every key:
+
+```python
+for tag in md.keys():
+    for position, instance in enumerate(md.get_all(tag)):
+        print(tag, position, instance)
+```
+
+`entries()` is a bulk export of the mapping, so it has one value per key by
+definition and carries the first instance only. Use `keys()` + `get_all()` when you
+need every instance.
+
+The instance order is the order the extensions appear in the file — inline
+container first, then anything resolved out of a `TRE_OVERFLOW` DES, which always
+sits later in the file. Writing preserves whatever order you supply, so a
+read-modify-write round trip keeps it.
 
 #### File-Level vs. Segment-Level TREs
 
@@ -271,6 +354,7 @@ underlying structure definition:
 | Repeated fields (band info, etc.) | `list` of `dict` | `[{"IREPBAND": "R", ...}]` |
 | Known TREs | `dict` of `dict` | `{"GEOLOB": {"ARV": "..."}}` |
 | Unknown TREs | `dict` with `_raw`, `_length` | `{"_raw": "0102", "_length": 2}` |
+| Repeated TREs (same CETAG twice) | `dict` — the first instance only; use `get_all()` for a `list` of all of them | `md["PIAPEA"]` → `{...}`, `md.get_all("PIAPEA")` → `[{...}, {...}, {...}]` |
 | Binary byte fields | `str` (hex-encoded) | `"ff8000"` |
 | Raw TRE containers (`XHD`, `IXSHD`, …) | `str` (hex-encoded) | `"435344494441..."` |
 
@@ -449,6 +533,73 @@ writer.metadata = file_meta
 Any TRE too large for the inline field spills into a `TRE_OVERFLOW` data
 extension segment automatically, with `XHDLOFL` set to point at it. A single
 TRE is never split across the two, per JBP-2021.2-037.
+
+##### Writing repeated TREs
+
+Bracket assignment stores one instance per tag, because a dict is one instance.
+To write a tag more than once, use `set_all` (replace the whole slot with a list of
+instances) or `append` (add one more instance, keeping the rest):
+
+```python
+image_meta = BufferedMetadataProvider()
+
+image_meta.set_all("PIAPEA", [
+    {"LASTNME": "DURHAM", "FIRSTNME": "JAMES", ...},
+    {"LASTNME": "DAILEY", "FIRSTNME": "RICHARD", ...},
+])
+image_meta.append("PIAPEA", {"LASTNME": "WEBB", "FIRSTNME": "DAVE", ...})
+
+image_meta.get_all("PIAPEA")     # three instances, in the order given
+image_meta["PIAPEA"]             # {...DURHAM...} — the first, same as on the read side
+```
+
+The order you supply is the order the writer emits, which matters for tags whose
+instances form a sequence. Passing an empty list to `set_all` removes the tag.
+
+Assignment is a **whole-slot** operation: `metadata[tag] = {...}` replaces every
+instance stored under that tag, not just the first. This keeps
+`metadata[tag] == metadata.get_all(tag)[0]` true and makes `d[k] = v` mean what it
+means everywhere else — *k maps to v afterwards*. `del metadata[tag]` is
+whole-slot in the same way, and `update()` is bulk assignment and so behaves
+identically.
+
+```python
+image_meta.set_all("PIAPEA", [A, B])
+image_meta["PIAPEA"] = C         # UserWarning: 2 instances held, 1 discarded
+image_meta.get_all("PIAPEA")     # [C]
+```
+
+Overwriting a slot that held more than one instance is legal but emits a
+`UserWarning`, since silently narrowing a repeated extension to one record is
+rarely intended. Catch or assert on it with `warnings.catch_warnings` or
+`pytest.warns`.
+
+##### Copying metadata between providers
+
+Use `BufferedMetadataProvider.from_provider` to copy a provider's metadata for
+writing. It is the duplicate-safe path: every key is copied through `get_all()`, so
+repeated instances survive with no special case.
+
+```python
+from aws.osml.io import IO, BufferedMetadataProvider
+
+with IO.open(["i_3128b.ntf"], "r") as dataset:
+    image = dataset.get_asset("image:0")
+    out = BufferedMetadataProvider.from_provider(image.metadata)
+    out.get_all("PIAPEA")          # all three instances survived the copy
+```
+
+Copying by hand is easy to get wrong. `update(src.entries())` carries only the first
+instance of each key, and because it is bulk assignment it obeys the whole-slot rule,
+so it discards exactly the instances you meant to copy:
+
+```python
+# Lossy — entries() carries the first instance of each key only
+out.update(src.metadata.entries())
+```
+
+`BufferedMetadataProvider(source=src.metadata)` routes through the same
+duplicate-safe path as `from_provider`.
 
 ##### File-header TREs are written to XHD
 

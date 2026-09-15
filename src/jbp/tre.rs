@@ -25,7 +25,11 @@
 //! let bytes = envelope.to_bytes();
 //! ```
 
+use std::collections::HashSet;
+
 use super::error::JBPError;
+use super::tre_fields::lookup_definition;
+use crate::parser::{StructureDefinition, StructureRegistry};
 
 /// CETAG field size in bytes (6 characters)
 const CETAG_SIZE: usize = 6;
@@ -273,12 +277,41 @@ impl TreFieldGroup {
     }
 }
 
+/// Build a TRE field group from a CETAG and a JSON object of field values.
+///
+/// Returns `None` for an empty object, which carries no fields to serialize.
+fn group_from_object(tag: &str, value: &serde_json::Value) -> Option<TreFieldGroup> {
+    let obj = value.as_object()?;
+    if obj.is_empty() {
+        return None;
+    }
+
+    let mut group = TreFieldGroup::new(tag);
+    for (field_name, field_value) in obj {
+        group.insert(field_name.clone(), field_value.clone());
+    }
+    Some(group)
+}
+
 /// Parse TRE field values from metadata with nested dictionary structure.
 ///
 /// This function extracts TRE field values from a metadata dictionary where
 /// each TRE is a top-level key (the CETAG) mapped to a JSON object containing
 /// that TRE's field names and values. This matches the format returned by the
 /// NITF reader's `entries()`, enabling clean roundtrips.
+///
+/// # Ordering and duplicates
+///
+/// The returned sequence is the order envelopes will be written in, so it must be
+/// stable across runs: groups come back sorted by CETAG, because a `HashMap` of
+/// metadata carries no order of its own.
+///
+/// A metadata dictionary holds at most one value per key, so this path can never
+/// express a repeated TRE. Callers holding a
+/// [`MetadataProvider`](crate::traits::MetadataProvider) should use
+/// [`extract_tre_fields_from_provider`] instead, which classifies keys against the
+/// container's own definition and reads every instance through `get_all()` —
+/// preserving file order and repeats alike.
 ///
 /// # Arguments
 ///
@@ -287,9 +320,9 @@ impl TreFieldGroup {
 ///
 /// # Returns
 ///
-/// A HashMap mapping CETAG strings to their corresponding TreFieldGroup.
-/// Only entries whose values are JSON objects are considered TRE fields.
-/// Scalar values, arrays, and null entries are ignored.
+/// A vector of [`TreFieldGroup`], one per TRE-valued key, sorted by CETAG.
+/// Only entries whose values are non-empty JSON objects are considered TRE
+/// fields. Scalar values, arrays, empty objects, and null entries are ignored.
 ///
 /// # Example
 ///
@@ -305,9 +338,9 @@ impl TreFieldGroup {
 ///
 /// let groups = parse_tre_fields_from_metadata(&metadata);
 ///
-/// assert!(groups.contains_key("GEOLOB"));
-/// assert!(groups.contains_key("SENSRB"));
-/// assert_eq!(groups["GEOLOB"].fields.len(), 2);
+/// assert_eq!(groups.len(), 2);
+/// assert_eq!(groups[0].tag, "GEOLOB");   // sorted by CETAG
+/// assert_eq!(groups[0].fields.len(), 2);
 /// ```
 ///
 /// # Requirements
@@ -315,56 +348,119 @@ impl TreFieldGroup {
 /// _Requirements: 18.6_
 pub fn parse_tre_fields_from_metadata(
     metadata: &std::collections::HashMap<String, serde_json::Value>,
-) -> std::collections::HashMap<String, TreFieldGroup> {
-    let mut groups: std::collections::HashMap<String, TreFieldGroup> =
-        std::collections::HashMap::new();
+) -> Vec<TreFieldGroup> {
+    let mut tags: Vec<&String> = metadata.keys().collect();
+    tags.sort_unstable();
 
-    for (key, value) in metadata {
-        // TRE entries are top-level keys whose values are JSON objects
-        if let serde_json::Value::Object(obj) = value {
-            if obj.is_empty() {
-                continue;
-            }
-
-            let mut group = TreFieldGroup::new(key);
-            for (field_name, field_value) in obj {
-                group.insert(field_name.clone(), field_value.clone());
-            }
-            groups.insert(key.clone(), group);
-        }
-    }
-
-    groups
+    tags.into_iter()
+        .filter_map(|tag| group_from_object(tag, &metadata[tag]))
+        .collect()
 }
 
-/// Extract TRE field groups from a MetadataProvider.
+/// The top-level field names a header or subheader definition declares.
 ///
-/// This is a convenience function that calls `entries(None)` on the provider
-/// and then parses the TRE fields from the resulting metadata.
+/// This is the authoritative answer to "is this metadata key a header field?" — it
+/// comes from the same `.ksy` definition the writer serializes the header from, so
+/// it cannot drift from what the header actually contains. Only top-level `seq`
+/// entries are collected, because only a top-level field can appear as a top-level
+/// metadata key; the names *inside* a nested group (`BAND_INFO`'s `IREPBAND`, say)
+/// are reachable only through that group's value.
+///
+/// Names are returned uppercased and trimmed, matching how the reader keys them.
+pub fn declared_field_ids(definition: &StructureDefinition) -> HashSet<String> {
+    definition
+        .fields
+        .iter()
+        .map(|field| field.id.trim().to_uppercase())
+        .collect()
+}
+
+/// Extract TRE field groups from a MetadataProvider, in the provider's key order.
+///
+/// A key is a TRE when the container's own definition does not declare it as a
+/// header field *and* the registry has a `tre_<tag>` definition to serialize it
+/// with. Both halves are authoritative — the first comes from the `.ksy` the header
+/// is written from, the second from the registry that does the writing — so nothing
+/// here guesses from the shape of a value. That is what keeps array-valued nested
+/// fields such as `IMAGE_INFO` and `BAND_INFO` out of the TRE path: they are
+/// declared header fields, not objects that happen not to look like TREs.
+///
+/// Every instance of each tag comes from [`MetadataProvider::get_all`], so a
+/// container holding the same CETAG more than once yields one group per instance —
+/// see STDI-0002 Volume 1 §2, which describes a *sequence* of tagged record
+/// extensions and imposes no uniqueness requirement. Order is load-bearing for such
+/// repeats: `CSEPHA` instances are defined in time-sequence order (STDI-0002 Vol 1
+/// App D) and `BCHIPA` instances form a UUID-linked series (Vol 1 App AR).
+///
+/// Tag order follows [`MetadataProvider::keys`], which is file order for a
+/// reader-backed provider and sorted for [`BufferedMetadataProvider`]. Both are
+/// stable, which envelope output requires.
+///
+/// A key that is neither a declared header field nor a known TRE cannot be written
+/// and is skipped with a warning — the pre-existing unknown-TRE write gap, now
+/// surfaced instead of silent.
+///
+/// [`BufferedMetadataProvider`]: crate::buffered::BufferedMetadataProvider
 ///
 /// # Arguments
 ///
 /// * `provider` - A MetadataProvider implementation
+/// * `registry` - Registry supplying `tre_<tag>` definitions
+/// * `header_field_ids` - Field names the target container declares, from
+///   [`declared_field_ids`]
 ///
 /// # Returns
 ///
-/// A HashMap mapping CETAG strings to their corresponding TreFieldGroup.
+/// A vector of [`TreFieldGroup`] in the order the provider reports the keys.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use osml_imagery_io::jbp::tre::extract_tre_fields_from_provider;
+/// use osml_imagery_io::jbp::tre::{declared_field_ids, extract_tre_fields_from_provider};
 ///
-/// let groups = extract_tre_fields_from_provider(&metadata_provider);
-/// for (cetag, group) in groups {
-///     println!("TRE {}: {} fields", cetag, group.len());
+/// let subheader = registry.get("nitf_02.10_image_subheader").unwrap();
+/// let groups = extract_tre_fields_from_provider(
+///     &metadata_provider,
+///     &registry,
+///     &declared_field_ids(&subheader),
+/// );
+/// for group in &groups {
+///     println!("TRE {}: {} fields", group.tag, group.len());
 /// }
 /// ```
 pub fn extract_tre_fields_from_provider(
     provider: &dyn crate::traits::MetadataProvider,
-) -> std::collections::HashMap<String, TreFieldGroup> {
-    let metadata = provider.entries(None);
-    parse_tre_fields_from_metadata(&metadata)
+    registry: &StructureRegistry,
+    header_field_ids: &HashSet<String>,
+) -> Vec<TreFieldGroup> {
+    provider
+        .keys()
+        .iter()
+        .filter(|key| !header_field_ids.contains(&key.trim().to_uppercase()))
+        .filter(|key| {
+            if lookup_definition(registry, key).is_some() {
+                return true;
+            }
+            // Only complain about values shaped like a TRE. A stray scalar under an
+            // unrecognized key is a plain field the container does not declare, not
+            // an extension the caller expected to be written.
+            if matches!(provider.get_value(key), Some(serde_json::Value::Object(o)) if !o.is_empty())
+            {
+                eprintln!(
+                    "Warning: no TRE definition for '{}'; it cannot be written and was skipped",
+                    key.trim()
+                );
+            }
+            false
+        })
+        .flat_map(|tag| {
+            provider
+                .get_all(tag)
+                .into_iter()
+                .filter_map(|instance| group_from_object(tag, &instance))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// Validate that a CETAG is in the correct format.
@@ -751,9 +847,8 @@ mod tests {
         let groups = parse_tre_fields_from_metadata(&metadata);
 
         assert_eq!(groups.len(), 1);
-        assert!(groups.contains_key("GEOLOB"));
 
-        let geolob = &groups["GEOLOB"];
+        let geolob = &groups[0];
         assert_eq!(geolob.tag, "GEOLOB");
         assert_eq!(geolob.len(), 2);
         assert_eq!(geolob.get("ARV"), Some(&serde_json::json!("000360000")));
@@ -764,22 +859,45 @@ mod tests {
     fn parse_tre_fields_multiple_tres() {
         let mut metadata = std::collections::HashMap::new();
         metadata.insert(
-            "GEOLOB".to_string(),
-            serde_json::json!({"ARV": "000360000", "BRV": "000360000"}),
-        );
-        metadata.insert(
             "SENSRB".to_string(),
             serde_json::json!({"PLATFORM": "AIRCRAFT", "SENSOR": "EO"}),
+        );
+        metadata.insert(
+            "GEOLOB".to_string(),
+            serde_json::json!({"ARV": "000360000", "BRV": "000360000"}),
         );
 
         let groups = parse_tre_fields_from_metadata(&metadata);
 
-        assert_eq!(groups.len(), 2);
-        assert!(groups.contains_key("GEOLOB"));
-        assert!(groups.contains_key("SENSRB"));
+        // Sorted by CETAG, regardless of insertion order into the metadata map.
+        assert_eq!(
+            groups.iter().map(|g| g.tag.as_str()).collect::<Vec<_>>(),
+            vec!["GEOLOB", "SENSRB"]
+        );
+        assert_eq!(groups[0].len(), 2);
+        assert_eq!(groups[1].len(), 2);
+    }
 
-        assert_eq!(groups["GEOLOB"].len(), 2);
-        assert_eq!(groups["SENSRB"].len(), 2);
+    #[test]
+    fn parse_tre_fields_order_is_stable_across_calls() {
+        let mut metadata = std::collections::HashMap::new();
+        for tag in ["SENSRB", "GEOLOB", "ACFTB", "PIAPEA", "BLOCKA"] {
+            metadata.insert(tag.to_string(), serde_json::json!({"F": "1"}));
+        }
+
+        // A metadata HashMap has no order of its own, so the sort is what makes
+        // repeated serialization of the same input byte-identical.
+        let first: Vec<String> = parse_tre_fields_from_metadata(&metadata)
+            .iter()
+            .map(|g| g.tag.clone())
+            .collect();
+        let second: Vec<String> = parse_tre_fields_from_metadata(&metadata)
+            .iter()
+            .map(|g| g.tag.clone())
+            .collect();
+
+        assert_eq!(first, second);
+        assert_eq!(first, vec!["ACFTB", "BLOCKA", "GEOLOB", "PIAPEA", "SENSRB"]);
     }
 
     #[test]
@@ -829,12 +947,291 @@ mod tests {
         let groups = parse_tre_fields_from_metadata(&metadata);
 
         assert_eq!(groups.len(), 1);
-        let test_group = &groups["TEST"];
+        let test_group = &groups[0];
+        assert_eq!(test_group.tag, "TEST");
         assert_eq!(test_group.get("STRING"), Some(&serde_json::json!("text")));
         assert_eq!(test_group.get("NUMBER"), Some(&serde_json::json!(42)));
         assert_eq!(test_group.get("FLOAT"), Some(&serde_json::json!(3.14)));
         assert_eq!(test_group.get("BOOL"), Some(&serde_json::json!(true)));
         assert_eq!(test_group.get("NULL"), Some(&serde_json::Value::Null));
+    }
+
+    /// Provider that reports keys in file order, including repeated CETAGs.
+    ///
+    /// Stands in for the JBP providers without needing a NITF file: `keys` returns
+    /// plain fields then extensions in file order, and `get_all` returns every
+    /// instance under a tag.
+    struct OrderedTreProvider {
+        /// (CETAG, instances) in file order.
+        get_all: Vec<(String, Vec<serde_json::Value>)>,
+        fields: std::collections::HashMap<String, serde_json::Value>,
+    }
+
+    impl crate::traits::MetadataProvider for OrderedTreProvider {
+        fn raw(&self) -> &[u8] {
+            &[]
+        }
+
+        fn entries(
+            &self,
+            _prefix: Option<&str>,
+        ) -> std::collections::HashMap<String, serde_json::Value> {
+            let mut out = self.fields.clone();
+            for (tag, instances) in &self.get_all {
+                if let Some(first) = instances.first() {
+                    out.insert(tag.clone(), first.clone());
+                }
+            }
+            out
+        }
+
+        fn get_all(&self, tag: &str) -> Vec<serde_json::Value> {
+            self.get_all
+                .iter()
+                .find(|(t, _)| t == tag)
+                .map(|(_, instances)| instances.clone())
+                .unwrap_or_default()
+        }
+
+        // Key order is the file order a reader-backed provider reports: plain
+        // fields first, then extensions in the order they appeared.
+        fn keys(&self) -> Vec<String> {
+            let mut keys: Vec<String> = self.fields.keys().cloned().collect();
+            keys.sort_unstable();
+            keys.extend(self.get_all.iter().map(|(t, _)| t.clone()));
+            keys
+        }
+    }
+
+    /// Declared field names of the image subheader, the container most of these
+    /// tests classify against.
+    fn image_subheader_fields(registry: &StructureRegistry) -> HashSet<String> {
+        declared_field_ids(
+            &registry
+                .get("nitf_02.10_image_subheader")
+                .expect("image subheader definition ships with the crate"),
+        )
+    }
+
+    #[test]
+    fn extract_tre_fields_from_provider_keeps_every_instance_in_order() {
+        let provider = OrderedTreProvider {
+            get_all: vec![(
+                "PIAPEA".to_string(),
+                vec![
+                    serde_json::json!({"LASTNME": "DURHAM"}),
+                    serde_json::json!({"LASTNME": "DAILEY"}),
+                    serde_json::json!({"LASTNME": "WEBB"}),
+                ],
+            )],
+            fields: std::collections::HashMap::new(),
+        };
+
+        let registry = StructureRegistry::new();
+        let header_fields = image_subheader_fields(&registry);
+        let groups = extract_tre_fields_from_provider(&provider, &registry, &header_fields);
+
+        assert_eq!(groups.len(), 3);
+        assert!(groups.iter().all(|g| g.tag == "PIAPEA"));
+        assert_eq!(
+            groups
+                .iter()
+                .map(|g| g.get("LASTNME").unwrap().as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["DURHAM", "DAILEY", "WEBB"]
+        );
+    }
+
+    #[test]
+    fn extract_tre_fields_from_provider_preserves_tag_order() {
+        let provider = OrderedTreProvider {
+            get_all: vec![
+                ("SENSRB".to_string(), vec![serde_json::json!({"F": "1"})]),
+                (
+                    "GEOLOB".to_string(),
+                    vec![serde_json::json!({"ARV": "000360000"})],
+                ),
+            ],
+            fields: std::collections::HashMap::new(),
+        };
+
+        let registry = StructureRegistry::new();
+        let header_fields = image_subheader_fields(&registry);
+        let groups = extract_tre_fields_from_provider(&provider, &registry, &header_fields);
+
+        // The provider's order wins — it is the file order, not an alphabetical one.
+        assert_eq!(
+            groups.iter().map(|g| g.tag.as_str()).collect::<Vec<_>>(),
+            vec!["SENSRB", "GEOLOB"]
+        );
+    }
+
+    #[test]
+    fn extract_tre_fields_from_provider_skips_declared_subheader_fields() {
+        // BAND_INFO decodes to a JSON *array* and IID1 to a scalar. Neither is
+        // excluded for its shape: both are declared fields of the image subheader
+        // definition, which is what the classification consults.
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("IID1".to_string(), serde_json::json!("TEST"));
+        fields.insert(
+            "BAND_INFO".to_string(),
+            serde_json::json!([{"IREPBAND": "R"}]),
+        );
+
+        let provider = OrderedTreProvider {
+            get_all: vec![(
+                "GEOLOB".to_string(),
+                vec![serde_json::json!({"ARV": "000360000"})],
+            )],
+            fields,
+        };
+
+        let registry = StructureRegistry::new();
+        let header_fields = image_subheader_fields(&registry);
+        assert!(header_fields.contains("BAND_INFO"));
+
+        let groups = extract_tre_fields_from_provider(&provider, &registry, &header_fields);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].tag, "GEOLOB");
+    }
+
+    #[test]
+    fn extract_tre_fields_from_provider_skips_declared_file_header_fields() {
+        // The file-header analogue, and the #11 hazard: IMAGE_INFO and the raw TRE
+        // container fields are objects or arrays sitting in file-header metadata.
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("FTITLE".to_string(), serde_json::json!("TEST"));
+        fields.insert(
+            "IMAGE_INFO".to_string(),
+            serde_json::json!([{"LISH": "439"}]),
+        );
+        fields.insert("XHD".to_string(), serde_json::json!("4353444944..."));
+
+        let provider = OrderedTreProvider {
+            get_all: vec![(
+                "GEOLOB".to_string(),
+                vec![serde_json::json!({"ARV": "000360000"})],
+            )],
+            fields,
+        };
+
+        let registry = StructureRegistry::new();
+        let header_fields = declared_field_ids(
+            &registry
+                .get("nitf_02.10_file_header")
+                .expect("file header definition ships with the crate"),
+        );
+        assert!(header_fields.contains("IMAGE_INFO"));
+
+        let groups = extract_tre_fields_from_provider(&provider, &registry, &header_fields);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].tag, "GEOLOB");
+    }
+
+    #[test]
+    fn extract_tre_fields_from_provider_skips_keys_with_no_tre_definition() {
+        // A nested dict the caller never meant as an extension. It is not a declared
+        // header field, so the registry is the only thing standing between it and the
+        // TRE path — and there is no `tre_obj` definition.
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("OBJ".to_string(), serde_json::json!({"A": "1"}));
+
+        let provider = OrderedTreProvider {
+            get_all: vec![(
+                "GEOLOB".to_string(),
+                vec![serde_json::json!({"ARV": "000360000"})],
+            )],
+            fields,
+        };
+
+        let registry = StructureRegistry::new();
+        let header_fields = image_subheader_fields(&registry);
+
+        let groups = extract_tre_fields_from_provider(&provider, &registry, &header_fields);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].tag, "GEOLOB");
+    }
+
+    #[test]
+    fn extract_tre_fields_from_provider_needs_no_provider_cooperation() {
+        // A provider that overrides nothing but `entries` — every hand-built provider
+        // and in-test mock. Classification is entirely external to it, so authoring a
+        // TRE as a CETAG-keyed dict keeps working with no trait impl to write.
+        struct PlainProvider(std::collections::HashMap<String, serde_json::Value>);
+
+        impl crate::traits::MetadataProvider for PlainProvider {
+            fn raw(&self) -> &[u8] {
+                &[]
+            }
+
+            fn entries(
+                &self,
+                _prefix: Option<&str>,
+            ) -> std::collections::HashMap<String, serde_json::Value> {
+                self.0.clone()
+            }
+        }
+
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("SENSRB".to_string(), serde_json::json!({"F": "1"}));
+        fields.insert("GEOLOB".to_string(), serde_json::json!({"ARV": "1"}));
+        fields.insert("IID1".to_string(), serde_json::json!("TEST"));
+
+        let registry = StructureRegistry::new();
+        let header_fields = image_subheader_fields(&registry);
+
+        let mut tags: Vec<String> =
+            extract_tre_fields_from_provider(&PlainProvider(fields), &registry, &header_fields)
+                .into_iter()
+                .map(|g| g.tag)
+                .collect();
+        tags.sort();
+
+        assert_eq!(tags, vec!["GEOLOB", "SENSRB"]);
+    }
+
+    /// No TRE tag may collide with a declared header field name.
+    ///
+    /// The whole classification rests on this: a collision would make a real TRE look
+    /// like a header field and silently drop it on write. Verified across the shipped
+    /// corpus so that adding a colliding `.ksy` fails here rather than in the field.
+    #[test]
+    fn no_tre_tag_collides_with_a_declared_header_field() {
+        let registry = StructureRegistry::new();
+
+        let mut declared = HashSet::new();
+        for container in [
+            "nitf_02.10_file_header",
+            "nitf_02.10_image_subheader",
+            "nitf_02.10_graphic_subheader",
+            "nitf_02.10_text_subheader",
+            "nitf_02.10_des_subheader",
+            "nsif_01.00_file_header",
+        ] {
+            if let Some(def) = registry.get(container) {
+                declared.extend(declared_field_ids(&def));
+            }
+        }
+        assert!(
+            declared.contains("FTITLE"),
+            "container definitions failed to load"
+        );
+
+        let collisions: Vec<String> = registry
+            .list()
+            .into_iter()
+            .filter_map(|name| name.strip_prefix("tre_").map(str::to_uppercase))
+            .filter(|tag| declared.contains(tag))
+            .collect();
+
+        assert!(
+            collisions.is_empty(),
+            "TRE tags collide with declared header fields: {:?}",
+            collisions
+        );
     }
 }
 
