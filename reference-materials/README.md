@@ -6,7 +6,7 @@ Key reference material for working on, and effectively using, this library inclu
 
 - NITF 2.0/2.1 specifications, especially the Joint BIIF Profile (JBP) document
 - GeoTIFF specifications
-- SAR imagery standards (SICD, SIDD, SIPS)
+- SAR imagery standards (SICD, SIDD)
 
 These specifications are controlled by third parties and are not checked into the repository.
 
@@ -31,32 +31,23 @@ SAR (Synthetic Aperture Radar) imagery uses specialized NITF-based formats. Both
 
 Links sourced from the [SarPy project](https://github.com/ngageoint/sarpy):
 
-#### SICD - Sensor Independent Complex Data (v1.3.0; 2021-11-30)
+#### SICD - Sensor Independent Complex Data
 
 Standard for complex SAR imagery (Single Look Complex / Level 1 data).
 
-- [Volume 1 - Design & Implementation Description Document](https://nsgreg.nga.mil/doc/view?i=5381)
-- [Volume 2 - File Format Description Document](https://nsgreg.nga.mil/doc/view?i=5382)
-- [Volume 3 - Image Projections Description Document](https://nsgreg.nga.mil/doc/view?i=5383)
-- [Schema](https://nsgreg.nga.mil/doc/view?i=5418)
+- [Volume 1 - Design & Implementation Description Document](https://nsgreg.nga.mil/doc/view?i=5696)
+- [Volume 2 - File Format Description Document](https://nsgreg.nga.mil/doc/view?i=5697)
+- [Volume 3 - Image Projections Description Document](https://nsgreg.nga.mil/doc/view?i=5698)
+- [Volume 4 - Schema](https://nsgreg.nga.mil/doc/view?i=5699)
 
-#### SIDD - Sensor Independent Derived Data (v3.0; 2021-11-30)
+#### SIDD - Sensor Independent Derived Data
 
 Standard for derived SAR products (detected imagery, etc.).
 
-- [Volume 1 - Design and Implementation Description Document](https://nsgreg.nga.mil/doc/view?i=5385)
-- [Volume 2 - NITF File Format Description Document](https://nsgreg.nga.mil/doc/view?i=5441)
+- [Volume 1 - Design and Implementation Description Document](https://nsgreg.nga.mil/doc/view?i=5384)
+- [Volume 2 - NITF File Format Description Document](https://nsgreg.nga.mil/doc/view?i=5385)
 - [Volume 3 - GeoTIFF File Format Description Document](https://nsgreg.nga.mil/doc/view?i=5387)
-- [Schema](https://nsgreg.nga.mil/doc/view?i=5384)
-
-#### SIPS - SAR Image Processing Standard
-
-Sandia National Laboratories image processing algorithms for SAR data. Useful for implementing image operators.
-
-Files in `SIPS/`:
-- `SIPS_v24_21Aug2019.pdf` - Main SIPS specification
-- `SAND2015-2309.pdf` - Supporting Sandia report
-- `SAND2019-2371.pdf` - Supporting Sandia report
+- [SIDD Schema v1.1.0](https://nsgreg.nga.mil/doc/view?i=5231)
 
 ### GeoTIFF Standards
 
