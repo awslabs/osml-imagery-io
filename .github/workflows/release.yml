@@ -46,8 +46,24 @@ jobs:
           set -euo pipefail
           PREFIX="${RUNNER_TEMP}/deps"
 
-          # Retry wrapper for flaky downloads
-          fetch() { for i in 1 2 3 4 5; do curl -fsSL "$1" && return 0; echo "Retry $i for $1..."; sleep $((i * 5)); done; return 1; }
+          # Retry wrapper for flaky downloads. Downloads to a temp file before
+          # extracting: piping curl straight into tar means a failed attempt
+          # feeds partial data (and this function's own progress messages) into
+          # tar's stdin, which kills tar and makes the retries useless.
+          fetch_extract() {
+            local url="$1" tmp
+            tmp="$(mktemp)"
+            for i in 1 2 3 4 5; do
+              if curl -fsSL --retry 3 --retry-delay 5 "$url" -o "$tmp"; then
+                tar xzf "$tmp" && rm -f "$tmp" && return 0
+              fi
+              echo "Retry $i for $url..." >&2
+              sleep $((i * 5))
+            done
+            rm -f "$tmp"
+            echo "Failed to fetch $url after 5 attempts" >&2
+            return 1
+          }
 
           # Cross-compilation: set CMAKE_OSX_ARCHITECTURES when target != host
           CMAKE_EXTRA=""
@@ -56,7 +72,7 @@ jobs:
           fi
 
           # --- OpenJPEG ---
-          fetch "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
+          fetch_extract "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz"
           cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/openjpeg" \
             -DBUILD_SHARED_LIBS=OFF \
@@ -66,7 +82,7 @@ jobs:
           cmake --install build-openjpeg
 
           # --- libjpeg-turbo ---
-          fetch "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_TURBO_VERSION}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" | tar xz
+          fetch_extract "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_TURBO_VERSION}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz"
           cmake -S "libjpeg-turbo-${LIBJPEG_TURBO_VERSION}" -B build-jpeg \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/jpeg" \
             -DENABLE_SHARED=OFF \
@@ -76,7 +92,7 @@ jobs:
           cmake --install build-jpeg
 
           # --- libdeflate ---
-          fetch "https://github.com/ebiggers/libdeflate/archive/refs/tags/v${LIBDEFLATE_VERSION}.tar.gz" | tar xz
+          fetch_extract "https://github.com/ebiggers/libdeflate/archive/refs/tags/v${LIBDEFLATE_VERSION}.tar.gz"
           cmake -S "libdeflate-${LIBDEFLATE_VERSION}" -B build-libdeflate \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/libdeflate" \
             -DBUILD_SHARED_LIBS=OFF \
@@ -87,7 +103,7 @@ jobs:
           cmake --install build-libdeflate
 
           # --- zstd ---
-          fetch "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz
+          fetch_extract "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz"
           cmake -S "zstd-${ZSTD_VERSION}/build/cmake" -B build-zstd \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/zstd" \
             -DBUILD_SHARED_LIBS=OFF \
@@ -99,7 +115,7 @@ jobs:
           cmake --install build-zstd
 
           # --- LERC ---
-          fetch "https://github.com/Esri/lerc/archive/refs/tags/v${LERC_VERSION}.tar.gz" | tar xz
+          fetch_extract "https://github.com/Esri/lerc/archive/refs/tags/v${LERC_VERSION}.tar.gz"
           cmake -S "lerc-${LERC_VERSION}" -B build-lerc \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/lerc" \
             -DBUILD_SHARED_LIBS=OFF \
@@ -108,7 +124,7 @@ jobs:
           cmake --install build-lerc
 
           # --- libtiff (with all codec dependencies) ---
-          fetch "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz" | tar xz
+          fetch_extract "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz"
           cmake -S "tiff-${LIBTIFF_VERSION}" -B build-tiff \
             -DCMAKE_INSTALL_PREFIX="${PREFIX}/tiff" \
             -DBUILD_SHARED_LIBS=OFF \
@@ -185,8 +201,25 @@ jobs:
 
             PREFIX="/tmp/deps"
 
-            # Retry wrapper for flaky downloads (GitHub/osgeo 504s)
-            fetch() { for i in 1 2 3 4 5; do curl -fsSL "$1" && return 0; echo "Retry $i for $1..."; sleep $((i * 5)); done; return 1; }
+            # Retry wrapper for flaky downloads (GitHub/osgeo 504s). Downloads to
+            # a temp file before extracting: piping curl straight into tar means a
+            # failed attempt feeds partial data (and this function's own progress
+            # messages) into tar's stdin, which kills tar and makes the retries
+            # useless.
+            fetch_extract() {
+              local url="$1" tmp
+              tmp="$(mktemp)"
+              for i in 1 2 3 4 5; do
+                if curl -fsSL --retry 3 --retry-delay 5 "$url" -o "$tmp"; then
+                  tar xzf "$tmp" && rm -f "$tmp" && return 0
+                fi
+                echo "Retry $i for $url..." >&2
+                sleep $((i * 5))
+              done
+              rm -f "$tmp"
+              echo "Failed to fetch $url after 5 attempts" >&2
+              return 1
+            }
 
             # Cross-compilation: detect if we're building for a different arch
             # and set CMAKE toolchain variables accordingly.
@@ -199,7 +232,7 @@ jobs:
 
               # Cross-compile zlib and xz (lzma) — transitive deps of libtiff
               # that must match the target architecture.
-              fetch "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz" | tar xz
+              fetch_extract "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
               cmake -S "zlib-1.3.1" -B build-zlib \
                 -DCMAKE_INSTALL_PREFIX="${PREFIX}/zlib" \
                 -DBUILD_SHARED_LIBS=OFF \
@@ -207,7 +240,7 @@ jobs:
               cmake --build build-zlib --config Release
               cmake --install build-zlib
 
-              fetch "https://github.com/tukaani-project/xz/releases/download/v5.6.4/xz-5.6.4.tar.gz" | tar xz
+              fetch_extract "https://github.com/tukaani-project/xz/releases/download/v5.6.4/xz-5.6.4.tar.gz"
               cmake -S "xz-5.6.4" -B build-xz \
                 -DCMAKE_INSTALL_PREFIX="${PREFIX}/xz" \
                 -DBUILD_SHARED_LIBS=OFF \
@@ -220,7 +253,7 @@ jobs:
             fi
 
             # --- OpenJPEG ---
-            fetch "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz" | tar xz
+            fetch_extract "https://github.com/uclouvain/openjpeg/archive/refs/tags/v${OPENJPEG_VERSION}.tar.gz"
             cmake -S "openjpeg-${OPENJPEG_VERSION}" -B build-openjpeg \
               -DCMAKE_INSTALL_PREFIX="${PREFIX}/openjpeg" \
               -DBUILD_SHARED_LIBS=OFF \
@@ -230,7 +263,7 @@ jobs:
             cmake --install build-openjpeg
 
             # --- libjpeg-turbo ---
-            fetch "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_TURBO_VERSION}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" | tar xz
+            fetch_extract "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_TURBO_VERSION}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz"
             cmake -S "libjpeg-turbo-${LIBJPEG_TURBO_VERSION}" -B build-jpeg \
               -DCMAKE_INSTALL_PREFIX="${PREFIX}/jpeg" \
               -DENABLE_SHARED=OFF \
@@ -240,7 +273,7 @@ jobs:
             cmake --install build-jpeg
 
             # --- libdeflate ---
-            fetch "https://github.com/ebiggers/libdeflate/archive/refs/tags/v${LIBDEFLATE_VERSION}.tar.gz" | tar xz
+            fetch_extract "https://github.com/ebiggers/libdeflate/archive/refs/tags/v${LIBDEFLATE_VERSION}.tar.gz"
             cmake -S "libdeflate-${LIBDEFLATE_VERSION}" -B build-libdeflate \
               -DCMAKE_INSTALL_PREFIX="${PREFIX}/libdeflate" \
               -DBUILD_SHARED_LIBS=OFF \
@@ -251,7 +284,7 @@ jobs:
             cmake --install build-libdeflate
 
             # --- zstd ---
-            fetch "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz
+            fetch_extract "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz"
             cmake -S "zstd-${ZSTD_VERSION}/build/cmake" -B build-zstd \
               -DCMAKE_INSTALL_PREFIX="${PREFIX}/zstd" \
               -DBUILD_SHARED_LIBS=OFF \
@@ -263,7 +296,7 @@ jobs:
             cmake --install build-zstd
 
             # --- LERC ---
-            fetch "https://github.com/Esri/lerc/archive/refs/tags/v${LERC_VERSION}.tar.gz" | tar xz
+            fetch_extract "https://github.com/Esri/lerc/archive/refs/tags/v${LERC_VERSION}.tar.gz"
             cmake -S "lerc-${LERC_VERSION}" -B build-lerc \
               -DCMAKE_INSTALL_PREFIX="${PREFIX}/lerc" \
               -DBUILD_SHARED_LIBS=OFF \
@@ -272,7 +305,7 @@ jobs:
             cmake --install build-lerc
 
             # --- libtiff (with all codec dependencies) ---
-            fetch "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz" | tar xz
+            fetch_extract "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz"
             TIFF_PREFIX_PATH="${PREFIX}/jpeg;${PREFIX}/libdeflate;${PREFIX}/zstd;${PREFIX}/lerc"
             if [[ -d "${PREFIX}/zlib" ]]; then
               TIFF_PREFIX_PATH="${TIFF_PREFIX_PATH};${PREFIX}/zlib;${PREFIX}/xz"
